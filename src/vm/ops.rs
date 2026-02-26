@@ -1,4 +1,6 @@
 use std::cmp::Ordering;
+use std::ffi::CString;
+use std::os::raw::{c_char, c_int};
 
 use super::class_name_for_instance;
 use super::containers::{dedup_hashable_values, dict_contains_key_checked, ensure_hashable};
@@ -10,6 +12,10 @@ use super::{
 use crate::runtime::{
     BigInt, BuiltinFunction, Heap, Object, RuntimeError, Value, format_repr, format_value,
 };
+
+unsafe extern "C" {
+    fn snprintf(buffer: *mut c_char, size: usize, format: *const c_char, ...) -> c_int;
+}
 
 fn string_like_for_add(value: &Value) -> Option<String> {
     match value {
@@ -426,7 +432,7 @@ fn bytes_percent_format(format: &[u8], right: Value) -> Result<Vec<u8>, RuntimeE
         }
         idx += 1;
         if idx >= format.len() {
-            return Err(RuntimeError::new("incomplete format"));
+            return Err(RuntimeError::value_error("incomplete format"));
         }
         if format[idx] == b'%' {
             out.push(b'%');
@@ -468,7 +474,7 @@ fn bytes_percent_format(format: &[u8], right: Value) -> Result<Vec<u8>, RuntimeE
             }
         }
         if idx >= format.len() {
-            return Err(RuntimeError::new("incomplete format"));
+            return Err(RuntimeError::value_error("incomplete format"));
         }
         let conv = format[idx];
         idx += 1;
@@ -485,7 +491,7 @@ fn bytes_percent_format(format: &[u8], right: Value) -> Result<Vec<u8>, RuntimeE
         }
     }
     if arg_idx < positional_args.len() {
-        return Err(RuntimeError::new(
+        return Err(RuntimeError::type_error(
             "not all arguments converted during bytes formatting",
         ));
     }
@@ -502,7 +508,7 @@ fn value_to_bytes_percent_value(value: Value) -> Result<Vec<u8>, RuntimeError> {
             Object::ByteArray(bytes) => Ok(bytes.clone()),
             _ => Err(RuntimeError::type_error("unsupported operand type for %")),
         },
-        _ => Err(RuntimeError::new("%b requires a bytes-like object")),
+        _ => Err(RuntimeError::type_error("%b requires a bytes-like object")),
     }
 }
 
@@ -539,7 +545,7 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
         }
         idx += 1;
         if idx >= chars.len() {
-            return Err(RuntimeError::new("incomplete format"));
+            return Err(RuntimeError::value_error("incomplete format"));
         }
         if chars[idx] == '%' {
             out.push('%');
@@ -555,7 +561,7 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
                 idx += 1;
             }
             if idx >= chars.len() {
-                return Err(RuntimeError::new("incomplete format key"));
+                return Err(RuntimeError::value_error("incomplete format key"));
             }
             mapping_key = Some(chars[key_start..idx].iter().collect());
             idx += 1;
@@ -565,12 +571,14 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
         let mut zero_pad = false;
         let mut force_sign = false;
         let mut space_sign = false;
+        let mut alternate = false;
         while idx < chars.len() && "#0- +".contains(chars[idx]) {
             match chars[idx] {
                 '-' => left_align = true,
                 '0' => zero_pad = true,
                 '+' => force_sign = true,
                 ' ' => space_sign = true,
+                '#' => alternate = true,
                 _ => {}
             }
             idx += 1;
@@ -579,7 +587,7 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
         let mut width: Option<usize> = None;
         if idx < chars.len() && chars[idx] == '*' {
             if mapping_key.is_some() {
-                return Err(RuntimeError::new("format requires a mapping"));
+                return Err(RuntimeError::type_error("format requires a mapping"));
             }
             if arg_idx >= positional_args.len() {
                 return Err(RuntimeError::type_error(
@@ -606,7 +614,7 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
                         .iter()
                         .collect::<String>()
                         .parse::<usize>()
-                        .map_err(|_| RuntimeError::new("invalid width in format string"))?,
+                        .map_err(|_| RuntimeError::value_error("invalid width in format string"))?,
                 );
             }
         }
@@ -616,7 +624,7 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
             idx += 1;
             if idx < chars.len() && chars[idx] == '*' {
                 if mapping_key.is_some() {
-                    return Err(RuntimeError::new("format requires a mapping"));
+                    return Err(RuntimeError::type_error("format requires a mapping"));
                 }
                 if arg_idx >= positional_args.len() {
                     return Err(RuntimeError::type_error(
@@ -641,7 +649,9 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
                     Some(
                         precision_text
                             .parse::<usize>()
-                            .map_err(|_| RuntimeError::new("invalid precision in format string"))?,
+                            .map_err(|_| {
+                                RuntimeError::value_error("invalid precision in format string")
+                            })?,
                     )
                 };
             }
@@ -650,7 +660,7 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
             idx += 1;
         }
         if idx >= chars.len() {
-            return Err(RuntimeError::new("incomplete format"));
+            return Err(RuntimeError::value_error("incomplete format"));
         }
         let conversion = chars[idx];
         idx += 1;
@@ -659,14 +669,14 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
             used_mapping = true;
             let entries = mapping
                 .as_ref()
-                .ok_or_else(|| RuntimeError::new("format requires a mapping"))?;
+                .ok_or_else(|| RuntimeError::type_error("format requires a mapping"))?;
             entries
                 .iter()
                 .find_map(|(entry_key, entry_value)| match entry_key {
                     Value::Str(name) if name == &key => Some(entry_value.clone()),
                     _ => None,
                 })
-                .ok_or_else(|| RuntimeError::new("format key not found"))?
+                .ok_or_else(|| RuntimeError::key_error(key.clone()))?
         } else {
             if arg_idx >= positional_args.len() {
                 return Err(RuntimeError::type_error(
@@ -678,7 +688,9 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
             value
         };
 
-        let formatted = format_percent_value(value, conversion, precision, force_sign, space_sign)?;
+        let formatted = format_percent_value(
+            value, conversion, precision, force_sign, space_sign, alternate,
+        )?;
         out.push_str(&apply_percent_width(
             formatted,
             width,
@@ -689,7 +701,7 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
     }
 
     if !used_mapping && arg_idx < positional_args.len() {
-        return Err(RuntimeError::new(
+        return Err(RuntimeError::type_error(
             "not all arguments converted during string formatting",
         ));
     }
@@ -750,6 +762,7 @@ fn format_percent_value(
     precision: Option<usize>,
     force_sign: bool,
     space_sign: bool,
+    alternate: bool,
 ) -> Result<String, RuntimeError> {
     match conversion {
         's' => {
@@ -782,7 +795,7 @@ fn format_percent_value(
             }
             Ok(text)
         }
-        'f' | 'F' => {
+        'e' | 'E' | 'f' | 'F' | 'g' | 'G' => {
             let number = match value {
                 Value::Bool(flag) => {
                     if flag {
@@ -792,45 +805,99 @@ fn format_percent_value(
                     }
                 }
                 Value::Int(number) => number as f64,
-                Value::BigInt(number) => number.to_f64(),
+                Value::BigInt(number) => {
+                    let converted = number.to_f64();
+                    if !converted.is_finite() {
+                        return Err(RuntimeError::overflow_error(
+                            "int too large to convert to float",
+                        ));
+                    }
+                    converted
+                }
                 Value::Float(number) => number,
                 _ => return Err(RuntimeError::new("must be real number")),
             };
-            let precision = precision.unwrap_or(6);
-            let mut text = format!("{number:.precision$}");
-            if conversion == 'F' {
-                text = text.to_ascii_uppercase();
+            let mut format_spec = String::from("%");
+            if force_sign {
+                format_spec.push('+');
+            } else if space_sign {
+                format_spec.push(' ');
             }
-            if !text.starts_with('-') {
-                if force_sign {
-                    text.insert(0, '+');
-                } else if space_sign {
-                    text.insert(0, ' ');
-                }
+            if alternate {
+                format_spec.push('#');
             }
-            Ok(text)
+            if let Some(precision) = precision {
+                format_spec.push('.');
+                format_spec.push_str(&precision.to_string());
+            }
+            format_spec.push(conversion);
+            format_percent_float_with_snprintf(&format_spec, number)
         }
         'x' => {
             let integer = int_like_to_bigint(&value)
                 .ok_or_else(|| RuntimeError::type_error("expected integer"))?;
-            integer
+            let is_negative = integer.is_negative();
+            let abs = integer.abs();
+            let digits = abs
                 .to_str_radix(16)
-                .ok_or_else(|| RuntimeError::new("unsupported operand type for hex formatting"))
+                .ok_or_else(|| RuntimeError::new("unsupported operand type for hex formatting"))?;
+            let mut out = String::new();
+            if is_negative {
+                out.push('-');
+            } else if force_sign {
+                out.push('+');
+            } else if space_sign {
+                out.push(' ');
+            }
+            if alternate {
+                out.push_str("0x");
+            }
+            out.push_str(&digits);
+            Ok(out)
         }
         'X' => {
             let integer = int_like_to_bigint(&value)
                 .ok_or_else(|| RuntimeError::type_error("expected integer"))?;
-            let value = integer
+            let is_negative = integer.is_negative();
+            let abs = integer.abs();
+            let value = abs
                 .to_str_radix(16)
                 .ok_or_else(|| RuntimeError::new("unsupported operand type for hex formatting"))?;
-            Ok(value.to_ascii_uppercase())
+            let mut out = String::new();
+            if is_negative {
+                out.push('-');
+            } else if force_sign {
+                out.push('+');
+            } else if space_sign {
+                out.push(' ');
+            }
+            if alternate {
+                out.push_str("0X");
+            }
+            out.push_str(&value.to_ascii_uppercase());
+            Ok(out)
         }
         'o' => {
             let integer = int_like_to_bigint(&value)
                 .ok_or_else(|| RuntimeError::type_error("expected integer"))?;
-            integer
-                .to_str_radix(8)
-                .ok_or_else(|| RuntimeError::new("unsupported operand type for octal formatting"))
+            let is_negative = integer.is_negative();
+            let abs = integer.abs();
+            let digits = abs.to_str_radix(8).ok_or_else(|| {
+                RuntimeError::new("unsupported operand type for octal formatting")
+            })?;
+            let mut out = String::new();
+            if is_negative {
+                out.push('-');
+            } else if force_sign {
+                out.push('+');
+            } else if space_sign {
+                out.push(' ');
+            }
+            if alternate {
+                out.push_str("0o");
+            }
+            out.push_str(&digits);
+            Ok(out)
         }
         'c' => match value {
             Value::Int(code) => {
@@ -852,8 +919,36 @@ fn format_percent_value(
             }
             _ => Err(RuntimeError::new("%c requires int or char")),
         },
-        _ => Err(RuntimeError::new("unsupported format character")),
+        _ => Err(RuntimeError::value_error("unsupported format character")),
     }
+}
+
+fn format_percent_float_with_snprintf(
+    format_spec: &str,
+    value: f64,
+) -> Result<String, RuntimeError> {
+    let c_format = CString::new(format_spec)
+        .map_err(|_| RuntimeError::value_error("invalid format string"))?;
+    // SAFETY: `c_format` is NUL-terminated and valid for both calls.
+    let needed = unsafe { snprintf(std::ptr::null_mut(), 0, c_format.as_ptr(), value) };
+    if needed < 0 {
+        return Err(RuntimeError::value_error("failed to format float"));
+    }
+    let mut buffer = vec![0u8; needed as usize + 1];
+    // SAFETY: output buffer is writable and large enough for the result and trailing NUL.
+    let wrote = unsafe {
+        snprintf(
+            buffer.as_mut_ptr().cast::<c_char>(),
+            buffer.len(),
+            c_format.as_ptr(),
+            value,
+        )
+    };
+    if wrote < 0 {
+        return Err(RuntimeError::value_error("failed to format float"));
+    }
+    buffer.truncate(wrote as usize);
+    Ok(String::from_utf8_lossy(&buffer).into_owned())
 }
 
 fn apply_percent_width(
@@ -900,7 +995,10 @@ fn apply_percent_width(
 }
 
 fn is_numeric_percent_conversion(conversion: char) -> bool {
-    matches!(conversion, 'd' | 'i' | 'u' | 'x' | 'X' | 'o' | 'f' | 'F')
+    matches!(
+        conversion,
+        'd' | 'i' | 'u' | 'x' | 'X' | 'o' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G'
+    )
 }
 
 pub(super) fn pow_values(left: Value, right: Value) -> Result<Value, RuntimeError> {
@@ -1219,12 +1317,13 @@ pub(super) fn lshift_values(left: Value, right: Value) -> Result<Value, RuntimeE
     let (left, right) = integer_pair(&left, &right)
         .ok_or_else(|| RuntimeError::new("unsupported operand type for <<"))?;
     if right.is_negative() {
-        return Err(RuntimeError::new("negative shift count"));
+        return Err(RuntimeError::value_error("negative shift count"));
     }
     let shift = right
         .to_i64()
-        .ok_or_else(|| RuntimeError::new("shift count too large"))?;
-    let shift = usize::try_from(shift).map_err(|_| RuntimeError::new("shift count too large"))?;
+        .ok_or_else(|| RuntimeError::overflow_error("shift count too large"))?;
+    let shift = usize::try_from(shift)
+        .map_err(|_| RuntimeError::overflow_error("shift count too large"))?;
     Ok(bigint_to_value(left.shl_bits(shift)))
 }
 
@@ -1232,12 +1331,13 @@ pub(super) fn rshift_values(left: Value, right: Value) -> Result<Value, RuntimeE
     let (left, right) = integer_pair(&left, &right)
         .ok_or_else(|| RuntimeError::new("unsupported operand type for >>"))?;
     if right.is_negative() {
-        return Err(RuntimeError::new("negative shift count"));
+        return Err(RuntimeError::value_error("negative shift count"));
     }
     let shift = right
         .to_i64()
-        .ok_or_else(|| RuntimeError::new("shift count too large"))?;
-    let shift = usize::try_from(shift).map_err(|_| RuntimeError::new("shift count too large"))?;
+        .ok_or_else(|| RuntimeError::overflow_error("shift count too large"))?;
+    let shift = usize::try_from(shift)
+        .map_err(|_| RuntimeError::overflow_error("shift count too large"))?;
     Ok(bigint_to_value(left.shr_bits_arithmetic(shift)))
 }
 

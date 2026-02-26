@@ -161,11 +161,13 @@ impl<'a> Translator<'a> {
         self.constants = self.convert_constants(&self.code.consts)?;
 
         let mut result = CodeObject::new(self.code.name.clone(), self.code.filename.clone());
+        result.first_line = self.code.firstlineno.max(1) as usize;
         result.names = self.names.clone();
         result.cellvars = self.cellvars.clone();
         result.freevars = self.freevars.clone();
         result.is_generator = (self.code.flags & 0x20) != 0;
-        result.is_coroutine = (self.code.flags & 0x80) != 0 || (self.code.flags & 0x100) != 0;
+        result.is_coroutine = (self.code.flags & 0x80) != 0;
+        result.is_iterable_coroutine = (self.code.flags & 0x100) != 0;
         result.is_async_generator = (self.code.flags & 0x200) != 0;
         self.populate_params(&mut result)?;
 

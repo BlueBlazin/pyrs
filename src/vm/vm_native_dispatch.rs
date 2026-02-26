@@ -1,20 +1,20 @@
 use std::cell::Cell;
 
 use super::{
-    BigInt, Block, BoundMethod, BuiltinFunction, CodeObject, FormatterFieldKey, Frame,
-    GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome, HashMap, InstanceObject,
-    Instruction, InternalCallOutcome, IteratorKind, IteratorObject, ModuleObject, NativeCallResult,
-    NativeMethodKind, ObjRef, Object, Opcode, Ordering, PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc,
-    ReMode, RePatternValue, RuntimeError, Value, Vm, bigint_to_fixed_bytes, bytes_like_from_value,
-    call_builtin_with_kwargs, class_attr_lookup, class_name_for_instance, decode_text_bytes,
-    dedup_hashable_values, dict_get_value, dict_remove_value, dict_set_value,
-    dict_set_value_checked, encode_text_bytes, ensure_hashable, exception_is_named,
-    find_bytes_subslice, is_truthy, memoryview_bounds, memoryview_decode_tolist,
-    memoryview_format_for_view, memoryview_shape_and_strides_from_parts, normalize_codec_encoding,
-    normalize_codec_errors, parse_memoryview_cast_format, parse_string_formatter,
-    py_rsplit_whitespace, py_split_whitespace, py_splitlines, re_pattern_from_compiled_module,
-    runtime_error_matches_exception, split_formatter_field_name, value_from_bigint,
-    value_to_bigint, value_to_int, with_bytes_like_source,
+    BigInt, Block, BoundMethod, BuiltinFunction, CodeObject, ExceptionObject, FormatterFieldKey,
+    Frame, GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome, HashMap, InstanceObject,
+    Instruction, InternalCallOutcome, IteratorKind, IteratorObject, MAPPING_PROXY_STORAGE_ATTR,
+    ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object, Opcode, Ordering,
+    PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc, ReMode, RePatternValue, RuntimeError, Value, Vm,
+    bigint_to_fixed_bytes, bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup,
+    class_name_for_instance, decode_text_bytes, dedup_hashable_values, dict_get_value,
+    dict_remove_value, dict_set_value, dict_set_value_checked, encode_text_bytes, ensure_hashable,
+    exception_is_named, find_bytes_subslice, format_value, is_truthy, memoryview_bounds,
+    memoryview_decode_tolist, memoryview_format_for_view, memoryview_shape_and_strides_from_parts,
+    normalize_codec_encoding, normalize_codec_errors, parse_memoryview_cast_format,
+    parse_string_formatter, py_rsplit_whitespace, py_split_whitespace, py_splitlines,
+    re_pattern_from_compiled_module, runtime_error_matches_exception, split_formatter_field_name,
+    value_from_bigint, value_to_bigint, value_to_int, with_bytes_like_source,
 };
 
 unsafe extern "C" {
@@ -25,6 +25,8 @@ thread_local! {
     static CALL_BUILTIN_DEPTH: Cell<usize> = const { Cell::new(0) };
     static CALL_NATIVE_METHOD_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
+
+const SIMPLE_QUEUE_STORAGE_ATTR: &str = "__pyrs_simple_queue_items__";
 
 fn parse_memoryview_cast_shape(value: &Value) -> Result<Vec<usize>, RuntimeError> {
     let shape_items = match value {
@@ -94,6 +96,69 @@ fn c_contiguous_strides_for_shape(
 }
 
 impl Vm {
+    pub(super) fn stop_iteration_runtime_error(&mut self, value: Value) -> RuntimeError {
+        let message = if matches!(value, Value::None) {
+            None
+        } else {
+            Some(format_value(&value))
+        };
+        let exception = ExceptionObject::new("StopIteration", message);
+        {
+            let mut attrs = exception.attrs.borrow_mut();
+            let args = if matches!(value, Value::None) {
+                self.heap.alloc_tuple(Vec::new())
+            } else {
+                self.heap.alloc_tuple(vec![value.clone()])
+            };
+            attrs.insert("args".to_string(), args);
+            attrs.insert("value".to_string(), value);
+        }
+        RuntimeError::from_exception(exception)
+    }
+
+    fn stop_iteration_value_from_value(&self, value: &Value) -> Option<Value> {
+        if !exception_is_named(value, "StopIteration") {
+            return None;
+        }
+        match value {
+            Value::Exception(exception) => {
+                let attrs = exception.attrs.borrow();
+                attrs
+                    .get("value")
+                    .cloned()
+                    .or_else(|| match attrs.get("args") {
+                        Some(Value::Tuple(args_obj)) => match &*args_obj.kind() {
+                            Object::Tuple(items) => items.first().cloned(),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+            }
+            Value::Instance(instance) => match &*instance.kind() {
+                Object::Instance(instance_data) => {
+                    instance_data.attrs.get("value").cloned().or_else(|| {
+                        match instance_data.attrs.get("args") {
+                            Some(Value::Tuple(args_obj)) => match &*args_obj.kind() {
+                                Object::Tuple(items) => items.first().cloned(),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
+                    })
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn stop_iteration_value_from_active_exception(&self) -> Option<Value> {
+        self.frames
+            .last()
+            .and_then(|frame| frame.active_exception.as_ref())
+            .and_then(|value| self.stop_iteration_value_from_value(value))
+    }
+
     fn str_predicate_receiver_text(
         &self,
         receiver: &ObjRef,
@@ -154,7 +219,7 @@ impl Vm {
         let _depth_guard = CallNativeMethodDepthGuard;
         let hard_limit = (self.recursion_limit.max(1) as usize).saturating_mul(4);
         if depth > hard_limit {
-            return Err(RuntimeError::new("maximum recursion depth exceeded"));
+            return Err(self.recursion_limit_error());
         }
         if !kwargs.is_empty()
             && !matches!(
@@ -284,8 +349,8 @@ impl Vm {
                 }
                 match self.resume_generator(&receiver, None, None, GeneratorResumeKind::Next)? {
                     GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(value)),
-                    GeneratorResumeOutcome::Complete(_) => {
-                        Err(RuntimeError::stop_iteration("StopIteration"))
+                    GeneratorResumeOutcome::Complete(value) => {
+                        Err(self.stop_iteration_runtime_error(value))
                     }
                     GeneratorResumeOutcome::PropagatedException => {
                         Ok(NativeCallResult::PropagatedException)
@@ -299,8 +364,8 @@ impl Vm {
                 let sent = args.into_iter().next();
                 match self.resume_generator(&receiver, sent, None, GeneratorResumeKind::Next)? {
                     GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(value)),
-                    GeneratorResumeOutcome::Complete(_) => {
-                        Err(RuntimeError::stop_iteration("StopIteration"))
+                    GeneratorResumeOutcome::Complete(value) => {
+                        Err(self.stop_iteration_runtime_error(value))
                     }
                     GeneratorResumeOutcome::PropagatedException => {
                         Ok(NativeCallResult::PropagatedException)
@@ -331,8 +396,8 @@ impl Vm {
                     GeneratorResumeKind::Throw,
                 )? {
                     GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(value)),
-                    GeneratorResumeOutcome::Complete(_) => {
-                        Err(RuntimeError::stop_iteration("StopIteration"))
+                    GeneratorResumeOutcome::Complete(value) => {
+                        Err(self.stop_iteration_runtime_error(value))
                     }
                     GeneratorResumeOutcome::PropagatedException => {
                         Ok(NativeCallResult::PropagatedException)
@@ -409,7 +474,7 @@ impl Vm {
                 }
                 match self.iterator_next_value(&receiver)? {
                     Some(value) => Ok(NativeCallResult::Value(value)),
-                    None => Err(RuntimeError::stop_iteration("StopIteration")),
+                    None => Err(self.stop_iteration_runtime_error(Value::None)),
                 }
             }
             NativeMethodKind::DictKeys => {
@@ -1299,20 +1364,52 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::ListPop => {
-                if args.len() > 1 {
+                let (list_receiver, method_args) = match &*receiver.kind() {
+                    Object::List(_) => (receiver.clone(), args),
+                    Object::Module(module_data)
+                        if module_data.name == "__list_unbound_method__" =>
+                    {
+                        if args.is_empty() {
+                            return Err(RuntimeError::type_error(
+                                "descriptor 'pop' for 'list' objects needs an argument",
+                            ));
+                        }
+                        let target = args.remove(0);
+                        let list_receiver = match target {
+                            Value::List(obj) => obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_list(&instance).ok_or_else(|| {
+                                    RuntimeError::type_error(
+                                        "descriptor 'pop' for 'list' objects doesn't apply to this object",
+                                    )
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::type_error(
+                                    "descriptor 'pop' for 'list' objects doesn't apply to this object",
+                                ));
+                            }
+                        };
+                        (list_receiver, args)
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("list.pop() receiver must be list"));
+                    }
+                };
+                if method_args.len() > 1 {
                     return Err(RuntimeError::new("list.pop() expects at most one argument"));
                 }
-                let mut receiver_kind = receiver.kind_mut();
+                let mut receiver_kind = list_receiver.kind_mut();
                 let Object::List(values) = &mut *receiver_kind else {
                     return Err(RuntimeError::new("list.pop() receiver must be list"));
                 };
                 if values.is_empty() {
                     return Err(RuntimeError::new("pop from empty list"));
                 }
-                let idx = if args.is_empty() {
+                let idx = if method_args.is_empty() {
                     values.len() as i64 - 1
                 } else {
-                    value_to_int(args.first().cloned().expect("checked len"))?
+                    value_to_int(method_args.first().cloned().expect("checked len"))?
                 };
                 let len = values.len() as i64;
                 let mut normalized = idx;
@@ -1323,6 +1420,57 @@ impl Vm {
                     return Err(RuntimeError::new("pop index out of range"));
                 }
                 Ok(NativeCallResult::Value(values.remove(normalized as usize)))
+            }
+            NativeMethodKind::QueueSimpleQueuePut => {
+                if args.is_empty() {
+                    return Err(RuntimeError::type_error(
+                        "put() missing required argument 'item' (pos 1)",
+                    ));
+                }
+                if args.len() > 3 {
+                    return Err(RuntimeError::type_error(format!(
+                        "put() takes at most 3 positional arguments ({} given)",
+                        args.len()
+                    )));
+                }
+                let allowed_kwargs = ["block", "timeout"];
+                for name in kwargs.keys() {
+                    if !allowed_kwargs.contains(&name.as_str()) {
+                        return Err(RuntimeError::type_error(format!(
+                            "put() got an unexpected keyword argument '{}'",
+                            name
+                        )));
+                    }
+                }
+                let item = args.remove(0);
+                let storage = {
+                    let mut receiver_kind = receiver.kind_mut();
+                    let Object::Instance(instance_data) = &mut *receiver_kind else {
+                        return Err(RuntimeError::type_error(
+                            "put() receiver must be _queue.SimpleQueue",
+                        ));
+                    };
+                    if let Some(existing) =
+                        instance_data.attrs.get(SIMPLE_QUEUE_STORAGE_ATTR).cloned()
+                    {
+                        existing
+                    } else {
+                        let list = self.heap.alloc_list(Vec::new());
+                        instance_data
+                            .attrs
+                            .insert(SIMPLE_QUEUE_STORAGE_ATTR.to_string(), list.clone());
+                        list
+                    }
+                };
+                let Value::List(storage_list) = storage else {
+                    return Err(RuntimeError::type_error("SimpleQueue storage is invalid"));
+                };
+                let mut storage_kind = storage_list.kind_mut();
+                let Object::List(values) = &mut *storage_kind else {
+                    return Err(RuntimeError::type_error("SimpleQueue storage is invalid"));
+                };
+                values.push(item);
+                Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::ListCount => {
                 if args.len() != 1 {
@@ -1883,7 +2031,8 @@ impl Vm {
                     },
                     _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
-                let len = text.len() as i64;
+                let char_len = text.chars().count();
+                let len = char_len as i64;
                 let mut start = if let Some(value) = args.get(1) {
                     value_to_int(value.clone())?
                 } else {
@@ -1905,7 +2054,16 @@ impl Vm {
                 if end < start {
                     return Ok(NativeCallResult::Value(Value::Bool(false)));
                 }
-                let Some(slice) = text.get(start as usize..end as usize) else {
+                let start_idx = start as usize;
+                let end_idx = end as usize;
+                let mut byte_offsets: Vec<usize> = text.char_indices().map(|(idx, _)| idx).collect();
+                byte_offsets.push(text.len());
+                if start_idx > char_len || end_idx > char_len {
+                    return Ok(NativeCallResult::Value(Value::Bool(false)));
+                }
+                let start_byte = byte_offsets[start_idx];
+                let end_byte = byte_offsets[end_idx];
+                let Some(slice) = text.get(start_byte..end_byte) else {
                     return Ok(NativeCallResult::Value(Value::Bool(false)));
                 };
                 let match_candidate = |candidate: &str| {
@@ -1927,7 +2085,7 @@ impl Vm {
                                         break;
                                     }
                                 } else {
-                                    return Err(RuntimeError::new(format!(
+                                    return Err(RuntimeError::type_error(format!(
                                         "{method_name}() tuple entries must be str"
                                     )));
                                 }
@@ -1935,13 +2093,13 @@ impl Vm {
                             any
                         }
                         _ => {
-                            return Err(RuntimeError::new(format!(
+                            return Err(RuntimeError::type_error(format!(
                                 "{method_name}() argument must be str or tuple of str"
                             )));
                         }
                     },
                     _ => {
-                        return Err(RuntimeError::new(format!(
+                        return Err(RuntimeError::type_error(format!(
                             "{method_name}() argument must be str or tuple of str"
                         )));
                     }
@@ -2002,6 +2160,20 @@ impl Vm {
             NativeMethodKind::StrLower => {
                 let text = self.str_predicate_receiver_text(&receiver, &mut args, "lower")?;
                 Ok(NativeCallResult::Value(Value::Str(text.to_lowercase())))
+            }
+            NativeMethodKind::StrSwapCase => {
+                let text = self.str_predicate_receiver_text(&receiver, &mut args, "swapcase")?;
+                let mut out = String::new();
+                for ch in text.chars() {
+                    if ch.is_lowercase() {
+                        out.extend(ch.to_uppercase());
+                    } else if ch.is_uppercase() {
+                        out.extend(ch.to_lowercase());
+                    } else {
+                        out.push(ch);
+                    }
+                }
+                Ok(NativeCallResult::Value(Value::Str(out)))
             }
             NativeMethodKind::StrCapitalize => {
                 if !args.is_empty() {
@@ -3932,17 +4104,37 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::Bool(is_identifier)))
             }
             NativeMethodKind::StrJoin => {
-                if args.len() != 1 {
-                    return Err(RuntimeError::new("join() expects one argument"));
-                }
-                let separator = match &*receiver.kind() {
-                    Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
-                    },
-                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
+                let Object::Module(module_data) = &*receiver.kind() else {
+                    return Err(RuntimeError::type_error("str receiver is invalid"));
                 };
-                let values = self.collect_iterable_values(args[0].clone())?;
+                let (separator, iterable_arg) = if let Some(Value::Str(value)) =
+                    module_data.globals.get("value")
+                {
+                    if args.len() != 1 {
+                        return Err(RuntimeError::new("join() expects one argument"));
+                    }
+                    (value.clone(), args.remove(0))
+                } else if matches!(
+                    module_data.globals.get("owner"),
+                    Some(Value::Builtin(BuiltinFunction::Str))
+                ) {
+                    if args.len() != 2 {
+                        return Err(RuntimeError::new(
+                            "join() descriptor requires a str argument",
+                        ));
+                    }
+                    let separator = match args.remove(0) {
+                        Value::Str(value) => value,
+                        Value::Instance(instance) => self
+                            .instance_backing_str(&instance)
+                            .ok_or_else(|| RuntimeError::type_error("str receiver is invalid"))?,
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
+                    };
+                    (separator, args.remove(0))
+                } else {
+                    return Err(RuntimeError::type_error("str receiver is invalid"));
+                };
+                let values = self.collect_iterable_values(iterable_arg)?;
                 let mut parts = Vec::with_capacity(values.len());
                 for (index, value) in values.into_iter().enumerate() {
                     match value {
@@ -4246,7 +4438,8 @@ impl Vm {
                     Value::Str(value) => value.clone(),
                     _ => return Err(RuntimeError::new("count() substring must be str")),
                 };
-                let len = text.len() as i64;
+                let char_len = text.chars().count();
+                let len = char_len as i64;
                 let mut start = if let Some(value) = args.get(1) {
                     value_to_int(value.clone())?
                 } else {
@@ -4337,7 +4530,8 @@ impl Vm {
                         )));
                     }
                 };
-                let len = text.len() as i64;
+                let char_len = text.chars().count();
+                let len = char_len as i64;
                 let mut start = if let Some(value) = args.get(1) {
                     value_to_int(value.clone())?
                 } else {
@@ -4361,7 +4555,14 @@ impl Vm {
                 }
                 let start_idx = start as usize;
                 let end_idx = end as usize;
-                let Some(slice) = text.get(start_idx..end_idx) else {
+                let mut byte_offsets: Vec<usize> = text.char_indices().map(|(idx, _)| idx).collect();
+                byte_offsets.push(text.len());
+                if start_idx > char_len || end_idx > char_len {
+                    return Ok(NativeCallResult::Value(Value::Int(-1)));
+                }
+                let start_byte = byte_offsets[start_idx];
+                let end_byte = byte_offsets[end_idx];
+                let Some(slice) = text.get(start_byte..end_byte) else {
                     return Ok(NativeCallResult::Value(Value::Int(-1)));
                 };
                 let found = if matches!(kind, NativeMethodKind::StrRFind) {
@@ -4369,7 +4570,12 @@ impl Vm {
                 } else {
                     slice.find(&needle)
                 };
-                let found = found.map(|idx| (idx + start_idx) as i64).unwrap_or(-1);
+                let found = found
+                    .map(|idx| {
+                        let absolute_byte = start_byte + idx;
+                        text[..absolute_byte].chars().count() as i64
+                    })
+                    .unwrap_or(-1);
                 if matches!(kind, NativeMethodKind::StrIndex) && found < 0 {
                     return Err(RuntimeError::value_error("substring not found"));
                 }
@@ -4770,6 +4976,7 @@ impl Vm {
                             }
                             replaced.is_generator = (flags & 0x0020) != 0;
                             replaced.is_coroutine = (flags & 0x0080) != 0;
+                            replaced.is_iterable_coroutine = (flags & 0x0100) != 0;
                             replaced.is_async_generator = (flags & 0x0200) != 0;
                         }
                         "co_argcount" | "co_posonlyargcount" | "co_kwonlyargcount"
@@ -4799,6 +5006,7 @@ impl Vm {
                                 ));
                             }
                             let line = line as usize;
+                            replaced.first_line = line;
                             if let Some(first) = replaced.locations.first_mut() {
                                 first.line = line;
                             } else {
@@ -4841,12 +5049,12 @@ impl Vm {
                     } else {
                         Value::Int(location.end_line as i64)
                     };
-                    let start_column = if location.column == 0 {
+                    let start_column = if !self.traceback_caret_enabled || location.column == 0 {
                         Value::None
                     } else {
                         Value::Int(location.column.saturating_sub(1) as i64)
                     };
-                    let end_column = if location.end_column == 0 {
+                    let end_column = if !self.traceback_caret_enabled || location.end_column == 0 {
                         Value::None
                     } else {
                         Value::Int(location.end_column.saturating_sub(1) as i64)
@@ -4893,6 +5101,39 @@ impl Vm {
                     HashMap::new(),
                 )?;
                 Ok(NativeCallResult::Value(iterator))
+            }
+            NativeMethodKind::FrameClear => {
+                if !kwargs.is_empty() || !args.is_empty() {
+                    return Err(RuntimeError::new("frame.clear() takes no arguments"));
+                }
+                let locals_value = {
+                    let Object::Instance(instance_data) = &mut *receiver.kind_mut() else {
+                        return Err(RuntimeError::new("frame.clear() receiver must be a frame"));
+                    };
+                    let locals_value = instance_data.attrs.get("f_locals").cloned();
+                    // Drop backward links to break traceback reference cycles.
+                    instance_data
+                        .attrs
+                        .insert("f_back".to_string(), Value::None);
+                    locals_value
+                };
+                let clear_dict = |dict_obj: &ObjRef| {
+                    if let Object::Dict(entries) = &mut *dict_obj.kind_mut() {
+                        entries.clear();
+                    }
+                };
+                if let Some(locals) = locals_value {
+                    match locals {
+                        Value::Dict(dict_obj) => clear_dict(&dict_obj),
+                        Value::Instance(instance) => {
+                            if let Some(dict_obj) = self.instance_backing_dict(&instance) {
+                                clear_dict(&dict_obj);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::RePatternSearch
             | NativeMethodKind::RePatternMatch
@@ -5230,46 +5471,124 @@ impl Vm {
                 else {
                     return Err(RuntimeError::type_error("exception receiver is invalid"));
                 };
-                let target_name = exception.name.clone();
-                let target_message = exception.message.clone();
-                exception.notes.push(note.clone());
-                if let Some(frame) = self.frames.last_mut() {
-                    let append_matching_note = |value: &mut Value| {
-                        if let Value::Exception(candidate) = value
-                            && candidate.name == target_name
-                            && candidate.message == target_message
-                        {
-                            candidate.notes.push(note.clone());
-                        }
-                    };
-                    for value in frame.locals.values_mut() {
-                        append_matching_note(value);
+                let note_value = Value::Str(note.clone());
+                let default_notes_list = self.heap.alloc_list(vec![note_value.clone()]);
+                let append_note_to_candidate = |candidate: &mut ExceptionObject| {
+                    let mut attrs = candidate.attrs.borrow_mut();
+                    if let Some(existing) = attrs.get_mut("__notes__") {
+                        let Value::List(list_obj) = existing else {
+                            return Err(RuntimeError::type_error(
+                                "Cannot add note: __notes__ is not a list",
+                            ));
+                        };
+                        let mut list_kind = list_obj.kind_mut();
+                        let Object::List(items) = &mut *list_kind else {
+                            return Err(RuntimeError::type_error(
+                                "Cannot add note: __notes__ is not a list",
+                            ));
+                        };
+                        items.push(note_value.clone());
+                    } else {
+                        attrs.insert("__notes__".to_string(), default_notes_list.clone());
                     }
-                    for value in frame.fast_locals.iter_mut().flatten() {
-                        append_matching_note(value);
-                    }
-                    for value in frame.stack.iter_mut() {
-                        append_matching_note(value);
-                    }
-                    if let Some(active_exception) = frame.active_exception.as_mut() {
-                        append_matching_note(active_exception);
-                    }
-                    if frame.is_module
-                        && let Object::Module(module_data) = &mut *frame.module.kind_mut()
-                    {
-                        for value in module_data.globals.values_mut() {
-                            append_matching_note(value);
-                        }
-                    }
-                }
+                    candidate.notes.push(note.clone());
+                    Ok::<(), RuntimeError>(())
+                };
+                append_note_to_candidate(exception.as_mut())?;
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::DescriptorReduceTypeError => Err(RuntimeError::new(
                 "TypeError: cannot pickle descriptor objects",
             )),
+            NativeMethodKind::BoundMethodDescriptorGet => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new("__get__() expects 1-2 arguments"));
+                }
+                let descriptor = {
+                    let descriptor_kind = receiver.kind();
+                    let Object::BoundMethod(method_data) = &*descriptor_kind else {
+                        return Err(RuntimeError::new("invalid method descriptor"));
+                    };
+                    method_data.clone()
+                };
+                let obj = args.remove(0);
+                if matches!(obj, Value::None) {
+                    return Ok(NativeCallResult::Value(Value::BoundMethod(receiver)));
+                }
+                if let Object::Module(module_data) = &*descriptor.receiver.kind()
+                    && let Some(owner) = module_data.globals.get("owner")
+                {
+                    let owner_is_classinfo = matches!(
+                        owner,
+                        Value::Class(_) | Value::Tuple(_) | Value::List(_)
+                    ) || matches!(owner, Value::Builtin(builtin) if self.builtin_is_type_object(*builtin));
+                    if owner_is_classinfo && !self.value_is_instance_of(&obj, owner)? {
+                        let owner_name = match owner {
+                            Value::Builtin(builtin) => self.builtin_type_name(*builtin).to_string(),
+                            Value::Class(class_ref) => match &*class_ref.kind() {
+                                Object::Class(class_data) => class_data.name.clone(),
+                                _ => self.value_type_name_for_error(owner),
+                            },
+                            _ => self.value_type_name_for_error(owner),
+                        };
+                        let object_name = self.value_type_name_for_error(&obj);
+                        return Err(RuntimeError::type_error(format!(
+                            "descriptor for '{}' objects doesn't apply to a '{}' object",
+                            owner_name, object_name
+                        )));
+                    }
+                }
+                if let Object::Module(module_data) = &*descriptor.receiver.kind()
+                    && module_data.name == "__str_unbound_method__"
+                {
+                    let text = match &obj {
+                        Value::Str(value) => Some(value.clone()),
+                        Value::Instance(instance) => self.instance_backing_str(instance),
+                        _ => None,
+                    };
+                    if let Some(text) = text {
+                        let bound_receiver = match self
+                            .heap
+                            .alloc_module(ModuleObject::new("__str_method__".to_string()))
+                        {
+                            Value::Module(obj) => obj,
+                            _ => unreachable!(),
+                        };
+                        if let Object::Module(bound_receiver_data) = &mut *bound_receiver.kind_mut()
+                        {
+                            bound_receiver_data
+                                .globals
+                                .insert("value".to_string(), Value::Str(text));
+                        }
+                        return Ok(NativeCallResult::Value(self.heap.alloc_bound_method(
+                            BoundMethod::new(descriptor.function, bound_receiver),
+                        )));
+                    }
+                }
+                let bound_receiver = self.receiver_from_value(&obj)?;
+                Ok(NativeCallResult::Value(self.heap.alloc_bound_method(
+                    BoundMethod::new(descriptor.function, bound_receiver),
+                )))
+            }
             NativeMethodKind::FunctionDescriptorGet => {
                 if args.is_empty() || args.len() > 2 {
                     return Err(RuntimeError::new("__get__() expects 1-2 arguments"));
+                }
+                if let Object::Module(module_data) = &*receiver.kind()
+                    && module_data.name == "__builtin_descriptor__"
+                {
+                    let Some(Value::Builtin(builtin)) = module_data.globals.get("builtin").cloned()
+                    else {
+                        return Err(RuntimeError::new("invalid builtin descriptor"));
+                    };
+                    let obj = args.remove(0);
+                    if matches!(obj, Value::None) {
+                        return Ok(NativeCallResult::Value(Value::Builtin(builtin)));
+                    }
+                    let bound_receiver = self.receiver_from_value(&obj)?;
+                    return Ok(NativeCallResult::Value(
+                        self.alloc_builtin_bound_method(builtin, bound_receiver),
+                    ));
                 }
                 let obj = args.remove(0);
                 if matches!(obj, Value::None) {
@@ -5336,31 +5655,41 @@ impl Vm {
                 else {
                     return Err(RuntimeError::new("function annotate receiver is invalid"));
                 };
-                let annotations = self.ensure_function_annotations(&function_obj)?;
+                let annotations = {
+                    let mut function_ref = function_obj.kind_mut();
+                    let Object::Function(func_data) = &mut *function_ref else {
+                        return Err(RuntimeError::new("function annotate receiver is invalid"));
+                    };
+                    if let Some(existing) = func_data.annotations.clone() {
+                        existing
+                    } else {
+                        let dict = self.heap.alloc_dict(Vec::new());
+                        let Value::Dict(dict_obj) = dict else {
+                            unreachable!()
+                        };
+                        func_data.annotations = Some(dict_obj.clone());
+                        dict_obj
+                    }
+                };
                 let function_module = match &*function_obj.kind() {
                     Object::Function(func_data) => func_data.module.clone(),
                     _ => return Err(RuntimeError::new("function annotate receiver is invalid")),
                 };
-
-                let resolve_annotation_name = |vm: &mut Vm, name: &str| -> Option<Value> {
-                    let mut parts = name.split('.');
-                    let first = parts.next()?;
-                    let mut current = if let Object::Module(module_data) = &*function_module.kind()
-                    {
-                        module_data.globals.get(first).cloned()
-                    } else {
-                        None
-                    }
-                    .or_else(|| vm.builtins.get(first).cloned())?;
-                    for part in parts {
-                        current = vm
-                            .builtin_getattr(
-                                vec![current, Value::Str(part.to_string())],
-                                HashMap::new(),
+                let annotation_locals = match &*function_obj.kind() {
+                    Object::Function(func_data) => func_data
+                        .dict
+                        .as_ref()
+                        .and_then(|dict| {
+                            dict_get_value(
+                                dict,
+                                &Value::Str("__pyrs_annotation_locals__".to_string()),
                             )
-                            .ok()?;
-                    }
-                    Some(current)
+                        })
+                        .and_then(|value| match value {
+                            Value::Dict(dict) => Some(dict),
+                            _ => None,
+                        }),
+                    _ => None,
                 };
 
                 let mut resolved_entries = Vec::new();
@@ -5370,7 +5699,15 @@ impl Vm {
                             continue;
                         };
                         let resolved_value = if let Value::Str(text) = value {
-                            resolve_annotation_name(self, text).unwrap_or_else(|| value.clone())
+                            let mut eval_args = vec![
+                                Value::Str(text.clone()),
+                                Value::Module(function_module.clone()),
+                            ];
+                            if let Some(locals_dict) = &annotation_locals {
+                                eval_args.push(Value::Dict(locals_dict.clone()));
+                            }
+                            self.builtin_eval(eval_args, HashMap::new())
+                                .unwrap_or_else(|_| value.clone())
                         } else {
                             value.clone()
                         };
@@ -5471,6 +5808,357 @@ impl Vm {
                 }
                 let reduced = self.builtin_object_reduce_ex(forwarded, HashMap::new())?;
                 Ok(NativeCallResult::Value(reduced))
+            }
+            NativeMethodKind::GenericAliasReduceEx => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "__reduce_ex__() takes at most one protocol argument",
+                    ));
+                }
+                if self
+                    .generic_alias_parts_from_value(&Value::Instance(receiver.clone()))
+                    .is_none()
+                {
+                    return Err(RuntimeError::new("GenericAlias reduce receiver is invalid"));
+                }
+                let receiver_kind = receiver.kind();
+                let Object::Instance(instance_data) = &*receiver_kind else {
+                    return Err(RuntimeError::new("GenericAlias reduce receiver is invalid"));
+                };
+                let origin = instance_data
+                    .attrs
+                    .get("__origin__")
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new("GenericAlias reduce receiver is invalid"))?;
+                let args_value = instance_data
+                    .attrs
+                    .get("__args__")
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new("GenericAlias reduce receiver is invalid"))?;
+                let args_value = match args_value {
+                    Value::Tuple(_) => args_value,
+                    other => self.heap.alloc_tuple(vec![other]),
+                };
+                let ctor = Value::Class(instance_data.class.clone());
+                let ctor_args = self.heap.alloc_tuple(vec![origin, args_value]);
+                Ok(NativeCallResult::Value(
+                    self.heap.alloc_tuple(vec![ctor, ctor_args]),
+                ))
+            }
+            NativeMethodKind::GenericAliasMroEntries => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error(
+                        "__mro_entries__() takes exactly one argument",
+                    ));
+                }
+                let receiver_value = Value::Instance(receiver.clone());
+                if !self.is_types_generic_alias_value(&receiver_value) {
+                    return Err(RuntimeError::new("GenericAlias mro receiver is invalid"));
+                }
+                let receiver_kind = receiver.kind();
+                let Object::Instance(instance_data) = &*receiver_kind else {
+                    return Err(RuntimeError::new("GenericAlias mro receiver is invalid"));
+                };
+                let origin = instance_data
+                    .attrs
+                    .get("__origin__")
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new("GenericAlias mro receiver is invalid"))?;
+                Ok(NativeCallResult::Value(self.heap.alloc_tuple(vec![origin])))
+            }
+            NativeMethodKind::TypeParamCopy => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "__deepcopy__() takes at most one argument",
+                    ));
+                }
+                if !self.is_type_parameter_value(&Value::Instance(receiver.clone())) {
+                    return Err(RuntimeError::new("type parameter copy receiver is invalid"));
+                }
+                Ok(NativeCallResult::Value(Value::Instance(receiver)))
+            }
+            NativeMethodKind::TypeParamReduceEx => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "__reduce_ex__() takes at most one protocol argument",
+                    ));
+                }
+                if !self.is_type_parameter_value(&Value::Instance(receiver.clone())) {
+                    return Err(RuntimeError::new(
+                        "type parameter reduce receiver is invalid",
+                    ));
+                }
+                let receiver_kind = receiver.kind();
+                let Object::Instance(instance_data) = &*receiver_kind else {
+                    return Err(RuntimeError::new(
+                        "type parameter reduce receiver is invalid",
+                    ));
+                };
+                let Some(Value::Str(name)) = instance_data.attrs.get("__name__") else {
+                    return Err(RuntimeError::new(
+                        "type parameter reduce receiver is invalid",
+                    ));
+                };
+                Ok(NativeCallResult::Value(Value::Str(name.clone())))
+            }
+            NativeMethodKind::MappingProxyContains => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("__contains__() expects one argument"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                let target = args.remove(0);
+                if let Some(contains_method) =
+                    self.lookup_bound_special_method(&mapping, "__contains__")?
+                {
+                    return match self.call_internal(
+                        contains_method,
+                        vec![target],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(
+                            Value::Bool(self.truthy_from_value(&value)?),
+                        )),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            Ok(NativeCallResult::PropagatedException)
+                        }
+                    };
+                }
+                let contains = self.compare_in_runtime(target, mapping)?;
+                Ok(NativeCallResult::Value(Value::Bool(contains)))
+            }
+            NativeMethodKind::MappingProxyGetItem => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("__getitem__() expects one argument"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                let key = args.remove(0);
+                let value = if let Some(getitem_method) =
+                    self.lookup_bound_special_method(&mapping, "__getitem__")?
+                {
+                    match self.call_internal(getitem_method, vec![key.clone()], HashMap::new())? {
+                        InternalCallOutcome::Value(value) => value,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Ok(NativeCallResult::PropagatedException);
+                        }
+                    }
+                } else {
+                    self.call_builtin(
+                        BuiltinFunction::OperatorGetItem,
+                        vec![mapping, key],
+                        HashMap::new(),
+                    )?
+                };
+                Ok(NativeCallResult::Value(value))
+            }
+            NativeMethodKind::MappingProxyIor => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("__ior__() expects one argument"));
+                }
+                Err(RuntimeError::type_error(
+                    "'|=' is not supported by mappingproxy; use '|' instead",
+                ))
+            }
+            NativeMethodKind::MappingProxyIter => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error("__iter__() expects no arguments"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                let iter = if let Some(iter_method) =
+                    self.lookup_bound_special_method(&mapping, "__iter__")?
+                {
+                    match self.call_internal(iter_method, Vec::new(), HashMap::new())? {
+                        InternalCallOutcome::Value(value) => self.to_iterator_value(value)?,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Ok(NativeCallResult::PropagatedException);
+                        }
+                    }
+                } else {
+                    self.to_iterator_value(mapping)?
+                };
+                Ok(NativeCallResult::Value(iter))
+            }
+            NativeMethodKind::MappingProxyLen => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error("__len__() expects no arguments"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                let len = if let Some(len_method) =
+                    self.lookup_bound_special_method(&mapping, "__len__")?
+                {
+                    match self.call_internal(len_method, Vec::new(), HashMap::new())? {
+                        InternalCallOutcome::Value(value) => Value::Int(value_to_int(value)?),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Ok(NativeCallResult::PropagatedException);
+                        }
+                    }
+                } else {
+                    self.call_builtin(BuiltinFunction::Len, vec![mapping], HashMap::new())?
+                };
+                Ok(NativeCallResult::Value(len))
+            }
+            NativeMethodKind::MappingProxyOr => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error("__or__() expects one argument"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                let right = args.remove(0);
+                let merged = self.binary_or_runtime(mapping, right)?;
+                Ok(NativeCallResult::Value(merged))
+            }
+            NativeMethodKind::MappingProxyReversed => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error(
+                        "__reversed__() expects no arguments",
+                    ));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                let reversed =
+                    self.call_builtin(BuiltinFunction::Reversed, vec![mapping], HashMap::new())?;
+                Ok(NativeCallResult::Value(reversed))
+            }
+            NativeMethodKind::MappingProxyRor => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error("__ror__() expects one argument"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                let left = args.remove(0);
+                let merged = self.binary_or_runtime(left, mapping)?;
+                Ok(NativeCallResult::Value(merged))
+            }
+            NativeMethodKind::MappingProxyCopy => {
+                self.mappingproxy_call_mapping_method(&receiver, "copy", args)
+            }
+            NativeMethodKind::MappingProxyGet => {
+                self.mappingproxy_call_mapping_method(&receiver, "get", args)
+            }
+            NativeMethodKind::MappingProxyItems => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error("items() expects no arguments"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                if matches!(mapping, Value::Dict(_)) {
+                    return Ok(NativeCallResult::Value(
+                        self.mappingproxy_alloc_view_instance(mapping, true),
+                    ));
+                }
+                self.mappingproxy_call_mapping_method(&receiver, "items", args)
+            }
+            NativeMethodKind::MappingProxyKeys => {
+                self.mappingproxy_call_mapping_method(&receiver, "keys", args)
+            }
+            NativeMethodKind::MappingProxyValues => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error("values() expects no arguments"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                if matches!(mapping, Value::Dict(_)) {
+                    return Ok(NativeCallResult::Value(
+                        self.mappingproxy_alloc_view_instance(mapping, false),
+                    ));
+                }
+                self.mappingproxy_call_mapping_method(&receiver, "values", args)
+            }
+            NativeMethodKind::MappingProxyEq => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error("__eq__() expects one argument"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                let other = args.remove(0);
+                let equals = self.compare_eq_runtime(mapping, other)?;
+                Ok(NativeCallResult::Value(equals))
+            }
+            NativeMethodKind::MappingProxyNe => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error("__ne__() expects one argument"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                let other = args.remove(0);
+                let equals = self.compare_eq_runtime(mapping, other)?;
+                let truthy = self.truthy_from_value(&equals)?;
+                Ok(NativeCallResult::Value(Value::Bool(!truthy)))
+            }
+            NativeMethodKind::MappingProxyHash => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error("__hash__() expects no arguments"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                let hash = self.hash_value_runtime(&mapping)?;
+                Ok(NativeCallResult::Value(Value::Int(hash)))
+            }
+            NativeMethodKind::MappingProxyRepr => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error("__repr__() expects no arguments"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                let repr =
+                    self.call_builtin(BuiltinFunction::Repr, vec![mapping], HashMap::new())?;
+                let Value::Str(rendered) = repr else {
+                    return Err(RuntimeError::type_error("__repr__() must return str"));
+                };
+                Ok(NativeCallResult::Value(Value::Str(format!(
+                    "mappingproxy({rendered})"
+                ))))
+            }
+            NativeMethodKind::MappingProxyClassGetItem => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error(
+                        "__class_getitem__() expects one argument",
+                    ));
+                }
+                Ok(NativeCallResult::Value(self.alloc_generic_alias_instance(
+                    Value::Class(receiver),
+                    args.remove(0),
+                )))
+            }
+            NativeMethodKind::MappingProxyValuesViewIter => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error("__iter__() expects no arguments"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                let Value::Dict(dict_obj) = mapping else {
+                    return Err(RuntimeError::type_error(
+                        "mappingproxy values view is invalid",
+                    ));
+                };
+                let values = match &*dict_obj.kind() {
+                    Object::Dict(entries) => entries
+                        .iter()
+                        .map(|(_key, value)| value.clone())
+                        .collect::<Vec<_>>(),
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "mappingproxy values view is invalid",
+                        ));
+                    }
+                };
+                let as_list = self.heap.alloc_list(values);
+                let iter = self.to_iterator_value(as_list)?;
+                Ok(NativeCallResult::Value(iter))
+            }
+            NativeMethodKind::MappingProxyItemsViewIter => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error("__iter__() expects no arguments"));
+                }
+                let mapping = self.mappingproxy_mapping_value(&receiver)?;
+                let Value::Dict(dict_obj) = mapping else {
+                    return Err(RuntimeError::type_error(
+                        "mappingproxy items view is invalid",
+                    ));
+                };
+                let items = match &*dict_obj.kind() {
+                    Object::Dict(entries) => entries
+                        .iter()
+                        .map(|(key, value)| self.heap.alloc_tuple(vec![key.clone(), value.clone()]))
+                        .collect::<Vec<_>>(),
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "mappingproxy items view is invalid",
+                        ));
+                    }
+                };
+                let as_list = self.heap.alloc_list(items);
+                let iter = self.to_iterator_value(as_list)?;
+                Ok(NativeCallResult::Value(iter))
             }
             NativeMethodKind::SetContains => {
                 let receiver_is_set = {
@@ -6144,11 +6832,22 @@ impl Vm {
             .last()
             .map(|frame| frame.module.clone())
             .unwrap_or_else(|| self.main_module.clone());
-        let mut frame = Box::new(Frame::new(code, module, false, false, Vec::new(), None));
-        let generator = match self.heap.alloc_generator(GeneratorObject::new(true, false)) {
-            Value::Generator(obj) => obj,
-            _ => unreachable!(),
-        };
+        let mut frame = Box::new(Frame::new(
+            code.clone(),
+            module,
+            false,
+            false,
+            Vec::new(),
+            None,
+        ));
+        let generator =
+            match self
+                .heap
+                .alloc_generator(GeneratorObject::new(code.clone(), true, false))
+            {
+                Value::Generator(obj) => obj,
+                _ => unreachable!(),
+            };
         frame.generator_owner = Some(generator.clone());
         self.generator_states.insert(generator.id(), frame);
         Value::Generator(generator)
@@ -6157,11 +6856,16 @@ impl Vm {
     pub(super) fn awaitable_from_value(&mut self, value: Value) -> Result<Value, RuntimeError> {
         match value {
             Value::Generator(generator) => {
-                let (is_coroutine, is_async_generator) = match &*generator.kind() {
-                    Object::Generator(state) => (state.is_coroutine, state.is_async_generator),
-                    _ => (false, false),
-                };
-                if is_coroutine {
+                let (is_coroutine, is_async_generator, is_iterable_coroutine) =
+                    match &*generator.kind() {
+                        Object::Generator(state) => (
+                            state.is_coroutine,
+                            state.is_async_generator,
+                            state.code.is_iterable_coroutine,
+                        ),
+                        _ => (false, false, false),
+                    };
+                if is_coroutine || is_iterable_coroutine {
                     Ok(Value::Generator(generator))
                 } else if is_async_generator {
                     Err(RuntimeError::type_error(
@@ -6177,22 +6881,25 @@ impl Vm {
                     .lookup_bound_special_method(&other, "__await__")?
                     .ok_or_else(|| RuntimeError::type_error("object is not awaitable"))?;
                 match self.call_internal(method, Vec::new(), HashMap::new())? {
-                    InternalCallOutcome::Value(awaitable) => match awaitable {
-                        Value::Generator(generator) => {
-                            if let Object::Generator(state) = &*generator.kind()
-                                && state.is_async_generator
-                            {
-                                return Err(RuntimeError::new(
-                                    "__await__() returned an async generator",
+                    InternalCallOutcome::Value(awaitable) => {
+                        let iterator = match self.to_iterator_value(awaitable) {
+                            Ok(value) => value,
+                            Err(_) => {
+                                return Err(RuntimeError::type_error(
+                                    "__await__() returned non-iterator",
                                 ));
                             }
-                            Ok(Value::Generator(generator))
+                        };
+                        if let Value::Generator(generator) = &iterator
+                            && let Object::Generator(state) = &*generator.kind()
+                            && state.is_async_generator
+                        {
+                            return Err(RuntimeError::new(
+                                "__await__() returned an async generator",
+                            ));
                         }
-                        Value::Iterator(iterator) => Ok(Value::Iterator(iterator)),
-                        _ => Err(RuntimeError::type_error(
-                            "__await__() returned non-iterator",
-                        )),
-                    },
+                        Ok(iterator)
+                    }
                     InternalCallOutcome::CallerExceptionHandled => {
                         Err(RuntimeError::new("__await__() failed"))
                     }
@@ -6202,29 +6909,23 @@ impl Vm {
     }
 
     pub(super) fn run_awaitable(&mut self, awaitable: Value) -> Result<Value, RuntimeError> {
-        match self.awaitable_from_value(awaitable)? {
-            Value::Generator(generator) => loop {
-                match self.resume_generator(&generator, None, None, GeneratorResumeKind::Next)? {
-                    GeneratorResumeOutcome::Yield(_) => {}
-                    GeneratorResumeOutcome::Complete(value) => return Ok(value),
-                    GeneratorResumeOutcome::PropagatedException => {
-                        self.propagate_pending_generator_exception()?;
-                        return Err(RuntimeError::new("awaitable execution failed"));
-                    }
+        let iterator = self.awaitable_from_value(awaitable)?;
+        loop {
+            match self.next_from_iterator_value(&iterator)? {
+                GeneratorResumeOutcome::Yield(_) => {}
+                GeneratorResumeOutcome::Complete(value) => return Ok(value),
+                GeneratorResumeOutcome::PropagatedException => {
+                    self.propagate_pending_generator_exception()?;
+                    return Err(RuntimeError::new("awaitable execution failed"));
                 }
-            },
-            Value::Iterator(iterator) => {
-                while self.iterator_next_value(&iterator)?.is_some() {}
-                Ok(Value::None)
             }
-            _ => Err(RuntimeError::type_error("object is not awaitable")),
         }
     }
 
     pub(super) fn is_awaitable_value(&self, value: &Value) -> bool {
         match value {
             Value::Generator(generator) => match &*generator.kind() {
-                Object::Generator(state) => state.is_coroutine,
+                Object::Generator(state) => state.is_coroutine || state.code.is_iterable_coroutine,
                 _ => false,
             },
             Value::Iterator(_) => false,
@@ -6263,6 +6964,143 @@ impl Vm {
             kind: IteratorKind::SequenceGetItem { target, getitem },
             index: 0,
         })))
+    }
+
+    fn origin_is_tuple_alias_target(origin: &Value) -> bool {
+        match origin {
+            Value::Builtin(BuiltinFunction::Tuple) => true,
+            Value::Class(class) => match &*class.kind() {
+                Object::Class(class_data) => class_data.name == "tuple",
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn typing_alias_unpack_iterator(&mut self, alias: &ObjRef) -> Option<Value> {
+        let (origin, args) = {
+            let alias_kind = alias.kind();
+            let Object::Instance(instance_data) = &*alias_kind else {
+                return None;
+            };
+            let class_kind = instance_data.class.kind();
+            let Object::Class(class_data) = &*class_kind else {
+                return None;
+            };
+            if !matches!(class_data.name.as_str(), "GenericAlias" | "_GenericAlias") {
+                return None;
+            }
+            let origin = instance_data.attrs.get("__origin__")?.clone();
+            let args = instance_data.attrs.get("__args__")?.clone();
+            (origin, args)
+        };
+
+        let unpacked = self.alloc_generic_alias_instance(origin.clone(), args.clone());
+        if let Value::Instance(unpacked_instance) = &unpacked
+            && let Object::Instance(unpacked_data) = &mut *unpacked_instance.kind_mut()
+        {
+            unpacked_data
+                .attrs
+                .insert("__unpacked__".to_string(), Value::Bool(true));
+            if Self::origin_is_tuple_alias_target(&origin) {
+                unpacked_data
+                    .attrs
+                    .insert("__typing_unpacked_tuple_args__".to_string(), args);
+            }
+        }
+
+        let list = match self.heap.alloc_list(vec![unpacked]) {
+            Value::List(list) => list,
+            _ => unreachable!(),
+        };
+        Some(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::List(list),
+            index: 0,
+        }))
+    }
+
+    fn mappingproxy_mapping_value(&self, receiver: &ObjRef) -> Result<Value, RuntimeError> {
+        let receiver_kind = receiver.kind();
+        let Object::Instance(instance_data) = &*receiver_kind else {
+            return Err(RuntimeError::type_error("mappingproxy receiver is invalid"));
+        };
+        instance_data
+            .attrs
+            .get(MAPPING_PROXY_STORAGE_ATTR)
+            .cloned()
+            .ok_or_else(|| RuntimeError::type_error("mappingproxy receiver is invalid"))
+    }
+
+    fn mappingproxy_call_mapping_method(
+        &mut self,
+        receiver: &ObjRef,
+        method_name: &str,
+        args: Vec<Value>,
+    ) -> Result<NativeCallResult, RuntimeError> {
+        let mapping = self.mappingproxy_mapping_value(receiver)?;
+        if let Value::Instance(instance) = &mapping
+            && let Object::Instance(instance_data) = &*instance.kind()
+            && let Some(method) = class_attr_lookup(&instance_data.class, method_name)
+        {
+            let callable =
+                if let Some(bound) = self.bind_descriptor_method(method.clone(), &mapping)? {
+                    bound
+                } else {
+                    method
+                };
+            return match self.call_internal(callable, args, HashMap::new())? {
+                InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(value)),
+                InternalCallOutcome::CallerExceptionHandled => {
+                    Ok(NativeCallResult::PropagatedException)
+                }
+            };
+        }
+        let callable = self.builtin_getattr(
+            vec![mapping, Value::Str(method_name.to_string())],
+            HashMap::new(),
+        )?;
+        match self.call_internal(callable, args, HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(value)),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Ok(NativeCallResult::PropagatedException)
+            }
+        }
+    }
+
+    fn mappingproxy_view_class(&mut self, items: bool) -> ObjRef {
+        let class = if items {
+            self.alloc_synthetic_class("_mappingproxy_items_view")
+        } else {
+            self.alloc_synthetic_class("_mappingproxy_values_view")
+        };
+        if let Object::Class(class_data) = &mut *class.kind_mut()
+            && !class_data.attrs.contains_key("__iter__")
+        {
+            let kind = if items {
+                NativeMethodKind::MappingProxyItemsViewIter
+            } else {
+                NativeMethodKind::MappingProxyValuesViewIter
+            };
+            class_data.attrs.insert(
+                "__iter__".to_string(),
+                Value::Function(
+                    self.heap
+                        .alloc_native_method(crate::runtime::NativeMethodObject::new(kind)),
+                ),
+            );
+        }
+        class
+    }
+
+    fn mappingproxy_alloc_view_instance(&mut self, mapping: Value, items: bool) -> Value {
+        let class = self.mappingproxy_view_class(items);
+        let instance = self.alloc_instance_for_class(&class);
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data
+                .attrs
+                .insert(MAPPING_PROXY_STORAGE_ATTR.to_string(), mapping);
+        }
+        Value::Instance(instance)
     }
 
     pub(super) fn to_iterator_value(&mut self, source: Value) -> Result<Value, RuntimeError> {
@@ -6321,6 +7159,9 @@ impl Vm {
                 }
                 if let Some(backing_frozenset) = self.instance_backing_frozenset(&instance) {
                     return self.to_iterator_value(Value::FrozenSet(backing_frozenset));
+                }
+                if let Some(iterator) = self.typing_alias_unpack_iterator(&instance) {
+                    return Ok(iterator);
                 }
                 let other = Value::Instance(instance);
                 if let Some(proxy_iter_result) = self.cpython_proxy_get_iter(&other) {
@@ -6861,6 +7702,46 @@ impl Vm {
             return match iterator {
                 Value::Generator(obj) => {
                     self.resume_generator(obj, Some(sent), None, GeneratorResumeKind::Next)
+                }
+                Value::Instance(instance) => {
+                    let receiver = Value::Instance(instance.clone());
+                    let Some(send_method) = self.optional_getattr_value(receiver, "send")? else {
+                        return Err(RuntimeError::type_error("yield from expects iterable"));
+                    };
+                    match self.call_internal(send_method, vec![sent], HashMap::new()) {
+                        Ok(InternalCallOutcome::Value(value)) => {
+                            if exception_is_named(&value, "StopIteration") {
+                                Ok(GeneratorResumeOutcome::Complete(
+                                    self.stop_iteration_value_from_value(&value)
+                                        .unwrap_or(Value::None),
+                                ))
+                            } else {
+                                Ok(GeneratorResumeOutcome::Yield(value))
+                            }
+                        }
+                        Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                            if self.active_exception_is("StopIteration") {
+                                let value = self
+                                    .stop_iteration_value_from_active_exception()
+                                    .unwrap_or(Value::None);
+                                self.clear_active_exception();
+                                Ok(GeneratorResumeOutcome::Complete(value))
+                            } else {
+                                Ok(GeneratorResumeOutcome::PropagatedException)
+                            }
+                        }
+                        Err(err) => {
+                            if runtime_error_matches_exception(&err, "StopIteration") {
+                                let value = self
+                                    .stop_iteration_value_from_active_exception()
+                                    .unwrap_or(Value::None);
+                                self.clear_active_exception();
+                                Ok(GeneratorResumeOutcome::Complete(value))
+                            } else {
+                                Err(err)
+                            }
+                        }
+                    }
                 }
                 Value::Iterator(_) => Err(RuntimeError::attribute_error(format!(
                     "'{}' object has no attribute 'send'",
@@ -7526,7 +8407,7 @@ impl Vm {
         self.active_generator_resume_boundary = Some(self.frames.len());
         self.generator_resume_outcome = None;
         self.pending_generator_exception = None;
-        self.frames.push(frame);
+        self.push_frame_checked(frame)?;
         let run_result = self.run();
         let outcome = self.generator_resume_outcome.take();
         let pending = self.pending_generator_exception.take();
@@ -7613,8 +8494,9 @@ impl Vm {
 
     pub(super) fn active_exception_is(&self, name: &str) -> bool {
         self.frames
-            .last()
-            .and_then(|frame| frame.active_exception.as_ref())
+            .iter()
+            .rev()
+            .find_map(|frame| frame.active_exception.as_ref())
             .and_then(|value| match value {
                 Value::Exception(exc) => Some(exc.name.as_str()),
                 _ => None,
@@ -7624,7 +8506,12 @@ impl Vm {
     }
 
     pub(super) fn clear_active_exception(&mut self) {
-        if let Some(frame) = self.frames.last_mut() {
+        if let Some(frame) = self
+            .frames
+            .iter_mut()
+            .rev()
+            .find(|frame| frame.active_exception.is_some())
+        {
             frame.active_exception = None;
         }
     }
@@ -7711,14 +8598,50 @@ impl Vm {
             BuiltinFunction::GcGetThreshold => self.builtin_gc_get_threshold(args, kwargs),
             BuiltinFunction::GcSetThreshold => self.builtin_gc_set_threshold(args, kwargs),
             BuiltinFunction::GcGetCount => self.builtin_gc_get_count(args, kwargs),
+            BuiltinFunction::TraceMallocStart => self.builtin_tracemalloc_start(args, kwargs),
+            BuiltinFunction::TraceMallocStop => self.builtin_tracemalloc_stop(args, kwargs),
+            BuiltinFunction::TraceMallocIsTracing => {
+                self.builtin_tracemalloc_is_tracing(args, kwargs)
+            }
+            BuiltinFunction::TraceMallocGetTracebackLimit => {
+                self.builtin_tracemalloc_get_traceback_limit(args, kwargs)
+            }
+            BuiltinFunction::TraceMallocGetTracedMemory => {
+                self.builtin_tracemalloc_get_traced_memory(args, kwargs)
+            }
+            BuiltinFunction::TraceMallocGetTraceMallocMemory => {
+                self.builtin_tracemalloc_get_tracemalloc_memory(args, kwargs)
+            }
+            BuiltinFunction::TraceMallocResetPeak => {
+                self.builtin_tracemalloc_reset_peak(args, kwargs)
+            }
+            BuiltinFunction::TraceMallocClearTraces => {
+                self.builtin_tracemalloc_clear_traces(args, kwargs)
+            }
+            BuiltinFunction::TraceMallocGetTraces => {
+                self.builtin_tracemalloc_get_traces(args, kwargs)
+            }
+            BuiltinFunction::TraceMallocGetObjectTraceback => {
+                self.builtin_tracemalloc_get_object_traceback(args, kwargs)
+            }
             BuiltinFunction::Dir => self.builtin_dir(args, kwargs),
             BuiltinFunction::Hash => self.builtin_hash(args, kwargs),
             BuiltinFunction::Breakpoint => self.builtin_breakpoint(args, kwargs),
             BuiltinFunction::SysGetFrame => self.builtin_sys_getframe(args, kwargs),
+            BuiltinFunction::SysGetFrameModuleName => {
+                self.builtin_sys_getframemodulename(args, kwargs)
+            }
+            BuiltinFunction::SysCurrentFrames => self.builtin_sys_current_frames(args, kwargs),
             BuiltinFunction::SysException => self.builtin_sys_exception(args, kwargs),
             BuiltinFunction::SysExcInfo => self.builtin_sys_exc_info(args, kwargs),
+            BuiltinFunction::SysCallTracing => self.builtin_sys_call_tracing(args, kwargs),
             BuiltinFunction::SysExit => self.builtin_sys_exit(args, kwargs),
+            BuiltinFunction::SysIntern => self.builtin_sys_intern(args, kwargs),
             BuiltinFunction::SysIsFinalizing => self.builtin_sys_is_finalizing(args, kwargs),
+            BuiltinFunction::SysIsGilEnabled => self.builtin_sys_is_gil_enabled(args, kwargs),
+            BuiltinFunction::SysIsRemoteDebugEnabled => {
+                self.builtin_sys_is_remote_debug_enabled(args, kwargs)
+            }
             BuiltinFunction::SysGetDefaultEncoding => {
                 self.builtin_sys_getdefaultencoding(args, kwargs)
             }
@@ -7742,6 +8665,8 @@ impl Vm {
             BuiltinFunction::SysSetSwitchInterval => {
                 self.builtin_sys_setswitchinterval(args, kwargs)
             }
+            BuiltinFunction::SysExcepthook => self.builtin_sys_excepthook(args, kwargs),
+            BuiltinFunction::SysDisplayHook => self.builtin_sys_displayhook(args, kwargs),
             BuiltinFunction::SysAudit => self.builtin_sys_audit(args, kwargs),
             BuiltinFunction::SysAddAuditHook => self.builtin_sys_addaudithook(args, kwargs),
             BuiltinFunction::SysClearTypeDescriptors => {
@@ -7829,9 +8754,12 @@ impl Vm {
             BuiltinFunction::TypeSubclassCheck => self.builtin_type_subclasscheck(args, kwargs),
             BuiltinFunction::Property => self.builtin_property(args, kwargs),
             BuiltinFunction::ObjectNew => self.builtin_object_new(args, kwargs),
+            BuiltinFunction::TracebackTypeNew => self.builtin_traceback_type_new(args, kwargs),
             BuiltinFunction::ObjectInit => self.builtin_object_init(args, kwargs),
             BuiltinFunction::ObjectInitSubclass => self.builtin_object_init_subclass(args, kwargs),
             BuiltinFunction::ExceptionTypeInit => self.builtin_exception_type_init(args, kwargs),
+            BuiltinFunction::ExceptionTypeStr => self.builtin_exception_type_str(args, kwargs),
+            BuiltinFunction::ExceptionTypeRepr => self.builtin_exception_type_repr(args, kwargs),
             BuiltinFunction::ObjectGetAttribute => self.builtin_object_getattribute(args, kwargs),
             BuiltinFunction::ObjectFormat => self.builtin_object_format(args, kwargs),
             BuiltinFunction::ObjectGetState => self.builtin_object_getstate(args, kwargs),
@@ -7882,6 +8810,10 @@ impl Vm {
                 self.builtin_pkgutil_walk_packages(args, kwargs)
             }
             BuiltinFunction::PkgutilResolveName => self.builtin_pkgutil_resolve_name(args, kwargs),
+            BuiltinFunction::ImportlibPathHook => self.builtin_importlib_path_hook(args, kwargs),
+            BuiltinFunction::ImportlibFileFinderFindSpec => {
+                self.builtin_importlib_file_finder_find_spec(args, kwargs)
+            }
             BuiltinFunction::FindSpec => self.builtin_find_spec(args, kwargs),
             BuiltinFunction::ImportlibInvalidateCaches => {
                 self.builtin_importlib_invalidate_caches(args, kwargs)
@@ -7912,6 +8844,9 @@ impl Vm {
             }
             BuiltinFunction::FrozenImportlibExternalPathStat => {
                 self.builtin_frozen_importlib_external_path_stat(args, kwargs)
+            }
+            BuiltinFunction::FrozenImportlibExternalPackUint32 => {
+                self.builtin_frozen_importlib_external_pack_uint32(args, kwargs)
             }
             BuiltinFunction::FrozenImportlibExternalUnpackUint16 => {
                 self.builtin_frozen_importlib_external_unpack_uint16(args, kwargs)
@@ -7982,7 +8917,9 @@ impl Vm {
             BuiltinFunction::TimeMonotonic => self.builtin_time_monotonic(args, kwargs),
             BuiltinFunction::TimeSleep => self.builtin_time_sleep(args, kwargs),
             BuiltinFunction::OsGetPid => self.builtin_os_getpid(args, kwargs),
+            BuiltinFunction::OsChDir => self.builtin_os_chdir(args, kwargs),
             BuiltinFunction::OsGetCwd => self.builtin_os_getcwd(args, kwargs),
+            BuiltinFunction::OsCpuCount => self.builtin_os_cpu_count(args, kwargs),
             BuiltinFunction::OsUname => self.builtin_os_uname(args, kwargs),
             BuiltinFunction::OsUnameIter => self.builtin_os_uname_iter(args, kwargs),
             BuiltinFunction::OsGetEnv => self.builtin_os_getenv(args, kwargs),
@@ -8673,6 +9610,7 @@ impl Vm {
             BuiltinFunction::InspectSignatureRepr => {
                 self.builtin_inspect_signature_repr(args, kwargs)
             }
+            BuiltinFunction::InspectSignatureEq => self.builtin_inspect_signature_eq(args, kwargs),
             BuiltinFunction::InspectSignatureReplace => {
                 self.builtin_inspect_signature_replace(args, kwargs)
             }
@@ -8716,8 +9654,14 @@ impl Vm {
             BuiltinFunction::InspectIsModule => self.builtin_inspect_ismodule(args, kwargs),
             BuiltinFunction::InspectIsGenerator => self.builtin_inspect_isgenerator(args, kwargs),
             BuiltinFunction::InspectIsCoroutine => self.builtin_inspect_iscoroutine(args, kwargs),
+            BuiltinFunction::InspectIsCoroutineFunction => {
+                self.builtin_inspect_iscoroutinefunction(args, kwargs)
+            }
             BuiltinFunction::InspectIsAwaitable => self.builtin_inspect_isawaitable(args, kwargs),
             BuiltinFunction::InspectIsAsyncGen => self.builtin_inspect_isasyncgen(args, kwargs),
+            BuiltinFunction::InspectMarkCoroutineFunction => {
+                self.builtin_inspect_markcoroutinefunction(args, kwargs)
+            }
             BuiltinFunction::InspectStaticGetMro => {
                 self.builtin_inspect_static_getmro(args, kwargs)
             }
@@ -8725,12 +9669,35 @@ impl Vm {
                 self.builtin_inspect_get_dunder_dict_of_class(args, kwargs)
             }
             BuiltinFunction::TypesModuleType => self.builtin_types_moduletype(args, kwargs),
+            BuiltinFunction::TypesMappingProxy => self.builtin_types_mappingproxy(args, kwargs),
+            BuiltinFunction::SimpleNamespaceTypeRepr => {
+                self.builtin_types_simplenamespace_repr(args, kwargs)
+            }
+            BuiltinFunction::SimpleNamespaceInit => {
+                self.builtin_types_simplenamespace_init(args, kwargs)
+            }
+            BuiltinFunction::SimpleNamespaceEq => {
+                self.builtin_types_simplenamespace_eq(args, kwargs)
+            }
+            BuiltinFunction::SimpleNamespaceReduce => {
+                self.builtin_types_simplenamespace_reduce(args, kwargs)
+            }
+            BuiltinFunction::SimpleNamespaceReplace => {
+                self.builtin_types_simplenamespace_replace(args, kwargs)
+            }
             BuiltinFunction::TypesFunctionType => self.builtin_types_functiontype(args, kwargs),
             BuiltinFunction::TypesMethodType => self.builtin_types_methodtype(args, kwargs),
             BuiltinFunction::TypesCoroutine => self.builtin_types_coroutine(args, kwargs),
             BuiltinFunction::TypesNewClass => self.builtin_types_new_class(args, kwargs),
             BuiltinFunction::EnumConvert => self.builtin_enum_convert(args, kwargs),
             BuiltinFunction::TypeAnnotationsGet => self.builtin_type_annotations_get(args, kwargs),
+            BuiltinFunction::TestCapiExceptionPrint => {
+                self.builtin_testcapi_exception_print(args, kwargs)
+            }
+            BuiltinFunction::TestCapiConfigGet => self.builtin_testcapi_config_get(args, kwargs),
+            BuiltinFunction::TestCapiPyObjectVectorcall => {
+                self.builtin_testcapi_pyobject_vectorcall(args, kwargs)
+            }
             BuiltinFunction::TestInternalCapiGetRecursionDepth => {
                 self.builtin_testinternalcapi_get_recursion_depth(args, kwargs)
             }
@@ -8746,6 +9713,7 @@ impl Vm {
                 self.builtin_dataclasses_make_dataclass(args, kwargs)
             }
             BuiltinFunction::IoOpen => self.builtin_io_open(args, kwargs),
+            BuiltinFunction::IoOpenCode => self.builtin_io_open_code(args, kwargs),
             BuiltinFunction::IoReadText => self.builtin_io_read_text(args, kwargs),
             BuiltinFunction::IoWriteText => self.builtin_io_write_text(args, kwargs),
             BuiltinFunction::IoTextEncoding => self.builtin_io_text_encoding(args, kwargs),
@@ -9115,6 +10083,7 @@ impl Vm {
             BuiltinFunction::ColorizeGetColors => self.builtin_colorize_get_colors(args, kwargs),
             BuiltinFunction::ColorizeSetTheme => self.builtin_colorize_set_theme(args, kwargs),
             BuiltinFunction::ColorizeDecolor => self.builtin_colorize_decolor(args, kwargs),
+            BuiltinFunction::ColorizeThemeItems => self.builtin_colorize_theme_items(args, kwargs),
             BuiltinFunction::WarningsWarn => self.builtin_warnings_warn(args, kwargs),
             BuiltinFunction::WarningsWarnExplicit => {
                 self.builtin_warnings_warn_explicit(args, kwargs)
@@ -9127,6 +10096,30 @@ impl Vm {
             }
             BuiltinFunction::WarningsReleaseLock => {
                 self.builtin_warnings_release_lock(args, kwargs)
+            }
+            BuiltinFunction::TypingTypeVar
+            | BuiltinFunction::TypingParamSpec
+            | BuiltinFunction::TypingTypeVarTuple
+            | BuiltinFunction::TypingTypeAliasType => {
+                let mut kwargs = kwargs;
+                kwargs.clear();
+                let marker = builtin.call(&self.heap, args)?;
+                let current_module_name =
+                    self.frames
+                        .last()
+                        .and_then(|frame| match &*frame.module.kind() {
+                            Object::Module(module_data) => Some(module_data.name.clone()),
+                            _ => None,
+                        });
+                if let Some(module_name) = current_module_name
+                    && let Value::Instance(instance) = &marker
+                    && let Object::Instance(instance_data) = &mut *instance.kind_mut()
+                {
+                    instance_data
+                        .attrs
+                        .insert("__module__".to_string(), Value::Str(module_name));
+                }
+                Ok(marker)
             }
             BuiltinFunction::Range => self.builtin_range(args, kwargs),
             _ => {

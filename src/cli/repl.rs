@@ -130,19 +130,29 @@ fn repl_palette(theme: ResolvedReplTheme) -> ReplPalette {
     }
 }
 
-pub(super) fn run_repl(import_site: bool) -> Result<(), String> {
+pub(super) fn run_repl(
+    import_site: bool,
+    warnoptions: Vec<String>,
+    startup_tracemalloc_limit: Option<usize>,
+) -> Result<i32, String> {
     let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
-    let mut vm = build_vm(import_site, interactive)?;
+    let mut vm = build_vm_with_warnoptions(
+        import_site,
+        interactive,
+        &warnoptions,
+        startup_tracemalloc_limit,
+    )?;
 
     let run_result = if interactive {
-        run_interactive_session(&mut vm, import_site)
+        run_interactive_session(&mut vm, import_site, &warnoptions)
     } else {
         run_stdin_script(&mut vm)
     };
     let shutdown_result = vm
         .run_shutdown_hooks()
         .map_err(|err| format!("shutdown error: {}", err.message));
-    run_result.and(shutdown_result)
+    shutdown_result?;
+    run_result
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -228,25 +238,73 @@ fn normalize_completion_symbols(mut symbols: Vec<String>) -> Option<Vec<String>>
 }
 
 fn build_vm(import_site: bool, interactive: bool) -> Result<Vm, String> {
+    build_vm_with_warnoptions(import_site, interactive, &[], None)
+}
+
+fn build_vm_with_warnoptions(
+    import_site: bool,
+    interactive: bool,
+    warnoptions: &[String],
+    startup_tracemalloc_limit: Option<usize>,
+) -> Result<Vm, String> {
     let mut vm = Vm::new();
-    super::configure_vm_for_command(&mut vm, import_site)?;
+    super::configure_vm_for_command(&mut vm, import_site, true, warnoptions)?;
+    if let Some(limit) = startup_tracemalloc_limit {
+        vm.start_tracemalloc(limit);
+    }
     vm.set_sys_interactive_flag(interactive);
     vm.set_sys_argv(vec![String::new()]);
     Ok(vm)
 }
 
-fn run_stdin_script(vm: &mut Vm) -> Result<(), String> {
+fn parse_system_exit_status(error_text: &str) -> Option<(i32, Option<String>)> {
+    let marker = error_text.lines().rev().map(str::trim).find(|line| {
+        line.starts_with("SystemExit") || line.starts_with("runtime error: SystemExit")
+    })?;
+    if marker == "SystemExit" || marker == "runtime error: SystemExit" {
+        return Some((0, None));
+    }
+    let payload = marker
+        .strip_prefix("SystemExit:")
+        .or_else(|| marker.strip_prefix("runtime error: SystemExit:"))?
+        .trim();
+    if payload == "None" {
+        return Some((0, None));
+    }
+    if let Ok(code) = payload.parse::<i32>() {
+        return Some((code, None));
+    }
+    Some((1, Some(payload.to_string())))
+}
+
+fn run_stdin_script(vm: &mut Vm) -> Result<i32, String> {
     let mut source = String::new();
     io::stdin()
         .read_to_string(&mut source)
         .map_err(|err| format!("failed to read stdin: {err}"))?;
     if source.trim().is_empty() {
-        return Ok(());
+        return Ok(0);
     }
-    execute_module_source(vm, &source, "<stdin>", false)
+    match execute_module_source(vm, &source, "<stdin>", false) {
+        Ok(()) => Ok(0),
+        Err(err) => {
+            if let Some((status, message)) = parse_system_exit_status(&err) {
+                if let Some(message) = message {
+                    eprintln!("{message}");
+                }
+                Ok(status)
+            } else {
+                Err(err)
+            }
+        }
+    }
 }
 
-fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String> {
+fn run_interactive_session(
+    vm: &mut Vm,
+    import_site: bool,
+    warnoptions: &[String],
+) -> Result<i32, String> {
     println!("RSPYTHON {VERSION} (CPython 3.14 compatible)");
     println!("Type :help for REPL commands, Ctrl-D to exit.");
 
@@ -315,6 +373,7 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                         &mut paste_mode,
                         &mut timing_enabled,
                         import_site,
+                        warnoptions,
                         &completion_state,
                     )? {
                         break;
@@ -334,6 +393,12 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                         }
                     };
                     if let Err(err) = result {
+                        if let Some((status, message)) = parse_system_exit_status(&err) {
+                            if let Some(message) = message {
+                                eprintln!("{message}");
+                            }
+                            return Ok(status);
+                        }
                         eprintln!("{}", error_style::format_error_for_stderr(&err));
                     } else {
                         refresh_completion_state(vm, &completion_state);
@@ -359,6 +424,12 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                             true,
                             timing_enabled,
                         ) {
+                            if let Some((status, message)) = parse_system_exit_status(&err) {
+                                if let Some(message) = message {
+                                    eprintln!("{message}");
+                                }
+                                return Ok(status);
+                            }
                             eprintln!("{}", error_style::format_error_for_stderr(&err));
                         } else {
                             apply_completion_refresh_plan(vm, &completion_state, completion_plan);
@@ -399,7 +470,7 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
         }
     }
 
-    Ok(())
+    Ok(0)
 }
 
 #[derive(Default)]
@@ -1738,6 +1809,7 @@ fn apply_meta_command(
     paste_mode: &mut bool,
     timing_enabled: &mut bool,
     import_site: bool,
+    warnoptions: &[String],
     completion_state: &Arc<Mutex<CompletionState>>,
 ) -> Result<bool, String> {
     match command {
@@ -1784,7 +1856,7 @@ fn apply_meta_command(
             if let Err(err) = vm.run_shutdown_hooks() {
                 eprintln!("shutdown warning before reset: {}", err.message);
             }
-            *vm = build_vm(import_site, true)?;
+            *vm = build_vm_with_warnoptions(import_site, true, warnoptions, None)?;
             pending.clear();
             *paste_mode = false;
             refresh_completion_state(vm, completion_state);
@@ -2187,6 +2259,7 @@ mod tests {
             &mut paste_mode,
             &mut timing_enabled,
             false,
+            &[],
             &completion_state,
         )
         .expect("reset should succeed");

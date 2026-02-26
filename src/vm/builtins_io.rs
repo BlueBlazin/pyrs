@@ -500,6 +500,22 @@ impl Vm {
         Ok(text_instance)
     }
 
+    pub(super) fn builtin_io_open_code(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "open_code() takes exactly one argument",
+            ));
+        }
+        self.builtin_io_open(
+            vec![args.remove(0), Value::Str("rb".to_string())],
+            HashMap::new(),
+        )
+    }
+
     pub(super) fn ensure_known_text_encoding(
         &mut self,
         encoding: &str,
@@ -1826,7 +1842,7 @@ impl Vm {
     }
 
     pub(super) fn alloc_io_file_instance(
-        &self,
+        &mut self,
         class_name: &str,
         fd: i64,
         mode: &str,
@@ -1837,7 +1853,10 @@ impl Vm {
         newline: Option<String>,
     ) -> Result<Value, RuntimeError> {
         let class_ref = self.io_class_ref(class_name)?;
-        let instance = match self.heap.alloc_instance(InstanceObject::new(class_ref)) {
+        let instance = match self
+            .heap
+            .alloc_instance(InstanceObject::new(class_ref.clone()))
+        {
             Value::Instance(obj) => obj,
             _ => unreachable!(),
         };
@@ -1945,6 +1964,8 @@ impl Vm {
                 .attrs
                 .insert("raw".to_string(), instance_value.clone());
         }
+        self.tracemalloc_track_object_allocation(&instance);
+        self.track_instance_del_candidate(&class_ref, &instance);
         Ok(instance_value)
     }
 
@@ -4435,9 +4456,19 @@ impl Vm {
             vec![codec_info, Value::Str("encode".to_string())],
             HashMap::new(),
         )?;
+        let encode_is_builtin = matches!(encode, Value::Builtin(BuiltinFunction::CodecsEncode));
+        let encode_args = if encode_is_builtin {
+            vec![
+                Value::Str(text.to_string()),
+                Value::Str(encoding.to_string()),
+                Value::Str(errors.to_string()),
+            ]
+        } else {
+            vec![Value::Str(text.to_string()), Value::Str(errors.to_string())]
+        };
         let encoded = match self.call_internal_preserving_caller(
             encode,
-            vec![Value::Str(text.to_string()), Value::Str(errors.to_string())],
+            encode_args,
             HashMap::new(),
         )? {
             InternalCallOutcome::Value(value) => value,
@@ -4445,6 +4476,10 @@ impl Vm {
                 return Err(self.runtime_error_from_active_exception("encode() failed"));
             }
         };
+        if encode_is_builtin {
+            return bytes_like_from_value(encoded)
+                .map_err(|_| RuntimeError::type_error("encoder should return a bytes object"));
+        }
         let first = self.io_codec_result_first_value(encoded, "encode")?;
         bytes_like_from_value(first)
             .map_err(|_| RuntimeError::type_error("encoder should return a bytes object"))
@@ -4465,12 +4500,22 @@ impl Vm {
             vec![codec_info, Value::Str("decode".to_string())],
             HashMap::new(),
         )?;
-        let decoded = match self.call_internal_preserving_caller(
-            decode,
+        let decode_is_builtin = matches!(decode, Value::Builtin(BuiltinFunction::CodecsDecode));
+        let decode_args = if decode_is_builtin {
+            vec![
+                self.heap.alloc_bytes(payload.to_vec()),
+                Value::Str(encoding.to_string()),
+                Value::Str(errors.to_string()),
+            ]
+        } else {
             vec![
                 self.heap.alloc_bytes(payload.to_vec()),
                 Value::Str(errors.to_string()),
-            ],
+            ]
+        };
+        let decoded = match self.call_internal_preserving_caller(
+            decode,
+            decode_args,
             HashMap::new(),
         )? {
             InternalCallOutcome::Value(value) => value,
@@ -4478,6 +4523,14 @@ impl Vm {
                 return Err(self.runtime_error_from_active_exception("decode() failed"));
             }
         };
+        if decode_is_builtin {
+            return match decoded {
+                Value::Str(text) => Ok(text),
+                _ => Err(RuntimeError::new(
+                    "TypeError: decoder should return a string result",
+                )),
+            };
+        }
         let first = self.io_codec_result_first_value(decoded, "decode")?;
         match first {
             Value::Str(text) => Ok(text),
@@ -5899,7 +5952,19 @@ impl Vm {
         if !has_direct_fd && !has_raw_fd {
             return;
         }
-        let Some(warnings_module) = self.modules.get("warnings").cloned() else {
+        let file_text = match self.builtin_repr(vec![Value::Instance(receiver.clone())], HashMap::new()) {
+            Ok(Value::Str(text)) => text,
+            _ => format_value(&Value::Instance(receiver.clone())),
+        };
+        let warnings_module = if let Some(module) = self.modules.get("warnings").cloned() {
+            Some(module)
+        } else if self.is_finalizing {
+            None
+        } else {
+            self.load_module("warnings").ok()
+        };
+        let Some(warnings_module) = warnings_module else {
+            eprint!("<sys>:0: ResourceWarning: unclosed file {file_text}\n");
             return;
         };
         let warn = match self.builtin_getattr(
@@ -5917,10 +5982,12 @@ impl Vm {
             .get("ResourceWarning")
             .cloned()
             .unwrap_or_else(|| Value::ExceptionType("ResourceWarning".to_string()));
+        let mut warn_kwargs = HashMap::new();
+        warn_kwargs.insert("source".to_string(), Value::Instance(receiver.clone()));
         let _ = self.call_internal(
             warn,
-            vec![Value::Str("unclosed file".to_string()), category],
-            HashMap::new(),
+            vec![Value::Str(format!("unclosed file {file_text}")), category],
+            warn_kwargs,
         );
     }
 

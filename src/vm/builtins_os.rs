@@ -5,12 +5,14 @@ use super::{
     RuntimeError, Seek, SeekFrom, Stdio, SystemTime, TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH,
     UnixStream, Value, Vm, Write, bytes_like_from_value, collect_env_entries, collect_process_argv,
     decode_escape_bytes, decode_text_bytes, dict_get_value, encode_text_bytes, format_value, fs,
-    is_pyrs_executable, is_truthy, mul_values, normalize_codec_encoding, normalize_codec_errors,
-    parse_decimal_bigint_literal, parse_modules_to_block_literal, parse_string_formatter,
-    pow_values, seconds_to_system_time, split_formatter_field_name, system_time_to_secs_f64,
-    value_from_bigint, value_to_bigint, value_to_f64, value_to_int, value_to_process_text,
-    value_to_sequence_items,
+    is_missing_attribute_error, is_pyrs_executable, is_truthy, mul_values,
+    normalize_codec_encoding, normalize_codec_errors, parse_decimal_bigint_literal,
+    parse_modules_to_block_literal, parse_string_formatter, pow_values, seconds_to_system_time,
+    split_formatter_field_name, system_time_to_secs_f64, value_from_bigint, value_to_bigint,
+    value_to_f64, value_to_int, value_to_process_text, value_to_sequence_items,
 };
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 const CODECS_ATTR_ENCODING: &str = "__pyrs_codec_encoding__";
 const CODECS_ATTR_ERRORS: &str = "__pyrs_codec_errors__";
@@ -20,6 +22,7 @@ const SUBPROCESS_PIPE_PID_ATTR: &str = "__pyrs_pid";
 const SUBPROCESS_PIPE_KIND_ATTR: &str = "__pyrs_kind";
 const SUBPROCESS_PIPE_ENCODING_ATTR: &str = "__pyrs_encoding";
 const SUBPROCESS_PIPE_TEXT_ATTR: &str = "__pyrs_text";
+const SUBPROCESS_STDERR_TO_STDOUT_ATTR: &str = "__pyrs_stderr_to_stdout";
 const PATHLIB_PATH_VALUE_ATTR: &str = "__pyrs_path_value__";
 
 fn unicode_is_private_use(code: u32) -> bool {
@@ -272,6 +275,20 @@ impl Vm {
         Ok(Value::Str(cwd.to_string_lossy().to_string()))
     }
 
+    pub(super) fn builtin_os_chdir(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("chdir() expects one argument"));
+        }
+        let path = self.path_arg_to_string(args[0].clone())?;
+        std::env::set_current_dir(Path::new(&path))
+            .map_err(|err| Self::os_error_from_io("chdir failed", err))?;
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_os_getpid(
         &mut self,
         args: Vec<Value>,
@@ -281,6 +298,20 @@ impl Vm {
             return Err(RuntimeError::new("getpid() expects no arguments"));
         }
         Ok(Value::Int(std::process::id() as i64))
+    }
+
+    pub(super) fn builtin_os_cpu_count(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("cpu_count() expects no arguments"));
+        }
+        match std::thread::available_parallelism() {
+            Ok(count) => Ok(Value::Int(count.get() as i64)),
+            Err(_) => Ok(Value::None),
+        }
     }
 
     pub(super) fn builtin_os_popen(
@@ -1993,15 +2024,58 @@ impl Vm {
         }
         let pid = value_to_int(args[0].clone())?;
         let options = value_to_int(args[1].clone())?;
-        if pid <= 0 {
-            return Err(RuntimeError::new("waitpid() pid must be positive"));
-        }
-        if let Some(status) = self.child_exit_status.get(&pid) {
+        let is_wait_any = pid <= 0;
+        let child_process_error = || {
+            RuntimeError::with_exception(
+                "ChildProcessError",
+                Some("[Errno 10] No child processes".to_string()),
+            )
+        };
+
+        if is_wait_any {
+            if let Some((&ready_pid, status)) = self.child_exit_status.iter().next() {
+                let wait_status = *status;
+                self.child_exit_status.remove(&ready_pid);
+                return Ok(self
+                    .heap
+                    .alloc_tuple(vec![Value::Int(ready_pid), Value::Int(wait_status)]));
+            }
+        } else if let Some(status) = self.child_exit_status.get(&pid) {
+            let wait_status = *status;
+            self.child_exit_status.remove(&pid);
             return Ok(self
                 .heap
-                .alloc_tuple(vec![Value::Int(pid), Value::Int(*status)]));
+                .alloc_tuple(vec![Value::Int(pid), Value::Int(wait_status)]));
         }
+
         if options & 1 != 0 {
+            if is_wait_any {
+                let child_pids = self.child_processes.keys().copied().collect::<Vec<_>>();
+                for child_pid in child_pids {
+                    let try_wait = self
+                        .child_processes
+                        .get_mut(&child_pid)
+                        .ok_or_else(child_process_error)?
+                        .try_wait()
+                        .map_err(|err| RuntimeError::new(format!("waitpid failed: {err}")))?;
+                    if let Some(status) = try_wait {
+                        #[cfg(unix)]
+                        let wait_status = Self::status_to_wait_status(status);
+                        #[cfg(not(unix))]
+                        let wait_status = 0;
+                        self.child_processes.remove(&child_pid);
+                        self.child_exit_status.insert(child_pid, wait_status);
+                        return Ok(self
+                            .heap
+                            .alloc_tuple(vec![Value::Int(child_pid), Value::Int(wait_status)]));
+                    }
+                }
+                if self.child_processes.is_empty() {
+                    return Err(child_process_error());
+                }
+                return Ok(self.heap.alloc_tuple(vec![Value::Int(0), Value::Int(0)]));
+            }
+
             if let Some(child) = self.child_processes.get_mut(&pid) {
                 match child
                     .try_wait()
@@ -2018,14 +2092,23 @@ impl Vm {
                             .heap
                             .alloc_tuple(vec![Value::Int(pid), Value::Int(wait_status)]));
                     }
-                    None => {
-                        return Ok(self.heap.alloc_tuple(vec![Value::Int(0), Value::Int(0)]));
-                    }
+                    None => return Ok(self.heap.alloc_tuple(vec![Value::Int(0), Value::Int(0)])),
                 }
             }
-            return Ok(self.heap.alloc_tuple(vec![Value::Int(0), Value::Int(0)]));
+            return Err(child_process_error());
         }
-        if let Some(child) = self.child_processes.get_mut(&pid) {
+
+        let wait_pid = if is_wait_any {
+            *self
+                .child_processes
+                .keys()
+                .next()
+                .ok_or_else(child_process_error)?
+        } else {
+            pid
+        };
+
+        if let Some(child) = self.child_processes.get_mut(&wait_pid) {
             let status = child
                 .wait()
                 .map_err(|err| RuntimeError::new(format!("waitpid failed: {err}")))?;
@@ -2033,13 +2116,14 @@ impl Vm {
             let wait_status = Self::status_to_wait_status(status);
             #[cfg(not(unix))]
             let wait_status = 0;
-            self.child_processes.remove(&pid);
-            self.child_exit_status.insert(pid, wait_status);
+            self.child_processes.remove(&wait_pid);
+            self.child_exit_status.insert(wait_pid, wait_status);
             return Ok(self
                 .heap
-                .alloc_tuple(vec![Value::Int(pid), Value::Int(wait_status)]));
+                .alloc_tuple(vec![Value::Int(wait_pid), Value::Int(wait_status)]));
         }
-        Ok(self.heap.alloc_tuple(vec![Value::Int(pid), Value::Int(0)]))
+
+        Err(child_process_error())
     }
 
     pub(super) fn builtin_posixsubprocess_fork_exec(
@@ -2174,66 +2258,46 @@ impl Vm {
         if argv.is_empty() {
             return Err(RuntimeError::new("empty command"));
         }
-        let executable = argv[0].clone();
+        let executable = argv[0].as_str();
         if !is_pyrs_executable(&executable) {
             return Ok(argv);
         }
-        let mut rewritten = vec![executable];
-        let mut iter = argv.into_iter().skip(1);
-        let mut inline_code: Option<String> = None;
-        while let Some(arg) = iter.next() {
-            match arg.as_str() {
-                "-E" | "-I" => {}
-                "-X" => {
-                    let _ = iter.next();
-                }
-                "-c" => {
-                    inline_code = iter.next();
-                    break;
-                }
-                _ => rewritten.push(arg),
-            }
-        }
-        if let Some(code) = inline_code {
-            let modules_to_block = parse_modules_to_block_literal(&code);
-            let sanitized_code = if modules_to_block.is_empty() {
-                code.clone()
-            } else {
-                let mut out = String::new();
-                for line in code.lines() {
-                    if line
-                        .trim_start()
-                        .starts_with("modules_to_block = frozenset(")
-                    {
-                        out.push_str("modules_to_block = frozenset()\n");
-                    } else {
-                        out.push_str(line);
-                        out.push('\n');
+        let mut rewritten = argv;
+        let mut index = 1;
+        while index + 1 < rewritten.len() {
+            if rewritten[index] == "-c" {
+                let code = rewritten[index + 1].clone();
+                let modules_to_block = parse_modules_to_block_literal(&code);
+                let sanitized_code = if modules_to_block.is_empty() {
+                    code.clone()
+                } else {
+                    let mut out = String::new();
+                    for line in code.lines() {
+                        if line
+                            .trim_start()
+                            .starts_with("modules_to_block = frozenset(")
+                        {
+                            out.push_str("modules_to_block = frozenset()\n");
+                        } else {
+                            out.push_str(line);
+                            out.push('\n');
+                        }
+                    }
+                    out
+                };
+                let mut rewritten_code = String::new();
+                if !modules_to_block.is_empty() {
+                    rewritten_code.push_str("import sys\n");
+                    for module_name in modules_to_block {
+                        rewritten_code
+                            .push_str(&format!("sys.modules.pop({module_name:?}, None)\n"));
                     }
                 }
-                out
-            };
-            let mut rewritten_code = String::new();
-            if !modules_to_block.is_empty() {
-                rewritten_code.push_str("import sys\n");
-                for module_name in modules_to_block {
-                    rewritten_code.push_str(&format!("sys.modules.pop({module_name:?}, None)\n"));
-                }
+                rewritten_code.push_str(&sanitized_code);
+                rewritten[index + 1] = rewritten_code;
+                return Ok(rewritten);
             }
-            rewritten_code.push_str(&sanitized_code);
-            let mut path = std::env::temp_dir();
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or(0);
-            path.push(format!("pyrs_subprocess_{nonce}.py"));
-            fs::write(&path, rewritten_code).map_err(|err| {
-                RuntimeError::new(format!("failed to write inline script: {err}"))
-            })?;
-            rewritten.push(path.to_string_lossy().to_string());
-        }
-        for remaining in iter {
-            rewritten.push(remaining);
+            index += 1;
         }
         Ok(rewritten)
     }
@@ -2333,6 +2397,43 @@ impl Vm {
         Ok((pid, kind, text_mode, encoding))
     }
 
+    fn subprocess_fd_from_stdio_spec(
+        &mut self,
+        spec: &Value,
+        stream_name: &str,
+    ) -> Result<i64, RuntimeError> {
+        if let Value::Int(fd) = spec {
+            return Ok(*fd);
+        }
+        let fileno = match self.builtin_getattr(
+            vec![spec.clone(), Value::Str("fileno".to_string())],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                if is_missing_attribute_error(&err) {
+                    return Err(RuntimeError::type_error(format!(
+                        "Popen() {stream_name} must be PIPE, DEVNULL, an int, or a file object",
+                    )));
+                }
+                return Err(err);
+            }
+        };
+        let fd_value = match self.call_internal(fileno, Vec::new(), HashMap::new())? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(
+                    self.runtime_error_from_active_exception("Popen() fileno() resolution failed")
+                );
+            }
+        };
+        value_to_int(fd_value).map_err(|_| {
+            RuntimeError::type_error(format!(
+                "Popen() {stream_name} fileno() must return an integer file descriptor",
+            ))
+        })
+    }
+
     pub(super) fn builtin_subprocess_popen_init(
         &mut self,
         mut args: Vec<Value>,
@@ -2360,9 +2461,14 @@ impl Vm {
             Some(value) => Some(self.subprocess_env_from_value(value)?),
             None => None,
         };
+        let executable = match kwargs.remove("executable") {
+            Some(Value::None) | None => None,
+            Some(value) => Some(self.path_arg_to_string(value)?),
+        };
         let stdin_spec = kwargs.remove("stdin").unwrap_or(Value::None);
         let stdout_spec = kwargs.remove("stdout").unwrap_or(Value::None);
         let stderr_spec = kwargs.remove("stderr").unwrap_or(Value::None);
+        let stderr_to_stdout = matches!(stderr_spec, Value::Int(-2));
         let text_mode = kwargs
             .remove("text")
             .map(|value| is_truthy(&value))
@@ -2380,7 +2486,12 @@ impl Vm {
         let _bufsize = kwargs.remove("bufsize");
         let _errors = kwargs.remove("errors");
 
-        let mut command = Command::new(&argv[0]);
+        let program = executable.as_deref().unwrap_or(&argv[0]);
+        let mut command = Command::new(program);
+        #[cfg(unix)]
+        if executable.is_some() {
+            command.arg0(&argv[0]);
+        }
         if argv.len() > 1 {
             command.args(&argv[1..]);
         }
@@ -2395,15 +2506,35 @@ impl Vm {
         }
         if matches!(stdin_spec, Value::Int(-1)) {
             command.stdin(Stdio::piped());
-        } else {
+        } else if matches!(stdin_spec, Value::Int(-3)) {
             command.stdin(Stdio::null());
+        } else if matches!(stdin_spec, Value::None) {
+            command.stdin(Stdio::inherit());
+        } else {
+            #[cfg(unix)]
+            {
+                let fd = self.subprocess_fd_from_stdio_spec(&stdin_spec, "stdin")?;
+                command.stdin(self.stdio_from_vm_fd(fd, Stdio::inherit())?);
+            }
+            #[cfg(not(unix))]
+            {
+                return Err(RuntimeError::new(
+                    "Popen() custom stdin objects are not supported on this platform",
+                ));
+            }
         }
         if matches!(stdout_spec, Value::Int(-1)) {
             command.stdout(Stdio::piped());
         } else {
             command.stdout(Stdio::inherit());
         }
-        if matches!(stderr_spec, Value::Int(-1)) {
+        if stderr_to_stdout {
+            if matches!(stdout_spec, Value::Int(-1)) {
+                command.stderr(Stdio::piped());
+            } else {
+                command.stderr(Stdio::inherit());
+            }
+        } else if matches!(stderr_spec, Value::Int(-1)) {
             command.stderr(Stdio::piped());
         } else {
             command.stderr(Stdio::inherit());
@@ -2418,6 +2549,11 @@ impl Vm {
         Self::instance_attr_set(&instance, "returncode", Value::None)?;
         Self::instance_attr_set(&instance, "_pyrs_stdout", Value::None)?;
         Self::instance_attr_set(&instance, "_pyrs_stderr", Value::None)?;
+        Self::instance_attr_set(
+            &instance,
+            SUBPROCESS_STDERR_TO_STDOUT_ATTR,
+            Value::Bool(stderr_to_stdout),
+        )?;
         let stdin_pipe = if matches!(stdin_spec, Value::Int(-1)) {
             self.subprocess_pipe_instance(pid, "stdin", explicit_text, encoding.as_deref())?
         } else {
@@ -2481,6 +2617,10 @@ impl Vm {
                 .and_then(|(_, _, _, encoding)| encoding),
             _ => None,
         };
+        let stderr_to_stdout = matches!(
+            Self::instance_attr_get(&instance, SUBPROCESS_STDERR_TO_STDOUT_ATTR),
+            Some(Value::Bool(true))
+        );
         if let Some(mut child) = self.child_processes.remove(&pid) {
             if let Some(input) = input
                 && let Some(stdin) = child.stdin.as_mut()
@@ -2504,6 +2644,17 @@ impl Vm {
             let output = child
                 .wait_with_output()
                 .map_err(|err| RuntimeError::new(format!("communicate failed: {err}")))?;
+            let mut stdout_data = output.stdout;
+            let mut stderr_data = output.stderr;
+            if stderr_to_stdout
+                && matches!(
+                    Self::instance_attr_get(&instance, "stdout"),
+                    Some(Value::Instance(_))
+                )
+            {
+                stdout_data.extend_from_slice(&stderr_data);
+                stderr_data.clear();
+            }
             #[cfg(unix)]
             let wait_status = Self::status_to_wait_status(output.status);
             #[cfg(not(unix))]
@@ -2518,12 +2669,12 @@ impl Vm {
             Self::instance_attr_set(
                 &instance,
                 "_pyrs_stdout",
-                self.heap.alloc_bytes(output.stdout),
+                self.heap.alloc_bytes(stdout_data),
             )?;
             Self::instance_attr_set(
                 &instance,
                 "_pyrs_stderr",
-                self.heap.alloc_bytes(output.stderr),
+                self.heap.alloc_bytes(stderr_data),
             )?;
         }
 
@@ -2995,6 +3146,10 @@ impl Vm {
             Some(value) => Some(self.subprocess_env_from_value(value)?),
             None => None,
         };
+        let executable = match kwargs.remove("executable") {
+            Some(Value::None) | None => None,
+            Some(value) => Some(self.path_arg_to_string(value)?),
+        };
         let text_mode = kwargs
             .remove("text")
             .map(|value| is_truthy(&value))
@@ -3029,7 +3184,12 @@ impl Vm {
             stderr_spec = Value::Int(-1);
         }
 
-        let mut command = Command::new(&argv[0]);
+        let program = executable.as_deref().unwrap_or(&argv[0]);
+        let mut command = Command::new(program);
+        #[cfg(unix)]
+        if executable.is_some() {
+            command.arg0(&argv[0]);
+        }
         if argv.len() > 1 {
             command.args(&argv[1..]);
         }
@@ -3044,8 +3204,22 @@ impl Vm {
         }
         if input_value.is_some() || matches!(stdin_spec, Value::Int(-1)) {
             command.stdin(Stdio::piped());
-        } else {
+        } else if matches!(stdin_spec, Value::Int(-3)) {
             command.stdin(Stdio::null());
+        } else if matches!(stdin_spec, Value::None) {
+            command.stdin(Stdio::inherit());
+        } else {
+            #[cfg(unix)]
+            {
+                let fd = self.subprocess_fd_from_stdio_spec(&stdin_spec, "stdin")?;
+                command.stdin(self.stdio_from_vm_fd(fd, Stdio::inherit())?);
+            }
+            #[cfg(not(unix))]
+            {
+                return Err(RuntimeError::new(
+                    "run() custom stdin objects are not supported on this platform",
+                ));
+            }
         }
         if matches!(stdout_spec, Value::Int(-1)) {
             command.stdout(Stdio::piped());

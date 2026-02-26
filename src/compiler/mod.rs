@@ -3280,6 +3280,7 @@ impl Compiler {
                 let func_code = compiler.compile_function(
                     "<lambda>",
                     false,
+                    span,
                     posonly_params,
                     params,
                     kwonly_params,
@@ -3919,6 +3920,7 @@ impl Compiler {
         &mut self,
         name: &str,
         is_async: bool,
+        definition_span: Span,
         posonly_params: &[Parameter],
         params: &[Parameter],
         kwonly_params: &[Parameter],
@@ -3937,6 +3939,7 @@ impl Compiler {
         )?;
         let mut compiler = Compiler::new(name, &self.code.filename, scope);
         compiler.future_annotations = self.future_annotations;
+        compiler.code.first_line = definition_span.line.max(1);
         compiler.code.posonly_params = posonly_params
             .iter()
             .map(|param| param.name.clone())
@@ -4046,6 +4049,7 @@ impl Compiler {
         let helper_code = self.compile_function(
             "<type_param_expr>",
             false,
+            expr.span,
             &[],
             &helper_params,
             &[],
@@ -4155,6 +4159,7 @@ impl Compiler {
         let func_code = self.compile_function(
             name,
             is_async,
+            self.current_span,
             posonly_params,
             params,
             kwonly_params,
@@ -4281,6 +4286,7 @@ impl Compiler {
             let helper_code = self.compile_function(
                 "<type_alias_value>",
                 false,
+                value.span,
                 &[],
                 &helper_params,
                 &[],
@@ -4321,6 +4327,7 @@ impl Compiler {
         let scope = ScopeInfo::for_class(body, &self.scope)?;
         let mut compiler = Compiler::new(&format!("<class {name}>"), &self.code.filename, scope);
         compiler.future_annotations = self.future_annotations;
+        compiler.code.first_line = self.current_span.line.max(1);
         if body_has_ann_assign(body) {
             compiler.init_annotations()?;
         }
@@ -5080,6 +5087,7 @@ impl Compiler {
         let func_code = self.compile_function(
             name,
             is_async_comp,
+            self.current_span,
             &empty_params,
             &params,
             &empty_params,
@@ -5877,6 +5885,9 @@ impl Compiler {
             for stmt in &handler.body {
                 self.compile_stmt(stmt)?;
             }
+            if let Some(name) = &handler.name {
+                self.emit_delete_name(name);
+            }
             self.emit(Opcode::ClearException, None);
             end_jumps.push(self.emit_jump(Opcode::Jump));
 
@@ -5934,7 +5945,10 @@ impl Compiler {
             // Split the current remainder against this handler type.
             self.emit_load_name(&remaining_name)?;
             self.compile_expr(type_expr)?;
-            self.emit(Opcode::MatchExceptionStar, None);
+            self.with_span(type_expr.span, |compiler| {
+                compiler.emit(Opcode::MatchExceptionStar, None);
+                Ok(())
+            })?;
             // Stack layout now: [matched_or_none, remainder_or_none]
             self.emit_store_name(&remaining_name);
             // Keep a copy for null-check while preserving the matched value for binding.
@@ -5949,6 +5963,9 @@ impl Compiler {
 
             for stmt in &handler.body {
                 self.compile_stmt(stmt)?;
+            }
+            if let Some(name) = &handler.name {
+                self.emit_delete_name(name);
             }
             self.emit(Opcode::ClearException, None);
             let matched_continue_jump = self.emit_jump(Opcode::Jump);

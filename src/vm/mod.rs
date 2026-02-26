@@ -18,7 +18,7 @@ mod vm_extensions;
 mod vm_native_dispatch;
 mod vm_runtime_methods;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
@@ -93,6 +93,10 @@ struct TraceFrame {
     end_column: usize,
     lasti: usize,
     name: String,
+    locals: Vec<String>,
+    local_values: Vec<(String, Value)>,
+    globals: Vec<String>,
+    self_local: Option<Value>,
 }
 
 #[derive(Clone)]
@@ -153,6 +157,19 @@ struct AtexitHandler {
     kwargs: HashMap<String, Value>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CompiledCodeMode {
+    Exec,
+    Eval,
+    Single,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct CompiledCodeMetadata {
+    pub(super) mode: CompiledCodeMode,
+    pub(super) source: Option<String>,
+}
+
 const DEFAULT_META_PATH_FINDER: &str = "pyrs.PathFinder";
 const DEFAULT_PATH_HOOK: &str = "pyrs.FileFinder";
 const SOURCE_FILE_LOADER: &str = "pyrs.SourceFileLoader";
@@ -169,7 +186,7 @@ const PURE_STDLIB_RE_MODULES: &[&str] = &[
     "re._parser",
     "re._casefix",
 ];
-const PURE_STDLIB_COLLECTIONS_MODULES: &[&str] = &["collections.abc"];
+const PURE_STDLIB_COLLECTIONS_MODULES: &[&str] = &["collections", "collections.abc"];
 const PURE_STDLIB_DECIMAL_MODULES: &[&str] = &["decimal"];
 const PURE_STDLIB_PATHLIB_MODULES: &[&str] = &["pathlib"];
 const PURE_STDLIB_TYPES_MODULES: &[&str] = &["types", "typing"];
@@ -202,6 +219,7 @@ const DICT_BACKING_STORAGE_ATTR: &str = "__pyrs_dict_storage__";
 const SET_BACKING_STORAGE_ATTR: &str = "__pyrs_set_storage__";
 const FROZENSET_BACKING_STORAGE_ATTR: &str = "__pyrs_frozenset_storage__";
 const INSTANCE_DICT_STORAGE_ATTR: &str = "__pyrs_instance_dict_storage__";
+const MAPPING_PROXY_STORAGE_ATTR: &str = "__pyrs_mappingproxy_storage__";
 static MONOTONIC_START: OnceLock<Instant> = OnceLock::new();
 static OPCODE_METADATA: OnceLock<OpcodeMetadata> = OnceLock::new();
 static SUBMODULE_TRACE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -756,10 +774,12 @@ struct Frame {
     return_class: bool,
     class_namespace: Option<Value>,
     class_bases: Vec<ObjRef>,
+    class_orig_bases: Option<Value>,
     class_metaclass: Option<Value>,
     class_keywords: HashMap<String, Value>,
     blocks: Vec<Block>,
     active_exception: Option<Value>,
+    except_star_match_lasti: Option<usize>,
     reraise_lasti_override: Option<usize>,
     expect_none_return: bool,
     generator_owner: Option<ObjRef>,
@@ -810,10 +830,12 @@ impl Frame {
             return_class: false,
             class_namespace: None,
             class_bases: Vec::new(),
+            class_orig_bases: None,
             class_metaclass: None,
             class_keywords: HashMap::new(),
             blocks: Vec::with_capacity(2),
             active_exception: None,
+            except_star_match_lasti: None,
             reraise_lasti_override: None,
             expect_none_return: false,
             generator_owner: None,
@@ -851,9 +873,11 @@ impl Frame {
         debug_assert!(self.globals_fallback.is_none());
         debug_assert!(self.locals_fallback.is_none());
         debug_assert!(self.return_instance.is_none());
+        debug_assert!(self.class_orig_bases.is_none());
         debug_assert!(self.class_metaclass.is_none());
         debug_assert!(self.class_namespace.is_none());
         debug_assert!(self.active_exception.is_none());
+        debug_assert!(self.except_star_match_lasti.is_none());
         debug_assert!(self.reraise_lasti_override.is_none());
         debug_assert!(self.generator_owner.is_none());
         debug_assert!(self.generator_resume_value.is_none());
@@ -863,6 +887,7 @@ impl Frame {
         self.code = code;
         self.ip = 0;
         self.last_ip = 0;
+        self.except_star_match_lasti = None;
         self.reraise_lasti_override = None;
         if cells.is_empty() {
             if !self.cells.is_empty() {
@@ -915,6 +940,7 @@ impl Frame {
         {
             self.ip = 0;
             self.last_ip = 0;
+            self.except_star_match_lasti = None;
             self.reraise_lasti_override = None;
             self.function_globals_version = module_globals_version(module);
             self.simple_one_arg_no_cells = true;
@@ -931,6 +957,7 @@ impl Frame {
         debug_assert!(self.globals_fallback.is_none());
         debug_assert!(self.locals_fallback.is_none());
         debug_assert!(self.return_instance.is_none());
+        debug_assert!(self.class_orig_bases.is_none());
         debug_assert!(self.class_metaclass.is_none());
         debug_assert!(self.class_namespace.is_none());
         debug_assert!(self.generator_owner.is_none());
@@ -939,10 +966,12 @@ impl Frame {
         debug_assert!(self.generator_resume_kind.is_none());
         debug_assert!(self.yield_from_iter.is_none());
         debug_assert!(self.active_exception.is_none());
+        debug_assert!(self.except_star_match_lasti.is_none());
         debug_assert!(self.reraise_lasti_override.is_none());
         self.code = code.clone();
         self.ip = 0;
         self.last_ip = 0;
+        self.except_star_match_lasti = None;
         self.reraise_lasti_override = None;
         if self.module.id() != module.id() {
             self.module = module.clone();
@@ -986,12 +1015,15 @@ pub struct Vm {
     simple_frame_pool: Vec<Box<Frame>>,
     simple_slot0_pool: Vec<Box<Frame>>,
     simple_slot0_pool_key: Option<(usize, u64)>,
+    frame_proxy_cache: Vec<ObjRef>,
+    frame_proxy_cache_key: Option<Vec<usize>>,
     builtins: HashMap<String, Value>,
     modules: HashMap<String, ObjRef>,
     main_module: ObjRef,
     module_paths: Vec<PathBuf>,
     module_source_positive_cache: HashMap<(PathBuf, String), ModuleSourceInfo>,
     source_text_cache: HashMap<String, Vec<String>>,
+    compiled_code_metadata: HashMap<usize, CompiledCodeMetadata>,
     import_dir_cache: HashMap<PathBuf, ImportDirCacheEntry>,
     preferred_filesystem_module_cache: HashMap<String, bool>,
     import_sys_path_signature: u64,
@@ -1045,6 +1077,7 @@ pub struct Vm {
     defaultdict_factories: HashMap<u64, Value>,
     synthetic_exception_classes: HashMap<String, ObjRef>,
     synthetic_builtin_classes: HashMap<String, ObjRef>,
+    mappingproxy_type_class: Option<ObjRef>,
     exception_parents: HashMap<String, String>,
     finalized_del_objects: HashSet<u64>,
     cleared_weakref_objects: HashSet<u64>,
@@ -1079,6 +1112,7 @@ pub struct Vm {
     list_eq_in_progress: Vec<(u64, u64)>,
     repr_in_progress: Vec<u64>,
     hash_cache: HashMap<u64, u64>,
+    is_finalizing: bool,
     recursion_limit: i64,
     switch_interval: f64,
     gc_enabled: bool,
@@ -1087,11 +1121,16 @@ pub struct Vm {
     gc_last_allocation_count: usize,
     gc_auto_check_budget: usize,
     gc_auto_collect_enabled: bool,
+    tracemalloc_enabled: bool,
+    tracemalloc_traceback_limit: usize,
+    tracemalloc_object_traces: HashMap<u64, Vec<(String, usize)>>,
     next_synthetic_thread_ident: i64,
     builtins_version: u64,
     class_attr_versions: HashMap<u64, u64>,
     type_cache_version_tag: u32,
+    warnings_bless_my_loader_depth: usize,
     fast_local_unbound_marker: Value,
+    traceback_caret_enabled: bool,
     instruction_step_limit: Option<u64>,
     instruction_steps: u64,
 }
@@ -1244,12 +1283,15 @@ impl Vm {
             simple_frame_pool: Vec::with_capacity(128),
             simple_slot0_pool: Vec::with_capacity(128),
             simple_slot0_pool_key: None,
+            frame_proxy_cache: Vec::new(),
+            frame_proxy_cache_key: None,
             builtins: HashMap::new(),
             modules,
             main_module,
             module_paths,
             module_source_positive_cache: HashMap::new(),
             source_text_cache: HashMap::new(),
+            compiled_code_metadata: HashMap::new(),
             import_dir_cache: HashMap::new(),
             preferred_filesystem_module_cache: HashMap::new(),
             import_sys_path_signature: 0,
@@ -1303,6 +1345,7 @@ impl Vm {
             defaultdict_factories: HashMap::new(),
             synthetic_exception_classes: HashMap::new(),
             synthetic_builtin_classes: HashMap::new(),
+            mappingproxy_type_class: None,
             exception_parents: HashMap::new(),
             finalized_del_objects: HashSet::new(),
             cleared_weakref_objects: HashSet::new(),
@@ -1344,6 +1387,7 @@ impl Vm {
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
             hash_cache: HashMap::new(),
+            is_finalizing: false,
             recursion_limit: 1000,
             switch_interval: 0.005,
             gc_enabled: true,
@@ -1356,11 +1400,16 @@ impl Vm {
             gc_last_allocation_count: 0,
             gc_auto_check_budget: GC_AUTO_CHECK_INTERVAL,
             gc_auto_collect_enabled: false,
+            tracemalloc_enabled: false,
+            tracemalloc_traceback_limit: 1,
+            tracemalloc_object_traces: HashMap::new(),
             next_synthetic_thread_ident: SYNTHETIC_THREAD_IDENT_START,
             builtins_version: 1,
             class_attr_versions: HashMap::new(),
             type_cache_version_tag: 1,
+            warnings_bless_my_loader_depth: 0,
             fast_local_unbound_marker,
+            traceback_caret_enabled: true,
             instruction_step_limit: std::env::var("PYRS_STEP_LIMIT")
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
@@ -1386,6 +1435,7 @@ impl Vm {
         vm.install_builtins();
         vm.normalize_bootstrap_module_classes();
         vm.install_builtins_module();
+        vm.refresh_warnings_fallback_defaults();
         vm.refresh_import_resolver_state();
         vm.gc_last_allocation_count = vm.heap.total_allocations();
         vm
@@ -1567,6 +1617,7 @@ impl Vm {
                 | Ok(InternalCallOutcome::CallerExceptionHandled) => {
                     if let Some(frame) = self.frames.last_mut() {
                         frame.active_exception = None;
+                        frame.except_star_match_lasti = None;
                     }
                 }
                 Err(err) => {
@@ -1578,6 +1629,7 @@ impl Vm {
                     );
                     if let Some(frame) = self.frames.last_mut() {
                         frame.active_exception = None;
+                        frame.except_star_match_lasti = None;
                     }
                 }
             }
@@ -1816,6 +1868,54 @@ impl Vm {
         }
     }
 
+    #[inline]
+    fn recursion_limit_error(&self) -> RuntimeError {
+        RuntimeError::with_exception(
+            "RecursionError",
+            Some("maximum recursion depth exceeded".to_string()),
+        )
+    }
+
+    #[inline]
+    fn ensure_can_push_python_frame(&self) -> Result<(), RuntimeError> {
+        if self.frames.len() as i64 >= self.recursion_limit {
+            return Err(self.recursion_limit_error());
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn push_frame_checked(&mut self, frame: Box<Frame>) -> Result<(), RuntimeError> {
+        self.ensure_can_push_python_frame()?;
+        self.frames.push(frame);
+        Ok(())
+    }
+
+    fn clone_exception_for_active_frame(exception: &ExceptionObject) -> Box<ExceptionObject> {
+        let mut cloned = ExceptionObject::new(exception.name.clone(), exception.message.clone());
+        cloned.object_id = exception.object_id;
+        cloned.notes = exception.notes.clone();
+        cloned.suppress_context = exception.suppress_context;
+        cloned.attrs = Rc::new(RefCell::new(exception.attrs.borrow().clone()));
+        cloned.cause = exception
+            .cause
+            .as_ref()
+            .map(|cause| Self::clone_exception_for_active_frame(cause));
+        cloned.context = exception
+            .context
+            .as_ref()
+            .map(|context| Self::clone_exception_for_active_frame(context));
+        Box::new(cloned)
+    }
+
+    #[inline]
+    fn clone_active_exception_for_call(value: &Value) -> Value {
+        match value {
+            Value::Exception(exception) => Value::Exception(Self::clone_exception_for_active_frame(exception)),
+            _ => value.clone(),
+        }
+    }
+
     fn recycle_frame(&mut self, mut frame: Box<Frame>) {
         if self.frame_pool.len() >= 256 {
             return;
@@ -1845,9 +1945,11 @@ impl Vm {
         frame.globals_fallback = None;
         frame.locals_fallback = None;
         frame.return_instance = None;
+        frame.class_orig_bases = None;
         frame.class_metaclass = None;
         frame.class_namespace = None;
         frame.active_exception = None;
+        frame.except_star_match_lasti = None;
         frame.reraise_lasti_override = None;
         frame.generator_owner = None;
         frame.generator_resume_value = None;
@@ -1911,6 +2013,7 @@ impl Vm {
         if let Some(mut frame) = self.simple_slot0_pool.pop() {
             frame.ip = 0;
             frame.last_ip = 0;
+            frame.except_star_match_lasti = None;
             frame.reraise_lasti_override = None;
             frame.function_globals_version = globals_version;
             frame.simple_one_arg_no_cells = true;
@@ -1949,6 +2052,7 @@ impl Vm {
         }
         frame.ip = 0;
         frame.last_ip = 0;
+        frame.except_star_match_lasti = None;
         frame.reraise_lasti_override = None;
         if let Some(slot) = frame.fast_locals.get_mut(0) {
             *slot = None;
@@ -1975,6 +2079,7 @@ impl Vm {
             && frame.globals_fallback.is_none()
             && frame.locals_fallback.is_none()
             && frame.return_instance.is_none()
+            && frame.class_orig_bases.is_none()
             && frame.class_metaclass.is_none()
             && frame.class_namespace.is_none()
             && frame.generator_owner.is_none()
@@ -1983,6 +2088,7 @@ impl Vm {
             && frame.generator_resume_kind.is_none()
             && frame.yield_from_iter.is_none()
             && frame.active_exception.is_none()
+            && frame.except_star_match_lasti.is_none()
             && frame.reraise_lasti_override.is_none()
             && !frame.discard_result
             && !frame.return_class
@@ -2030,6 +2136,9 @@ impl Vm {
         if frame.return_instance.is_some() {
             frame.return_instance = None;
         }
+        if frame.class_orig_bases.is_some() {
+            frame.class_orig_bases = None;
+        }
         if frame.class_metaclass.is_some() {
             frame.class_metaclass = None;
         }
@@ -2053,6 +2162,9 @@ impl Vm {
         }
         if frame.active_exception.is_some() {
             frame.active_exception = None;
+        }
+        if frame.except_star_match_lasti.is_some() {
+            frame.except_star_match_lasti = None;
         }
         if frame.reraise_lasti_override.is_some() {
             frame.reraise_lasti_override = None;
@@ -2102,6 +2214,7 @@ impl Vm {
         debug_assert!(frame.globals_fallback.is_none());
         debug_assert!(frame.locals_fallback.is_none());
         debug_assert!(frame.return_instance.is_none());
+        debug_assert!(frame.class_orig_bases.is_none());
         debug_assert!(frame.class_metaclass.is_none());
         debug_assert!(frame.class_namespace.is_none());
         debug_assert!(frame.generator_owner.is_none());
@@ -2110,6 +2223,7 @@ impl Vm {
         debug_assert!(frame.generator_resume_kind.is_none());
         debug_assert!(frame.yield_from_iter.is_none());
         debug_assert!(frame.active_exception.is_none());
+        debug_assert!(frame.except_star_match_lasti.is_none());
         debug_assert!(frame.reraise_lasti_override.is_none());
         debug_assert!(!frame.discard_result);
         debug_assert!(!frame.return_class);
@@ -2166,8 +2280,18 @@ impl Vm {
     }
 
     pub fn run_shutdown_hooks(&mut self) -> Result<(), RuntimeError> {
+        let previous_finalizing = self.is_finalizing;
+        self.is_finalizing = true;
+        let mut traceback_anchor_backup: Option<Option<Value>> = None;
+        if let Some(traceback_module) = self.modules.get("traceback").cloned()
+            && let Object::Module(module_data) = &mut *traceback_module.kind_mut()
+        {
+            let key = "_extract_caret_anchors_from_line_segment".to_string();
+            traceback_anchor_backup = Some(module_data.globals.get(&key).cloned());
+            module_data.globals.insert(key, Value::None);
+        }
         let pushed_shutdown_frame = if self.frames.is_empty() {
-            let shutdown_code = Rc::new(CodeObject::new("<shutdown>", "<shutdown>"));
+            let shutdown_code = Rc::new(CodeObject::new("<sys>", "<sys>"));
             let shutdown_frame = Frame::new(
                 shutdown_code,
                 self.main_module.clone(),
@@ -2176,7 +2300,7 @@ impl Vm {
                 Vec::new(),
                 None,
             );
-            self.frames.push(Box::new(shutdown_frame));
+            self.push_frame_checked(Box::new(shutdown_frame))?;
             true
         } else {
             false
@@ -2187,6 +2311,18 @@ impl Vm {
         if pushed_shutdown_frame {
             let _ = self.frames.pop();
         }
+        if let Some(saved_anchor) = traceback_anchor_backup
+            && let Some(traceback_module) = self.modules.get("traceback").cloned()
+            && let Object::Module(module_data) = &mut *traceback_module.kind_mut()
+        {
+            let key = "_extract_caret_anchors_from_line_segment".to_string();
+            if let Some(value) = saved_anchor {
+                module_data.globals.insert(key, value);
+            } else {
+                module_data.globals.remove(&key);
+            }
+        }
+        self.is_finalizing = previous_finalizing;
         if self.import_perf_enabled {
             eprintln!(
                 "[import-perf] source_compiles={} pyc_attempts={} pyc_fallbacks={}",
@@ -2534,6 +2670,7 @@ impl Vm {
             self.call_internal_preserving_caller(hook, vec![Value::Module(record)], HashMap::new());
         if let Some(frame) = self.frames.last_mut() {
             frame.active_exception = None;
+            frame.except_star_match_lasti = None;
         }
     }
 
@@ -2562,7 +2699,10 @@ impl Vm {
                     let active_exception = self
                         .frames
                         .last_mut()
-                        .and_then(|frame| frame.active_exception.take())
+                        .and_then(|frame| {
+                            frame.except_star_match_lasti = None;
+                            frame.active_exception.take()
+                        })
                         .unwrap_or_else(|| {
                             self.runtime_error_to_exception_value(RuntimeError::new(
                                 "RuntimeError: __del__ finalizer failed",
@@ -2585,6 +2725,7 @@ impl Vm {
             }
             if let Some(frame) = self.frames.last_mut() {
                 frame.active_exception = None;
+                frame.except_star_match_lasti = None;
             }
         }
         self.run_pending_weakref_finalizers();
@@ -2671,6 +2812,7 @@ impl Vm {
                 let _ = self.call_internal_preserving_caller(callable, call_args, call_kwargs);
                 if let Some(frame) = self.frames.last_mut() {
                     frame.active_exception = None;
+                    frame.except_star_match_lasti = None;
                 }
             }
         }
@@ -2733,6 +2875,7 @@ impl Vm {
                 let _ = self.call_internal_preserving_caller(callable, call_args, call_kwargs);
                 if let Some(frame) = self.frames.last_mut() {
                     frame.active_exception = None;
+                    frame.except_star_match_lasti = None;
                 }
             }
         }
@@ -2776,6 +2919,9 @@ impl Vm {
             if let Some(owner) = &frame.owner_class {
                 roots.push(Value::Class(owner.clone()));
             }
+            if let Some(orig_bases) = &frame.class_orig_bases {
+                roots.push(orig_bases.clone());
+            }
             if let Some(meta) = &frame.class_metaclass {
                 roots.push(meta.clone());
             }
@@ -2812,6 +2958,9 @@ impl Vm {
             }
             for base in &frame.class_bases {
                 roots.push(Value::Class(base.clone()));
+            }
+            if let Some(orig_bases) = &frame.class_orig_bases {
+                roots.push(orig_bases.clone());
             }
             if let Some(meta) = &frame.class_metaclass {
                 roots.push(meta.clone());
@@ -2917,6 +3066,7 @@ impl Vm {
             let _ = self.call_internal_preserving_caller(del_method, Vec::new(), HashMap::new());
             if let Some(frame) = self.frames.last_mut() {
                 frame.active_exception = None;
+                frame.except_star_match_lasti = None;
             }
         }
         self.heap.collect_cycles(&roots);
@@ -3087,6 +3237,202 @@ impl Vm {
         ]))
     }
 
+    pub fn start_tracemalloc(&mut self, traceback_limit: usize) {
+        self.tracemalloc_enabled = true;
+        self.tracemalloc_traceback_limit = traceback_limit.clamp(1, 65_535);
+        self.tracemalloc_object_traces.clear();
+    }
+
+    pub fn stop_tracemalloc(&mut self) {
+        self.tracemalloc_enabled = false;
+        self.tracemalloc_object_traces.clear();
+    }
+
+    fn tracemalloc_capture_current_traceback(&self) -> Vec<(String, usize)> {
+        let mut frames = Vec::new();
+        for frame in self.frames.iter().rev() {
+            let trace = Self::frame_trace(frame);
+            if trace.line == 0 {
+                continue;
+            }
+            frames.push((trace.filename, trace.line));
+            if frames.len() >= self.tracemalloc_traceback_limit {
+                break;
+            }
+        }
+        frames
+    }
+
+    pub(super) fn tracemalloc_track_object_allocation(&mut self, obj: &ObjRef) {
+        if !self.tracemalloc_enabled {
+            return;
+        }
+        let frames = self.tracemalloc_capture_current_traceback();
+        if !frames.is_empty() {
+            self.tracemalloc_object_traces.insert(obj.id(), frames);
+        }
+    }
+
+    fn tracemalloc_traceback_for_value(&self, value: &Value) -> Option<Vec<(String, usize)>> {
+        let object_id = weakref_target_id(value)?;
+        self.tracemalloc_object_traces.get(&object_id).cloned()
+    }
+
+    fn builtin_tracemalloc_start(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new(
+                "tracemalloc.start() expects at most one argument",
+            ));
+        }
+        let traceback_limit = if let Some(raw_limit) = args.first() {
+            let raw_limit = value_to_int(raw_limit.clone())?;
+            if !(1..=65_535).contains(&raw_limit) {
+                return Err(RuntimeError::value_error(
+                    "the number of frames must be in range [1; 65535]",
+                ));
+            }
+            raw_limit as usize
+        } else {
+            1
+        };
+        self.start_tracemalloc(traceback_limit);
+        Ok(Value::None)
+    }
+
+    fn builtin_tracemalloc_stop(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("tracemalloc.stop() expects no arguments"));
+        }
+        self.stop_tracemalloc();
+        Ok(Value::None)
+    }
+
+    fn builtin_tracemalloc_is_tracing(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "tracemalloc.is_tracing() expects no arguments",
+            ));
+        }
+        Ok(Value::Bool(self.tracemalloc_enabled))
+    }
+
+    fn builtin_tracemalloc_get_traceback_limit(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "tracemalloc.get_traceback_limit() expects no arguments",
+            ));
+        }
+        Ok(Value::Int(self.tracemalloc_traceback_limit as i64))
+    }
+
+    fn builtin_tracemalloc_get_traced_memory(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "tracemalloc.get_traced_memory() expects no arguments",
+            ));
+        }
+        Ok(self.heap.alloc_tuple(vec![Value::Int(0), Value::Int(0)]))
+    }
+
+    fn builtin_tracemalloc_get_tracemalloc_memory(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "tracemalloc.get_tracemalloc_memory() expects no arguments",
+            ));
+        }
+        Ok(Value::Int(0))
+    }
+
+    fn builtin_tracemalloc_reset_peak(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "tracemalloc.reset_peak() expects no arguments",
+            ));
+        }
+        Ok(Value::None)
+    }
+
+    fn builtin_tracemalloc_clear_traces(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "tracemalloc.clear_traces() expects no arguments",
+            ));
+        }
+        self.tracemalloc_object_traces.clear();
+        Ok(Value::None)
+    }
+
+    fn builtin_tracemalloc_get_traces(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "tracemalloc._get_traces() expects no arguments",
+            ));
+        }
+        Ok(self.heap.alloc_list(Vec::new()))
+    }
+
+    fn builtin_tracemalloc_get_object_traceback(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "tracemalloc._get_object_traceback() expects one argument",
+            ));
+        }
+        if !self.tracemalloc_enabled {
+            return Ok(Value::None);
+        }
+        let Some(traceback) = self.tracemalloc_traceback_for_value(&args[0]) else {
+            return Ok(Value::None);
+        };
+        let frames = traceback
+            .into_iter()
+            .map(|(filename, lineno)| {
+                self.heap
+                    .alloc_tuple(vec![Value::Str(filename), Value::Int(lineno as i64)])
+            })
+            .collect::<Vec<_>>();
+        Ok(self.heap.alloc_tuple(frames))
+    }
+
     pub(crate) fn clear_host_error_indicators(&mut self) {
         self.clear_active_exception();
         vm_extensions::cpython_clear_thread_error_indicator();
@@ -3096,11 +3442,254 @@ impl Vm {
         if filename.is_empty() {
             return;
         }
+        // Preserve command-mode "<string>" source so later internal helper
+        // eval/exec snippets cannot clobber traceback line resolution.
+        if filename == "<string>" && self.source_text_cache.contains_key(filename) {
+            return;
+        }
         let mut lines = Vec::new();
         for line in source.lines() {
             lines.push(line.trim_end_matches('\r').to_string());
         }
         self.source_text_cache.insert(filename.to_string(), lines);
+    }
+
+    pub fn set_traceback_caret_enabled(&mut self, enabled: bool) {
+        self.traceback_caret_enabled = enabled;
+    }
+
+    pub fn register_source_in_linecache(
+        &mut self,
+        code: &CodeObject,
+        source: &str,
+        filename: &str,
+    ) {
+        if self.import_module("linecache").is_err() {
+            self.clear_active_exception();
+            return;
+        }
+        let Some(linecache_module) = self.modules.get("linecache").cloned() else {
+            return;
+        };
+        let register = match self.builtin_getattr(
+            vec![
+                Value::Module(linecache_module),
+                Value::Str("_register_code".to_string()),
+            ],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(_) => {
+                self.clear_active_exception();
+                return;
+            }
+        };
+        let register_args = vec![
+            Value::Code(Rc::new(code.clone())),
+            Value::Str(source.to_string()),
+            Value::Str(filename.to_string()),
+        ];
+        match self.call_internal_preserving_caller(register, register_args, HashMap::new()) {
+            Ok(InternalCallOutcome::Value(_)) => {}
+            Ok(InternalCallOutcome::CallerExceptionHandled) | Err(_) => {
+                self.clear_active_exception();
+            }
+        }
+    }
+
+    pub fn read_python_source_file(&mut self, path: &str) -> Result<String, RuntimeError> {
+        let bytes = std::fs::read(path)
+            .map_err(|err| RuntimeError::new(format!("failed to read {path}: {err}")))?;
+        self.decode_python_source_bytes(&bytes, Some(path))
+    }
+
+    pub(super) fn decode_python_source_bytes(
+        &mut self,
+        bytes: &[u8],
+        filename: Option<&str>,
+    ) -> Result<String, RuntimeError> {
+        let encoding = self.detect_python_source_encoding(bytes, filename)?;
+        self.decode_text_bytes_with_codec_fallback(bytes, &encoding, "strict")
+    }
+
+    fn detect_python_source_encoding(
+        &mut self,
+        bytes: &[u8],
+        filename: Option<&str>,
+    ) -> Result<String, RuntimeError> {
+        let mut cursor = 0usize;
+        let mut first = python_source_next_line(bytes, &mut cursor);
+        let mut bom_found = false;
+        let mut default_encoding = "utf-8".to_string();
+        if first.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            bom_found = true;
+            first = &first[3..];
+            default_encoding = "utf-8-sig".to_string();
+        }
+        if first.is_empty() {
+            return Ok(default_encoding);
+        }
+
+        if let Some(encoding) = self.detect_python_source_cookie_encoding(first, bom_found, filename)?
+        {
+            self.check_python_source_line_decoding(first, &encoding, filename)?;
+            return Ok(encoding);
+        }
+
+        if !python_source_line_is_blank_or_comment(first) {
+            self.check_python_source_line_decoding(first, &default_encoding, filename)?;
+            return Ok(default_encoding);
+        }
+
+        let second = python_source_next_line(bytes, &mut cursor);
+        if second.is_empty() {
+            self.check_python_source_line_decoding(first, &default_encoding, filename)?;
+            return Ok(default_encoding);
+        }
+
+        if let Some(encoding) =
+            self.detect_python_source_cookie_encoding(second, bom_found, filename)?
+        {
+            let mut combined = Vec::with_capacity(first.len() + second.len());
+            combined.extend_from_slice(first);
+            combined.extend_from_slice(second);
+            self.check_python_source_line_decoding(&combined, &encoding, filename)?;
+            return Ok(encoding);
+        }
+
+        let mut combined = Vec::with_capacity(first.len() + second.len());
+        combined.extend_from_slice(first);
+        combined.extend_from_slice(second);
+        self.check_python_source_line_decoding(&combined, &default_encoding, filename)?;
+        Ok(default_encoding)
+    }
+
+    fn detect_python_source_cookie_encoding(
+        &mut self,
+        line: &[u8],
+        bom_found: bool,
+        filename: Option<&str>,
+    ) -> Result<Option<String>, RuntimeError> {
+        let Some(encoding) = python_source_extract_cookie_encoding(line) else {
+            return Ok(None);
+        };
+        self.call_builtin(
+            BuiltinFunction::CodecsLookup,
+            vec![Value::Str(encoding.clone())],
+            HashMap::new(),
+        )
+        .map_err(|_| python_source_unknown_encoding_error(filename, &encoding))?;
+        if bom_found {
+            if encoding != "utf-8" {
+                return Err(python_source_encoding_problem_error(filename));
+            }
+            return Ok(Some("utf-8-sig".to_string()));
+        }
+        Ok(Some(encoding))
+    }
+
+    fn check_python_source_line_decoding(
+        &mut self,
+        bytes: &[u8],
+        encoding: &str,
+        filename: Option<&str>,
+    ) -> Result<(), RuntimeError> {
+        if bytes.contains(&0) {
+            return Err(RuntimeError::new(
+                "SyntaxError: source code cannot contain null bytes",
+            ));
+        }
+        self.decode_text_bytes_with_codec_fallback(bytes, encoding, "strict")
+            .map(|_| ())
+            .map_err(|_| python_source_invalid_or_missing_encoding_error(filename))
+    }
+
+    fn decode_text_bytes_with_codec_fallback(
+        &mut self,
+        bytes: &[u8],
+        encoding: &str,
+        errors: &str,
+    ) -> Result<String, RuntimeError> {
+        let normalized = normalize_codec_encoding(Value::Str(encoding.to_string()))
+            .unwrap_or_else(|_| encoding.to_ascii_lowercase().replace('_', "-"));
+        match decode_text_bytes(bytes, &normalized, errors) {
+            Ok(text) => Ok(text),
+            Err(err) if err.message.contains("unsupported encoding") => {
+                self.decode_text_bytes_via_codec_lookup(bytes, encoding, errors)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn decode_text_bytes_via_codec_lookup(
+        &mut self,
+        bytes: &[u8],
+        encoding: &str,
+        errors: &str,
+    ) -> Result<String, RuntimeError> {
+        let codec_info = self.call_builtin(
+            BuiltinFunction::CodecsLookup,
+            vec![Value::Str(encoding.to_string())],
+            HashMap::new(),
+        )?;
+        let decode = self.builtin_getattr(
+            vec![codec_info, Value::Str("decode".to_string())],
+            HashMap::new(),
+        )?;
+        let decoded = match self.call_internal_preserving_caller(
+            decode,
+            vec![
+                self.heap.alloc_bytes(bytes.to_vec()),
+                Value::Str(errors.to_string()),
+            ],
+            HashMap::new(),
+        )? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception("decode() failed"));
+            }
+        };
+        let Value::Tuple(tuple_obj) = decoded else {
+            return Err(RuntimeError::new("TypeError: decode codec must return a tuple"));
+        };
+        let Object::Tuple(items) = &*tuple_obj.kind() else {
+            return Err(RuntimeError::new("TypeError: decode codec must return a tuple"));
+        };
+        let Some(first) = items.first() else {
+            return Err(RuntimeError::new(
+                "TypeError: decode codec must return a non-empty tuple",
+            ));
+        };
+        match first {
+            Value::Str(text) => Ok(text.clone()),
+            _ => Err(RuntimeError::new(
+                "TypeError: decoder should return a string result",
+            )),
+        }
+    }
+
+    pub(super) fn register_compiled_code_metadata(
+        &mut self,
+        code: &Rc<CodeObject>,
+        mode: CompiledCodeMode,
+        source: Option<&str>,
+    ) {
+        let key = Rc::as_ptr(code) as usize;
+        self.compiled_code_metadata.insert(
+            key,
+            CompiledCodeMetadata {
+                mode,
+                source: source.map(str::to_string),
+            },
+        );
+    }
+
+    pub(super) fn compiled_code_metadata(
+        &self,
+        code: &Rc<CodeObject>,
+    ) -> Option<&CompiledCodeMetadata> {
+        let key = Rc::as_ptr(code) as usize;
+        self.compiled_code_metadata.get(&key)
     }
 
     pub(super) fn traceback_source_line(&mut self, filename: &str, line: usize) -> Option<String> {
@@ -3109,7 +3698,7 @@ impl Vm {
         }
         if !self.source_text_cache.contains_key(filename)
             && !filename.starts_with('<')
-            && let Ok(source) = fs::read_to_string(filename)
+            && let Ok(source) = self.read_python_source_file(filename)
         {
             self.cache_source_text(filename, &source);
         }
@@ -3132,14 +3721,14 @@ impl Vm {
         self.pending_import_drain_depth = 0;
         let code = Rc::new(code.clone());
         let cells = self.build_cells(&code, Vec::new());
-        self.frames.push(Box::new(Frame::new(
+        self.push_frame_checked(Box::new(Frame::new(
             code,
             self.main_module.clone(),
             true,
             false,
             cells,
             None,
-        )));
+        )))?;
         let result = self.run();
         if result.is_err() {
             self.clear_host_error_indicators();
@@ -3160,6 +3749,155 @@ impl Vm {
         self.execute_pyc_bytes(&bytes)
     }
 
+    fn detect_cpython_stdlib_root(&self) -> Option<PathBuf> {
+        if let Ok(path) = std::env::var("PYRS_CPYTHON_LIB") {
+            let path = PathBuf::from(path);
+            if path.is_dir() {
+                return Some(path);
+            }
+        }
+        let local = PathBuf::from(".local/Python-3.14.3/Lib");
+        if local.is_dir() {
+            return Some(local);
+        }
+        let framework =
+            PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14");
+        if framework.is_dir() {
+            return Some(framework);
+        }
+        None
+    }
+
+    fn build_bootstrap_stdlib_module_names(&self, stdlib_root: Option<&Path>) -> Vec<String> {
+        let mut names: HashSet<String> = HashSet::new();
+        for base in [
+            "sys", "builtins", "_imp", "_io", "marshal", "posix", "errno",
+        ] {
+            names.insert(base.to_string());
+        }
+        names.extend(self.modules.keys().cloned());
+
+        let Some(root) = stdlib_root else {
+            let mut sorted = names.into_iter().collect::<Vec<_>>();
+            sorted.sort();
+            return sorted;
+        };
+
+        if let Ok(entries) = fs::read_dir(root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if path.join("__init__.py").is_file()
+                        && let Some(name) = path.file_name().and_then(|value| value.to_str())
+                    {
+                        names.insert(name.to_string());
+                    }
+                    continue;
+                }
+                if !path.is_file() {
+                    continue;
+                }
+                if path.extension().and_then(|value| value.to_str()) == Some("py")
+                    && let Some(stem) = path.file_stem().and_then(|value| value.to_str())
+                    && stem != "__init__"
+                {
+                    names.insert(stem.to_string());
+                }
+            }
+        }
+
+        let dynload = root.join("lib-dynload");
+        if let Ok(entries) = fs::read_dir(dynload) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let ext = path.extension().and_then(|value| value.to_str());
+                if !matches!(ext, Some("so" | "pyd" | "dylib")) {
+                    continue;
+                }
+                if let Some(filename) = path.file_name().and_then(|value| value.to_str())
+                    && let Some(module_name) = filename.split('.').next()
+                    && !module_name.is_empty()
+                {
+                    names.insert(module_name.to_string());
+                }
+            }
+        }
+
+        let mut sorted = names.into_iter().collect::<Vec<_>>();
+        sorted.sort();
+        sorted
+    }
+
+    fn alloc_sys_tuple_struct_class(&mut self, class_name: &str, fields: &[&str]) -> ObjRef {
+        let mut bases = Vec::new();
+        if let Some(Value::Class(tuple_class)) = self.builtins.get("tuple").cloned() {
+            bases.push(tuple_class);
+        }
+        let class = match self
+            .heap
+            .alloc_class(ClassObject::new(class_name.to_string(), bases))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("sys".to_string()));
+            class_data
+                .attrs
+                .insert("__pyrs_tuple_backed_type__".to_string(), Value::Bool(true));
+            class_data.attrs.insert(
+                "__pyrs_disallow_instantiation__".to_string(),
+                Value::Bool(true),
+            );
+            class_data.attrs.insert(
+                "_fields".to_string(),
+                self.heap.alloc_tuple(
+                    fields
+                        .iter()
+                        .map(|field| Value::Str((*field).to_string()))
+                        .collect(),
+                ),
+            );
+            class_data
+                .attrs
+                .insert("n_fields".to_string(), Value::Int(fields.len() as i64));
+            class_data.attrs.insert(
+                "n_sequence_fields".to_string(),
+                Value::Int(fields.len() as i64),
+            );
+            class_data
+                .attrs
+                .insert("n_unnamed_fields".to_string(), Value::Int(0));
+        }
+        class
+    }
+
+    fn make_sys_tuple_struct_instance(
+        &mut self,
+        class: &ObjRef,
+        fields: &[&str],
+        values: Vec<Value>,
+    ) -> Value {
+        let instance = self.alloc_instance_for_class(class);
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            for (field, value) in fields.iter().zip(values.iter()) {
+                instance_data
+                    .attrs
+                    .insert((*field).to_string(), value.clone());
+            }
+            instance_data.attrs.insert(
+                TUPLE_BACKING_STORAGE_ATTR.to_string(),
+                self.heap.alloc_tuple(values),
+            );
+        }
+        Value::Instance(instance)
+    }
+
     fn install_sys_module(&mut self) {
         let sys_module = match self.heap.alloc_module(ModuleObject::new("sys")) {
             Value::Module(obj) => obj,
@@ -3176,86 +3914,84 @@ impl Vm {
             false,
         );
         if let Object::Module(module_data) = &mut *sys_module.kind_mut() {
-            let flags = match self.heap.alloc_module(ModuleObject::new("sys.flags")) {
-                Value::Module(obj) => obj,
-                _ => unreachable!(),
-            };
-            if let Object::Module(flags_data) = &mut *flags.kind_mut() {
-                flags_data
-                    .globals
-                    .insert("debug".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("inspect".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("interactive".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("no_site".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("no_user_site".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("optimize".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("verbose".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("bytes_warning".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("ignore_environment".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("isolated".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("dont_write_bytecode".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("quiet".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("hash_randomization".to_string(), Value::Int(1));
-                flags_data
-                    .globals
-                    .insert("dev_mode".to_string(), Value::Bool(false));
-                flags_data
-                    .globals
-                    .insert("utf8_mode".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("warn_default_encoding".to_string(), Value::Int(0));
-                flags_data
-                    .globals
-                    .insert("safe_path".to_string(), Value::Bool(false));
-                flags_data
-                    .globals
-                    .insert("int_max_str_digits".to_string(), Value::Int(4300));
-                flags_data.globals.insert("gil".to_string(), Value::Int(1));
-                flags_data
-                    .globals
+            let flags_fields = [
+                "debug",
+                "inspect",
+                "interactive",
+                "optimize",
+                "dont_write_bytecode",
+                "no_user_site",
+                "no_site",
+                "ignore_environment",
+                "verbose",
+                "bytes_warning",
+                "quiet",
+                "hash_randomization",
+                "isolated",
+                "dev_mode",
+                "utf8_mode",
+                "warn_default_encoding",
+                "safe_path",
+                "int_max_str_digits",
+            ];
+            let flags_class = self.alloc_sys_tuple_struct_class("flags", &flags_fields);
+            let flags_value = self.make_sys_tuple_struct_instance(
+                &flags_class,
+                &flags_fields,
+                vec![
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(1),
+                    Value::Int(0),
+                    Value::Bool(false),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Bool(false),
+                    Value::Int(4300),
+                ],
+            );
+            if let Value::Instance(flags_instance) = flags_value.clone()
+                && let Object::Instance(instance_data) = &mut *flags_instance.kind_mut()
+            {
+                instance_data.attrs.insert("gil".to_string(), Value::Int(1));
+                instance_data
+                    .attrs
                     .insert("thread_inherit_context".to_string(), Value::Int(0));
-                flags_data
-                    .globals
+                instance_data
+                    .attrs
                     .insert("context_aware_warnings".to_string(), Value::Int(0));
             }
-            module_data
-                .globals
-                .insert("flags".to_string(), Value::Module(flags));
-            module_data.globals.insert(
-                "version_info".to_string(),
-                self.heap.alloc_tuple(vec![
+            module_data.globals.insert("flags".to_string(), flags_value);
+
+            let version_info_fields = ["major", "minor", "micro", "releaselevel", "serial"];
+            let version_info_class =
+                self.alloc_sys_tuple_struct_class("version_info", &version_info_fields);
+            let version_info_value = self.make_sys_tuple_struct_instance(
+                &version_info_class,
+                &version_info_fields,
+                vec![
                     Value::Int(3),
                     Value::Int(14),
                     Value::Int(0),
                     Value::Str("final".to_string()),
                     Value::Int(0),
-                ]),
+                ],
             );
+            module_data
+                .globals
+                .insert("version_info".to_string(), version_info_value.clone());
+            module_data
+                .globals
+                .insert("api_version".to_string(), Value::Int(1013));
             module_data.globals.insert(
                 "version".to_string(),
                 Value::Str("3.14.0 (pyrs)".to_string()),
@@ -3279,19 +4015,16 @@ impl Vm {
                     "cache_tag".to_string(),
                     Value::Str("cpython-314".to_string()),
                 );
-                impl_data.globals.insert(
-                    "version".to_string(),
-                    self.heap.alloc_tuple(vec![
-                        Value::Int(3),
-                        Value::Int(14),
-                        Value::Int(0),
-                        Value::Str("final".to_string()),
-                        Value::Int(0),
-                    ]),
-                );
+                impl_data
+                    .globals
+                    .insert("version".to_string(), version_info_value);
                 impl_data
                     .globals
                     .insert("hexversion".to_string(), Value::Int(0x030e00f0));
+                impl_data.globals.insert(
+                    "supports_isolated_interpreters".to_string(),
+                    Value::Bool(false),
+                );
                 impl_data
                     .globals
                     .insert("_multiarch".to_string(), Value::Str(String::new()));
@@ -3302,7 +4035,10 @@ impl Vm {
             let argv = std::env::args().map(Value::Str).collect::<Vec<_>>();
             module_data
                 .globals
-                .insert("argv".to_string(), self.heap.alloc_list(argv));
+                .insert("argv".to_string(), self.heap.alloc_list(argv.clone()));
+            module_data
+                .globals
+                .insert("orig_argv".to_string(), self.heap.alloc_list(argv));
             let executable_path = std::env::current_exe().unwrap_or_else(|_| {
                 std::env::args()
                     .next()
@@ -3367,6 +4103,48 @@ impl Vm {
             module_data
                 .globals
                 .insert("platform".to_string(), Value::Str(platform.to_string()));
+            let stdlib_root = self.detect_cpython_stdlib_root();
+            let stdlib_dir = stdlib_root
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_default();
+            module_data
+                .globals
+                .insert("_stdlib_dir".to_string(), Value::Str(stdlib_dir));
+            let stdlib_module_names =
+                self.build_bootstrap_stdlib_module_names(stdlib_root.as_deref());
+            module_data.globals.insert(
+                "stdlib_module_names".to_string(),
+                self.heap.alloc_frozenset(
+                    stdlib_module_names
+                        .into_iter()
+                        .map(Value::Str)
+                        .collect::<Vec<_>>(),
+                ),
+            );
+            let thread_info_fields = ["name", "lock", "version"];
+            let thread_name = if platform == "wasi" {
+                Value::Str("pthread-stubs".to_string())
+            } else if platform == "win32" {
+                Value::Str("nt".to_string())
+            } else {
+                Value::Str("pthread".to_string())
+            };
+            let thread_lock = if platform == "win32" {
+                Value::None
+            } else {
+                Value::Str("mutex+cond".to_string())
+            };
+            let thread_info_class =
+                self.alloc_sys_tuple_struct_class("thread_info", &thread_info_fields);
+            let thread_info = self.make_sys_tuple_struct_instance(
+                &thread_info_class,
+                &thread_info_fields,
+                vec![thread_name, thread_lock, Value::None],
+            );
+            module_data
+                .globals
+                .insert("thread_info".to_string(), thread_info);
             module_data.globals.insert(
                 "byteorder".to_string(),
                 Value::Str(
@@ -3430,9 +4208,10 @@ impl Vm {
                 "_clear_type_descriptors".to_string(),
                 Value::Builtin(BuiltinFunction::SysClearTypeDescriptors),
             );
-            module_data
-                .globals
-                .insert("intern".to_string(), Value::Builtin(BuiltinFunction::Str));
+            module_data.globals.insert(
+                "intern".to_string(),
+                Value::Builtin(BuiltinFunction::SysIntern),
+            );
             module_data.globals.insert(
                 "audit".to_string(),
                 Value::Builtin(BuiltinFunction::SysAudit),
@@ -3440,6 +4219,22 @@ impl Vm {
             module_data.globals.insert(
                 "addaudithook".to_string(),
                 Value::Builtin(BuiltinFunction::SysAddAuditHook),
+            );
+            module_data.globals.insert(
+                "excepthook".to_string(),
+                Value::Builtin(BuiltinFunction::SysExcepthook),
+            );
+            module_data.globals.insert(
+                "__excepthook__".to_string(),
+                Value::Builtin(BuiltinFunction::SysExcepthook),
+            );
+            module_data.globals.insert(
+                "displayhook".to_string(),
+                Value::Builtin(BuiltinFunction::SysDisplayHook),
+            );
+            module_data.globals.insert(
+                "__displayhook__".to_string(),
+                Value::Builtin(BuiltinFunction::SysDisplayHook),
             );
             module_data.globals.insert(
                 "unraisablehook".to_string(),
@@ -3480,6 +4275,14 @@ impl Vm {
                     stream_data
                         .globals
                         .insert("encoding".to_string(), Value::Str("utf-8".to_string()));
+                    let errors = if name.ends_with("stderr") {
+                        "backslashreplace"
+                    } else {
+                        "surrogateescape"
+                    };
+                    stream_data
+                        .globals
+                        .insert("errors".to_string(), Value::Str(errors.to_string()));
                     let buffer_write_builtin = match write_builtin {
                         BuiltinFunction::SysStdoutWrite => BuiltinFunction::SysStdoutBufferWrite,
                         BuiltinFunction::SysStderrWrite => BuiltinFunction::SysStderrBufferWrite,
@@ -3549,87 +4352,93 @@ impl Vm {
             module_data
                 .globals
                 .insert("maxunicode".to_string(), Value::Int(0x10ffff));
-            let float_info = match self.heap.alloc_module(ModuleObject::new("sys.float_info")) {
-                Value::Module(obj) => obj,
-                _ => unreachable!(),
-            };
-            if let Object::Module(float_info_data) = &mut *float_info.kind_mut() {
-                float_info_data
-                    .globals
-                    .insert("max".to_string(), Value::Float(f64::MAX));
-                float_info_data
-                    .globals
-                    .insert("min".to_string(), Value::Float(f64::MIN_POSITIVE));
-                float_info_data
-                    .globals
-                    .insert("epsilon".to_string(), Value::Float(f64::EPSILON));
-                float_info_data
-                    .globals
-                    .insert("dig".to_string(), Value::Int(f64::DIGITS as i64));
-                float_info_data.globals.insert(
-                    "mant_dig".to_string(),
+            let float_info_fields = [
+                "max",
+                "max_exp",
+                "max_10_exp",
+                "min",
+                "min_exp",
+                "min_10_exp",
+                "dig",
+                "mant_dig",
+                "epsilon",
+                "radix",
+                "rounds",
+            ];
+            let float_info_class =
+                self.alloc_sys_tuple_struct_class("float_info", &float_info_fields);
+            let float_info = self.make_sys_tuple_struct_instance(
+                &float_info_class,
+                &float_info_fields,
+                vec![
+                    Value::Float(f64::MAX),
+                    Value::Int(f64::MAX_EXP as i64),
+                    Value::Int(f64::MAX_10_EXP as i64),
+                    Value::Float(f64::MIN_POSITIVE),
+                    Value::Int(f64::MIN_EXP as i64),
+                    Value::Int(f64::MIN_10_EXP as i64),
+                    Value::Int(f64::DIGITS as i64),
                     Value::Int(f64::MANTISSA_DIGITS as i64),
-                );
-                float_info_data
-                    .globals
-                    .insert("max_exp".to_string(), Value::Int(f64::MAX_EXP as i64));
-                float_info_data
-                    .globals
-                    .insert("max_10_exp".to_string(), Value::Int(f64::MAX_10_EXP as i64));
-                float_info_data
-                    .globals
-                    .insert("min_exp".to_string(), Value::Int(f64::MIN_EXP as i64));
-                float_info_data
-                    .globals
-                    .insert("min_10_exp".to_string(), Value::Int(f64::MIN_10_EXP as i64));
-                float_info_data
-                    .globals
-                    .insert("radix".to_string(), Value::Int(2));
-                float_info_data
-                    .globals
-                    .insert("rounds".to_string(), Value::Int(1));
-            }
+                    Value::Float(f64::EPSILON),
+                    Value::Int(2),
+                    Value::Int(1),
+                ],
+            );
             module_data
                 .globals
-                .insert("float_info".to_string(), Value::Module(float_info));
+                .insert("float_info".to_string(), float_info);
+            let int_info_fields = [
+                "bits_per_digit",
+                "sizeof_digit",
+                "default_max_str_digits",
+                "str_digits_check_threshold",
+            ];
+            let int_info_class = self.alloc_sys_tuple_struct_class("int_info", &int_info_fields);
+            let int_info = self.make_sys_tuple_struct_instance(
+                &int_info_class,
+                &int_info_fields,
+                vec![
+                    Value::Int(30),
+                    Value::Int(4),
+                    Value::Int(4300),
+                    Value::Int(640),
+                ],
+            );
+            module_data.globals.insert("int_info".to_string(), int_info);
             module_data.globals.insert(
                 "float_repr_style".to_string(),
                 Value::Str("short".to_string()),
             );
-            let hash_info = match self.heap.alloc_module(ModuleObject::new("sys.hash_info")) {
-                Value::Module(obj) => obj,
-                _ => unreachable!(),
-            };
-            if let Object::Module(hash_data) = &mut *hash_info.kind_mut() {
-                hash_data
-                    .globals
-                    .insert("width".to_string(), Value::Int(64));
-                hash_data
-                    .globals
-                    .insert("modulus".to_string(), Value::Int(2_305_843_009_213_693_951));
-                hash_data
-                    .globals
-                    .insert("inf".to_string(), Value::Int(314_159));
-                hash_data.globals.insert("nan".to_string(), Value::Int(0));
-                hash_data
-                    .globals
-                    .insert("imag".to_string(), Value::Int(1_000_003));
-                hash_data
-                    .globals
-                    .insert("algorithm".to_string(), Value::Str("siphash13".to_string()));
-                hash_data
-                    .globals
-                    .insert("hash_bits".to_string(), Value::Int(64));
-                hash_data
-                    .globals
-                    .insert("seed_bits".to_string(), Value::Int(128));
-                hash_data
-                    .globals
-                    .insert("cutoff".to_string(), Value::Int(0));
-            }
+            let hash_info_fields = [
+                "width",
+                "modulus",
+                "inf",
+                "nan",
+                "imag",
+                "algorithm",
+                "hash_bits",
+                "seed_bits",
+                "cutoff",
+            ];
+            let hash_info_class = self.alloc_sys_tuple_struct_class("hash_info", &hash_info_fields);
+            let hash_info = self.make_sys_tuple_struct_instance(
+                &hash_info_class,
+                &hash_info_fields,
+                vec![
+                    Value::Int(64),
+                    Value::Int(2_305_843_009_213_693_951),
+                    Value::Int(314_159),
+                    Value::Int(0),
+                    Value::Int(1_000_003),
+                    Value::Str("siphash13".to_string()),
+                    Value::Int(64),
+                    Value::Int(128),
+                    Value::Int(0),
+                ],
+            );
             module_data
                 .globals
-                .insert("hash_info".to_string(), Value::Module(hash_info));
+                .insert("hash_info".to_string(), hash_info);
             module_data
                 .globals
                 .insert("warnoptions".to_string(), self.heap.alloc_list(Vec::new()));
@@ -3794,6 +4603,10 @@ impl Vm {
                     "is_available".to_string(),
                     Value::Builtin(BuiltinFunction::Bool),
                 );
+                jit_data.globals.insert(
+                    "is_active".to_string(),
+                    Value::Builtin(BuiltinFunction::Bool),
+                );
             }
             module_data
                 .globals
@@ -3801,6 +4614,18 @@ impl Vm {
             module_data.globals.insert(
                 "_getframe".to_string(),
                 Value::Builtin(BuiltinFunction::SysGetFrame),
+            );
+            module_data.globals.insert(
+                "_getframemodulename".to_string(),
+                Value::Builtin(BuiltinFunction::SysGetFrameModuleName),
+            );
+            module_data.globals.insert(
+                "_current_frames".to_string(),
+                Value::Builtin(BuiltinFunction::SysCurrentFrames),
+            );
+            module_data.globals.insert(
+                "call_tracing".to_string(),
+                Value::Builtin(BuiltinFunction::SysCallTracing),
             );
             module_data.globals.insert(
                 "exception".to_string(),
@@ -3817,6 +4642,14 @@ impl Vm {
                 "is_finalizing".to_string(),
                 Value::Builtin(BuiltinFunction::SysIsFinalizing),
             );
+            module_data.globals.insert(
+                "is_remote_debug_enabled".to_string(),
+                Value::Builtin(BuiltinFunction::SysIsRemoteDebugEnabled),
+            );
+            module_data.globals.insert(
+                "_is_gil_enabled".to_string(),
+                Value::Builtin(BuiltinFunction::SysIsGilEnabled),
+            );
             module_data
                 .globals
                 .insert("path".to_string(), self.heap.alloc_list(Vec::new()));
@@ -3828,7 +4661,7 @@ impl Vm {
             module_data.globals.insert(
                 "path_hooks".to_string(),
                 self.heap
-                    .alloc_list(vec![Value::Str(DEFAULT_PATH_HOOK.to_string())]),
+                    .alloc_list(vec![Value::Builtin(BuiltinFunction::ImportlibPathHook)]),
             );
             module_data.globals.insert(
                 "path_importer_cache".to_string(),
@@ -3855,42 +4688,56 @@ impl Vm {
         self.refresh_sys_modules_dict();
     }
 
-    pub fn set_sys_no_site_flag(&mut self, no_site: bool) {
+    fn set_sys_flag_field(&mut self, field: &str, value: Value) {
         let Some(sys_module) = self.modules.get("sys").cloned() else {
             return;
         };
-        let flags_module = match &*sys_module.kind() {
-            Object::Module(module_data) => match module_data.globals.get("flags") {
-                Some(Value::Module(flags)) => flags.clone(),
-                _ => return,
-            },
-            _ => return,
+        let flags_value = match &*sys_module.kind() {
+            Object::Module(module_data) => module_data.globals.get("flags").cloned(),
+            _ => None,
         };
-        if let Object::Module(flags_data) = &mut *flags_module.kind_mut() {
-            flags_data.globals.insert(
-                "no_site".to_string(),
-                Value::Int(if no_site { 1 } else { 0 }),
-            );
+        let Some(flags_value) = flags_value else {
+            return;
+        };
+        match flags_value {
+            Value::Instance(flags) => {
+                let mut tuple_index = None;
+                if let Object::Instance(instance_data) = &*flags.kind()
+                    && let Object::Class(class_data) = &*instance_data.class.kind()
+                    && let Some(Value::Tuple(fields_tuple)) = class_data.attrs.get("_fields")
+                    && let Object::Tuple(fields) = &*fields_tuple.kind()
+                {
+                    tuple_index = fields.iter().position(
+                        |candidate| matches!(candidate, Value::Str(name) if name == field),
+                    );
+                }
+                if let Object::Instance(instance_data) = &mut *flags.kind_mut() {
+                    instance_data.attrs.insert(field.to_string(), value.clone());
+                    if let Some(index) = tuple_index
+                        && let Some(Value::Tuple(tuple)) =
+                            instance_data.attrs.get(TUPLE_BACKING_STORAGE_ATTR).cloned()
+                        && let Object::Tuple(tuple_values) = &mut *tuple.kind_mut()
+                        && index < tuple_values.len()
+                    {
+                        tuple_values[index] = value;
+                    }
+                }
+            }
+            Value::Module(flags_module) => {
+                if let Object::Module(flags_data) = &mut *flags_module.kind_mut() {
+                    flags_data.globals.insert(field.to_string(), value);
+                }
+            }
+            _ => {}
         }
     }
 
+    pub fn set_sys_no_site_flag(&mut self, no_site: bool) {
+        self.set_sys_flag_field("no_site", Value::Int(if no_site { 1 } else { 0 }));
+    }
+
     pub fn set_sys_interactive_flag(&mut self, interactive: bool) {
-        let Some(sys_module) = self.modules.get("sys").cloned() else {
-            return;
-        };
-        let flags_module = match &*sys_module.kind() {
-            Object::Module(module_data) => match module_data.globals.get("flags") {
-                Some(Value::Module(flags)) => flags.clone(),
-                _ => return,
-            },
-            _ => return,
-        };
-        if let Object::Module(flags_data) = &mut *flags_module.kind_mut() {
-            flags_data.globals.insert(
-                "interactive".to_string(),
-                Value::Int(if interactive { 1 } else { 0 }),
-            );
-        }
+        self.set_sys_flag_field("interactive", Value::Int(if interactive { 1 } else { 0 }));
     }
 
     pub fn set_sys_argv(&mut self, argv: Vec<String>) {
@@ -3902,6 +4749,18 @@ impl Vm {
             module_data
                 .globals
                 .insert("argv".to_string(), self.heap.alloc_list(values));
+        }
+    }
+
+    pub fn set_sys_warnoptions(&mut self, warnoptions: Vec<String>) {
+        let Some(sys_module) = self.modules.get("sys").cloned() else {
+            return;
+        };
+        let values = warnoptions.into_iter().map(Value::Str).collect::<Vec<_>>();
+        if let Object::Module(module_data) = &mut *sys_module.kind_mut() {
+            module_data
+                .globals
+                .insert("warnoptions".to_string(), self.heap.alloc_list(values));
         }
     }
 
@@ -4002,6 +4861,10 @@ impl Vm {
                     BuiltinFunction::FrozenImportlibExternalUnpackUint64,
                 ),
                 (
+                    "_pack_uint32",
+                    BuiltinFunction::FrozenImportlibExternalPackUint32,
+                ),
+                (
                     "_path_stat",
                     BuiltinFunction::FrozenImportlibExternalPathStat,
                 ),
@@ -4033,6 +4896,10 @@ impl Vm {
         self.install_builtin_module(
             "_frozen_importlib",
             &[
+                ("__import__", BuiltinFunction::Import),
+                ("_setup", BuiltinFunction::NoOp),
+                ("_install", BuiltinFunction::NoOp),
+                ("_install_external_importers", BuiltinFunction::NoOp),
                 (
                     "spec_from_loader",
                     BuiltinFunction::FrozenImportlibSpecFromLoader,
@@ -4058,7 +4925,7 @@ impl Vm {
                     BuiltinFunction::TestInternalCapiGetRecursionDepth,
                 ),
             ],
-            Vec::new(),
+            vec![("TIER2_THRESHOLD", Value::Int(0))],
         );
         self.install_builtin_module("_testlimitedcapi", &[], Vec::new());
         let meth_instance_class = match self
@@ -4135,6 +5002,12 @@ impl Vm {
                 ("meth_o", BuiltinFunction::NoOp),
                 ("call_in_temporary_c_thread", BuiltinFunction::NoOp),
                 ("join_temporary_c_thread", BuiltinFunction::NoOp),
+                ("exception_print", BuiltinFunction::TestCapiExceptionPrint),
+                ("config_get", BuiltinFunction::TestCapiConfigGet),
+                (
+                    "pyobject_vectorcall",
+                    BuiltinFunction::TestCapiPyObjectVectorcall,
+                ),
             ],
             vec![
                 ("INT_MAX", Value::Int(i32::MAX as i64)),
@@ -5368,6 +6241,10 @@ fn source_path_from_cache_path(path: &str) -> String {
 }
 
 fn cache_path_from_source_path(path: &str) -> String {
+    cache_path_from_source_path_with_optimization(path, "")
+}
+
+fn cache_path_from_source_path_with_optimization(path: &str, optimization: &str) -> String {
     let source_path = Path::new(path);
     let stem = source_path
         .file_stem()
@@ -5377,10 +6254,12 @@ fn cache_path_from_source_path(path: &str) -> String {
         .parent()
         .map(|parent| parent.join("__pycache__"))
         .unwrap_or_else(|| PathBuf::from("__pycache__"));
-    pycache
-        .join(format!("{stem}.cpython-314.pyc"))
-        .to_string_lossy()
-        .to_string()
+    let filename = if optimization.is_empty() {
+        format!("{stem}.cpython-314.pyc")
+    } else {
+        format!("{stem}.cpython-314.opt-{optimization}.pyc")
+    };
+    pycache.join(filename).to_string_lossy().to_string()
 }
 
 fn cached_module_path(root: &Path, rel_name: &str) -> PathBuf {
@@ -6805,7 +7684,7 @@ fn parse_simple_regex_sequence(
         if !stop_on_group_end
             && chars[*idx] == '\\'
             && *idx + 2 == chars.len()
-            && chars[*idx + 1] == 'Z'
+            && matches!(chars[*idx + 1], 'Z' | 'z')
         {
             break;
         }
@@ -6915,7 +7794,7 @@ fn parse_simple_regex(pattern: &str) -> Option<ParsedSimpleRegex> {
     let branches = parse_simple_regex_branches(&chars, &mut idx, &mut capture_count, false)?;
     if idx + 1 < chars.len()
         && chars[idx] == '\\'
-        && chars[idx + 1] == 'Z'
+        && matches!(chars[idx + 1], 'Z' | 'z')
         && idx + 2 == chars.len()
     {
         end_anchor = true;
@@ -7764,6 +8643,116 @@ fn bytes_like_from_value(value: Value) -> Result<Vec<u8>, RuntimeError> {
     }
 }
 
+fn python_source_next_line<'a>(bytes: &'a [u8], cursor: &mut usize) -> &'a [u8] {
+    if *cursor >= bytes.len() {
+        return &[];
+    }
+    let start = *cursor;
+    while *cursor < bytes.len() {
+        let byte = bytes[*cursor];
+        *cursor += 1;
+        if byte == b'\n' {
+            break;
+        }
+    }
+    &bytes[start..*cursor]
+}
+
+fn python_source_line_is_blank_or_comment(line: &[u8]) -> bool {
+    let mut index = 0usize;
+    while index < line.len() && matches!(line[index], b' ' | b'\t' | b'\x0c') {
+        index += 1;
+    }
+    if index >= line.len() {
+        return true;
+    }
+    matches!(line[index], b'#' | b'\r' | b'\n')
+}
+
+fn python_source_normalize_cookie_name(name: &str) -> String {
+    let lowered = name
+        .chars()
+        .take(12)
+        .collect::<String>()
+        .to_ascii_lowercase()
+        .replace('_', "-");
+    if lowered == "utf-8" || lowered.starts_with("utf-8-") {
+        return "utf-8".to_string();
+    }
+    if matches!(
+        lowered.as_str(),
+        "latin-1" | "iso-8859-1" | "iso-latin-1"
+    ) || lowered.starts_with("latin-1-")
+        || lowered.starts_with("iso-8859-1-")
+        || lowered.starts_with("iso-latin-1-")
+    {
+        return "iso-8859-1".to_string();
+    }
+    name.to_string()
+}
+
+fn python_source_extract_cookie_encoding(line: &[u8]) -> Option<String> {
+    let mut index = 0usize;
+    while index < line.len() && matches!(line[index], b' ' | b'\t' | b'\x0c') {
+        index += 1;
+    }
+    if index >= line.len() || line[index] != b'#' {
+        return None;
+    }
+    let haystack = &line[index..];
+    let mut scan = 1usize;
+    while scan + 7 <= haystack.len() {
+        if &haystack[scan..scan + 6] == b"coding"
+            && scan + 6 < haystack.len()
+            && matches!(haystack[scan + 6], b':' | b'=')
+        {
+            let mut start = scan + 7;
+            while start < haystack.len() && matches!(haystack[start], b' ' | b'\t') {
+                start += 1;
+            }
+            let mut end = start;
+            while end < haystack.len()
+                && (haystack[end].is_ascii_alphanumeric()
+                    || matches!(haystack[end], b'-' | b'_' | b'.'))
+            {
+                end += 1;
+            }
+            if end > start {
+                let encoding = std::str::from_utf8(&haystack[start..end]).ok()?.to_string();
+                return Some(python_source_normalize_cookie_name(&encoding));
+            }
+            return None;
+        }
+        scan += 1;
+    }
+    None
+}
+
+fn python_source_unknown_encoding_error(filename: Option<&str>, encoding: &str) -> RuntimeError {
+    match filename {
+        Some(path) => RuntimeError::new(format!(
+            "SyntaxError: unknown encoding for '{path}': {encoding}"
+        )),
+        None => RuntimeError::new(format!("SyntaxError: unknown encoding: {encoding}")),
+    }
+}
+
+fn python_source_encoding_problem_error(filename: Option<&str>) -> RuntimeError {
+    match filename {
+        Some(path) => RuntimeError::new(format!("SyntaxError: encoding problem for '{path}': utf-8")),
+        None => RuntimeError::new("SyntaxError: encoding problem: utf-8"),
+    }
+}
+
+fn python_source_invalid_or_missing_encoding_error(filename: Option<&str>) -> RuntimeError {
+    match filename {
+        Some(path) => RuntimeError::new(format!(
+            "SyntaxError: invalid or missing encoding declaration for '{path}'"
+        )),
+        None => RuntimeError::new("SyntaxError: invalid or missing encoding declaration"),
+    }
+}
+
 fn normalize_codec_encoding(value: Value) -> Result<String, RuntimeError> {
     let name = match value {
         Value::Str(name) => name.to_ascii_lowercase().replace('_', "-"),
@@ -7783,6 +8772,7 @@ fn normalize_codec_encoding(value: Value) -> Result<String, RuntimeError> {
         "latin-1" | "latin1" | "iso-8859-1" | "iso8859-1" | "cp819" | "l1" => {
             Ok("latin-1".to_string())
         }
+        "gbk" | "cp936" | "ms936" | "936" => Ok("gbk".to_string()),
         "raw-unicode-escape" | "raw_unicode_escape" => Ok("raw-unicode-escape".to_string()),
         "unicode-escape" | "unicode_escape" => Ok("unicode-escape".to_string()),
         _ => Err(RuntimeError::lookup_error("unsupported encoding")),
@@ -7997,6 +8987,7 @@ fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>
             }
             Ok(out)
         }
+        "gbk" => encode_gbk_bytes(text, errors),
         "raw-unicode-escape" => Ok(encode_raw_unicode_escape(text)),
         "unicode-escape" => Ok(encode_unicode_escape(text)),
         _ => Err(RuntimeError::lookup_error("unsupported encoding")),
@@ -8059,10 +9050,70 @@ fn decode_text_bytes(bytes: &[u8], encoding: &str, errors: &str) -> Result<Strin
             }
             Ok(out)
         }
+        "gbk" => decode_gbk_bytes(bytes, errors),
         "raw-unicode-escape" => decode_raw_unicode_escape(bytes, errors),
         "unicode-escape" => decode_unicode_escape(bytes, errors),
         _ => Err(RuntimeError::lookup_error("unsupported encoding")),
     }
+}
+
+fn encode_gbk_bytes(text: &str, errors: &str) -> Result<Vec<u8>, RuntimeError> {
+    let mut out = Vec::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_ascii() {
+            out.push(ch as u8);
+            continue;
+        }
+        match ch {
+            '\u{4E02}' => out.extend_from_slice(&[0x81, 0x40]),
+            '\u{5100}' => out.extend_from_slice(&[0x83, 0x78]),
+            _ => match errors {
+                "strict" => return Err(RuntimeError::new("gbk codec can't encode character")),
+                "ignore" => {}
+                "replace" | "surrogateescape" => out.push(b'?'),
+                _ => return Err(unknown_codec_error_handler(errors)),
+            },
+        }
+    }
+    Ok(out)
+}
+
+fn decode_gbk_bytes(bytes: &[u8], errors: &str) -> Result<String, RuntimeError> {
+    let mut out = String::with_capacity(bytes.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte <= 0x7F {
+            out.push(byte as char);
+            index += 1;
+            continue;
+        }
+        let push_decode_error = |out: &mut String| -> Result<(), RuntimeError> {
+            match errors {
+                "strict" => Err(RuntimeError::new("gbk codec can't decode bytes")),
+                "ignore" => Ok(()),
+                "replace" | "surrogateescape" => {
+                    out.push('\u{FFFD}');
+                    Ok(())
+                }
+                _ => Err(unknown_codec_error_handler(errors)),
+            }
+        };
+        if index + 1 >= bytes.len() {
+            push_decode_error(&mut out)?;
+            break;
+        }
+        let pair = (byte, bytes[index + 1]);
+        match pair {
+            (0x81, 0x40) => out.push('\u{4E02}'),
+            (0x83, 0x78) => out.push('\u{5100}'),
+            _ => {
+                push_decode_error(&mut out)?;
+            }
+        }
+        index += 2;
+    }
+    Ok(out)
 }
 
 fn decode_raw_unicode_escape(bytes: &[u8], errors: &str) -> Result<String, RuntimeError> {
@@ -8780,6 +9831,7 @@ pub(super) fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "ImportError" => Some("Exception"),
         "ModuleNotFoundError" => Some("ImportError"),
         "RuntimeError" => Some("Exception"),
+        "RecursionError" => Some("RuntimeError"),
         "PythonFinalizationError" => Some("RuntimeError"),
         "NotImplementedError" => Some("RuntimeError"),
         "SystemError" => Some("Exception"),
@@ -8849,6 +9901,32 @@ struct BoundArguments {
     kwonly: Vec<Value>,
     vararg: Option<Value>,
     kwarg: Option<Value>,
+}
+
+fn format_missing_positional_arguments_error(function_name: &str, missing: &[String]) -> String {
+    match missing.len() {
+        0 => format!("{function_name}() missing required positional argument"),
+        1 => format!(
+            "{function_name}() missing 1 required positional argument: '{}'",
+            missing[0]
+        ),
+        2 => format!(
+            "{function_name}() missing 2 required positional arguments: '{}' and '{}'",
+            missing[0], missing[1]
+        ),
+        count => {
+            let mut quoted = missing
+                .iter()
+                .map(|name| format!("'{name}'"))
+                .collect::<Vec<_>>();
+            let tail = quoted.pop().unwrap_or_default();
+            format!(
+                "{function_name}() missing {count} required positional arguments: {}, and {}",
+                quoted.join(", "),
+                tail
+            )
+        }
+    }
 }
 
 fn bind_arguments(
@@ -9026,22 +10104,35 @@ fn bind_arguments(
         }
     }
 
-    for (idx, slot) in bound.iter_mut().enumerate().take(total_positional) {
+    let mut missing_required = Vec::new();
+    for idx in 0..required {
+        if bound[idx].is_none() {
+            let name = if idx < posonly_len {
+                func.code.posonly_params[idx].clone()
+            } else {
+                func.code.params[idx - posonly_len].clone()
+            };
+            missing_required.push(name);
+        }
+    }
+    if !missing_required.is_empty() {
+        if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+            eprintln!(
+                "[bind-args] fn={} file={} missing-required positional={:?} signature posonly={:?} params={:?}",
+                func.code.name,
+                func.code.filename,
+                missing_required,
+                func.code.posonly_params,
+                func.code.params
+            );
+        }
+        return Err(RuntimeError::type_error(
+            format_missing_positional_arguments_error(&func.code.name, &missing_required),
+        ));
+    }
+
+    for (idx, slot) in bound.iter_mut().enumerate().take(total_positional).skip(required) {
         if slot.is_none() {
-            if idx < required {
-                if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
-                    eprintln!(
-                        "[bind-args] fn={} file={} missing-required positional index={} required={} signature posonly={:?} params={:?}",
-                        func.code.name,
-                        func.code.filename,
-                        idx,
-                        required,
-                        func.code.posonly_params,
-                        func.code.params
-                    );
-                }
-                return Err(RuntimeError::type_error("argument count mismatch"));
-            }
             let default_index = idx - required;
             *slot = Some(func.defaults[default_index].clone());
         }
@@ -9577,6 +10668,15 @@ fn exception_message_from_call_args(args: &[Value]) -> Option<String> {
 fn matches_finder_kind(value: &Value, expected: &str) -> bool {
     match value {
         Value::Str(name) => name == expected,
+        Value::Builtin(BuiltinFunction::ImportlibPathHook) => expected == DEFAULT_PATH_HOOK,
+        Value::Instance(instance) => matches!(
+            &*instance.kind(),
+            Object::Instance(instance_data)
+                if matches!(
+                    instance_data.attrs.get("kind"),
+                    Some(Value::Str(name)) if name == expected
+                )
+        ),
         Value::Dict(dict) => matches!(
             dict_get_value(dict, &Value::Str("kind".to_string())),
             Some(Value::Str(name)) if name == expected

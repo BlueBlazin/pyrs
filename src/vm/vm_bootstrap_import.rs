@@ -1,8 +1,9 @@
 use super::{
     AtomicOrdering, BUILTIN_MODULE_LOADER, BuiltinFunction, ClassObject, DEFAULT_META_PATH_FINDER,
     DEFAULT_PATH_HOOK, DefaultHasher, EXTENSION_FILE_LOADER, Frame, Hash, HashMap, HashSet, Hasher,
-    ImportDirCacheEntry, InstanceObject, LOCAL_SHIM_MODULES, LOCAL_SHIM_PRECEDENCE_MODULES,
-    ModuleObject, ModuleSourceInfo, NAMESPACE_LOADER, ObjRef, Object,
+    INSTANCE_DICT_STORAGE_ATTR, ImportDirCacheEntry, InstanceObject, InternalCallOutcome,
+    LOCAL_SHIM_MODULES, LOCAL_SHIM_PRECEDENCE_MODULES, ModuleObject, ModuleSourceInfo,
+    NAMESPACE_LOADER, NativeMethodKind, NativeMethodObject, ObjRef, Object,
     PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_DECIMAL_MODULES, PURE_STDLIB_JSON_MODULES,
     PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_RE_MODULES,
     PURE_STDLIB_TYPES_MODULES, Path, PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
@@ -525,9 +526,10 @@ impl Vm {
                 .fs_source_compiles
                 .saturating_add(1);
         }
-        let source = std::fs::read_to_string(source_path)
-            .map_err(|err| RuntimeError::new(format!("failed to read module '{name}': {err}")))?;
         let source_filename = source_path.to_string_lossy().to_string();
+        let source = self.read_python_source_file(&source_filename).map_err(|err| {
+            RuntimeError::new(format!("failed to read module '{name}': {}", err.message))
+        })?;
         self.cache_source_text(&source_filename, &source);
 
         let module_ast = parser::parse_module(&source).map_err(|err| {
@@ -551,7 +553,7 @@ impl Vm {
         let cells = self.build_cells(&code, Vec::new());
         let mut frame = Frame::new(code, module.clone(), true, false, cells, None);
         frame.discard_result = true;
-        self.frames.push(Box::new(frame));
+        self.push_frame_checked(Box::new(frame))?;
         Ok(())
     }
 
@@ -938,7 +940,10 @@ impl Vm {
             "os",
             &[
                 ("getpid", BuiltinFunction::OsGetPid),
+                ("chdir", BuiltinFunction::OsChDir),
                 ("getcwd", BuiltinFunction::OsGetCwd),
+                ("fspath", BuiltinFunction::OsFspath),
+                ("cpu_count", BuiltinFunction::OsCpuCount),
                 ("uname", BuiltinFunction::OsUname),
                 ("getenv", BuiltinFunction::OsGetEnv),
                 ("putenv", BuiltinFunction::OsPutEnv),
@@ -1080,7 +1085,9 @@ impl Vm {
             "posix",
             &[
                 ("getpid", BuiltinFunction::OsGetPid),
+                ("chdir", BuiltinFunction::OsChDir),
                 ("getcwd", BuiltinFunction::OsGetCwd),
+                ("cpu_count", BuiltinFunction::OsCpuCount),
                 ("uname", BuiltinFunction::OsUname),
                 ("getenv", BuiltinFunction::OsGetEnv),
                 ("putenv", BuiltinFunction::OsPutEnv),
@@ -1121,6 +1128,7 @@ impl Vm {
                 ("pathsep", Value::Str(":".to_string())),
                 ("altsep", Value::None),
                 ("environ", self.heap.alloc_dict(Vec::new())),
+                ("_have_functions", self.heap.alloc_set(Vec::new())),
                 ("WNOHANG", Value::Int(1)),
                 ("WIFSTOPPED", Value::Builtin(BuiltinFunction::OsWIfStopped)),
                 ("WSTOPSIG", Value::Builtin(BuiltinFunction::OsWStopSig)),
@@ -3420,6 +3428,10 @@ impl Vm {
             Value::Module(module) => module,
             _ => unreachable!(),
         };
+        let traceback_items = self.alloc_builtin_bound_method(
+            BuiltinFunction::ColorizeThemeItems,
+            traceback_theme.clone(),
+        );
         if let Object::Module(module_data) = &mut *traceback_theme.kind_mut() {
             for name in [
                 "type",
@@ -3435,6 +3447,9 @@ impl Vm {
                     .globals
                     .insert(name.to_string(), Value::Str(String::new()));
             }
+            module_data
+                .globals
+                .insert("items".to_string(), traceback_items);
         }
         let unittest_theme = match self
             .heap
@@ -3443,12 +3458,19 @@ impl Vm {
             Value::Module(module) => module,
             _ => unreachable!(),
         };
+        let unittest_items = self.alloc_builtin_bound_method(
+            BuiltinFunction::ColorizeThemeItems,
+            unittest_theme.clone(),
+        );
         if let Object::Module(module_data) = &mut *unittest_theme.kind_mut() {
             for name in ["passed", "warn", "fail", "fail_info", "reset"] {
                 module_data
                     .globals
                     .insert(name.to_string(), Value::Str(String::new()));
             }
+            module_data
+                .globals
+                .insert("items".to_string(), unittest_items);
         }
         let syntax_theme = match self
             .heap
@@ -3457,6 +3479,8 @@ impl Vm {
             Value::Module(module) => module,
             _ => unreachable!(),
         };
+        let syntax_items = self
+            .alloc_builtin_bound_method(BuiltinFunction::ColorizeThemeItems, syntax_theme.clone());
         if let Object::Module(module_data) = &mut *syntax_theme.kind_mut() {
             for name in [
                 "prompt",
@@ -3475,6 +3499,9 @@ impl Vm {
                     .globals
                     .insert(name.to_string(), Value::Str(String::new()));
             }
+            module_data
+                .globals
+                .insert("items".to_string(), syntax_items);
         }
         let argparse_theme = match self
             .heap
@@ -3483,6 +3510,10 @@ impl Vm {
             Value::Module(module) => module,
             _ => unreachable!(),
         };
+        let argparse_items = self.alloc_builtin_bound_method(
+            BuiltinFunction::ColorizeThemeItems,
+            argparse_theme.clone(),
+        );
         if let Object::Module(module_data) = &mut *argparse_theme.kind_mut() {
             for name in [
                 "usage",
@@ -3503,6 +3534,9 @@ impl Vm {
                     .globals
                     .insert(name.to_string(), Value::Str(String::new()));
             }
+            module_data
+                .globals
+                .insert("items".to_string(), argparse_items);
         }
         let color_theme = match self
             .heap
@@ -4044,10 +4078,29 @@ impl Vm {
         let code_type_class = self
             .heap
             .alloc_class(ClassObject::new("code".to_string(), Vec::new()));
+        let member_descriptor_type_class = self.heap.alloc_class(ClassObject::new(
+            "member_descriptor".to_string(),
+            Vec::new(),
+        ));
+        let getset_descriptor_type_class = self.heap.alloc_class(ClassObject::new(
+            "getset_descriptor".to_string(),
+            Vec::new(),
+        ));
         let generic_alias_class = self.ensure_generic_alias_class();
+        let mappingproxy_type_class = self
+            .heap
+            .alloc_class(ClassObject::new("mappingproxy".to_string(), Vec::new()));
+        let union_type_class = self
+            .heap
+            .alloc_class(ClassObject::new("UnionType".to_string(), Vec::new()));
         if let Value::Class(class_obj) = &simple_namespace_class
             && let Object::Class(class_data) = &mut *class_obj.kind_mut()
         {
+            class_data.slots = Some(vec!["__dict__".to_string()]);
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::SimpleNamespaceInit),
+            );
             class_data.attrs.insert(
                 "__repr__".to_string(),
                 Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
@@ -4056,6 +4109,61 @@ impl Vm {
                 "__str__".to_string(),
                 Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
             );
+            class_data.attrs.insert(
+                "__eq__".to_string(),
+                Value::Builtin(BuiltinFunction::SimpleNamespaceEq),
+            );
+            class_data.attrs.insert(
+                "__reduce__".to_string(),
+                Value::Builtin(BuiltinFunction::SimpleNamespaceReduce),
+            );
+            class_data.attrs.insert(
+                "__replace__".to_string(),
+                Value::Builtin(BuiltinFunction::SimpleNamespaceReplace),
+            );
+        }
+        if let Some(sys_module) = self.modules.get("sys").cloned()
+            && let Value::Class(simple_namespace_type) = &simple_namespace_class
+        {
+            let implementation_module = if let Object::Module(sys_data) = &*sys_module.kind() {
+                match sys_data.globals.get("implementation") {
+                    Some(Value::Module(module)) => Some(module.clone()),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some(implementation_module) = implementation_module {
+                let implementation_attrs =
+                    if let Object::Module(module_data) = &*implementation_module.kind() {
+                        module_data.globals.clone()
+                    } else {
+                        HashMap::new()
+                    };
+                let implementation_instance = match self
+                    .heap
+                    .alloc_instance(InstanceObject::new(simple_namespace_type.clone()))
+                {
+                    Value::Instance(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Instance(instance_data) = &mut *implementation_instance.kind_mut() {
+                    let dict_entries = implementation_attrs
+                        .into_iter()
+                        .map(|(name, value)| (Value::Str(name), value))
+                        .collect::<Vec<_>>();
+                    instance_data.attrs.insert(
+                        INSTANCE_DICT_STORAGE_ATTR.to_string(),
+                        self.heap.alloc_dict(dict_entries),
+                    );
+                }
+                if let Object::Module(sys_data) = &mut *sys_module.kind_mut() {
+                    sys_data.globals.insert(
+                        "implementation".to_string(),
+                        Value::Instance(implementation_instance),
+                    );
+                }
+            }
         }
         if let Value::Class(class_obj) = &function_type_class
             && let Object::Class(class_data) = &mut *class_obj.kind_mut()
@@ -4064,12 +4172,192 @@ impl Vm {
                 "__new__".to_string(),
                 Value::Builtin(BuiltinFunction::TypesFunctionType),
             );
+            if let Value::Class(getset_descriptor_class) = &getset_descriptor_type_class {
+                class_data.attrs.insert(
+                    "__code__".to_string(),
+                    self.heap
+                        .alloc_instance(InstanceObject::new(getset_descriptor_class.clone())),
+                );
+            }
+            if let Value::Class(member_descriptor_class) = &member_descriptor_type_class {
+                class_data.attrs.insert(
+                    "__globals__".to_string(),
+                    self.heap
+                        .alloc_instance(InstanceObject::new(member_descriptor_class.clone())),
+                );
+            }
         }
+        if let Some(builtins_module) = self.modules.get("builtins").cloned()
+            && let Object::Module(module_data) = &mut *builtins_module.kind_mut()
+            && let Value::Class(function_class) = &function_type_class
+        {
+            module_data.globals.insert(
+                "__pyrs_function_type_class__".to_string(),
+                Value::Class(function_class.clone()),
+            );
+        }
+        if let Some(builtins_module) = self.modules.get("builtins").cloned()
+            && let Object::Module(module_data) = &mut *builtins_module.kind_mut()
+            && let Value::Class(mappingproxy_class) = &mappingproxy_type_class
+        {
+            module_data.globals.insert(
+                "__pyrs_mappingproxy_type_class__".to_string(),
+                Value::Class(mappingproxy_class.clone()),
+            );
+        }
+        if let Value::Class(class_obj) = &union_type_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("types".to_string()));
+            class_data
+                .attrs
+                .insert("__name__".to_string(), Value::Str("UnionType".to_string()));
+            class_data.attrs.insert(
+                "__qualname__".to_string(),
+                Value::Str("UnionType".to_string()),
+            );
+            class_data.attrs.insert(
+                "__pyrs_disallow_instantiation__".to_string(),
+                Value::Bool(true),
+            );
+        }
+        if let Value::Class(class_obj) = &mappingproxy_type_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data.attrs.insert(
+                "__new__".to_string(),
+                Value::Builtin(BuiltinFunction::TypesMappingProxy),
+            );
+            class_data.attrs.insert(
+                "__contains__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyContains,
+                ))),
+            );
+            class_data.attrs.insert(
+                "__getitem__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyGetItem,
+                ))),
+            );
+            class_data.attrs.insert(
+                "__class_getitem__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyClassGetItem,
+                ))),
+            );
+            class_data.attrs.insert(
+                "__ior__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyIor,
+                ))),
+            );
+            class_data.attrs.insert(
+                "__iter__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyIter,
+                ))),
+            );
+            class_data.attrs.insert(
+                "__len__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyLen,
+                ))),
+            );
+            class_data.attrs.insert(
+                "__or__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyOr,
+                ))),
+            );
+            class_data.attrs.insert(
+                "__reversed__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyReversed,
+                ))),
+            );
+            class_data.attrs.insert(
+                "__ror__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyRor,
+                ))),
+            );
+            class_data.attrs.insert(
+                "copy".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyCopy,
+                ))),
+            );
+            class_data.attrs.insert(
+                "get".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyGet,
+                ))),
+            );
+            class_data.attrs.insert(
+                "items".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyItems,
+                ))),
+            );
+            class_data.attrs.insert(
+                "keys".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyKeys,
+                ))),
+            );
+            class_data.attrs.insert(
+                "values".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyValues,
+                ))),
+            );
+            class_data.attrs.insert(
+                "__eq__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyEq,
+                ))),
+            );
+            class_data.attrs.insert(
+                "__ne__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyNe,
+                ))),
+            );
+            class_data.attrs.insert(
+                "__hash__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyHash,
+                ))),
+            );
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyRepr,
+                ))),
+            );
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::MappingProxyRepr,
+                ))),
+            );
+        }
+        if let Value::Class(class_obj) = &mappingproxy_type_class {
+            self.mappingproxy_type_class = Some(class_obj.clone());
+        }
+        let traceback_type_class = self
+            .heap
+            .alloc_class(ClassObject::new("traceback".to_string(), Vec::new()));
+        let frame_type_class = self
+            .heap
+            .alloc_class(ClassObject::new("frame".to_string(), Vec::new()));
         self.install_builtin_module(
             "types",
             &[
                 ("ModuleType", BuiltinFunction::TypesModuleType),
-                ("MappingProxyType", BuiltinFunction::TypesMappingProxy),
                 ("MethodType", BuiltinFunction::TypesMethodType),
                 ("new_class", BuiltinFunction::TypesNewClass),
                 ("coroutine", BuiltinFunction::TypesCoroutine),
@@ -4099,18 +4387,10 @@ impl Vm {
                 ),
                 ("SimpleNamespace", simple_namespace_class),
                 ("GenericAlias", Value::Class(generic_alias_class.clone())),
-                (
-                    "UnionType",
-                    self.heap
-                        .alloc_class(ClassObject::new("UnionType".to_string(), Vec::new())),
-                ),
-                (
-                    "MemberDescriptorType",
-                    self.heap.alloc_class(ClassObject::new(
-                        "member_descriptor".to_string(),
-                        Vec::new(),
-                    )),
-                ),
+                ("MappingProxyType", mappingproxy_type_class.clone()),
+                ("__pyrs_mappingproxy_type__", mappingproxy_type_class),
+                ("UnionType", union_type_class),
+                ("MemberDescriptorType", member_descriptor_type_class),
                 (
                     "CellType",
                     self.heap
@@ -4154,25 +4434,75 @@ impl Vm {
                         Vec::new(),
                     )),
                 ),
+                ("TracebackType", traceback_type_class.clone()),
+                ("FrameType", frame_type_class.clone()),
+                ("GetSetDescriptorType", getset_descriptor_type_class),
                 (
-                    "TracebackType",
+                    "CapsuleType",
                     self.heap
-                        .alloc_class(ClassObject::new("traceback".to_string(), Vec::new())),
-                ),
-                (
-                    "FrameType",
-                    self.heap
-                        .alloc_class(ClassObject::new("frame".to_string(), Vec::new())),
-                ),
-                (
-                    "GetSetDescriptorType",
-                    self.heap.alloc_class(ClassObject::new(
-                        "getset_descriptor".to_string(),
-                        Vec::new(),
-                    )),
+                        .alloc_class(ClassObject::new("capsule".to_string(), Vec::new())),
                 ),
             ],
         );
+        if let Some(types_module) = self.modules.get("types").cloned() {
+            let none_type_class = if let Object::Module(types_data) = &*types_module.kind() {
+                match types_data.globals.get("NoneType") {
+                    Some(Value::Class(class)) => Some(class.clone()),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some(none_type_class) = none_type_class
+                && let Object::Class(class_data) = &mut *none_type_class.kind_mut()
+            {
+                class_data
+                    .attrs
+                    .insert("__module__".to_string(), Value::Str("builtins".to_string()));
+            }
+        }
+        if let Value::Class(class_obj) = &traceback_type_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data.attrs.insert(
+                "__new__".to_string(),
+                Value::Builtin(BuiltinFunction::TracebackTypeNew),
+            );
+        }
+        if let Value::Class(class_obj) = &frame_type_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data.attrs.insert(
+                "clear".to_string(),
+                Value::Function(
+                    self.heap
+                        .alloc_native_method(NativeMethodObject::new(NativeMethodKind::FrameClear)),
+                ),
+            );
+        }
+        if let Some(types_module) = self.modules.get("types").cloned()
+            && let Some(builtins_module) = self.modules.get("builtins").cloned()
+        {
+            let type_class_exports = if let Object::Module(types_data) = &*types_module.kind() {
+                types_data
+                    .globals
+                    .iter()
+                    .filter_map(|(name, value)| match value {
+                        Value::Class(class) => Some((name.clone(), class.clone())),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            if let Object::Module(builtins_data) = &mut *builtins_module.kind_mut() {
+                for (name, class) in type_class_exports {
+                    builtins_data
+                        .globals
+                        .insert(format!("__pyrs_types_class_{name}"), Value::Class(class));
+                }
+            }
+        }
         if let Some(types_module) = self.modules.get("types").cloned() {
             let types_alias = match self.heap.alloc_module(ModuleObject::new("_types")) {
                 Value::Module(obj) => obj,
@@ -5011,16 +5341,6 @@ impl Vm {
             Vec::new(),
         );
         self.install_builtin_module(
-            "pkgutil",
-            &[
-                ("get_data", BuiltinFunction::PkgutilGetData),
-                ("iter_modules", BuiltinFunction::PkgutilIterModules),
-                ("walk_packages", BuiltinFunction::PkgutilWalkPackages),
-                ("resolve_name", BuiltinFunction::PkgutilResolveName),
-            ],
-            Vec::new(),
-        );
-        self.install_builtin_module(
             "_abc",
             &[
                 ("get_cache_token", BuiltinFunction::AbcGetCacheToken),
@@ -5267,6 +5587,10 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::InspectSignatureRepr),
             );
             class_data.attrs.insert(
+                "__eq__".to_string(),
+                Value::Builtin(BuiltinFunction::InspectSignatureEq),
+            );
+            class_data.attrs.insert(
                 "replace".to_string(),
                 Value::Builtin(BuiltinFunction::InspectSignatureReplace),
             );
@@ -5342,12 +5666,20 @@ impl Vm {
                 ("isframe", BuiltinFunction::InspectIsFrame),
                 ("iscode", BuiltinFunction::InspectIsCode),
                 ("unwrap", BuiltinFunction::InspectUnwrap),
+                ("getattr_static", BuiltinFunction::GetAttr),
                 ("isclass", BuiltinFunction::InspectIsClass),
                 ("ismodule", BuiltinFunction::InspectIsModule),
                 ("isgenerator", BuiltinFunction::InspectIsGenerator),
                 ("isgeneratorfunction", BuiltinFunction::InspectIsGenerator),
                 ("iscoroutine", BuiltinFunction::InspectIsCoroutine),
-                ("iscoroutinefunction", BuiltinFunction::InspectIsCoroutine),
+                (
+                    "iscoroutinefunction",
+                    BuiltinFunction::InspectIsCoroutineFunction,
+                ),
+                (
+                    "markcoroutinefunction",
+                    BuiltinFunction::InspectMarkCoroutineFunction,
+                ),
                 ("isawaitable", BuiltinFunction::InspectIsAwaitable),
                 ("isasyncgen", BuiltinFunction::InspectIsAsyncGen),
                 ("isasyncgenfunction", BuiltinFunction::InspectIsAsyncGen),
@@ -5370,6 +5702,7 @@ impl Vm {
                 ("CO_VARKEYWORDS", Value::Int(0x08)),
                 ("CO_GENERATOR", Value::Int(0x20)),
                 ("CO_COROUTINE", Value::Int(0x80)),
+                ("CO_ITERABLE_COROUTINE", Value::Int(0x100)),
                 ("CO_ASYNC_GENERATOR", Value::Int(0x200)),
             ],
         );
@@ -5377,6 +5710,7 @@ impl Vm {
             "io",
             &[
                 ("open", BuiltinFunction::IoOpen),
+                ("open_code", BuiltinFunction::IoOpenCode),
                 ("read_text", BuiltinFunction::IoReadText),
                 ("write_text", BuiltinFunction::IoWriteText),
                 ("text_encoding", BuiltinFunction::IoTextEncoding),
@@ -5950,6 +6284,14 @@ impl Vm {
                         && let Object::Class(class_data) = &mut *class_ref.kind_mut()
                     {
                         Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            self.alloc_native_unbound_method(
+                                "__textiobase_unbound_method__",
+                                Value::None,
+                                NativeMethodKind::Builtin(BuiltinFunction::IoFileRead),
+                            ),
+                        );
                     }
                     ("TextIOBase", class)
                 },
@@ -6037,7 +6379,10 @@ impl Vm {
         );
         self.install_builtin_module(
             "_io",
-            &[("open", BuiltinFunction::IoOpen)],
+            &[
+                ("open", BuiltinFunction::IoOpen),
+                ("open_code", BuiltinFunction::IoOpenCode),
+            ],
             vec![
                 {
                     let textio = self
@@ -6567,6 +6912,14 @@ impl Vm {
                         && let Object::Class(class_data) = &mut *class_ref.kind_mut()
                     {
                         Self::install_iobase_methods(class_data);
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            self.alloc_native_unbound_method(
+                                "__textiobase_unbound_method__",
+                                Value::None,
+                                NativeMethodKind::Builtin(BuiltinFunction::IoFileRead),
+                            ),
+                        );
                     }
                     ("TextIOBase", class)
                 },
@@ -6931,6 +7284,14 @@ impl Vm {
                 .attrs
                 .insert("utc".to_string(), Value::Instance(timezone_utc.clone()));
         }
+        let datetime_capi = if let Some(capsule_class) = self.types_module_class("CapsuleType") {
+            match self.heap.alloc_instance(InstanceObject::new(capsule_class)) {
+                Value::Instance(obj) => Value::Instance(obj),
+                _ => Value::None,
+            }
+        } else {
+            Value::None
+        };
         self.install_builtin_module(
             "_datetime",
             &[
@@ -6945,6 +7306,7 @@ impl Vm {
                 ("tzinfo", Value::Class(tzinfo_class)),
                 ("timezone", Value::Class(timezone_class)),
                 ("UTC", Value::Instance(timezone_utc)),
+                ("datetime_CAPI", datetime_capi),
                 ("MINYEAR", Value::Int(1)),
                 ("MAXYEAR", Value::Int(9999)),
             ],
@@ -7244,11 +7606,6 @@ impl Vm {
         );
         self.install_module_alias_from_existing("_signal", "signal");
         self.install_builtin_module(
-            "_suggestions",
-            &[("_generate_suggestions", BuiltinFunction::NoOp)],
-            Vec::new(),
-        );
-        self.install_builtin_module(
             "_symtable",
             &[("symtable", BuiltinFunction::NoOp)],
             vec![
@@ -7283,16 +7640,28 @@ impl Vm {
         self.install_builtin_module(
             "_tracemalloc",
             &[
-                ("start", BuiltinFunction::NoOp),
-                ("stop", BuiltinFunction::NoOp),
-                ("is_tracing", BuiltinFunction::Bool),
-                ("get_traceback_limit", BuiltinFunction::Int),
-                ("get_traced_memory", BuiltinFunction::Tuple),
-                ("get_tracemalloc_memory", BuiltinFunction::Int),
-                ("reset_peak", BuiltinFunction::NoOp),
-                ("clear_traces", BuiltinFunction::NoOp),
-                ("_get_traces", BuiltinFunction::List),
-                ("_get_object_traceback", BuiltinFunction::NoOp),
+                ("start", BuiltinFunction::TraceMallocStart),
+                ("stop", BuiltinFunction::TraceMallocStop),
+                ("is_tracing", BuiltinFunction::TraceMallocIsTracing),
+                (
+                    "get_traceback_limit",
+                    BuiltinFunction::TraceMallocGetTracebackLimit,
+                ),
+                (
+                    "get_traced_memory",
+                    BuiltinFunction::TraceMallocGetTracedMemory,
+                ),
+                (
+                    "get_tracemalloc_memory",
+                    BuiltinFunction::TraceMallocGetTraceMallocMemory,
+                ),
+                ("reset_peak", BuiltinFunction::TraceMallocResetPeak),
+                ("clear_traces", BuiltinFunction::TraceMallocClearTraces),
+                ("_get_traces", BuiltinFunction::TraceMallocGetTraces),
+                (
+                    "_get_object_traceback",
+                    BuiltinFunction::TraceMallocGetObjectTraceback,
+                ),
             ],
             Vec::new(),
         );
@@ -7382,7 +7751,6 @@ impl Vm {
                 ("S_IROTH", Value::Int(0o004)),
                 ("S_IWOTH", Value::Int(0o002)),
                 ("S_IXOTH", Value::Int(0o001)),
-                ("S_IFMT", Value::Int(0o170000)),
                 ("S_IFDIR", Value::Int(0o040000)),
                 ("S_IFCHR", Value::Int(0o020000)),
                 ("S_IFBLK", Value::Int(0o060000)),
@@ -7495,26 +7863,7 @@ impl Vm {
             ],
             vec![],
         );
-        self.install_builtin_module(
-            "_warnings",
-            &[
-                ("warn", BuiltinFunction::WarningsWarn),
-                ("warn_explicit", BuiltinFunction::WarningsWarnExplicit),
-                ("_filters_mutated", BuiltinFunction::WarningsFiltersMutated),
-                (
-                    "_filters_mutated_lock_held",
-                    BuiltinFunction::WarningsFiltersMutated,
-                ),
-                ("_acquire_lock", BuiltinFunction::WarningsAcquireLock),
-                ("_release_lock", BuiltinFunction::WarningsReleaseLock),
-            ],
-            vec![
-                ("_defaultaction", Value::Str("default".to_string())),
-                ("_onceregistry", self.heap.alloc_dict(Vec::new())),
-                ("_warnings_context", Value::None),
-                ("filters", self.heap.alloc_list(Vec::new())),
-            ],
-        );
+        self.install_warnings_fallback_module();
     }
 
     pub(super) fn sync_sys_path_from_module_paths(&mut self) {
@@ -7695,7 +8044,11 @@ impl Vm {
                     .join(" <- ")
             );
         }
-        self.modules.remove(name);
+        // Keep bootstrap `_types` resident so stdlib import_fresh paths can
+        // delete/re-import it without losing the module substrate.
+        if name != "_types" {
+            self.modules.remove(name);
+        }
         if matches!(name, "pickle" | "_pickle" | "copyreg") {
             self.pickle_symbol_cache.clear();
             self.pickle_copyreg_cache.clear();
@@ -8083,6 +8436,139 @@ impl Vm {
         );
     }
 
+    fn warning_class_value(&self, name: &str) -> Value {
+        self.modules
+            .get("builtins")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get(name).cloned(),
+                _ => None,
+            })
+            .or_else(|| self.builtins.get(name).cloned())
+            .unwrap_or(Value::None)
+    }
+
+    fn warnings_default_filter_entries(&mut self) -> Vec<Value> {
+        vec![
+            self.heap.alloc_tuple(vec![
+                Value::Str("default".to_string()),
+                Value::None,
+                self.warning_class_value("DeprecationWarning"),
+                Value::Str("__main__".to_string()),
+                Value::Int(0),
+            ]),
+            self.heap.alloc_tuple(vec![
+                Value::Str("ignore".to_string()),
+                Value::None,
+                self.warning_class_value("DeprecationWarning"),
+                Value::None,
+                Value::Int(0),
+            ]),
+            self.heap.alloc_tuple(vec![
+                Value::Str("ignore".to_string()),
+                Value::None,
+                self.warning_class_value("PendingDeprecationWarning"),
+                Value::None,
+                Value::Int(0),
+            ]),
+            self.heap.alloc_tuple(vec![
+                Value::Str("ignore".to_string()),
+                Value::None,
+                self.warning_class_value("ImportWarning"),
+                Value::None,
+                Value::Int(0),
+            ]),
+            self.heap.alloc_tuple(vec![
+                Value::Str("ignore".to_string()),
+                Value::None,
+                self.warning_class_value("ResourceWarning"),
+                Value::None,
+                Value::Int(0),
+            ]),
+        ]
+    }
+
+    pub(super) fn refresh_warnings_fallback_defaults(&mut self) {
+        let Some(module) = self.modules.get("_warnings").cloned() else {
+            return;
+        };
+        let entries = self.warnings_default_filter_entries();
+        let filters = self.heap.alloc_list(entries);
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data.globals.insert("filters".to_string(), filters);
+        }
+    }
+
+    fn install_warnings_fallback_module(&mut self) {
+        if self.modules.contains_key("_warnings") {
+            return;
+        }
+        let default_filters = self.warnings_default_filter_entries();
+        self.install_builtin_module(
+            "_warnings",
+            &[
+                ("warn", BuiltinFunction::WarningsWarn),
+                ("warn_explicit", BuiltinFunction::WarningsWarnExplicit),
+                ("_filters_mutated", BuiltinFunction::WarningsFiltersMutated),
+                (
+                    "_filters_mutated_lock_held",
+                    BuiltinFunction::WarningsFiltersMutated,
+                ),
+                ("_acquire_lock", BuiltinFunction::WarningsAcquireLock),
+                ("_release_lock", BuiltinFunction::WarningsReleaseLock),
+            ],
+            vec![
+                ("_defaultaction", Value::Str("default".to_string())),
+                ("_onceregistry", self.heap.alloc_dict(Vec::new())),
+                ("_warnings_context", Value::None),
+                ("filters", self.heap.alloc_list(default_filters)),
+            ],
+        );
+        self.refresh_warnings_fallback_defaults();
+    }
+
+    fn install_queue_fallback_module(&mut self) {
+        if self.modules.contains_key("_queue") {
+            return;
+        }
+        let bases = match self.builtins.get("object").cloned() {
+            Some(Value::Class(object_class)) => vec![object_class],
+            _ => Vec::new(),
+        };
+        let simple_queue_class = match self
+            .heap
+            .alloc_class(ClassObject::new("SimpleQueue".to_string(), bases))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *simple_queue_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_queue".to_string()));
+            class_data.attrs.insert(
+                "__qualname__".to_string(),
+                Value::Str("SimpleQueue".to_string()),
+            );
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::ObjectInit),
+            );
+            class_data.attrs.insert(
+                "put".to_string(),
+                self.alloc_native_unbound_method(
+                    "__queue_unbound_method__",
+                    Value::Class(simple_queue_class.clone()),
+                    NativeMethodKind::QueueSimpleQueuePut,
+                ),
+            );
+        }
+        self.install_builtin_module(
+            "_queue",
+            &[],
+            vec![("SimpleQueue", Value::Class(simple_queue_class))],
+        );
+    }
+
     fn install_builtin_import_fallback(&mut self, name: &str) -> Result<bool, RuntimeError> {
         match name {
             "abc" => {
@@ -8109,6 +8595,21 @@ impl Vm {
                 self.install_atexit_fallback_module();
                 Ok(self.modules.contains_key("atexit"))
             }
+            "_types" => {
+                if !self.modules.contains_key("_types") {
+                    self.install_module_alias_from_existing("_types", "types");
+                }
+                Ok(self.modules.contains_key("_types"))
+            }
+            "_warnings" => {
+                self.install_warnings_fallback_module();
+                self.refresh_warnings_fallback_defaults();
+                Ok(self.modules.contains_key("_warnings"))
+            }
+            "_queue" => {
+                self.install_queue_fallback_module();
+                Ok(self.modules.contains_key("_queue"))
+            }
             _ => Ok(false),
         }
     }
@@ -8118,6 +8619,9 @@ impl Vm {
             eprintln!("[module-load] {name}");
         }
         if let Some(module) = self.modules.get(name).cloned() {
+            if name == "_warnings" {
+                self.refresh_warnings_fallback_defaults();
+            }
             if !self.module_requires_realization(name, &module) {
                 return Ok(module);
             }
@@ -8284,7 +8788,7 @@ impl Vm {
                         let cells = self.build_cells(&code, Vec::new());
                         let mut frame = Frame::new(code, module.clone(), true, false, cells, None);
                         frame.discard_result = true;
-                        self.frames.push(Box::new(frame));
+                        self.push_frame_checked(Box::new(frame))?;
                         Ok(())
                     }
                     Err(pyc_err) => {
@@ -8473,17 +8977,230 @@ impl Vm {
         }
     }
 
-    pub(super) fn make_file_finder_importer(&self, root: &std::path::Path) -> Value {
-        self.heap.alloc_dict(vec![
-            (
-                Value::Str("kind".to_string()),
+    fn try_make_cpython_file_finder_importer(&mut self, root: &std::path::Path) -> Option<Value> {
+        let trace = std::env::var_os("PYRS_TRACE_FILE_FINDER_HOOK").is_some();
+        let machinery = if let Some(module) = self.modules.get("importlib.machinery").cloned() {
+            module
+        } else if let Some(modules_dict) = self.sys_dict_obj("modules") {
+            match dict_get_value(
+                &modules_dict,
+                &Value::Str("importlib.machinery".to_string()),
+            ) {
+                Some(Value::Module(module)) => {
+                    if trace {
+                        eprintln!(
+                            "[file-finder] recovered importlib.machinery from sys.modules for root {}",
+                            root.to_string_lossy()
+                        );
+                    }
+                    module
+                }
+                _ => {
+                    if trace {
+                        let in_sys_modules = self
+                            .sys_dict_obj("modules")
+                            .is_some_and(|modules| {
+                                dict_get_value(
+                                    &modules,
+                                    &Value::Str("importlib.machinery".to_string()),
+                                )
+                                .is_some()
+                            });
+                        eprintln!(
+                            "[file-finder] importlib.machinery missing for root {} (present_in_sys_modules={})",
+                            root.to_string_lossy(),
+                            in_sys_modules
+                        );
+                    }
+                    return None;
+                }
+            }
+        } else {
+            if trace {
+                eprintln!(
+                    "[file-finder] importlib.machinery missing for root {} (sys.modules unavailable)",
+                    root.to_string_lossy()
+                );
+            }
+            return None;
+        };
+        let module_value = Value::Module(machinery);
+        let load_attr = |vm: &mut Vm, module_value: &Value, name: &str| -> Option<Value> {
+            match vm.builtin_getattr(
+                vec![module_value.clone(), Value::Str(name.to_string())],
+                HashMap::new(),
+            ) {
+                Ok(value) => Some(value),
+                Err(_) => {
+                    if trace {
+                        eprintln!("[file-finder] missing attr {}", name);
+                    }
+                    vm.clear_active_exception();
+                    None
+                }
+            }
+        };
+        let file_finder = load_attr(self, &module_value, "FileFinder")?;
+        if trace {
+            let detail = match &file_finder {
+                Value::Class(class) => match &*class.kind() {
+                    Object::Class(class_data) => {
+                        let module_name = class_data
+                            .attrs
+                            .get("__module__")
+                            .and_then(|value| match value {
+                                Value::Str(text) => Some(text.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| "<none>".to_string());
+                        format!("class {}.{}", module_name, class_data.name)
+                    }
+                    _ => "class <unknown>".to_string(),
+                },
+                _ => self.value_type_name_for_error(&file_finder),
+            };
+            eprintln!("[file-finder] FileFinder attr {}", detail);
+        }
+        let source_loader = load_attr(self, &module_value, "SourceFileLoader")?;
+        let source_suffixes = load_attr(self, &module_value, "SOURCE_SUFFIXES")?;
+        let mut args = vec![
+            Value::Str(root.to_string_lossy().to_string()),
+            self.heap.alloc_tuple(vec![source_loader, source_suffixes]),
+        ];
+        if let (Some(sourceless_loader), Some(bytecode_suffixes)) = (
+            load_attr(self, &module_value, "SourcelessFileLoader"),
+            load_attr(self, &module_value, "BYTECODE_SUFFIXES"),
+        ) {
+            args.push(self.heap.alloc_tuple(vec![sourceless_loader, bytecode_suffixes]));
+        }
+        match self.call_internal(file_finder, args, HashMap::new()) {
+            Ok(InternalCallOutcome::Value(importer)) => {
+                if trace {
+                    eprintln!(
+                        "[file-finder] constructor returned {}",
+                        self.value_type_name_for_error(&importer)
+                    );
+                }
+                Some(importer)
+            }
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                if trace {
+                    eprintln!("[file-finder] constructor handled exception");
+                }
+                self.clear_active_exception();
+                None
+            }
+            Err(err) => {
+                if trace {
+                    eprintln!("[file-finder] constructor error: {}", err.message);
+                }
+                None
+            }
+        }
+    }
+
+    fn make_file_finder_importer_fallback(&self, root: &std::path::Path) -> Value {
+        let mut bases = Vec::new();
+        if let Some(file_finder_class) = self.loader_class_from_modules("FileFinder") {
+            bases.push(file_finder_class);
+        }
+        let class = match self
+            .heap
+            .alloc_class(ClassObject::new("FileFinder".to_string(), bases))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("importlib.machinery".to_string()),
+            );
+            class_data.attrs.insert(
+                "find_spec".to_string(),
+                Value::Builtin(BuiltinFunction::ImportlibFileFinderFindSpec),
+            );
+            class_data
+                .attrs
+                .insert("invalidate_caches".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+        }
+        let importer = match self.heap.alloc_instance(InstanceObject::new(class)) {
+            Value::Instance(instance) => instance,
+            _ => unreachable!(),
+        };
+        if let Object::Instance(instance_data) = &mut *importer.kind_mut() {
+            instance_data.attrs.insert(
+                "kind".to_string(),
                 Value::Str(DEFAULT_PATH_HOOK.to_string()),
-            ),
-            (
-                Value::Str("path".to_string()),
+            );
+            instance_data.attrs.insert(
+                "path".to_string(),
                 Value::Str(root.to_string_lossy().to_string()),
-            ),
-        ])
+            );
+        }
+        Value::Instance(importer)
+    }
+
+    pub(super) fn make_file_finder_importer(&mut self, root: &std::path::Path) -> Value {
+        let trace = std::env::var_os("PYRS_TRACE_FILE_FINDER_HOOK").is_some();
+        if let Some(importer) = self.try_make_cpython_file_finder_importer(root) {
+            if trace {
+                eprintln!(
+                    "[file-finder] using canonical finder for root {}",
+                    root.to_string_lossy()
+                );
+            }
+            importer
+        } else {
+            if trace {
+                eprintln!(
+                    "[file-finder] using fallback finder for root {}",
+                    root.to_string_lossy()
+                );
+            }
+            self.make_file_finder_importer_fallback(root)
+        }
+    }
+
+    fn importer_kind_and_root(importer: &Value) -> Option<(String, PathBuf)> {
+        match importer {
+            Value::Dict(dict) => {
+                let kind = match dict_get_value(dict, &Value::Str("kind".to_string())) {
+                    Some(Value::Str(kind)) => kind,
+                    _ => return None,
+                };
+                let root = match dict_get_value(dict, &Value::Str("path".to_string())) {
+                    Some(Value::Str(path)) => PathBuf::from(path),
+                    _ => return None,
+                };
+                Some((kind, root))
+            }
+            Value::Instance(instance) => {
+                let instance_kind = instance.kind();
+                let Object::Instance(instance_data) = &*instance_kind else {
+                    return None;
+                };
+                let root = match instance_data.attrs.get("path") {
+                    Some(Value::Str(path)) => PathBuf::from(path),
+                    _ => return None,
+                };
+                let kind = if let Some(Value::Str(kind)) = instance_data.attrs.get("kind") {
+                    kind.clone()
+                } else {
+                    let class_kind = instance_data.class.kind();
+                    let Object::Class(class_data) = &*class_kind else {
+                        return None;
+                    };
+                    if class_data.name == "FileFinder" {
+                        DEFAULT_PATH_HOOK.to_string()
+                    } else {
+                        return None;
+                    }
+                };
+                Some((kind, root))
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn find_module_source_with_importer(
@@ -8491,21 +9208,10 @@ impl Vm {
         importer: &Value,
         module_name: &str,
     ) -> Option<ModuleSourceInfo> {
-        let importer_dict = match importer {
-            Value::Dict(dict) => dict.clone(),
-            _ => return None,
-        };
-        let kind = match dict_get_value(&importer_dict, &Value::Str("kind".to_string())) {
-            Some(Value::Str(kind)) => kind,
-            _ => return None,
-        };
+        let (kind, root) = Self::importer_kind_and_root(importer)?;
         if kind != DEFAULT_PATH_HOOK {
             None
         } else {
-            let root = match dict_get_value(&importer_dict, &Value::Str("path".to_string())) {
-                Some(Value::Str(path)) => PathBuf::from(path),
-                _ => return None,
-            };
             self.find_module_source_in_single_root(module_name, &root)
         }
     }
@@ -8865,9 +9571,6 @@ impl Vm {
                 .map(|(parent, _)| parent.to_string())
                 .unwrap_or_default()
         };
-        let loader_value = loader_name
-            .map(|loader| Value::Str(loader.to_string()))
-            .unwrap_or(Value::None);
         let origin_value = origin
             .map(|path| Value::Str(path.to_string_lossy().to_string()))
             .unwrap_or(Value::None);
@@ -8892,6 +9595,30 @@ impl Vm {
             package_dirs.as_slice(),
             is_namespace,
         );
+        let loader_value = match &spec_value {
+            Value::Module(spec_obj) => match &*spec_obj.kind() {
+                Object::Module(module_data) => {
+                    module_data.globals.get("loader").cloned().unwrap_or(Value::None)
+                }
+                _ => Value::None,
+            },
+            Value::Dict(spec_obj) => match &*spec_obj.kind() {
+                Object::Dict(entries) => entries
+                    .find(&Value::Str("loader".to_string()))
+                    .cloned()
+                    .unwrap_or(Value::None),
+                _ => Value::None,
+            },
+            Value::Instance(spec_obj) => match &*spec_obj.kind() {
+                Object::Instance(instance_data) => instance_data
+                    .attrs
+                    .get("loader")
+                    .cloned()
+                    .unwrap_or(Value::None),
+                _ => Value::None,
+            },
+            _ => Value::None,
+        };
 
         if let Object::Module(module_data) = &mut *module.kind_mut() {
             module_data
@@ -8953,10 +9680,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn loader_spec_value(&mut self, loader_name: Option<&str>) -> Value {
-        let Some(loader_name) = loader_name else {
-            return Value::None;
-        };
+    fn fallback_loader_spec_value(&mut self, loader_name: &str) -> Value {
         let class_name = loader_name
             .rsplit_once('.')
             .map(|(_, name)| name)
@@ -8984,6 +9708,99 @@ impl Vm {
         self.heap.alloc_instance(InstanceObject::new(class))
     }
 
+    fn loader_class_from_modules(&self, class_name: &str) -> Option<ObjRef> {
+        for module_name in [
+            "importlib.machinery",
+            "_frozen_importlib_external",
+            "_frozen_importlib",
+        ] {
+            let Some(module) = self.modules.get(module_name) else {
+                continue;
+            };
+            let Object::Module(module_data) = &*module.kind() else {
+                continue;
+            };
+            if let Some(Value::Class(class)) = module_data.globals.get(class_name) {
+                return Some(class.clone());
+            }
+        }
+        None
+    }
+
+    fn instantiate_loader_class(&mut self, class: ObjRef, args: Vec<Value>) -> Option<Value> {
+        match self.call_internal(Value::Class(class), args, HashMap::new()) {
+            Ok(InternalCallOutcome::Value(value)) => Some(value),
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                self.clear_active_exception();
+                None
+            }
+            Err(_) => None,
+        }
+    }
+
+    pub(super) fn loader_spec_value_for_module(
+        &mut self,
+        module_name: &str,
+        origin: Option<&PathBuf>,
+        loader_name: Option<&str>,
+        package_dirs: &[PathBuf],
+        _is_namespace: bool,
+    ) -> Value {
+        let Some(loader_name) = loader_name else {
+            return Value::None;
+        };
+        let class_name = loader_name
+            .rsplit_once('.')
+            .map(|(_, name)| name)
+            .unwrap_or(loader_name);
+        let Some(loader_class) = self.loader_class_from_modules(class_name) else {
+            return self.fallback_loader_spec_value(loader_name);
+        };
+
+        match loader_name {
+            BUILTIN_MODULE_LOADER => Value::Class(loader_class),
+            SOURCE_FILE_LOADER | SOURCELESS_FILE_LOADER | EXTENSION_FILE_LOADER => {
+                let Some(path) = origin else {
+                    return self.fallback_loader_spec_value(loader_name);
+                };
+                self.instantiate_loader_class(
+                    loader_class,
+                    vec![
+                        Value::Str(module_name.to_string()),
+                        Value::Str(path.to_string_lossy().to_string()),
+                    ],
+                )
+                .unwrap_or_else(|| self.fallback_loader_spec_value(loader_name))
+            }
+            NAMESPACE_LOADER => {
+                let search_locations = self.heap.alloc_list(
+                    package_dirs
+                        .iter()
+                        .map(|dir| Value::Str(dir.to_string_lossy().to_string()))
+                        .collect(),
+                );
+                let path_finder = self
+                    .loader_class_from_modules("PathFinder")
+                    .map(Value::Class)
+                    .unwrap_or(Value::None);
+                self.instantiate_loader_class(
+                    loader_class,
+                    vec![
+                        Value::Str(module_name.to_string()),
+                        search_locations,
+                        path_finder,
+                    ],
+                )
+                .unwrap_or_else(|| self.fallback_loader_spec_value(loader_name))
+            }
+            _ => self.fallback_loader_spec_value(loader_name),
+        }
+    }
+
+    pub(super) fn loader_spec_value(&mut self, loader_name: Option<&str>) -> Value {
+        self.loader_spec_value_for_module("", None, loader_name, &[], false)
+    }
+
     pub(super) fn build_module_spec_value(
         &mut self,
         name: &str,
@@ -8998,7 +9815,13 @@ impl Vm {
             .rsplit_once('.')
             .map(|(parent, _)| parent.to_string())
             .unwrap_or_default();
-        let loader_value = self.loader_spec_value(loader_name);
+        let loader_value = self.loader_spec_value_for_module(
+            name,
+            origin,
+            loader_name,
+            package_dirs,
+            is_namespace,
+        );
         let origin_value = origin
             .map(|path| Value::Str(path.to_string_lossy().to_string()))
             .unwrap_or(Value::None);
@@ -9134,7 +9957,9 @@ impl Vm {
                     }
                 }
                 Some(Value::None) => {
-                    self.modules.remove(name);
+                    if name != "_types" {
+                        self.modules.remove(name);
+                    }
                     return Err(RuntimeError::module_not_found_error(format!(
                         "No module named '{}'",
                         name
@@ -9158,7 +9983,13 @@ impl Vm {
                 .get(name)
                 .is_some_and(Self::module_is_initializing);
             if !keep_cached_initializing {
-                self.modules.remove(name);
+                let preserve_builtin = self.modules.get(name).cloned().is_some_and(|module| {
+                    Self::module_loader_name(&module).as_deref() == Some(BUILTIN_MODULE_LOADER)
+                        && !self.should_prefer_filesystem_module(name, &module)
+                });
+                if !preserve_builtin {
+                    self.modules.remove(name);
+                }
             }
         }
         if let Some(module) = self.modules.get(name).cloned() {
@@ -9249,6 +10080,9 @@ impl Vm {
         let stale = module_entries
             .iter()
             .filter_map(|(name, module)| {
+                if name == "_types" {
+                    return None;
+                }
                 if present.contains(name) {
                     return None;
                 }
@@ -9626,8 +10460,39 @@ impl Vm {
         let Object::Module(module_data) = &*module_kind else {
             return None;
         };
-        match module_data.globals.get("__loader__") {
-            Some(Value::Str(name)) => Some(name.clone()),
+        let loader = module_data.globals.get("__loader__")?;
+        Self::loader_name_from_value(loader)
+    }
+
+    fn loader_name_from_value(loader: &Value) -> Option<String> {
+        match loader {
+            Value::Str(name) => Self::canonicalize_loader_name(name),
+            Value::Class(class_obj) => match &*class_obj.kind() {
+                Object::Class(class_data) => Self::canonicalize_loader_name(&class_data.name),
+                _ => None,
+            },
+            Value::Instance(instance_obj) => match &*instance_obj.kind() {
+                Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                    Object::Class(class_data) => Self::canonicalize_loader_name(&class_data.name),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn canonicalize_loader_name(name: &str) -> Option<String> {
+        if name.starts_with("pyrs.") {
+            return Some(name.to_string());
+        }
+        let short = name.rsplit('.').next().unwrap_or(name);
+        match short {
+            "BuiltinLoader" | "BuiltinImporter" => Some(BUILTIN_MODULE_LOADER.to_string()),
+            "SourceFileLoader" => Some(SOURCE_FILE_LOADER.to_string()),
+            "SourcelessFileLoader" => Some(SOURCELESS_FILE_LOADER.to_string()),
+            "NamespaceLoader" => Some(NAMESPACE_LOADER.to_string()),
+            "ExtensionFileLoader" | "ExtensionLoader" => Some(EXTENSION_FILE_LOADER.to_string()),
             _ => None,
         }
     }
@@ -9642,7 +10507,7 @@ impl Vm {
             name,
             "re" | "re._compiler" | "re._constants" | "re._parser" | "re._casefix"
         );
-        let is_collections_stack = matches!(name, "collections.abc");
+        let is_collections_stack = matches!(name, "collections" | "collections.abc");
         let is_decimal_stack = name == "decimal";
         let is_functools_stack = name == "functools";
         let is_types_stack = matches!(name, "types" | "typing");
@@ -9711,7 +10576,81 @@ impl Vm {
         fallback
     }
 
+    fn refresh_module_spec_loader(&mut self, name: &str, module: &ObjRef) {
+        let Some(loader_name) = Self::module_loader_name(module) else {
+            return;
+        };
+        if !matches!(
+            loader_name.as_str(),
+            SOURCE_FILE_LOADER
+                | SOURCELESS_FILE_LOADER
+                | NAMESPACE_LOADER
+                | BUILTIN_MODULE_LOADER
+                | EXTENSION_FILE_LOADER
+        ) {
+            return;
+        }
+        let (origin, package_dirs) = match &*module.kind() {
+            Object::Module(module_data) => {
+                let origin = match module_data.globals.get("__file__") {
+                    Some(Value::Str(path)) => Some(PathBuf::from(path)),
+                    _ => None,
+                };
+                let package_dirs = match module_data.globals.get("__path__") {
+                    Some(Value::List(paths)) => match &*paths.kind() {
+                        Object::List(entries) => entries
+                            .iter()
+                            .filter_map(|entry| match entry {
+                                Value::Str(path) => Some(PathBuf::from(path)),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>(),
+                        _ => Vec::new(),
+                    },
+                    _ => Vec::new(),
+                };
+                (origin, package_dirs)
+            }
+            _ => return,
+        };
+        let loader_value = self.loader_spec_value_for_module(
+            name,
+            origin.as_ref(),
+            Some(loader_name.as_str()),
+            package_dirs.as_slice(),
+            loader_name == NAMESPACE_LOADER,
+        );
+        if matches!(loader_value, Value::None) {
+            return;
+        }
+        let spec = match &*module.kind() {
+            Object::Module(module_data) => module_data.globals.get("__spec__").cloned(),
+            _ => None,
+        };
+        if let Some(spec) = spec {
+            self.set_module_spec_field(&spec, "loader", loader_value.clone());
+        }
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data
+                .globals
+                .insert("__loader__".to_string(), loader_value);
+        }
+    }
+
     fn apply_post_import_fixups(&mut self, name: &str, module: &ObjRef) {
+        if self.modules.contains_key("importlib.machinery") {
+            self.refresh_module_spec_loader(name, module);
+        }
+        if name == "importlib.machinery" {
+            let module_rows: Vec<(String, ObjRef)> = self
+                .modules
+                .iter()
+                .map(|(module_name, module)| (module_name.clone(), module.clone()))
+                .collect();
+            for (module_name, module_obj) in module_rows {
+                self.refresh_module_spec_loader(&module_name, &module_obj);
+            }
+        }
         if name == "_threading_local" {
             let local_class = match &*module.kind() {
                 Object::Module(module_data) => module_data.globals.get("local").cloned(),

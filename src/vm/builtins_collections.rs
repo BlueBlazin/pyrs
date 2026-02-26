@@ -1,12 +1,12 @@
 use super::{
     BoundMethod, BuiltinFunction, ClassObject, DEQUE_BACKING_STORAGE_ATTR, GeneratorResumeOutcome,
-    HashMap, Heap, InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, ModuleObject,
-    NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values, and_values,
-    binary_operator, bytes_like_from_value, class_attr_lookup, class_name_for_instance, compare_ge,
-    compare_gt, compare_le, compare_lt, dict_get_value, dict_remove_value, dict_set_value_checked,
-    div_values, ensure_hashable, floor_div_values, format_repr, format_value,
-    is_missing_attribute_error, is_truthy, lshift_values, mod_values, mul_values, or_values,
-    pow_values, rshift_values, sub_values, unary_predicate, value_to_int, xor_values,
+    HashMap, Heap, InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject,
+    MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeMethodKind, ObjRef, Object, RuntimeError,
+    Value, Vm, add_values, and_values, binary_operator, bytes_like_from_value, class_attr_lookup,
+    class_name_for_instance, compare_ge, compare_gt, compare_le, compare_lt, dict_get_value,
+    dict_remove_value, dict_set_value_checked, div_values, ensure_hashable, floor_div_values,
+    format_repr, is_missing_attribute_error, is_truthy, lshift_values, mod_values,
+    mul_values, pow_values, rshift_values, sub_values, unary_predicate, value_to_int, xor_values,
 };
 use crate::runtime::FunctionObject;
 
@@ -78,7 +78,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         binary_operator(args, kwargs, |left, right| {
-            or_values(left, right, &self.heap)
+            self.binary_or_runtime(left, right)
         })
     }
 
@@ -2837,12 +2837,18 @@ impl Vm {
         let mut parts = Vec::new();
         let mut return_annotation = signature_empty;
 
-        let make_param =
+        let mut make_param =
             |name: String, kind: &str, default: Option<Value>| -> (String, (Value, Value)) {
                 let has_default = default.is_some();
                 let default_value = default.unwrap_or_else(|| parameter_empty.clone());
                 let rendered = if has_default {
-                    format!("{name}={}", format_value(&default_value))
+                    let default_text = match self
+                        .builtin_repr(vec![default_value.clone()], HashMap::new())
+                    {
+                        Ok(Value::Str(text)) => text,
+                        _ => format_repr(&default_value),
+                    };
+                    format!("{name}={default_text}")
                 } else {
                     name.clone()
                 };
@@ -2979,6 +2985,38 @@ impl Vm {
 
         match callable {
             Value::Function(func) => populate_from_function(func, false)?,
+            Value::BoundMethod(method_obj) => {
+                let mut handled_native_descriptor = false;
+                if let Object::BoundMethod(method_data) = &*method_obj.kind()
+                    && let Object::NativeMethod(native) = &*method_data.function.kind()
+                    && native.kind == NativeMethodKind::FunctionDescriptorGet
+                    && let Object::Module(module_data) = &*method_data.receiver.kind()
+                    && module_data.name == "__builtin_descriptor__"
+                {
+                    let (instance_rendered, instance_entry) =
+                        make_param("instance".to_string(), "POSITIONAL_OR_KEYWORD", None);
+                    parts.push(instance_rendered);
+                    params.push(instance_entry);
+                    let (owner_rendered, owner_entry) = make_param(
+                        "owner".to_string(),
+                        "POSITIONAL_OR_KEYWORD",
+                        Some(Value::None),
+                    );
+                    parts.push(owner_rendered);
+                    params.push(owner_entry);
+                    handled_native_descriptor = true;
+                }
+                if !handled_native_descriptor && text_signature_override.is_none() {
+                    let (args_rendered, args_entry) =
+                        make_param("args".to_string(), "VAR_POSITIONAL", None);
+                    parts.push(format!("*{args_rendered}"));
+                    params.push(args_entry);
+                    let (kwargs_rendered, kwargs_entry) =
+                        make_param("kwargs".to_string(), "VAR_KEYWORD", None);
+                    parts.push(format!("**{kwargs_rendered}"));
+                    params.push(kwargs_entry);
+                }
+            }
             Value::Class(class_ref) => {
                 if let Some(Value::Function(func)) = class_attr_lookup(&class_ref, "__init__") {
                     populate_from_function(func, true)?;
@@ -3257,6 +3295,46 @@ impl Vm {
             Some(Value::Str(text)) => Ok(Value::Str(format!("<Signature {text}>"))),
             _ => Ok(Value::Str("<Signature instance>".to_string())),
         }
+    }
+
+    pub(super) fn builtin_inspect_signature_eq(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "Signature.__eq__() expects one argument",
+            ));
+        }
+        let left = self.receiver_from_value(&args[0])?;
+        let Value::Instance(right) = &args[1] else {
+            return Ok(Value::Bool(false));
+        };
+        let is_right_signature = match &*right.kind() {
+            Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                Object::Class(class_data) => class_data.name == "Signature",
+                _ => false,
+            },
+            _ => false,
+        };
+        if !is_right_signature {
+            return Ok(Value::Bool(false));
+        }
+        let left_text = Self::instance_attr_get(&left, "__text__").unwrap_or(Value::None);
+        let right_text = Self::instance_attr_get(right, "__text__").unwrap_or(Value::None);
+        let text_compare = self.compare_eq_runtime(left_text, right_text)?;
+        let text_equal = self.truthy_from_value(&text_compare)?;
+        if !text_equal {
+            return Ok(Value::Bool(false));
+        }
+        let left_return =
+            Self::instance_attr_get(&left, "return_annotation").unwrap_or(Value::None);
+        let right_return =
+            Self::instance_attr_get(right, "return_annotation").unwrap_or(Value::None);
+        let return_compare = self.compare_eq_runtime(left_return, right_return)?;
+        let return_equal = self.truthy_from_value(&return_compare)?;
+        Ok(Value::Bool(return_equal))
     }
 
     pub(super) fn builtin_inspect_signature_replace(
@@ -3569,6 +3647,46 @@ impl Vm {
         unary_predicate(args, kwargs, |value| matches!(value, Value::BoundMethod(_)))
     }
 
+    pub(super) fn builtin_inspect_markcoroutinefunction(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("markcoroutinefunction() expects one argument"));
+        }
+        let mut target = args.remove(0);
+        let bound_function = if let Value::BoundMethod(method) = &target {
+            match &*method.kind() {
+                Object::BoundMethod(method_data)
+                    if matches!(&*method_data.function.kind(), Object::Function(_)) =>
+                {
+                    Some(method_data.function.clone())
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(function) = bound_function {
+            target = Value::Function(function);
+        }
+        if let Some(unbound) = self.optional_getattr_value(target.clone(), "__func__")?
+            && matches!(unbound, Value::Function(_))
+        {
+            target = unbound;
+        }
+        self.builtin_setattr(
+            vec![
+                target.clone(),
+                Value::Str("_is_coroutine_marker".to_string()),
+                Value::Bool(true),
+            ],
+            HashMap::new(),
+        )?;
+        Ok(target)
+    }
+
     pub(super) fn builtin_inspect_isroutine(
         &mut self,
         args: Vec<Value>,
@@ -3767,6 +3885,50 @@ impl Vm {
         })
     }
 
+    pub(super) fn builtin_inspect_iscoroutinefunction(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("predicate expects one argument"));
+        }
+        let value = args.remove(0);
+        let code_marks_coroutine = match &value {
+            Value::Function(func) => match &*func.kind() {
+                Object::Function(function_data) => function_data.code.is_coroutine,
+                _ => false,
+            },
+            Value::BoundMethod(method) => match &*method.kind() {
+                Object::BoundMethod(method_data) => match &*method_data.function.kind() {
+                    Object::Function(function_data) => function_data.code.is_coroutine,
+                    _ => false,
+                },
+                _ => false,
+            },
+            _ => false,
+        };
+        if code_marks_coroutine {
+            return Ok(Value::Bool(true));
+        }
+        let marker_target = match &value {
+            Value::BoundMethod(method) => match &*method.kind() {
+                Object::BoundMethod(method_data)
+                    if matches!(&*method_data.function.kind(), Object::Function(_)) =>
+                {
+                    Value::Function(method_data.function.clone())
+                }
+                _ => value.clone(),
+            },
+            _ => value.clone(),
+        };
+        let has_marker = self
+            .optional_getattr_value(marker_target, "_is_coroutine_marker")?
+            .map(|marker| is_truthy(&marker))
+            .unwrap_or(false);
+        Ok(Value::Bool(has_marker))
+    }
+
     pub(super) fn builtin_inspect_isawaitable(
         &mut self,
         args: Vec<Value>,
@@ -3865,6 +4027,325 @@ impl Vm {
                 "_get_dunder_dict_of_class() expects a class-like argument",
             )),
         }
+    }
+
+    fn simple_namespace_not_implemented(&self) -> Value {
+        self.builtins
+            .get("NotImplemented")
+            .cloned()
+            .unwrap_or(Value::None)
+    }
+
+    fn is_simple_namespace_instance(&self, instance: &ObjRef) -> bool {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return false;
+        };
+        self.class_mro_entries(&instance_data.class)
+            .iter()
+            .any(|class_ref| {
+                matches!(&*class_ref.kind(), Object::Class(class_data) if class_data.name == "SimpleNamespace")
+            })
+    }
+
+    fn simple_namespace_ordered_kwargs(
+        &self,
+        mut kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
+    ) -> Vec<(String, Value)> {
+        let mut ordered = Vec::with_capacity(kwargs.len());
+        if let Some(order) = kwargs_order {
+            for name in order {
+                if let Some(value) = kwargs.remove(&name) {
+                    ordered.push((name, value));
+                }
+            }
+        }
+        ordered.extend(kwargs);
+        ordered
+    }
+
+    fn simple_namespace_dict(&mut self, instance: &ObjRef) -> Result<ObjRef, RuntimeError> {
+        let dict_value = self.builtin_getattr(
+            vec![
+                Value::Instance(instance.clone()),
+                Value::Str("__dict__".to_string()),
+            ],
+            HashMap::new(),
+        )?;
+        match dict_value {
+            Value::Dict(dict_obj) => Ok(dict_obj),
+            _ => Err(RuntimeError::type_error(
+                "SimpleNamespace.__dict__ is not a dict",
+            )),
+        }
+    }
+
+    fn simple_namespace_assign_attr(
+        &mut self,
+        instance: &ObjRef,
+        key: String,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        self.builtin_setattr(
+            vec![Value::Instance(instance.clone()), Value::Str(key), value],
+            HashMap::new(),
+        )?;
+        Ok(())
+    }
+
+    fn simple_namespace_assign_key_value(
+        &mut self,
+        instance: &ObjRef,
+        key: Value,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        let Value::Str(key) = key else {
+            return Err(RuntimeError::type_error(
+                "SimpleNamespace() keyword names must be strings",
+            ));
+        };
+        self.simple_namespace_assign_attr(instance, key, value)
+    }
+
+    fn simple_namespace_apply_source(
+        &mut self,
+        instance: &ObjRef,
+        source: Value,
+    ) -> Result<(), RuntimeError> {
+        match source.clone() {
+            Value::Dict(dict_obj) => {
+                let Object::Dict(entries) = &*dict_obj.kind() else {
+                    return Err(RuntimeError::type_error(
+                        "SimpleNamespace() source mapping is invalid",
+                    ));
+                };
+                for (key, value) in entries.iter() {
+                    self.simple_namespace_assign_key_value(instance, key.clone(), value.clone())?;
+                }
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        match self.builtin_getattr(
+            vec![source.clone(), Value::Str("keys".to_string())],
+            HashMap::new(),
+        ) {
+            Ok(keys_method) => {
+                let keys_iterable =
+                    match self.call_internal(keys_method, Vec::new(), HashMap::new())? {
+                        InternalCallOutcome::Value(value) => value,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(self.runtime_error_from_active_exception(
+                                "SimpleNamespace() keys() failed",
+                            ));
+                        }
+                    };
+                for key in self.collect_iterable_values(keys_iterable)? {
+                    let mapped_value = self.builtin_operator_getitem(
+                        vec![source.clone(), key.clone()],
+                        HashMap::new(),
+                    )?;
+                    self.simple_namespace_assign_key_value(instance, key, mapped_value)?;
+                }
+                Ok(())
+            }
+            Err(err) => {
+                if !is_missing_attribute_error(&err) {
+                    return Err(err);
+                }
+                for pair in self.collect_iterable_values(source)? {
+                    let values = self.collect_iterable_values(pair)?;
+                    if values.len() != 2 {
+                        return Err(RuntimeError::value_error(format!(
+                            "dictionary update sequence element has length {}; 2 is required",
+                            values.len()
+                        )));
+                    }
+                    let mut values_iter = values.into_iter();
+                    let key = values_iter.next().expect("len checked");
+                    let value = values_iter.next().expect("len checked");
+                    self.simple_namespace_assign_key_value(instance, key, value)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn simple_namespace_entries(
+        &mut self,
+        instance: &ObjRef,
+    ) -> Result<Vec<(String, Value)>, RuntimeError> {
+        let dict = self.simple_namespace_dict(instance)?;
+        let Object::Dict(entries) = &*dict.kind() else {
+            return Err(RuntimeError::type_error(
+                "SimpleNamespace.__dict__ is not a dict",
+            ));
+        };
+        let mut out = Vec::with_capacity(entries.len());
+        for (key, value) in entries.iter() {
+            if let Value::Str(name) = key {
+                out.push((name.clone(), value.clone()));
+            }
+        }
+        Ok(out)
+    }
+
+    fn simple_namespace_repr_inner(
+        &mut self,
+        instance: &ObjRef,
+        seen: &mut Vec<u64>,
+    ) -> Result<String, RuntimeError> {
+        if seen.contains(&instance.id()) {
+            return Ok("namespace(...)".to_string());
+        }
+        seen.push(instance.id());
+        let entries = self.simple_namespace_entries(instance)?;
+        let mut rendered = Vec::with_capacity(entries.len());
+        for (name, value) in entries {
+            let value_repr = if let Value::Instance(nested) = &value {
+                if self.is_simple_namespace_instance(nested) {
+                    self.simple_namespace_repr_inner(nested, seen)?
+                } else {
+                    self.render_value_repr_for_display(value)?
+                }
+            } else {
+                self.render_value_repr_for_display(value)?
+            };
+            rendered.push(format!("{name}={value_repr}"));
+        }
+        seen.pop();
+        Ok(format!("namespace({})", rendered.join(", ")))
+    }
+
+    pub(super) fn builtin_types_simplenamespace_init_with_order(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::type_error(
+                "SimpleNamespace.__init__() takes from 1 to 2 positional arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "SimpleNamespace.__init__")?;
+        if let Some(source) = args.pop() {
+            self.simple_namespace_apply_source(&instance, source)?;
+        }
+        for (key, value) in self.simple_namespace_ordered_kwargs(kwargs, kwargs_order) {
+            self.simple_namespace_assign_attr(&instance, key, value)?;
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_types_simplenamespace_init(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_types_simplenamespace_init_with_order(args, kwargs, None)
+    }
+
+    pub(super) fn builtin_types_simplenamespace_repr(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "SimpleNamespace.__repr__() expects no arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "SimpleNamespace.__repr__")?;
+        let mut seen = Vec::new();
+        let repr = self.simple_namespace_repr_inner(&instance, &mut seen)?;
+        Ok(Value::Str(repr))
+    }
+
+    pub(super) fn builtin_types_simplenamespace_eq(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "SimpleNamespace.__eq__() expects one argument",
+            ));
+        }
+        let left = self.take_bound_instance_arg(&mut args, "SimpleNamespace.__eq__")?;
+        let right = args.remove(0);
+        let Value::Instance(right_instance) = right else {
+            return Ok(self.simple_namespace_not_implemented());
+        };
+        if !self.is_simple_namespace_instance(&left)
+            || !self.is_simple_namespace_instance(&right_instance)
+        {
+            return Ok(self.simple_namespace_not_implemented());
+        }
+        let left_dict = self.simple_namespace_dict(&left)?;
+        let right_dict = self.simple_namespace_dict(&right_instance)?;
+        let equals = self.compare_eq_runtime(Value::Dict(left_dict), Value::Dict(right_dict))?;
+        Ok(Value::Bool(self.truthy_from_value(&equals)?))
+    }
+
+    pub(super) fn builtin_types_simplenamespace_reduce(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "SimpleNamespace.__reduce__() expects no arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "SimpleNamespace.__reduce__")?;
+        let class = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "SimpleNamespace.__reduce__() receiver must be instance",
+                ));
+            }
+        };
+        let mut state_entries = Vec::new();
+        for (name, value) in self.simple_namespace_entries(&instance)? {
+            state_entries.push((Value::Str(name), value));
+        }
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Class(class),
+            self.heap.alloc_tuple(Vec::new()),
+            self.heap.alloc_dict(state_entries),
+        ]))
+    }
+
+    pub(super) fn builtin_types_simplenamespace_replace(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "SimpleNamespace.__replace__() expects no positional arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "SimpleNamespace.__replace__")?;
+        let class = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "SimpleNamespace.__replace__() receiver must be instance",
+                ));
+            }
+        };
+        let replaced = self.alloc_instance_for_class(&class);
+        for (name, value) in self.simple_namespace_entries(&instance)? {
+            self.simple_namespace_assign_attr(&replaced, name, value)?;
+        }
+        for (name, value) in kwargs {
+            self.simple_namespace_assign_attr(&replaced, name, value)?;
+        }
+        Ok(Value::Instance(replaced))
     }
 
     pub(super) fn builtin_types_moduletype(
@@ -3982,6 +4463,57 @@ impl Vm {
             }
             Ok(module)
         }
+    }
+
+    fn value_supports_mapping_protocol(&self, value: &Value) -> bool {
+        match value {
+            Value::Dict(_) => true,
+            Value::Instance(instance) => match &*instance.kind() {
+                Object::Instance(instance_data) => {
+                    if self.instance_backing_dict(instance).is_some() {
+                        return true;
+                    }
+                    class_attr_lookup(&instance_data.class, "__getitem__").is_some()
+                        && class_attr_lookup(&instance_data.class, "keys").is_some()
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub(super) fn builtin_types_mappingproxy(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("MappingProxyType() expects one argument"));
+        }
+        let mapping = if args.len() == 1 {
+            args.remove(0)
+        } else {
+            args.remove(0);
+            args.remove(0)
+        };
+        if !self.value_supports_mapping_protocol(&mapping) {
+            return Err(RuntimeError::type_error(format!(
+                "mappingproxy() argument must be a mapping, not {}",
+                self.value_type_name_for_error(&mapping)
+            )));
+        }
+        let class = self
+            .mappingproxy_type_class
+            .clone()
+            .or_else(|| self.types_module_class("__pyrs_mappingproxy_type__"))
+            .unwrap_or_else(|| self.alloc_synthetic_class("mappingproxy"));
+        let instance = self.alloc_instance_for_class(&class);
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data
+                .attrs
+                .insert(MAPPING_PROXY_STORAGE_ATTR.to_string(), mapping);
+        }
+        Ok(Value::Instance(instance))
     }
 
     pub(super) fn builtin_types_functiontype(

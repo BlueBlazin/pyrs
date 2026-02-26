@@ -3,9 +3,10 @@ use super::{
     IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
     SIGNAL_SIGINT, SocketAddr, SystemTime, TimeParts, ToSocketAddrs, UNIX_EPOCH, Value, Vm,
     apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil,
-    format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy, parse_uuid_like_string,
-    split_unix_timestamp, uuid_hash_mix_bytes, uuid_node_from_hostname, uuid_random_bytes,
-    uuid_timestamp_100ns_since_gregorian, value_to_f64, value_to_int,
+    dict_get_value, format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
+    parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp, uuid_hash_mix_bytes,
+    uuid_node_from_hostname, uuid_random_bytes, uuid_timestamp_100ns_since_gregorian,
+    value_to_f64, value_to_int,
 };
 
 const DATETIME_MIN_YEAR: i64 = 1;
@@ -27,6 +28,120 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 }
 
 impl Vm {
+    fn warnings_is_internal_traceback_file(filename: &str) -> bool {
+        filename.ends_with("_py_warnings.py")
+    }
+
+    fn warnings_infer_call_span_end_column(
+        &mut self,
+        filename: &str,
+        line: usize,
+        column: usize,
+    ) -> Option<usize> {
+        if line == 0 || column == 0 {
+            return None;
+        }
+        let source_line = self.traceback_source_line(filename, line)?;
+        let chars = source_line.chars().collect::<Vec<_>>();
+        let start = column.saturating_sub(1);
+        if start >= chars.len() {
+            return None;
+        }
+        let segment = chars[start..].iter().collect::<String>();
+        let segment = segment.trim_end();
+        if segment.contains('#') || !segment.ends_with(')') {
+            return None;
+        }
+        let first = segment.chars().next()?;
+        if !(first == '_' || first.is_ascii_alphabetic()) {
+            return None;
+        }
+        let open = segment.find('(')?;
+        if open == 0 {
+            return None;
+        }
+        Some(start.saturating_add(segment.chars().count()).saturating_add(1))
+    }
+
+    fn warnings_normalize_active_exception_traceback(&mut self) {
+        let Some(frame_index) = (0..self.frames.len())
+            .rev()
+            .find(|idx| self.frames[*idx].active_exception.is_some())
+        else {
+            return;
+        };
+        let Some(mut active) = self
+            .frames
+            .get_mut(frame_index)
+            .and_then(|frame| frame.active_exception.take())
+        else {
+            return;
+        };
+        if let Value::Exception(exception) = &mut active {
+            exception
+                .traceback_frames
+                .retain(|frame| !Self::warnings_is_internal_traceback_file(&frame.filename));
+            for idx in 0..exception.traceback_frames.len() {
+                let (filename, line, column, end_line, end_column) = {
+                    let frame = &exception.traceback_frames[idx];
+                    (
+                        frame.filename.clone(),
+                        frame.line,
+                        frame.column,
+                        frame.end_line,
+                        frame.end_column,
+                    )
+                };
+                if end_line == 0
+                    && end_column == 0
+                    && let Some(inferred_end) =
+                        self.warnings_infer_call_span_end_column(&filename, line, column)
+                    && let Some(frame) = exception.traceback_frames.get_mut(idx)
+                {
+                    frame.end_line = line;
+                    frame.end_column = inferred_end;
+                }
+            }
+        }
+        if let Some(frame) = self.frames.get_mut(frame_index) {
+            frame.active_exception = Some(active);
+        }
+    }
+
+    fn warnings_normalize_runtime_error_traceback(&mut self, err: &mut RuntimeError) {
+        let Some(exception) = err.exception.as_mut() else {
+            return;
+        };
+        exception
+            .traceback_frames
+            .retain(|frame| !Self::warnings_is_internal_traceback_file(&frame.filename));
+        for idx in 0..exception.traceback_frames.len() {
+            let (filename, line, column, end_line, end_column) = {
+                let frame = &exception.traceback_frames[idx];
+                (
+                    frame.filename.clone(),
+                    frame.line,
+                    frame.column,
+                    frame.end_line,
+                    frame.end_column,
+                )
+            };
+            if end_line == 0
+                && end_column == 0
+                && let Some(inferred_end) =
+                    self.warnings_infer_call_span_end_column(&filename, line, column)
+                && let Some(frame) = exception.traceback_frames.get_mut(idx)
+            {
+                frame.end_line = line;
+                frame.end_column = inferred_end;
+            }
+        }
+        err.message = self.format_traceback(
+            &[],
+            &Value::Exception(Box::new((**exception).clone())),
+        );
+    }
+
     pub(super) fn builtin_threading_excepthook(
         &mut self,
         _args: Vec<Value>,
@@ -2531,13 +2646,22 @@ impl Vm {
     pub(super) fn builtin_thread_event_wait(
         &mut self,
         mut args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+        if kwargs.keys().any(|key| key != "timeout") || args.is_empty() || args.len() > 2 {
             return Err(RuntimeError::new("Event.wait() expects optional timeout"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "Event.wait")?;
-        if let Some(timeout) = args.first().cloned() {
+        let timeout = match (kwargs.remove("timeout"), args.pop()) {
+            (Some(_), Some(_)) => {
+                return Err(RuntimeError::type_error(
+                    "Event.wait() got multiple values for argument 'timeout'",
+                ));
+            }
+            (Some(timeout), None) | (None, Some(timeout)) => Some(timeout),
+            (None, None) => None,
+        };
+        if let Some(timeout) = timeout {
             let timeout = value_to_f64(timeout)?;
             if timeout.is_sign_negative() {
                 return Err(RuntimeError::value_error("timeout must be non-negative"));
@@ -4148,19 +4272,68 @@ impl Vm {
         Ok(Value::Str(output))
     }
 
+    pub(super) fn builtin_colorize_theme_items(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("theme.items() expects no arguments"));
+        }
+        let theme_section = match args.remove(0) {
+            Value::Module(module) => module,
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "theme.items() receiver must be module",
+                ));
+            }
+        };
+        let Object::Module(module_data) = &*theme_section.kind() else {
+            return Err(RuntimeError::type_error(
+                "theme.items() receiver must be module",
+            ));
+        };
+        let mut names = module_data
+            .globals
+            .keys()
+            .filter(|name| !name.starts_with("__") && name.as_str() != "items")
+            .cloned()
+            .collect::<Vec<_>>();
+        names.sort();
+        let items = names
+            .into_iter()
+            .map(|name| {
+                self.heap.alloc_tuple(vec![
+                    Value::Str(name.clone()),
+                    module_data
+                        .globals
+                        .get(&name)
+                        .cloned()
+                        .unwrap_or(Value::None),
+                ])
+            })
+            .collect::<Vec<_>>();
+        Ok(self.heap.alloc_list(items))
+    }
+
     pub(super) fn builtin_warnings_warn(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if let Ok(module) = self.load_module("_py_warnings") {
-            let callable = self.load_attr_module(&module, "warn")?;
-            return match self.call_internal(callable, args, kwargs)? {
-                InternalCallOutcome::Value(value) => Ok(value),
-                InternalCallOutcome::CallerExceptionHandled => {
-                    Err(self.runtime_error_from_active_exception("warn() raised exception"))
-                }
-            };
+        self.warnings_ensure_defaultaction();
+        self.warnings_ensure_filters();
+        self.warnings_ensure_onceregistry();
+        self.warnings_ensure_showwarnmsg();
+        if let Some(callable) =
+            self.warnings_python_dispatch_callable("warn", BuiltinFunction::WarningsWarn)
+        {
+            return self.call_warnings_python_callable(
+                callable,
+                args,
+                kwargs,
+                "warn() raised exception",
+            );
         }
         if kwargs.keys().any(|key| {
             !matches!(
@@ -4183,15 +4356,21 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if let Ok(module) = self.load_module("_py_warnings") {
-            let callable = self.load_attr_module(&module, "warn_explicit")?;
-            return match self.call_internal(callable, args, kwargs)? {
-                InternalCallOutcome::Value(value) => Ok(value),
-                InternalCallOutcome::CallerExceptionHandled => {
-                    Err(self
-                        .runtime_error_from_active_exception("warn_explicit() raised exception"))
-                }
-            };
+        self.warnings_ensure_defaultaction();
+        self.warnings_ensure_filters();
+        self.warnings_ensure_onceregistry();
+        self.warnings_ensure_showwarnmsg();
+        self.warnings_bless_module_globals_for_warn_explicit(&args, &kwargs)?;
+        if let Some(callable) = self.warnings_python_dispatch_callable(
+            "warn_explicit",
+            BuiltinFunction::WarningsWarnExplicit,
+        ) {
+            return self.call_warnings_python_callable(
+                callable,
+                args,
+                kwargs,
+                "warn_explicit() raised exception",
+            );
         }
         if kwargs
             .keys()
@@ -4209,6 +4388,285 @@ impl Vm {
         Ok(Value::None)
     }
 
+    fn warnings_python_dispatch_callable(
+        &mut self,
+        attr_name: &str,
+        recursive_builtin: BuiltinFunction,
+    ) -> Option<Value> {
+        let warnings_module_from_sys = if let Some(modules_dict) = self.sys_dict_obj("modules")
+            && let Some(Value::Module(warnings_module)) =
+                dict_get_value(&modules_dict, &Value::Str("warnings".to_string()))
+        {
+            Some(warnings_module)
+        } else {
+            None
+        };
+
+        if let Some(modules_dict) = self.sys_dict_obj("modules")
+            && let Some(Value::Module(warnings_module)) =
+                dict_get_value(&modules_dict, &Value::Str("warnings".to_string()))
+            && let Ok(callable) = self.load_attr_module(&warnings_module, attr_name)
+            && !matches!(callable, Value::Builtin(builtin) if builtin == recursive_builtin)
+        {
+            return Some(callable);
+        }
+        if let Some(warnings_module) = warnings_module_from_sys {
+            if let Ok(set_module) = self.load_attr_module(&warnings_module, "_set_module") {
+                let _ = self.call_internal_preserving_caller(
+                    set_module,
+                    vec![Value::Module(warnings_module.clone())],
+                    HashMap::new(),
+                );
+                self.clear_active_exception();
+            }
+            if let Ok(filterwarnings_callable) =
+                self.load_attr_module(&warnings_module, "filterwarnings")
+                && let Value::Function(function_obj) = filterwarnings_callable
+                && let Object::Function(function_data) = &*function_obj.kind()
+                && let Ok(callable) = self.load_attr_module(&function_data.module, attr_name)
+                && !matches!(callable, Value::Builtin(builtin) if builtin == recursive_builtin)
+            {
+                return Some(callable);
+            }
+        }
+        if let Ok(module) = self.load_module("_py_warnings")
+            && let Ok(callable) = self.load_attr_module(&module, attr_name)
+            && !matches!(callable, Value::Builtin(builtin) if builtin == recursive_builtin)
+        {
+            return Some(callable);
+        }
+        None
+    }
+
+    fn warnings_ensure_defaultaction(&mut self) {
+        let Some(modules_dict) = self.sys_dict_obj("modules") else {
+            return;
+        };
+        let Some(Value::Module(warnings_module)) =
+            dict_get_value(&modules_dict, &Value::Str("warnings".to_string()))
+        else {
+            return;
+        };
+        if let Object::Module(module_data) = &mut *warnings_module.kind_mut() {
+            module_data
+                .globals
+                .entry("defaultaction".to_string())
+                .or_insert_with(|| Value::Str("default".to_string()));
+        }
+    }
+
+    fn warnings_ensure_filters(&mut self) {
+        let Some(modules_dict) = self.sys_dict_obj("modules") else {
+            return;
+        };
+        let Some(Value::Module(warnings_module)) =
+            dict_get_value(&modules_dict, &Value::Str("warnings".to_string()))
+        else {
+            return;
+        };
+
+        let fallback_from_builtin = self
+            .modules
+            .get("_warnings")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("filters").cloned(),
+                _ => None,
+            });
+
+        if let Object::Module(module_data) = &mut *warnings_module.kind_mut() {
+            if let Some(filters) = module_data.globals.get("filters").cloned() {
+                module_data
+                    .globals
+                    .insert("__pyrs_warning_filters_fallback__".to_string(), filters);
+                return;
+            }
+            if let Some(saved) = module_data
+                .globals
+                .get("__pyrs_warning_filters_fallback__")
+                .cloned()
+            {
+                module_data.globals.insert("filters".to_string(), saved);
+                return;
+            }
+            if let Some(filters) = fallback_from_builtin {
+                module_data.globals.insert("filters".to_string(), filters);
+            }
+        }
+    }
+
+    fn warnings_ensure_onceregistry(&mut self) {
+        let Some(modules_dict) = self.sys_dict_obj("modules") else {
+            return;
+        };
+        let Some(Value::Module(warnings_module)) =
+            dict_get_value(&modules_dict, &Value::Str("warnings".to_string()))
+        else {
+            return;
+        };
+
+        let fallback_from_builtin = self
+            .modules
+            .get("_warnings")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("_onceregistry").cloned(),
+                _ => None,
+            });
+
+        if let Object::Module(module_data) = &mut *warnings_module.kind_mut() {
+            if let Some(onceregistry) = module_data.globals.get("onceregistry").cloned() {
+                module_data.globals.insert(
+                    "__pyrs_warning_onceregistry_fallback__".to_string(),
+                    onceregistry,
+                );
+                return;
+            }
+            if let Some(saved) = module_data
+                .globals
+                .get("__pyrs_warning_onceregistry_fallback__")
+                .cloned()
+            {
+                module_data.globals.insert("onceregistry".to_string(), saved);
+                return;
+            }
+            if let Some(onceregistry) = fallback_from_builtin {
+                module_data
+                    .globals
+                    .insert("onceregistry".to_string(), onceregistry);
+            } else {
+                module_data
+                    .globals
+                    .insert("onceregistry".to_string(), self.heap.alloc_dict(Vec::new()));
+            }
+        }
+    }
+
+    fn warnings_ensure_showwarnmsg(&mut self) {
+        let Some(modules_dict) = self.sys_dict_obj("modules") else {
+            return;
+        };
+        let Some(Value::Module(warnings_module)) =
+            dict_get_value(&modules_dict, &Value::Str("warnings".to_string()))
+        else {
+            return;
+        };
+        if let Object::Module(module_data) = &*warnings_module.kind()
+            && module_data.globals.contains_key("_showwarnmsg")
+        {
+            return;
+        }
+
+        let fallback_showwarnmsg = if let Ok(filterwarnings_callable) =
+            self.load_attr_module(&warnings_module, "filterwarnings")
+            && let Value::Function(function_obj) = filterwarnings_callable
+            && let Object::Function(function_data) = &*function_obj.kind()
+        {
+            self.load_attr_module(&function_data.module, "_showwarnmsg").ok()
+        } else {
+            None
+        };
+
+        if let Some(showwarnmsg) = fallback_showwarnmsg
+            && let Object::Module(module_data) = &mut *warnings_module.kind_mut()
+        {
+            module_data
+                .globals
+                .insert("_showwarnmsg".to_string(), showwarnmsg);
+        }
+    }
+
+    fn call_warnings_python_callable(
+        &mut self,
+        callable: Value,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        error_context: &str,
+    ) -> Result<Value, RuntimeError> {
+        match self.call_internal_preserving_caller(callable, args, kwargs) {
+            Ok(InternalCallOutcome::Value(value)) => Ok(value),
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                self.warnings_normalize_active_exception_traceback();
+                let mut err = self.runtime_error_from_active_exception(error_context);
+                self.warnings_normalize_runtime_error_traceback(&mut err);
+                self.clear_active_exception();
+                Err(err)
+            }
+            Err(mut err) => {
+                self.warnings_normalize_runtime_error_traceback(&mut err);
+                Err(err)
+            }
+        }
+    }
+
+    fn warnings_warn_explicit_module_globals_arg(
+        &self,
+        _args: &[Value],
+        kwargs: &HashMap<String, Value>,
+    ) -> Option<Value> {
+        kwargs.get("module_globals").cloned()
+    }
+
+    fn warnings_bless_module_globals_for_warn_explicit(
+        &mut self,
+        args: &[Value],
+        kwargs: &HashMap<String, Value>,
+    ) -> Result<(), RuntimeError> {
+        let Some(module_globals) = self.warnings_warn_explicit_module_globals_arg(args, kwargs)
+        else {
+            return Ok(());
+        };
+        if matches!(module_globals, Value::None) {
+            return Ok(());
+        }
+        if !matches!(module_globals, Value::Dict(_)) {
+            return Err(RuntimeError::type_error(format!(
+                "module_globals must be a dict, not '{}'",
+                self.value_type_name_for_error(&module_globals)
+            )));
+        }
+        if self.warnings_bless_my_loader_depth > 0 {
+            return Ok(());
+        }
+
+        self.warnings_bless_my_loader_depth += 1;
+        let bless_result = (|| {
+            let external = match self.load_module("importlib._bootstrap_external") {
+                Ok(module) => module,
+                Err(err)
+                    if runtime_error_matches_exception(&err, "ImportError")
+                        || runtime_error_matches_exception(&err, "ModuleNotFoundError") =>
+                {
+                    return Ok(());
+                }
+                Err(err) => return Err(err),
+            };
+            let bless = match self.load_attr_module(&external, "_bless_my_loader") {
+                Ok(callable) => callable,
+                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {
+                    return Ok(());
+                }
+                Err(err) => return Err(err),
+            };
+            match self.call_internal_preserving_caller(bless, vec![module_globals], HashMap::new())
+            {
+                Ok(InternalCallOutcome::Value(_)) => Ok(()),
+                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    self.warnings_normalize_active_exception_traceback();
+                    let mut err = self
+                        .runtime_error_from_active_exception("_bless_my_loader() raised exception");
+                    self.warnings_normalize_runtime_error_traceback(&mut err);
+                    Err(err)
+                }
+                Err(mut err) => {
+                    self.warnings_normalize_runtime_error_traceback(&mut err);
+                    Err(err)
+                }
+            }
+        })();
+        self.warnings_bless_my_loader_depth =
+            self.warnings_bless_my_loader_depth.saturating_sub(1);
+        bless_result
+    }
+
     pub(super) fn builtin_testinternalcapi_get_recursion_depth(
         &mut self,
         args: Vec<Value>,
@@ -4220,5 +4678,164 @@ impl Vm {
             ));
         }
         Ok(Value::Int(self.frames.len().max(1) as i64))
+    }
+
+    pub(super) fn builtin_testcapi_exception_print(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::type_error(format!(
+                "exception_print() takes from 1 to 2 positional arguments but {} were given",
+                args.len()
+            )));
+        }
+
+        let legacy = if args.len() == 2 {
+            is_truthy(&args.remove(1))
+        } else {
+            false
+        };
+        let input_exc = args.remove(0);
+
+        let normalized = match &input_exc {
+            Value::Exception(exception) => Value::Exception(exception.clone()),
+            Value::Instance(instance)
+                if self.exception_class_name_for_instance(instance).is_some() =>
+            {
+                self.normalize_exception_value(input_exc.clone())?
+            }
+            _ => {
+                self.clear_active_exception();
+                let rendered = format!(
+                    "TypeError: print_exception(): Exception expected for value, {} found",
+                    self.value_type_name_for_error(&input_exc)
+                );
+                let _ = self.call_builtin(
+                    BuiltinFunction::SysStderrWrite,
+                    vec![Value::Str(format!("{rendered}\n"))],
+                    HashMap::new(),
+                );
+                return Ok(Value::None);
+            }
+        };
+
+        let traceback = self.load_module("traceback")?;
+        let print_exception = self.load_attr_module(&traceback, "print_exception")?;
+        let call_args = if legacy {
+            let Value::Exception(exception) = &normalized else {
+                unreachable!("normalized exception must be exception object");
+            };
+            let traceback_value =
+                if let Some(cached) = exception.attrs.borrow().get("__traceback__").cloned() {
+                    cached
+                } else {
+                    self.traceback_value_from_frames(&exception.traceback_frames)
+                };
+            vec![
+                Value::ExceptionType(exception.name.clone()),
+                normalized.clone(),
+                traceback_value,
+            ]
+        } else {
+            vec![normalized]
+        };
+        match self.call_internal(print_exception, call_args, HashMap::new())? {
+            InternalCallOutcome::Value(_) => Ok(Value::None),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("exception_print() failed"))
+            }
+        }
+    }
+
+    pub(super) fn builtin_testcapi_config_get(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new(
+                "config_get() expects zero or one argument",
+            ));
+        }
+        if args.is_empty() {
+            return Ok(self.heap.alloc_dict(vec![(
+                Value::Str("code_debug_ranges".to_string()),
+                Value::Int(0),
+            )]));
+        }
+        let key = match args.remove(0) {
+            Value::Str(key) => key,
+            _ => {
+                return Err(RuntimeError::type_error("config_get() key must be string"));
+            }
+        };
+        match key.as_str() {
+            "code_debug_ranges" => Ok(Value::Int(0)),
+            _ => Ok(Value::None),
+        }
+    }
+
+    pub(super) fn builtin_testcapi_pyobject_vectorcall(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 3 {
+            return Err(RuntimeError::type_error(
+                "pyobject_vectorcall() expects callable, tuple-or-None, dict-or-None",
+            ));
+        }
+        let callable = args.remove(0);
+        let positional_args = match args.remove(0) {
+            Value::None => Vec::new(),
+            Value::Tuple(tuple) => match &*tuple.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "pyobject_vectorcall() positional args must be tuple or None",
+                    ));
+                }
+            },
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "pyobject_vectorcall() positional args must be tuple or None",
+                ));
+            }
+        };
+        let keyword_args = match args.remove(0) {
+            Value::None => HashMap::new(),
+            Value::Dict(dict) => match &*dict.kind() {
+                Object::Dict(entries) => {
+                    let mut collected = HashMap::with_capacity(entries.len());
+                    for (key, value) in entries {
+                        let Value::Str(name) = key else {
+                            return Err(RuntimeError::type_error(
+                                "pyobject_vectorcall() keyword names must be strings",
+                            ));
+                        };
+                        collected.insert(name.clone(), value.clone());
+                    }
+                    collected
+                }
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "pyobject_vectorcall() keyword args must be dict or None",
+                    ));
+                }
+            },
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "pyobject_vectorcall() keyword args must be dict or None",
+                ));
+            }
+        };
+        match self.call_internal(callable, positional_args, keyword_args)? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("pyobject_vectorcall() failed"))
+            }
+        }
     }
 }

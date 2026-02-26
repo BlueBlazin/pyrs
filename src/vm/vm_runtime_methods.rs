@@ -1,8 +1,8 @@
 use super::{
-    AttrAccessOutcome, BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome,
-    HashMap, InstanceObject, InternalCallOutcome, IteratorKind, ModuleObject, NativeMethodKind,
-    ObjRef, Object, Ordering, RuntimeError, Value, Vm, builtin_exception_parent, class_attr_lookup,
-    format_repr, memoryview_bounds, memoryview_decode_element, memoryview_element_offset,
+    BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome, HashMap, InstanceObject,
+    InternalCallOutcome, IteratorKind, ModuleObject, NativeMethodKind, ObjRef, Object, Ordering,
+    RuntimeError, Value, Vm, builtin_exception_parent, class_name_for_instance, format_repr,
+    memoryview_bounds, memoryview_decode_element, memoryview_element_offset,
     memoryview_format_for_view, memoryview_layout_1d, memoryview_logical_nbytes,
     memoryview_shape_and_strides_from_parts, module_globals_version,
     runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices, value_from_bigint,
@@ -11,6 +11,18 @@ use super::{
 use crate::runtime::SliceValue;
 
 impl Vm {
+    fn warnings_increment_filters_version(module: &ObjRef) {
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            let next = match module_data.globals.get("_filters_version") {
+                Some(Value::Int(value)) => value.saturating_add(1),
+                _ => 1,
+            };
+            module_data
+                .globals
+                .insert("_filters_version".to_string(), Value::Int(next));
+        }
+    }
+
     pub(super) fn dict_get_value_runtime(
         &mut self,
         dict: &ObjRef,
@@ -150,6 +162,35 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new("_filters_mutated() expects no arguments"));
+        }
+        let mut bumped = false;
+        if let Some(target_module) = self.frames.last().and_then(|frame| {
+            frame
+                .locals
+                .get("_wm")
+                .cloned()
+                .or_else(|| match &*frame.function_globals.kind() {
+                    Object::Module(module_data) => module_data.globals.get("_wm").cloned(),
+                    _ => None,
+                })
+                .and_then(|value| match value {
+                    Value::Module(module) => Some(module),
+                    _ => None,
+                })
+        }) {
+            Self::warnings_increment_filters_version(&target_module);
+            bumped = true;
+        }
+        if !bumped && let Some(module) = self.modules.get("warnings").cloned() {
+            Self::warnings_increment_filters_version(&module);
+            bumped = true;
+        }
+        if !bumped && let Some(module) = self.modules.get("_py_warnings").cloned() {
+            Self::warnings_increment_filters_version(&module);
+            bumped = true;
+        }
+        if !bumped && let Some(module) = self.modules.get("_warnings").cloned() {
+            Self::warnings_increment_filters_version(&module);
         }
         Ok(Value::None)
     }
@@ -297,13 +338,23 @@ impl Vm {
                     },
                     _ => false,
                 };
+                let receiver_value = Value::Instance(instance.clone());
                 if is_exact_builtin_dict {
                     return self.getitem_value(Value::Dict(backing_dict), index);
+                }
+                if let Some(getitem) =
+                    self.lookup_bound_special_method(&receiver_value, "__getitem__")?
+                {
+                    return match self.call_internal(getitem, vec![index], HashMap::new())? {
+                        InternalCallOutcome::Value(value) => Ok(value),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            Err(self.runtime_error_from_active_exception("subscript lookup failed"))
+                        }
+                    };
                 }
                 if let Some(value) = self.dict_get_value_runtime(&backing_dict, &index)? {
                     return Ok(value);
                 }
-                let receiver_value = Value::Instance(instance.clone());
                 if let Some(missing) =
                     self.lookup_bound_special_method(&receiver_value, "__missing__")?
                 {
@@ -877,15 +928,26 @@ impl Vm {
                     Ok(self.alloc_generic_alias_instance(Value::Builtin(builtin), index))
                 }
                 Value::Class(class) => {
+                    if self.is_union_type_class(&class) || self.is_typing_union_class(&class) {
+                        let members = self.subscript_items_from_index(index);
+                        return self.build_union_value_from_members_with_forward(members, true);
+                    }
                     let origin = Value::Class(class.clone());
                     Ok(self.alloc_generic_alias_instance(origin, index))
                 }
                 other => {
-                    if typing_alias_marker_value(&other) && typing_alias_index_shape(&index) {
-                        // Typing/generic alias marker instances can be re-subscripted while
-                        // building annotation metadata in scientific-stack imports.
-                        // Preserve the symbolic alias object instead of treating it as a
-                        // concrete runtime container.
+                    if self.union_args_from_value(&other).is_some()
+                        && typing_alias_index_shape(&index)
+                    {
+                        return self.subscript_union_value(other, index);
+                    }
+                    if self.generic_alias_parts_from_value(&other).is_some()
+                        && typing_alias_index_shape(&index)
+                    {
+                        return self.subscript_generic_alias_value(other, index);
+                    }
+                    if self.is_type_parameter_value(&other) && typing_alias_index_shape(&index) {
+                        // Re-subscripting raw type-parameter markers should preserve the marker.
                         return Ok(other);
                     }
                     if let Some(proxy_result) =
@@ -1010,9 +1072,883 @@ impl Vm {
                 Value::Tuple(tuple_obj) => Value::Tuple(tuple_obj),
                 value => self.heap.alloc_tuple(vec![value]),
             };
+            let mut parameters = Vec::new();
+            if let Some(items) = Self::tuple_items_from_value(&args) {
+                for item in &items {
+                    self.collect_union_type_parameters_from_value(item, &mut parameters);
+                }
+            }
             instance_data.attrs.insert("__args__".to_string(), args);
+            instance_data.attrs.insert(
+                "__parameters__".to_string(),
+                self.heap.alloc_tuple(parameters),
+            );
         }
         alias
+    }
+
+    fn tuple_items_from_value(value: &Value) -> Option<Vec<Value>> {
+        match value {
+            Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                Object::Tuple(items) => Some(items.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn list_items_from_value(value: &Value) -> Option<Vec<Value>> {
+        match value {
+            Value::List(list_obj) => match &*list_obj.kind() {
+                Object::List(items) => Some(items.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn class_name_and_module(class: &ObjRef) -> Option<(String, Option<String>)> {
+        let class_kind = class.kind();
+        let Object::Class(class_data) = &*class_kind else {
+            return None;
+        };
+        let module_name = match class_data.attrs.get("__module__") {
+            Some(Value::Str(name)) => Some(name.clone()),
+            _ => None,
+        };
+        Some((class_data.name.clone(), module_name))
+    }
+
+    fn class_mro_has_name(class: &ObjRef, needle: &str) -> bool {
+        let class_kind = class.kind();
+        let Object::Class(class_data) = &*class_kind else {
+            return false;
+        };
+        if class_data.name == needle {
+            return true;
+        }
+        class_data.mro.iter().any(|entry| {
+            let entry_kind = entry.kind();
+            matches!(&*entry_kind, Object::Class(entry_data) if entry_data.name == needle)
+        })
+    }
+
+    pub(super) fn is_type_parameter_value(&self, value: &Value) -> bool {
+        let Value::Instance(instance) = value else {
+            return false;
+        };
+        let instance_kind = instance.kind();
+        let Object::Instance(instance_data) = &*instance_kind else {
+            return false;
+        };
+        let class_kind = instance_data.class.kind();
+        let Object::Class(class_data) = &*class_kind else {
+            return false;
+        };
+        if !matches!(
+            class_data.name.as_str(),
+            "TypeVar" | "TypeVarTuple" | "ParamSpec"
+        ) {
+            return false;
+        }
+        matches!(
+            class_data.attrs.get("__module__"),
+            Some(Value::Str(module)) if matches!(module.as_str(), "typing" | "_typing")
+        )
+    }
+
+    fn union_type_class(&self) -> Option<ObjRef> {
+        let module = self.modules.get("types")?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return None;
+        };
+        match module_data.globals.get("UnionType") {
+            Some(Value::Class(class)) => Some(class.clone()),
+            _ => None,
+        }
+    }
+
+    pub(super) fn ensure_union_type_class(&mut self) -> ObjRef {
+        const CACHE_KEY: &str = "__types_union_type__";
+        if let Some(existing) = self.union_type_class() {
+            self.synthetic_builtin_classes
+                .insert(CACHE_KEY.to_string(), existing.clone());
+            if let Some(typing_module) = self.modules.get("typing").cloned()
+                && let Object::Module(module_data) = &mut *typing_module.kind_mut()
+            {
+                module_data
+                    .globals
+                    .insert("Union".to_string(), Value::Class(existing.clone()));
+            }
+            if let Some(private_typing_module) = self.modules.get("_typing").cloned()
+                && let Object::Module(module_data) = &mut *private_typing_module.kind_mut()
+            {
+                module_data
+                    .globals
+                    .insert("Union".to_string(), Value::Class(existing.clone()));
+            }
+            return existing;
+        }
+        if let Some(existing) = self.synthetic_builtin_classes.get(CACHE_KEY).cloned() {
+            if let Some(types_module) = self.modules.get("types").cloned()
+                && let Object::Module(module_data) = &mut *types_module.kind_mut()
+            {
+                module_data
+                    .globals
+                    .insert("UnionType".to_string(), Value::Class(existing.clone()));
+            }
+            if let Some(typing_module) = self.modules.get("typing").cloned()
+                && let Object::Module(module_data) = &mut *typing_module.kind_mut()
+            {
+                module_data
+                    .globals
+                    .insert("Union".to_string(), Value::Class(existing.clone()));
+            }
+            if let Some(private_typing_module) = self.modules.get("_typing").cloned()
+                && let Object::Module(module_data) = &mut *private_typing_module.kind_mut()
+            {
+                module_data
+                    .globals
+                    .insert("Union".to_string(), Value::Class(existing.clone()));
+            }
+            return existing;
+        }
+        let class = self.synthetic_builtin_class("UnionType");
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("types".to_string()));
+            class_data
+                .attrs
+                .insert("__name__".to_string(), Value::Str("UnionType".to_string()));
+            class_data.attrs.insert(
+                "__qualname__".to_string(),
+                Value::Str("UnionType".to_string()),
+            );
+            class_data.attrs.insert(
+                "__pyrs_disallow_instantiation__".to_string(),
+                Value::Bool(true),
+            );
+        }
+        self.synthetic_builtin_classes
+            .insert(CACHE_KEY.to_string(), class.clone());
+        if let Some(types_module) = self.modules.get("types").cloned()
+            && let Object::Module(module_data) = &mut *types_module.kind_mut()
+        {
+            module_data
+                .globals
+                .insert("UnionType".to_string(), Value::Class(class.clone()));
+        }
+        if let Some(typing_module) = self.modules.get("typing").cloned()
+            && let Object::Module(module_data) = &mut *typing_module.kind_mut()
+        {
+            module_data
+                .globals
+                .insert("Union".to_string(), Value::Class(class.clone()));
+        }
+        if let Some(private_typing_module) = self.modules.get("_typing").cloned()
+            && let Object::Module(module_data) = &mut *private_typing_module.kind_mut()
+        {
+            module_data
+                .globals
+                .insert("Union".to_string(), Value::Class(class.clone()));
+        }
+        class
+    }
+
+    pub(super) fn is_union_type_class(&self, class: &ObjRef) -> bool {
+        if self.is_typing_union_class(class) {
+            return true;
+        }
+        let Some((name, _module)) = Self::class_name_and_module(class) else {
+            return false;
+        };
+        if name == "UnionType" {
+            return true;
+        }
+        Self::class_mro_has_name(class, "UnionType")
+    }
+
+    pub(super) fn is_typing_union_class(&self, class: &ObjRef) -> bool {
+        let Some((name, module_name)) = Self::class_name_and_module(class) else {
+            return false;
+        };
+        if name != "Union" {
+            return false;
+        }
+        matches!(module_name.as_deref(), Some("_typing" | "typing"))
+    }
+
+    fn is_union_origin_value(&self, origin: &Value) -> bool {
+        let Value::Class(class) = origin else {
+            return false;
+        };
+        self.is_union_type_class(class) || self.is_typing_union_class(class)
+    }
+
+    fn none_type_value(&self) -> Option<Value> {
+        let module = self.modules.get("types")?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return None;
+        };
+        module_data.globals.get("NoneType").cloned()
+    }
+
+    pub(super) fn generic_alias_parts_from_value(
+        &self,
+        value: &Value,
+    ) -> Option<(Value, Vec<Value>)> {
+        let Value::Instance(instance) = value else {
+            return None;
+        };
+        let instance_kind = instance.kind();
+        let Object::Instance(instance_data) = &*instance_kind else {
+            return None;
+        };
+        if !Self::class_mro_has_name(&instance_data.class, "GenericAlias")
+            && !Self::class_mro_has_name(&instance_data.class, "_GenericAlias")
+        {
+            return None;
+        }
+        let origin = instance_data.attrs.get("__origin__")?.clone();
+        let args = instance_data.attrs.get("__args__")?;
+        let args = Self::tuple_items_from_value(args)?;
+        Some((origin, args))
+    }
+
+    pub(super) fn is_types_generic_alias_value(&self, value: &Value) -> bool {
+        let Value::Instance(instance) = value else {
+            return false;
+        };
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return false;
+        };
+        self.class_has_generic_alias_base(&instance_data.class)
+            && self.generic_alias_parts_from_value(value).is_some()
+    }
+
+    pub(super) fn class_has_generic_alias_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class).iter().any(|entry| {
+            let entry_kind = entry.kind();
+            let Object::Class(class_data) = &*entry_kind else {
+                return false;
+            };
+            if class_data.name != "GenericAlias" {
+                return false;
+            }
+            match class_data.attrs.get("__module__") {
+                Some(Value::Str(module)) => module == "types",
+                _ => true,
+            }
+        })
+    }
+
+    pub(super) fn instantiate_generic_alias_class(
+        &mut self,
+        class: ObjRef,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 2 {
+            return Err(RuntimeError::type_error(format!(
+                "GenericAlias() takes exactly 2 arguments ({} given)",
+                args.len()
+            )));
+        }
+
+        let origin = args.remove(0);
+        let index = args.remove(0);
+        let alias = self.heap.alloc_instance(InstanceObject::new(class));
+        if let Value::Instance(instance) = &alias
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut()
+        {
+            instance_data
+                .attrs
+                .insert("__origin__".to_string(), origin.clone());
+            let args = match index {
+                Value::Tuple(tuple_obj) => Value::Tuple(tuple_obj),
+                value => self.heap.alloc_tuple(vec![value]),
+            };
+            let mut parameters = Vec::new();
+            if let Some(items) = Self::tuple_items_from_value(&args) {
+                for item in &items {
+                    self.collect_union_type_parameters_from_value(item, &mut parameters);
+                }
+            }
+            instance_data.attrs.insert("__args__".to_string(), args);
+            instance_data.attrs.insert(
+                "__parameters__".to_string(),
+                self.heap.alloc_tuple(parameters),
+            );
+            for (name, value) in kwargs {
+                instance_data.attrs.insert(name, value);
+            }
+        }
+        Ok(alias)
+    }
+
+    pub(super) fn union_args_from_value(&self, value: &Value) -> Option<Vec<Value>> {
+        match value {
+            Value::Instance(instance) => {
+                let instance_kind = instance.kind();
+                let Object::Instance(instance_data) = &*instance_kind else {
+                    return None;
+                };
+                if self.is_union_type_class(&instance_data.class) {
+                    let args = instance_data.attrs.get("__args__")?;
+                    return Self::tuple_items_from_value(args);
+                }
+                if let Some((origin, args)) = self.generic_alias_parts_from_value(value)
+                    && self.is_union_origin_value(&origin)
+                {
+                    return Some(args);
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn value_contains_type_parameter(&self, value: &Value) -> bool {
+        if self.is_type_parameter_value(value) {
+            return true;
+        }
+        if let Some(args) = self.union_args_from_value(value) {
+            return args
+                .iter()
+                .any(|item| self.value_contains_type_parameter(item));
+        }
+        if let Some((_origin, args)) = self.generic_alias_parts_from_value(value) {
+            return args
+                .iter()
+                .any(|item| self.value_contains_type_parameter(item));
+        }
+        false
+    }
+
+    fn union_operand_value_with_forward(
+        &self,
+        value: &Value,
+        allow_forward_ref_strings: bool,
+    ) -> bool {
+        if self.union_args_from_value(value).is_some() {
+            return true;
+        }
+        if self.generic_alias_parts_from_value(value).is_some() {
+            return true;
+        }
+        match value {
+            Value::None | Value::Class(_) | Value::ExceptionType(_) => true,
+            Value::Str(_) => allow_forward_ref_strings,
+            Value::Function(_) => true,
+            Value::Builtin(
+                BuiltinFunction::Type
+                | BuiltinFunction::Bool
+                | BuiltinFunction::Int
+                | BuiltinFunction::Float
+                | BuiltinFunction::Str
+                | BuiltinFunction::List
+                | BuiltinFunction::Tuple
+                | BuiltinFunction::Dict
+                | BuiltinFunction::Set
+                | BuiltinFunction::FrozenSet
+                | BuiltinFunction::Bytes
+                | BuiltinFunction::ByteArray
+                | BuiltinFunction::MemoryView
+                | BuiltinFunction::Range
+                | BuiltinFunction::Slice
+                | BuiltinFunction::Complex
+                | BuiltinFunction::ClassMethod
+                | BuiltinFunction::StaticMethod
+                | BuiltinFunction::Property
+                | BuiltinFunction::Map,
+            ) => true,
+            Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                Object::Tuple(items) => items.iter().all(|item| {
+                    self.union_operand_value_with_forward(item, allow_forward_ref_strings)
+                }),
+                _ => false,
+            },
+            Value::Instance(instance) => {
+                if self.is_type_parameter_value(value) {
+                    return true;
+                }
+                let Some(class_name) = class_name_for_instance(instance) else {
+                    return false;
+                };
+                if matches!(
+                    class_name.as_str(),
+                    "GenericAlias" | "_GenericAlias" | "UnionType" | "TypeAliasType" | "ForwardRef"
+                ) {
+                    return true;
+                }
+                let module_name = {
+                    let instance_kind = instance.kind();
+                    match &*instance_kind {
+                        Object::Instance(instance_data) => {
+                            let class_kind = instance_data.class.kind();
+                            match &*class_kind {
+                                Object::Class(class_data) => {
+                                    match class_data.attrs.get("__module__") {
+                                        Some(Value::Str(name)) => Some(name.clone()),
+                                        _ => None,
+                                    }
+                                }
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    }
+                };
+                if matches!(
+                    class_name.as_str(),
+                    "TypeVar" | "TypeVarTuple" | "ParamSpec"
+                ) {
+                    return matches!(module_name.as_deref(), Some("typing" | "_typing"));
+                }
+                if matches!(module_name.as_deref(), Some("typing" | "_typing" | "types"))
+                    && (class_name.contains("GenericAlias")
+                        || class_name.contains("SpecialForm")
+                        || class_name.contains("SpecialGenericAlias")
+                        || class_name.contains("LiteralGenericAlias")
+                        || matches!(
+                            class_name.as_str(),
+                            "Union"
+                                | "NewType"
+                                | "_SpecialForm"
+                                | "_TypedCacheSpecialForm"
+                                | "_AnyMeta"
+                                | "_TupleType"
+                                | "_TypingEllipsis"
+                        ))
+                {
+                    return true;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn union_operand_value(&self, value: &Value) -> bool {
+        self.union_operand_value_with_forward(value, false)
+    }
+
+    fn collect_union_type_parameters_from_value(&self, value: &Value, out: &mut Vec<Value>) {
+        if self.is_type_parameter_value(value) {
+            if !out.contains(value) {
+                out.push(value.clone());
+            }
+            return;
+        }
+
+        if let Some(union_args) = self.union_args_from_value(value) {
+            for item in union_args {
+                self.collect_union_type_parameters_from_value(&item, out);
+            }
+            return;
+        }
+
+        if let Some((_origin, generic_args)) = self.generic_alias_parts_from_value(value) {
+            for item in generic_args {
+                self.collect_union_type_parameters_from_value(&item, out);
+            }
+            return;
+        }
+
+        let mut maybe_parameters = None;
+        if let Value::Instance(instance) = value {
+            let instance_kind = instance.kind();
+            if let Object::Instance(instance_data) = &*instance_kind {
+                maybe_parameters = instance_data.attrs.get("__parameters__").cloned();
+            }
+        }
+        if let Some(parameters) = maybe_parameters {
+            if let Some(items) = Self::tuple_items_from_value(&parameters) {
+                for item in items {
+                    self.collect_union_type_parameters_from_value(&item, out);
+                }
+            } else if let Some(items) = Self::list_items_from_value(&parameters) {
+                for item in items {
+                    self.collect_union_type_parameters_from_value(&item, out);
+                }
+            }
+        }
+    }
+
+    pub(super) fn literal_alias_args_from_value(&self, value: &Value) -> Option<Vec<Value>> {
+        let Value::Instance(instance) = value else {
+            return None;
+        };
+        let instance_kind = instance.kind();
+        let Object::Instance(instance_data) = &*instance_kind else {
+            return None;
+        };
+        let class_kind = instance_data.class.kind();
+        let Object::Class(class_data) = &*class_kind else {
+            return None;
+        };
+        let module_name = match class_data.attrs.get("__module__") {
+            Some(Value::Str(name)) => name.as_str(),
+            _ => "",
+        };
+        if module_name != "typing" || !class_data.name.contains("LiteralGenericAlias") {
+            return None;
+        }
+        let args = instance_data.attrs.get("__args__")?;
+        Self::tuple_items_from_value(args)
+    }
+
+    fn literal_value_strict_equal(left: &Value, right: &Value) -> bool {
+        use std::mem::discriminant;
+        if discriminant(left) != discriminant(right) {
+            return false;
+        }
+        match (left, right) {
+            (Value::Tuple(left_tuple), Value::Tuple(right_tuple)) => {
+                let (Object::Tuple(left_items), Object::Tuple(right_items)) =
+                    (&*left_tuple.kind(), &*right_tuple.kind())
+                else {
+                    return false;
+                };
+                left_items.len() == right_items.len()
+                    && left_items
+                        .iter()
+                        .zip(right_items.iter())
+                        .all(|(left_item, right_item)| {
+                            Self::literal_value_strict_equal(left_item, right_item)
+                        })
+            }
+            (Value::List(left_list), Value::List(right_list)) => {
+                let (Object::List(left_items), Object::List(right_items)) =
+                    (&*left_list.kind(), &*right_list.kind())
+                else {
+                    return false;
+                };
+                left_items.len() == right_items.len()
+                    && left_items
+                        .iter()
+                        .zip(right_items.iter())
+                        .all(|(left_item, right_item)| {
+                            Self::literal_value_strict_equal(left_item, right_item)
+                        })
+            }
+            (Value::Dict(left_dict), Value::Dict(right_dict)) => {
+                let (Object::Dict(left_items), Object::Dict(right_items)) =
+                    (&*left_dict.kind(), &*right_dict.kind())
+                else {
+                    return false;
+                };
+                if left_items.len() != right_items.len() {
+                    return false;
+                }
+                left_items.iter().zip(right_items.iter()).all(
+                    |((left_key, left_value), (right_key, right_value))| {
+                        Self::literal_value_strict_equal(left_key, right_key)
+                            && Self::literal_value_strict_equal(left_value, right_value)
+                    },
+                )
+            }
+            _ => left == right,
+        }
+    }
+
+    pub(super) fn literal_args_strict_equal(left: &[Value], right: &[Value]) -> bool {
+        left.len() == right.len()
+            && left
+                .iter()
+                .zip(right.iter())
+                .all(|(left_item, right_item)| {
+                    Self::literal_value_strict_equal(left_item, right_item)
+                })
+    }
+
+    fn forward_ref_value_from_string(&mut self, text: String) -> Value {
+        if self.import_module("typing").is_err() {
+            return Value::Str(text);
+        }
+        let Some(module) = self.modules.get("typing").cloned() else {
+            return Value::Str(text);
+        };
+        let forward_ref_ctor = {
+            let Object::Module(module_data) = &*module.kind() else {
+                return Value::Str(text);
+            };
+            module_data.globals.get("ForwardRef").cloned()
+        }
+        .or_else(|| {
+            self.builtin_getattr(
+                vec![
+                    Value::Module(module.clone()),
+                    Value::Str("ForwardRef".to_string()),
+                ],
+                HashMap::new(),
+            )
+            .ok()
+        });
+        let Some(forward_ref_ctor) = forward_ref_ctor else {
+            return Value::Str(text);
+        };
+        match self.call_internal(
+            forward_ref_ctor.clone(),
+            vec![Value::Str(text.clone())],
+            HashMap::new(),
+        ) {
+            Ok(InternalCallOutcome::Value(value)) => value,
+            _ => {
+                let Value::Class(class) = forward_ref_ctor else {
+                    return Value::Str(text);
+                };
+                let forward_ref = self.heap.alloc_instance(InstanceObject::new(class));
+                if let Value::Instance(instance) = &forward_ref
+                    && let Object::Instance(instance_data) = &mut *instance.kind_mut()
+                {
+                    instance_data
+                        .attrs
+                        .insert("__forward_arg__".to_string(), Value::Str(text.clone()));
+                    instance_data
+                        .attrs
+                        .insert("__forward_is_class__".to_string(), Value::Bool(false));
+                    instance_data
+                        .attrs
+                        .insert("__forward_module__".to_string(), Value::None);
+                    instance_data
+                        .attrs
+                        .insert("__owner__".to_string(), Value::None);
+                }
+                forward_ref
+            }
+        }
+    }
+
+    fn collect_union_member(
+        &mut self,
+        value: Value,
+        allow_forward_ref_strings: bool,
+        out: &mut Vec<Value>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(items) = self.union_args_from_value(&value) {
+            for item in items {
+                self.collect_union_member(item, allow_forward_ref_strings, out)?;
+            }
+            return Ok(());
+        }
+
+        let normalized = match value {
+            Value::None => self.none_type_value().unwrap_or(Value::None),
+            Value::Str(text) if allow_forward_ref_strings => {
+                self.forward_ref_value_from_string(text)
+            }
+            other => other,
+        };
+
+        if !self.union_operand_value_with_forward(&normalized, allow_forward_ref_strings) {
+            return Err(RuntimeError::type_error("unsupported operand type for |"));
+        }
+
+        for existing in out.iter() {
+            if let (Some(left_literal_args), Some(right_literal_args)) = (
+                self.literal_alias_args_from_value(existing),
+                self.literal_alias_args_from_value(&normalized),
+            ) {
+                if Self::literal_args_strict_equal(&left_literal_args, &right_literal_args) {
+                    return Ok(());
+                }
+                continue;
+            }
+            let existing_hash = self.hash_value_runtime(existing);
+            let normalized_hash = self.hash_value_runtime(&normalized);
+            match (&existing_hash, &normalized_hash) {
+                (Ok(left_hash), Ok(right_hash)) if left_hash != right_hash => {
+                    let both_class_like =
+                        matches!(existing, Value::Class(_) | Value::ExceptionType(_))
+                            && matches!(normalized, Value::Class(_) | Value::ExceptionType(_));
+                    if !both_class_like {
+                        continue;
+                    }
+                }
+                (Err(left_err), _) if !runtime_error_matches_exception(left_err, "TypeError") => {
+                    return Err(left_err.clone());
+                }
+                (_, Err(right_err)) if !runtime_error_matches_exception(right_err, "TypeError") => {
+                    return Err(right_err.clone());
+                }
+                _ => {}
+            }
+            let is_equal = self.compare_eq_runtime(existing.clone(), normalized.clone())?;
+            if self.truthy_from_value(&is_equal)? {
+                return Ok(());
+            }
+        }
+
+        out.push(normalized);
+        Ok(())
+    }
+
+    pub(super) fn build_union_value_from_members(
+        &mut self,
+        members: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let allow_forward_ref_strings = members
+            .iter()
+            .any(|value| self.value_contains_type_parameter(value));
+        self.build_union_value_from_members_with_forward(members, allow_forward_ref_strings)
+    }
+
+    fn build_union_value_from_members_with_forward(
+        &mut self,
+        members: Vec<Value>,
+        allow_forward_ref_strings: bool,
+    ) -> Result<Value, RuntimeError> {
+        let mut flat_members = Vec::new();
+        for member in members {
+            self.collect_union_member(member, allow_forward_ref_strings, &mut flat_members)?;
+        }
+
+        if flat_members.len() == 1 {
+            return Ok(flat_members.remove(0));
+        }
+
+        let mut parameters = Vec::new();
+        for item in &flat_members {
+            self.collect_union_type_parameters_from_value(item, &mut parameters);
+        }
+
+        let unhashable_count = 0i64;
+        let union_class = self.ensure_union_type_class();
+        let union = self.heap.alloc_instance(InstanceObject::new(union_class));
+        if let Value::Instance(instance) = &union
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut()
+        {
+            instance_data
+                .attrs
+                .insert("__args__".to_string(), self.heap.alloc_tuple(flat_members));
+            instance_data.attrs.insert(
+                "__parameters__".to_string(),
+                self.heap.alloc_tuple(parameters),
+            );
+            instance_data.attrs.insert(
+                "__pyrs_union_unhashable_count__".to_string(),
+                Value::Int(unhashable_count),
+            );
+        }
+        Ok(union)
+    }
+
+    pub(super) fn build_union_value_from_pair(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
+        self.build_union_value_from_members(vec![left, right])
+    }
+
+    fn subscript_items_from_index(&self, index: Value) -> Vec<Value> {
+        if let Some(items) = Self::tuple_items_from_value(&index) {
+            return items;
+        }
+        vec![index]
+    }
+
+    fn substitute_type_parameters_in_value(
+        &mut self,
+        value: Value,
+        substitutions: &[(Value, Value)],
+    ) -> Result<Value, RuntimeError> {
+        for (param, replacement) in substitutions {
+            let is_equal = self.compare_eq_runtime(value.clone(), param.clone())?;
+            if self.truthy_from_value(&is_equal)? {
+                return Ok(replacement.clone());
+            }
+        }
+
+        if let Some(items) = self.union_args_from_value(&value) {
+            let mut substituted = Vec::with_capacity(items.len());
+            for item in items {
+                substituted.push(self.substitute_type_parameters_in_value(item, substitutions)?);
+            }
+            return self.build_union_value_from_members(substituted);
+        }
+
+        if let Some((origin, args)) = self.generic_alias_parts_from_value(&value) {
+            let mut substituted = Vec::with_capacity(args.len());
+            for item in args {
+                substituted.push(self.substitute_type_parameters_in_value(item, substitutions)?);
+            }
+            let index = self.heap.alloc_tuple(substituted);
+            return Ok(self.alloc_generic_alias_instance(origin, index));
+        }
+
+        Ok(value)
+    }
+
+    pub(super) fn subscript_union_value(
+        &mut self,
+        value: Value,
+        index: Value,
+    ) -> Result<Value, RuntimeError> {
+        let args = self
+            .union_args_from_value(&value)
+            .ok_or_else(|| RuntimeError::type_error("subscript unsupported type"))?;
+        let mut parameters = Vec::new();
+        for item in &args {
+            self.collect_union_type_parameters_from_value(item, &mut parameters);
+        }
+        let replacement_values = self.subscript_items_from_index(index);
+        if parameters.is_empty() {
+            return Err(RuntimeError::type_error("union is not a generic type"));
+        }
+        if parameters.len() != replacement_values.len() {
+            return Err(RuntimeError::type_error(
+                "incorrect number of generic arguments",
+            ));
+        }
+        let substitutions = parameters
+            .into_iter()
+            .zip(replacement_values)
+            .collect::<Vec<_>>();
+
+        let mut substituted_args = Vec::with_capacity(args.len());
+        for item in args {
+            substituted_args.push(self.substitute_type_parameters_in_value(item, &substitutions)?);
+        }
+        self.build_union_value_from_members(substituted_args)
+    }
+
+    fn subscript_generic_alias_value(
+        &mut self,
+        value: Value,
+        index: Value,
+    ) -> Result<Value, RuntimeError> {
+        let (origin, args) = self
+            .generic_alias_parts_from_value(&value)
+            .ok_or_else(|| RuntimeError::type_error("subscript unsupported type"))?;
+        let mut parameters = Vec::new();
+        for item in &args {
+            self.collect_union_type_parameters_from_value(item, &mut parameters);
+        }
+        if parameters.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "{} is not a generic class",
+                format_repr(&value)
+            )));
+        }
+        let replacement_values = self.subscript_items_from_index(index);
+        if parameters.len() != replacement_values.len() {
+            return Err(RuntimeError::type_error(
+                "incorrect number of generic arguments",
+            ));
+        }
+        let substitutions = parameters
+            .into_iter()
+            .zip(replacement_values)
+            .collect::<Vec<_>>();
+        let mut substituted_args = Vec::with_capacity(args.len());
+        for item in args {
+            substituted_args.push(self.substitute_type_parameters_in_value(item, &substitutions)?);
+        }
+        let index_value = self.heap.alloc_tuple(substituted_args);
+        Ok(self.alloc_generic_alias_instance(origin, index_value))
     }
 
     pub(super) fn collect_iterable_values(
@@ -1345,6 +2281,10 @@ impl Vm {
             class_data.attrs.insert(
                 "__ne__".to_string(),
                 Value::Builtin(BuiltinFunction::OperatorNe),
+            );
+            class_data.attrs.insert(
+                "__lt__".to_string(),
+                Value::Builtin(BuiltinFunction::OperatorLt),
             );
             class_data
                 .attrs
@@ -1864,6 +2804,7 @@ impl Vm {
         let trace_build_class = std::env::var_os("PYRS_TRACE_BUILD_CLASS").is_some();
         let trace_this_class = trace_build_class && name == "_TagInfo";
         let mut resolved_bases = Vec::new();
+        let mut used_mro_entries = false;
         for base in args {
             let maybe_mro_entries = if matches!(base, Value::Class(_)) {
                 None
@@ -1878,6 +2819,7 @@ impl Vm {
                 }
             };
             if let Some(mro_entries) = maybe_mro_entries {
+                used_mro_entries = true;
                 let entries = match self.call_internal(
                     mro_entries,
                     vec![orig_bases_tuple.clone()],
@@ -1947,58 +2889,127 @@ impl Vm {
             .clone()
             .or_else(|| resolved_metaclass.map(Value::Class));
         let mut prepared_namespace = self.heap.alloc_dict(Vec::new());
-        if let Some(Value::Class(meta_class)) = effective_metaclass
-            && class_attr_lookup(&meta_class, "__prepare__").is_some()
-        {
-            let prepare_callable = match self.load_attr_class(&meta_class, "__prepare__")? {
-                AttrAccessOutcome::Value(value) => value,
-                AttrAccessOutcome::ExceptionHandled => {
-                    return Err(self.runtime_error_from_active_exception(
-                        "metaclass __prepare__ lookup failed",
-                    ));
-                }
+        if let Some(meta) = effective_metaclass {
+            let prepare_callable = match self.builtin_getattr(
+                vec![meta.clone(), Value::Str("__prepare__".to_string())],
+                HashMap::new(),
+            ) {
+                Ok(value) => Some(value),
+                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => None,
+                Err(err) => return Err(err),
             };
-            if std::env::var_os("PYRS_TRACE_PREPARE_CALL").is_some() {
-                let callable_type = self.value_type_name_for_error(&prepare_callable);
-                let callable_repr = format_repr(&prepare_callable);
-                eprintln!(
-                    "[prepare-call] class={} meta={} callable_type={} callable={}",
-                    name,
-                    match &*meta_class.kind() {
-                        Object::Class(data) => data.name.clone(),
-                        _ => "<non-class>".to_string(),
-                    },
-                    callable_type,
-                    callable_repr
+            if let Some(prepare_callable) = prepare_callable {
+                if std::env::var_os("PYRS_TRACE_PREPARE_CALL").is_some() {
+                    let callable_type = self.value_type_name_for_error(&prepare_callable);
+                    let callable_repr = format_repr(&prepare_callable);
+                    let meta_name = match &meta {
+                        Value::Class(class_ref) => match &*class_ref.kind() {
+                            Object::Class(data) => data.name.clone(),
+                            _ => "<non-class>".to_string(),
+                        },
+                        _ => "<metaclass>".to_string(),
+                    };
+                    eprintln!(
+                        "[prepare-call] class={} meta={} callable_type={} callable={}",
+                        name, meta_name, callable_type, callable_repr
+                    );
+                }
+                let bases_tuple = self.heap.alloc_tuple(
+                    base_classes
+                        .iter()
+                        .cloned()
+                        .map(Value::Class)
+                        .collect::<Vec<_>>(),
                 );
-            }
-            let bases_tuple = self.heap.alloc_tuple(
-                base_classes
-                    .iter()
-                    .cloned()
-                    .map(Value::Class)
-                    .collect::<Vec<_>>(),
-            );
-            prepared_namespace = match self.call_internal(
-                prepare_callable,
-                vec![Value::Str(name.clone()), bases_tuple],
-                kwargs.clone(),
-            )? {
-                InternalCallOutcome::Value(value) => value,
-                InternalCallOutcome::CallerExceptionHandled => {
-                    return Err(self
-                        .runtime_error_from_active_exception("metaclass __prepare__ call failed"));
+                prepared_namespace = match self.call_internal(
+                    prepare_callable,
+                    vec![Value::Str(name.clone()), bases_tuple],
+                    kwargs.clone(),
+                )? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self.runtime_error_from_active_exception(
+                            "metaclass __prepare__ call failed",
+                        ));
+                    }
+                };
+                if self
+                    .class_namespace_backing_dict(&prepared_namespace)
+                    .is_none()
+                {
+                    let meta_name = match &meta {
+                        Value::Class(class_ref) => match &*class_ref.kind() {
+                            Object::Class(class_data) => class_data.name.clone(),
+                            _ => "<metaclass>".to_string(),
+                        },
+                        _ => "<metaclass>".to_string(),
+                    };
+                    return Err(RuntimeError::type_error(format!(
+                        "{}.__prepare__() must return a mapping, not {}",
+                        meta_name,
+                        self.value_type_name_for_error(&prepared_namespace)
+                    )));
                 }
-            };
-            if self
-                .class_namespace_backing_dict(&prepared_namespace)
-                .is_none()
-            {
-                return Err(RuntimeError::new(
-                    "metaclass __prepare__() must return a mapping",
-                ));
             }
         }
+        let class_qualname = self
+            .frames
+            .last()
+            .and_then(|frame| {
+                if frame.return_class {
+                    let Object::Module(module_data) = &*frame.module.kind() else {
+                        return None;
+                    };
+                    let outer_qualname = module_data
+                        .globals
+                        .get("__qualname__")
+                        .and_then(|value| match value {
+                            Value::Str(name) => Some(name.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| module_data.name.clone());
+                    return Some(format!("{outer_qualname}.{name}"));
+                }
+                if frame.is_module {
+                    return None;
+                }
+                let mut outer_qualname = frame.code.name.clone();
+                let owner_value = frame
+                    .locals
+                    .get("self")
+                    .cloned()
+                    .or_else(|| frame.locals.get("cls").cloned())
+                    .or_else(|| {
+                        frame
+                            .code
+                            .names
+                            .iter()
+                            .position(|entry| entry == "self" || entry == "cls")
+                            .and_then(|idx| frame.fast_locals.get(idx))
+                            .and_then(|slot| slot.clone())
+                    });
+                if let Some(owner) = owner_value {
+                    match owner {
+                        Value::Instance(instance) => {
+                            if let Object::Instance(instance_data) = &*instance.kind()
+                                && let Object::Class(class_data) = &*instance_data.class.kind()
+                            {
+                                outer_qualname =
+                                    format!("{}.{}", class_data.name, outer_qualname);
+                            }
+                        }
+                        Value::Class(class) => {
+                            if let Object::Class(class_data) = &*class.kind() {
+                                outer_qualname =
+                                    format!("{}.{}", class_data.name, outer_qualname);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Some(format!("{outer_qualname}.<locals>.{name}"))
+            })
+            .unwrap_or_else(|| name.clone());
         let class_module = match self.heap.alloc_module(ModuleObject::new(name.clone())) {
             Value::Module(obj) => obj,
             _ => unreachable!(),
@@ -2009,7 +3020,7 @@ impl Vm {
                 .insert("__name__".to_string(), Value::Str(name.clone()));
             module_data
                 .globals
-                .insert("__qualname__".to_string(), Value::Str(name));
+                .insert("__qualname__".to_string(), Value::Str(class_qualname));
         }
 
         let outer_globals = func_data.module.clone();
@@ -2038,9 +3049,14 @@ impl Vm {
         );
         frame.return_class = true;
         frame.class_bases = base_classes;
+        frame.class_orig_bases = if used_mro_entries {
+            Some(orig_bases_tuple)
+        } else {
+            None
+        };
         frame.class_metaclass = class_metaclass;
         frame.class_keywords = kwargs;
-        self.frames.push(Box::new(frame));
+        self.push_frame_checked(Box::new(frame))?;
         Ok(None)
     }
 
@@ -2095,6 +3111,14 @@ impl Vm {
             class_data.attrs.insert(
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::ExceptionTypeInit),
+            );
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Builtin(BuiltinFunction::ExceptionTypeStr),
+            );
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::ExceptionTypeRepr),
             );
         }
         self.synthetic_exception_classes
@@ -2379,19 +3403,49 @@ fn typing_alias_marker_value(value: &Value) -> bool {
 }
 
 fn typing_alias_marker_instance(instance: &ObjRef) -> bool {
-    match &*instance.kind() {
+    let (class_name, module_name) = match &*instance.kind() {
         Object::Instance(instance_data) => match &*instance_data.class.kind() {
-            Object::Class(class_data) => matches!(
-                class_data.name.as_str(),
-                "GenericAlias"
-                    | "UnionType"
-                    | "TypeVar"
-                    | "TypeVarTuple"
-                    | "ParamSpec"
-                    | "TypeAliasType"
-            ),
-            _ => false,
+            Object::Class(class_data) => {
+                let module_name = match class_data.attrs.get("__module__") {
+                    Some(Value::Str(name)) => Some(name.clone()),
+                    _ => None,
+                };
+                (class_data.name.clone(), module_name)
+            }
+            _ => return false,
         },
-        _ => false,
+        _ => return false,
+    };
+    if matches!(
+        class_name.as_str(),
+        "GenericAlias"
+            | "_GenericAlias"
+            | "UnionType"
+            | "TypeVar"
+            | "TypeVarTuple"
+            | "ParamSpec"
+            | "TypeAliasType"
+            | "ForwardRef"
+    ) {
+        return true;
     }
+    if matches!(module_name.as_deref(), Some("typing" | "_typing" | "types"))
+        && (class_name.contains("GenericAlias")
+            || class_name.contains("SpecialForm")
+            || class_name.contains("SpecialGenericAlias")
+            || class_name.contains("LiteralGenericAlias")
+            || matches!(
+                class_name.as_str(),
+                "Union"
+                    | "NewType"
+                    | "_SpecialForm"
+                    | "_TypedCacheSpecialForm"
+                    | "_AnyMeta"
+                    | "_TupleType"
+                    | "_TypingEllipsis"
+            ))
+    {
+        return true;
+    }
+    false
 }

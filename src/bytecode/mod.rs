@@ -211,6 +211,7 @@ impl Location {
 pub struct CodeObject {
     pub name: String,
     pub filename: String,
+    pub first_line: usize,
     pub instructions: Vec<Instruction>,
     pub locations: Vec<Location>,
     pub constants: Vec<crate::runtime::Value>,
@@ -237,6 +238,7 @@ pub struct CodeObject {
     pub is_comprehension: bool,
     pub is_generator: bool,
     pub is_coroutine: bool,
+    pub is_iterable_coroutine: bool,
     pub is_async_generator: bool,
     pub exception_handlers: Vec<ExceptionHandler>,
 }
@@ -248,6 +250,7 @@ impl CodeObject {
             is_comprehension: matches!(name.as_str(), "<listcomp>" | "<dictcomp>" | "<genexpr>"),
             name,
             filename: filename.into(),
+            first_line: 1,
             instructions: Vec::new(),
             locations: Vec::new(),
             constants: vec![crate::runtime::Value::None],
@@ -273,6 +276,7 @@ impl CodeObject {
             positional_param_cell_indexes: Vec::new(),
             is_generator: false,
             is_coroutine: false,
+            is_iterable_coroutine: false,
             is_async_generator: false,
             exception_handlers: Vec::new(),
         }

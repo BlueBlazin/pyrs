@@ -2716,19 +2716,13 @@ impl Parser {
             {
                 let name = token.lexeme.clone();
                 pos += 2;
-                let (mut value, next) = self.parse_expr_at(pos)?;
-                let mut next_pos = next;
+                let (value, next) = self.parse_expr_at(pos)?;
+                let next_pos = next;
                 if self.is_comprehension_start(next_pos) {
-                    let (clauses, after) = self.parse_comp_clauses(next_pos)?;
-                    let span = value.span;
-                    value = Expr {
-                        node: ExprKind::GeneratorExp {
-                            elt: Box::new(value),
-                            clauses,
-                        },
-                        span,
-                    };
-                    next_pos = after;
+                    return Err(self.error_at(
+                        pos,
+                        "Generator expression must be parenthesized",
+                    ));
                 }
                 args.push(CallArg::Keyword { name, value });
                 pos = next_pos;
@@ -2736,7 +2730,19 @@ impl Parser {
                 let (mut expr, next) = self.parse_expr_at(pos)?;
                 let mut next_pos = next;
                 if self.is_comprehension_start(next_pos) {
+                    if !args.is_empty() {
+                        return Err(self.error_at(
+                            pos,
+                            "Generator expression must be parenthesized",
+                        ));
+                    }
                     let (clauses, after) = self.parse_comp_clauses(next_pos)?;
+                    if !matches!(self.token_at(after).kind, TokenKind::RParen) {
+                        return Err(self.error_at(
+                            pos,
+                            "Generator expression must be parenthesized",
+                        ));
+                    }
                     let span = expr.span;
                     expr = Expr {
                         node: ExprKind::GeneratorExp {
@@ -3647,11 +3653,13 @@ impl Parser {
     }
 
     fn parse_subscript(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
+        let start = pos.saturating_sub(1);
         let mut pos = pos;
-        let (first, next) = self.parse_subscript_item(pos)?;
+        let (first, next) = self.parse_subscript_element(pos)?;
         pos = next;
         let mut items = vec![first];
         let mut has_comma = false;
+        let mut has_star = matches!(items.first(), Some(SequenceElement::Star(_)));
 
         while matches!(self.token_at(pos).kind, TokenKind::Comma) {
             has_comma = true;
@@ -3659,26 +3667,55 @@ impl Parser {
             if matches!(self.token_at(pos).kind, TokenKind::RBracket) {
                 break;
             }
-            let (item, next) = self.parse_subscript_item(pos)?;
+            let (item, next) = self.parse_subscript_element(pos)?;
+            if matches!(item, SequenceElement::Star(_)) {
+                has_star = true;
+            }
             items.push(item);
             pos = next;
         }
 
         pos = self.expect_kind(pos, TokenKind::RBracket)?;
+        if has_star {
+            return Ok((self.lower_starred_tuple(start, items), pos));
+        }
         if has_comma {
-            let span = items
+            let values: Vec<Expr> = items
+                .into_iter()
+                .map(|item| match item {
+                    SequenceElement::Expr(expr) => expr,
+                    SequenceElement::Star(_) => unreachable!(),
+                })
+                .collect();
+            let span = values
                 .first()
                 .map(|item| item.span)
                 .unwrap_or_else(Span::unknown);
             return Ok((
                 Expr {
-                    node: ExprKind::Tuple(items),
+                    node: ExprKind::Tuple(values),
                     span,
                 },
                 pos,
             ));
         }
-        Ok((items.remove(0), pos))
+        match items.pop() {
+            Some(SequenceElement::Expr(expr)) => Ok((expr, pos)),
+            Some(SequenceElement::Star(_)) => unreachable!(),
+            None => unreachable!(),
+        }
+    }
+
+    fn parse_subscript_element(
+        &mut self,
+        pos: usize,
+    ) -> Result<(SequenceElement, usize), ParseError> {
+        if matches!(self.token_at(pos).kind, TokenKind::Star) {
+            let (expr, next) = self.parse_expr_at(pos + 1)?;
+            return Ok((SequenceElement::Star(expr), next));
+        }
+        let (expr, next) = self.parse_subscript_item(pos)?;
+        Ok((SequenceElement::Expr(expr), next))
     }
 
     fn parse_subscript_item(&mut self, pos: usize) -> Result<(Expr, usize), ParseError> {
@@ -3802,12 +3839,8 @@ impl Parser {
                     }
                     let name = name_token.lexeme.clone();
                     pos += 1;
-                    let mut annotation = None;
-                    if matches!(self.token_at(pos).kind, TokenKind::Colon) {
-                        let (expr, next) = self.parse_expr_at(pos + 1)?;
-                        annotation = Some(Box::new(expr));
-                        pos = next;
-                    }
+                    let (annotation, next) = self.parse_vararg_annotation(pos)?;
+                    pos = next;
                     vararg = Some(Parameter {
                         name,
                         default: None,
@@ -3891,6 +3924,31 @@ impl Parser {
 
         pos = self.expect_kind(pos, TokenKind::RParen)?;
         Ok((posonly_params, params, kwonly_params, vararg, kwarg, pos))
+    }
+
+    fn parse_vararg_annotation(
+        &mut self,
+        pos: usize,
+    ) -> Result<(Option<Box<Expr>>, usize), ParseError> {
+        if !matches!(self.token_at(pos).kind, TokenKind::Colon) {
+            return Ok((None, pos));
+        }
+        let annotation_pos = pos + 1;
+        if matches!(self.token_at(annotation_pos).kind, TokenKind::Star) {
+            let star_pos = annotation_pos;
+            let (inner, next) = self.parse_expr_at(annotation_pos + 1)?;
+            let unpack_name = self.make_expr(star_pos, ExprKind::Name("Unpack".to_string()));
+            let unpack_expr = self.make_expr(
+                star_pos,
+                ExprKind::Subscript {
+                    value: Box::new(unpack_name),
+                    index: Box::new(inner),
+                },
+            );
+            return Ok((Some(Box::new(unpack_expr)), next));
+        }
+        let (annotation, next) = self.parse_expr_at(annotation_pos)?;
+        Ok((Some(Box::new(annotation)), next))
     }
 
     fn parse_lambda_params(
@@ -4015,7 +4073,17 @@ impl Parser {
             if matches!(self.token_at(pos).kind, TokenKind::Comma) {
                 pos += 1;
                 if matches!(self.token_at(pos).kind, TokenKind::Colon) {
-                    return Err(self.error_at(pos, "expected parameter name"));
+                    // CPython accepts a trailing comma in lambda parameter lists
+                    // (for example: `lambda x,: x`).
+                    if posonly_params.is_empty()
+                        && params.is_empty()
+                        && kwonly_params.is_empty()
+                        && vararg.is_none()
+                        && kwarg.is_none()
+                    {
+                        return Err(self.error_at(pos, "expected parameter name"));
+                    }
+                    break;
                 }
                 if kwarg.is_some() {
                     return Err(self.error_at(pos, "**kwargs must be last parameter"));

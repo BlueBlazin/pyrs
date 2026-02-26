@@ -79,7 +79,7 @@ impl<'a> Lexer<'a> {
                 None => break,
             };
 
-            if ch == ' ' || ch == '\t' || ch == '\r' {
+            if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\x0c' {
                 self.advance();
                 continue;
             }
@@ -1194,6 +1194,12 @@ impl<'a> Lexer<'a> {
                 '\t' => {
                     let next = 8 - (level % 8);
                     level += next;
+                    self.advance();
+                }
+                '\x0c' => {
+                    // CPython treats form-feed in leading whitespace as indentation control.
+                    // Reset indentation accumulation to preserve compatibility in mixed ws lines.
+                    level = 0;
                     self.advance();
                 }
                 _ => break,

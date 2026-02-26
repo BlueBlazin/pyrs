@@ -907,7 +907,7 @@ pub unsafe extern "C" fn PyInstanceMethod_New(function: *mut c_void) -> *mut c_v
 pub unsafe extern "C" fn PyCode_NewEmpty(
     filename: *const c_char,
     funcname: *const c_char,
-    _firstlineno: c_int,
+    firstlineno: c_int,
 ) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         let filename_text = if filename.is_null() {
@@ -922,7 +922,8 @@ pub unsafe extern "C" fn PyCode_NewEmpty(
             // SAFETY: funcname is expected to be a NUL-terminated C string by C-API contract.
             unsafe { c_name_to_string(funcname) }.unwrap_or_else(|_| "<module>".to_string())
         };
-        let code = CodeObject::new(funcname_text, filename_text);
+        let mut code = CodeObject::new(funcname_text, filename_text);
+        code.first_line = firstlineno.max(1) as usize;
         let value = Value::Code(Rc::new(code));
         context.alloc_cpython_ptr_for_value(value)
     })

@@ -1,9 +1,10 @@
 use super::{
     BUILTIN_MODULE_LOADER, HashMap, ModuleObject, NAMESPACE_LOADER, OPCODE_METADATA, ObjRef,
     Object, OpcodeMetadata, PathBuf, RuntimeError, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
-    Value, Vm, bytes_like_from_value, cache_path_from_source_path, class_attr_lookup, fs,
-    is_truthy, opcode_flags_contains, source_path_from_cache_path, split_relative_import_name,
-    value_to_int, value_to_path,
+    Value, Vm, bytes_like_from_value, cache_path_from_source_path,
+    cache_path_from_source_path_with_optimization, class_attr_lookup, fs, is_truthy,
+    opcode_flags_contains, source_path_from_cache_path, split_relative_import_name, value_to_int,
+    value_to_path,
 };
 
 impl Vm {
@@ -738,6 +739,96 @@ impl Vm {
         ))
     }
 
+    pub(super) fn builtin_importlib_path_hook(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("path_hook() expects one path argument"));
+        }
+        let path = value_to_path(&args.remove(0))?;
+        let root = PathBuf::from(path);
+        Ok(self.make_file_finder_importer(&root))
+    }
+
+    pub(super) fn builtin_importlib_file_finder_find_spec(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new(
+                "find_spec() missing required argument 'fullname'",
+            ));
+        }
+        let finder = args.remove(0);
+        let kw_fullname = kwargs.remove("fullname");
+        let kw_target = kwargs.remove("target");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "find_spec() got an unexpected keyword argument",
+            ));
+        }
+
+        let fullname_value = if let Some(value) = kw_fullname {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "find_spec() got multiple values for argument 'fullname'",
+                ));
+            }
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            return Err(RuntimeError::new(
+                "find_spec() missing required argument 'fullname'",
+            ));
+        };
+        let fullname = match fullname_value {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("find_spec() fullname must be string")),
+        };
+
+        if let Some(_target) = kw_target {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "find_spec() got multiple values for argument 'target'",
+                ));
+            }
+        } else if !args.is_empty() {
+            args.remove(0);
+        }
+        if !args.is_empty() {
+            return Err(RuntimeError::new("find_spec() takes at most 2 arguments"));
+        }
+
+        let module_name = fullname
+            .rsplit_once('.')
+            .map(|(_, tail)| tail)
+            .unwrap_or(fullname.as_str());
+        let Some(source_info) = self.find_module_source_with_importer(&finder, module_name) else {
+            return Ok(Value::None);
+        };
+        let loader_name = if source_info.is_namespace {
+            NAMESPACE_LOADER
+        } else if source_info.is_bytecode {
+            SOURCELESS_FILE_LOADER
+        } else {
+            SOURCE_FILE_LOADER
+        };
+        let (origin, cached) = self.module_origin_and_cached_paths(&source_info);
+        Ok(self.build_module_spec_value(
+            &fullname,
+            origin.as_ref(),
+            cached.as_ref(),
+            Some(loader_name),
+            source_info.is_package,
+            source_info.package_dirs.as_slice(),
+            source_info.is_namespace,
+        ))
+    }
+
     pub(super) fn builtin_importlib_invalidate_caches(
         &mut self,
         args: Vec<Value>,
@@ -771,9 +862,16 @@ impl Vm {
             Value::Str(value) => value,
             _ => return Err(RuntimeError::new("location must be string")),
         };
-        let loader = kwargs
-            .remove("loader")
-            .unwrap_or_else(|| self.loader_spec_value(Some(SOURCE_FILE_LOADER)));
+        let location_path = PathBuf::from(&location);
+        let loader = kwargs.remove("loader").unwrap_or_else(|| {
+            self.loader_spec_value_for_module(
+                &name,
+                Some(&location_path),
+                Some(SOURCE_FILE_LOADER),
+                &[],
+                false,
+            )
+        });
         let search_locations = kwargs.remove("submodule_search_locations");
         kwargs.remove("target");
         if !kwargs.is_empty() {
@@ -792,7 +890,6 @@ impl Vm {
             Value::None
         };
         let is_package = !matches!(normalized_search_locations, Value::None);
-        let location_path = PathBuf::from(&location);
         let spec = self.build_module_spec_value(
             &name,
             Some(&location_path),
@@ -1030,6 +1127,20 @@ impl Vm {
         self.builtin_frozen_importlib_external_unpack_uint(args, kwargs, 2)
     }
 
+    pub(super) fn builtin_frozen_importlib_external_pack_uint32(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "_pack_uint32() expects one integer argument",
+            ));
+        }
+        let value = value_to_int(args[0].clone())?;
+        Ok(self.heap.alloc_bytes((value as u32).to_le_bytes().to_vec()))
+    }
+
     pub(super) fn builtin_frozen_importlib_external_unpack_uint32(
         &self,
         args: Vec<Value>,
@@ -1241,18 +1352,100 @@ impl Vm {
     pub(super) fn builtin_importlib_cache_from_source(
         &self,
         mut args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() != 1 {
+        let mut path = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = kwargs.remove("path") {
+            value
+        } else {
             return Err(RuntimeError::new(
-                "cache_from_source() expects one path argument",
+                "cache_from_source() missing required argument 'path'",
+            ));
+        };
+        if let Some(value) = kwargs.remove("path") {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "cache_from_source() got multiple values for argument 'path'",
+                ));
+            }
+            path = value;
+        }
+
+        let mut debug_override = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        if let Some(value) = kwargs.remove("debug_override") {
+            if debug_override.is_some() {
+                return Err(RuntimeError::new(
+                    "cache_from_source() got multiple values for argument 'debug_override'",
+                ));
+            }
+            debug_override = Some(value);
+        }
+        if !args.is_empty() {
+            return Err(RuntimeError::new(
+                "cache_from_source() takes at most 2 positional arguments",
             ));
         }
-        let path = match args.remove(0) {
+
+        let mut optimization = kwargs.remove("optimization");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "cache_from_source() got an unexpected keyword argument",
+            ));
+        }
+
+        if let Some(debug_override) = debug_override
+            && !matches!(debug_override, Value::None)
+        {
+            if optimization.is_some() {
+                return Err(RuntimeError::new(
+                    "debug_override or optimization must be set to None",
+                ));
+            }
+            optimization = Some(if is_truthy(&debug_override) {
+                Value::Str(String::new())
+            } else {
+                Value::Int(1)
+            });
+        }
+
+        let path = match path {
             Value::Str(path) => path,
             _ => return Err(RuntimeError::new("path must be string")),
         };
-        let cache = cache_path_from_source_path(&path);
+        let optimization = match optimization {
+            None | Some(Value::None) => String::new(),
+            Some(Value::Str(text)) => text,
+            Some(Value::Int(value)) => value.to_string(),
+            Some(Value::BigInt(value)) => value.to_string(),
+            Some(Value::Bool(value)) => {
+                if value {
+                    "True".to_string()
+                } else {
+                    "False".to_string()
+                }
+            }
+            Some(other) => {
+                return Err(RuntimeError::new(format!(
+                    "optimization must be str, int, bool, or None, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        if !optimization.is_empty() && !optimization.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+            return Err(RuntimeError::new(format!(
+                "{optimization:?} is not alphanumeric"
+            )));
+        }
+        let cache = if optimization.is_empty() {
+            cache_path_from_source_path(&path)
+        } else {
+            cache_path_from_source_path_with_optimization(&path, &optimization)
+        };
         Ok(Value::Str(cache))
     }
 }

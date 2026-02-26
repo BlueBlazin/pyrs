@@ -169,6 +169,7 @@ impl BoundMethod {
 
 #[derive(Debug, Clone)]
 pub struct GeneratorObject {
+    pub code: Rc<CodeObject>,
     pub started: bool,
     pub running: bool,
     pub closed: bool,
@@ -177,8 +178,9 @@ pub struct GeneratorObject {
 }
 
 impl GeneratorObject {
-    pub fn new(is_coroutine: bool, is_async_generator: bool) -> Self {
+    pub fn new(code: Rc<CodeObject>, is_coroutine: bool, is_async_generator: bool) -> Self {
         Self {
+            code,
             started: false,
             running: false,
             closed: false,
@@ -233,6 +235,7 @@ pub enum NativeMethodKind {
     ListInsert,
     ListRemove,
     ListPop,
+    QueueSimpleQueuePut,
     ListCount,
     ListCopy,
     ListClear,
@@ -253,6 +256,7 @@ pub enum NativeMethodKind {
     StrReplace,
     StrUpper,
     StrLower,
+    StrSwapCase,
     StrCapitalize,
     StrTitle,
     StrEncode,
@@ -313,6 +317,7 @@ pub enum NativeMethodKind {
     CodeReplace,
     CodeCoPositions,
     CodeCoLines,
+    FrameClear,
     SetContains,
     SetAdd,
     SetDiscard,
@@ -341,6 +346,31 @@ pub enum NativeMethodKind {
     ObjectReduceExBound,
     BoundMethodReduceEx,
     ComplexReduceEx,
+    GenericAliasReduceEx,
+    GenericAliasMroEntries,
+    TypeParamCopy,
+    TypeParamReduceEx,
+    MappingProxyContains,
+    MappingProxyGetItem,
+    MappingProxyIor,
+    MappingProxyIter,
+    MappingProxyLen,
+    MappingProxyOr,
+    MappingProxyReversed,
+    MappingProxyRor,
+    MappingProxyCopy,
+    MappingProxyGet,
+    MappingProxyItems,
+    MappingProxyKeys,
+    MappingProxyValues,
+    MappingProxyEq,
+    MappingProxyNe,
+    MappingProxyHash,
+    MappingProxyRepr,
+    MappingProxyClassGetItem,
+    MappingProxyValuesViewIter,
+    MappingProxyItemsViewIter,
+    BoundMethodDescriptorGet,
     FunctionDescriptorGet,
     ClassMethodDescriptorGet,
     StaticMethodDescriptorGet,
@@ -405,6 +435,10 @@ impl ObjRef {
 
     pub fn kind_mut(&self) -> RefMut<'_, Object> {
         self.0.kind.borrow_mut()
+    }
+
+    pub fn try_kind_mut(&self) -> Option<RefMut<'_, Object>> {
+        self.0.kind.try_borrow_mut().ok()
     }
 
     pub fn strong_count(&self) -> usize {
@@ -1980,7 +2014,11 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
 }
 
 fn clear_object_refs(obj: &ObjRef) {
-    let mut kind = obj.kind_mut();
+    // GC can be re-entered from object code paths (for example __repr__).
+    // If an object is currently borrowed, defer clearing it to a later cycle.
+    let Some(mut kind) = obj.try_kind_mut() else {
+        return;
+    };
     let replacement = match &mut *kind {
         Object::List(values) | Object::Tuple(values) => {
             values.clear();
@@ -2210,6 +2248,10 @@ pub struct ExceptionTracebackFrame {
     pub end_column: usize,
     pub lasti: usize,
     pub name: String,
+    pub locals: Vec<String>,
+    pub local_values: Vec<(String, Value)>,
+    pub globals: Vec<String>,
+    pub self_local: Option<Value>,
 }
 
 impl ExceptionObject {
@@ -2476,6 +2518,10 @@ pub enum BuiltinFunction {
     ByteArrayTypeRepr,
     MappingProxyTypeRepr,
     SimpleNamespaceTypeRepr,
+    SimpleNamespaceInit,
+    SimpleNamespaceEq,
+    SimpleNamespaceReduce,
+    SimpleNamespaceReplace,
     NoOp,
     Len,
     Range,
@@ -2538,9 +2584,12 @@ pub enum BuiltinFunction {
     StaticMethod,
     Property,
     ObjectNew,
+    TracebackTypeNew,
     ObjectInit,
     ObjectInitSubclass,
     ExceptionTypeInit,
+    ExceptionTypeStr,
+    ExceptionTypeRepr,
     ObjectGetAttribute,
     ObjectFormat,
     ObjectGetState,
@@ -2577,10 +2626,18 @@ pub enum BuiltinFunction {
     Locals,
     Globals,
     SysGetFrame,
+    SysGetFrameModuleName,
+    SysCurrentFrames,
     SysException,
     SysExcInfo,
+    SysCallTracing,
+    SysExcepthook,
+    SysDisplayHook,
+    SysIntern,
     SysExit,
     SysIsFinalizing,
+    SysIsGilEnabled,
+    SysIsRemoteDebugEnabled,
     SysGetDefaultEncoding,
     SysGetFilesystemEncoding,
     SysGetFilesystemEncodeErrors,
@@ -2628,6 +2685,8 @@ pub enum BuiltinFunction {
     PkgutilIterModules,
     PkgutilWalkPackages,
     PkgutilResolveName,
+    ImportlibPathHook,
+    ImportlibFileFinderFindSpec,
     FindSpec,
     ImportlibInvalidateCaches,
     ImportlibSourceFromCache,
@@ -2639,6 +2698,7 @@ pub enum BuiltinFunction {
     FrozenImportlibExternalPathJoin,
     FrozenImportlibExternalPathSplit,
     FrozenImportlibExternalPathStat,
+    FrozenImportlibExternalPackUint32,
     FrozenImportlibExternalUnpackUint16,
     FrozenImportlibExternalUnpackUint32,
     FrozenImportlibExternalUnpackUint64,
@@ -2679,6 +2739,16 @@ pub enum BuiltinFunction {
     GcGetThreshold,
     GcSetThreshold,
     GcGetCount,
+    TraceMallocStart,
+    TraceMallocStop,
+    TraceMallocIsTracing,
+    TraceMallocGetTracebackLimit,
+    TraceMallocGetTracedMemory,
+    TraceMallocGetTraceMallocMemory,
+    TraceMallocResetPeak,
+    TraceMallocClearTraces,
+    TraceMallocGetTraces,
+    TraceMallocGetObjectTraceback,
     MathSqrt,
     MathCopySign,
     MathFloor,
@@ -2715,7 +2785,9 @@ pub enum BuiltinFunction {
     TimeMonotonic,
     TimeSleep,
     OsGetPid,
+    OsChDir,
     OsGetCwd,
+    OsCpuCount,
     OsUname,
     OsUnameIter,
     OsGetEnv,
@@ -3161,6 +3233,7 @@ pub enum BuiltinFunction {
     InspectSignatureInit,
     InspectSignatureStr,
     InspectSignatureRepr,
+    InspectSignatureEq,
     InspectSignatureReplace,
     InspectSignatureBind,
     InspectSignatureBindPartial,
@@ -3176,8 +3249,10 @@ pub enum BuiltinFunction {
     InspectIsModule,
     InspectIsGenerator,
     InspectIsCoroutine,
+    InspectIsCoroutineFunction,
     InspectIsAwaitable,
     InspectIsAsyncGen,
+    InspectMarkCoroutineFunction,
     InspectStaticGetMro,
     InspectGetDunderDictOfClass,
     TypesModuleType,
@@ -3191,6 +3266,9 @@ pub enum BuiltinFunction {
     AsyncGeneratorType,
     EnumConvert,
     TypeAnnotationsGet,
+    TestCapiExceptionPrint,
+    TestCapiConfigGet,
+    TestCapiPyObjectVectorcall,
     TestInternalCapiGetRecursionDepth,
     DataclassesField,
     DataclassesIsDataclass,
@@ -3200,6 +3278,7 @@ pub enum BuiltinFunction {
     DataclassesReplace,
     DataclassesMakeDataclass,
     IoOpen,
+    IoOpenCode,
     IoReadText,
     IoWriteText,
     IoTextEncoding,
@@ -3437,6 +3516,7 @@ pub enum BuiltinFunction {
     ColorizeGetColors,
     ColorizeSetTheme,
     ColorizeDecolor,
+    ColorizeThemeItems,
     WarningsWarn,
     WarningsWarnExplicit,
     WarningsFiltersMutated,
@@ -5842,6 +5922,61 @@ impl BuiltinFunction {
                 }
                 Ok(Value::None)
             }
+            BuiltinFunction::TraceMallocStart => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "tracemalloc.start() expects at most one argument",
+                    ));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::TraceMallocStop
+            | BuiltinFunction::TraceMallocResetPeak
+            | BuiltinFunction::TraceMallocClearTraces => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new(
+                        "tracemalloc helper expects no arguments",
+                    ));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::TraceMallocIsTracing => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new(
+                        "tracemalloc.is_tracing() expects no arguments",
+                    ));
+                }
+                Ok(Value::Bool(false))
+            }
+            BuiltinFunction::TraceMallocGetTracebackLimit
+            | BuiltinFunction::TraceMallocGetTraceMallocMemory => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("tracemalloc helper expects no arguments"));
+                }
+                Ok(Value::Int(0))
+            }
+            BuiltinFunction::TraceMallocGetTracedMemory => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("tracemalloc helper expects no arguments"));
+                }
+                Ok(heap.alloc_tuple(vec![Value::Int(0), Value::Int(0)]))
+            }
+            BuiltinFunction::TraceMallocGetTraces => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new(
+                        "tracemalloc._get_traces() expects no arguments",
+                    ));
+                }
+                Ok(heap.alloc_list(Vec::new()))
+            }
+            BuiltinFunction::TraceMallocGetObjectTraceback => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new(
+                        "tracemalloc._get_object_traceback() expects one argument",
+                    ));
+                }
+                Ok(Value::None)
+            }
             BuiltinFunction::GetAttr
             | BuiltinFunction::SetAttr
             | BuiltinFunction::DelAttr
@@ -5876,11 +6011,21 @@ impl BuiltinFunction {
             | BuiltinFunction::PkgutilIterModules
             | BuiltinFunction::PkgutilWalkPackages
             | BuiltinFunction::PkgutilResolveName
+            | BuiltinFunction::ImportlibPathHook
+            | BuiltinFunction::ImportlibFileFinderFindSpec
             | BuiltinFunction::SysGetFrame
+            | BuiltinFunction::SysGetFrameModuleName
+            | BuiltinFunction::SysCurrentFrames
             | BuiltinFunction::SysException
             | BuiltinFunction::SysExcInfo
+            | BuiltinFunction::SysCallTracing
+            | BuiltinFunction::SysExcepthook
+            | BuiltinFunction::SysDisplayHook
+            | BuiltinFunction::SysIntern
             | BuiltinFunction::SysExit
             | BuiltinFunction::SysIsFinalizing
+            | BuiltinFunction::SysIsGilEnabled
+            | BuiltinFunction::SysIsRemoteDebugEnabled
             | BuiltinFunction::SysGetDefaultEncoding
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
@@ -5927,6 +6072,7 @@ impl BuiltinFunction {
             | BuiltinFunction::FrozenImportlibExternalPathJoin
             | BuiltinFunction::FrozenImportlibExternalPathSplit
             | BuiltinFunction::FrozenImportlibExternalPathStat
+            | BuiltinFunction::FrozenImportlibExternalPackUint32
             | BuiltinFunction::FrozenImportlibExternalUnpackUint16
             | BuiltinFunction::FrozenImportlibExternalUnpackUint32
             | BuiltinFunction::FrozenImportlibExternalUnpackUint64
@@ -5988,7 +6134,9 @@ impl BuiltinFunction {
             | BuiltinFunction::TimeMonotonic
             | BuiltinFunction::TimeSleep
             | BuiltinFunction::OsGetPid
+            | BuiltinFunction::OsChDir
             | BuiltinFunction::OsGetCwd
+            | BuiltinFunction::OsCpuCount
             | BuiltinFunction::OsUname
             | BuiltinFunction::OsUnameIter
             | BuiltinFunction::OsGetEnv
@@ -6243,6 +6391,7 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectSignatureInit
             | BuiltinFunction::InspectSignatureStr
             | BuiltinFunction::InspectSignatureRepr
+            | BuiltinFunction::InspectSignatureEq
             | BuiltinFunction::InspectSignatureReplace
             | BuiltinFunction::InspectSignatureBind
             | BuiltinFunction::InspectSignatureBindPartial
@@ -6258,8 +6407,10 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectIsModule
             | BuiltinFunction::InspectIsGenerator
             | BuiltinFunction::InspectIsCoroutine
+            | BuiltinFunction::InspectIsCoroutineFunction
             | BuiltinFunction::InspectIsAwaitable
             | BuiltinFunction::InspectIsAsyncGen
+            | BuiltinFunction::InspectMarkCoroutineFunction
             | BuiltinFunction::InspectStaticGetMro
             | BuiltinFunction::InspectGetDunderDictOfClass
             | BuiltinFunction::TypesModuleType
@@ -6269,6 +6420,9 @@ impl BuiltinFunction {
             | BuiltinFunction::TypesCoroutine
             | BuiltinFunction::EnumConvert
             | BuiltinFunction::TypeAnnotationsGet
+            | BuiltinFunction::TestCapiExceptionPrint
+            | BuiltinFunction::TestCapiConfigGet
+            | BuiltinFunction::TestCapiPyObjectVectorcall
             | BuiltinFunction::TestInternalCapiGetRecursionDepth
             | BuiltinFunction::DataclassesField
             | BuiltinFunction::DataclassesIsDataclass
@@ -6278,6 +6432,7 @@ impl BuiltinFunction {
             | BuiltinFunction::DataclassesReplace
             | BuiltinFunction::DataclassesMakeDataclass
             | BuiltinFunction::IoOpen
+            | BuiltinFunction::IoOpenCode
             | BuiltinFunction::IoReadText
             | BuiltinFunction::IoWriteText
             | BuiltinFunction::IoTextEncoding
@@ -6510,15 +6665,19 @@ impl BuiltinFunction {
             | BuiltinFunction::ColorizeGetColors
             | BuiltinFunction::ColorizeSetTheme
             | BuiltinFunction::ColorizeDecolor
+            | BuiltinFunction::ColorizeThemeItems
             | BuiltinFunction::WarningsWarn
             | BuiltinFunction::WarningsWarnExplicit
             | BuiltinFunction::WarningsFiltersMutated
             | BuiltinFunction::WarningsAcquireLock
             | BuiltinFunction::WarningsReleaseLock
             | BuiltinFunction::ObjectNew
+            | BuiltinFunction::TracebackTypeNew
             | BuiltinFunction::ObjectInit
             | BuiltinFunction::ObjectInitSubclass
             | BuiltinFunction::ExceptionTypeInit
+            | BuiltinFunction::ExceptionTypeStr
+            | BuiltinFunction::ExceptionTypeRepr
             | BuiltinFunction::ObjectGetAttribute
             | BuiltinFunction::ObjectFormat
             | BuiltinFunction::ObjectSetAttr
@@ -6530,7 +6689,11 @@ impl BuiltinFunction {
             | BuiltinFunction::ObjectReduceEx
             | BuiltinFunction::SetReduce
             | BuiltinFunction::StringFormatterParser
-            | BuiltinFunction::StringFormatterFieldNameSplit => {
+            | BuiltinFunction::StringFormatterFieldNameSplit
+            | BuiltinFunction::SimpleNamespaceInit
+            | BuiltinFunction::SimpleNamespaceEq
+            | BuiltinFunction::SimpleNamespaceReduce
+            | BuiltinFunction::SimpleNamespaceReplace => {
                 Err(RuntimeError::new("builtin requires VM context"))
             }
             BuiltinFunction::BuildClass => Err(RuntimeError::new(
@@ -7480,7 +7643,15 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
         Value::BoundMethod(_) => Value::Str("method".to_string()),
         Value::Function(_) => Value::Str("function".to_string()),
         Value::Cell(_) => Value::Str("cell".to_string()),
-        Value::Exception(exception) => Value::ExceptionType(exception.name.clone()),
+        Value::Exception(exception) => exception
+            .attrs
+            .borrow()
+            .get("__class__")
+            .and_then(|value| match value {
+                Value::Class(class) => Some(Value::Class(class.clone())),
+                _ => None,
+            })
+            .unwrap_or_else(|| Value::ExceptionType(exception.name.clone())),
         Value::ExceptionType(_) => Value::Builtin(BuiltinFunction::Type),
         Value::Slice(_) => Value::Builtin(BuiltinFunction::Slice),
         Value::Code(_) => Value::Str("code".to_string()),
@@ -7577,6 +7748,138 @@ fn bound_method_fallback_name(function: &ObjRef) -> Option<String> {
         Object::Module(module) => Some(module.name.clone()),
         _ => None,
     }
+}
+
+fn class_mro_has_name(class: &ObjRef, needle: &str) -> bool {
+    let class_kind = class.kind();
+    let Object::Class(class_data) = &*class_kind else {
+        return false;
+    };
+    if class_data.name == needle {
+        return true;
+    }
+    class_data.mro.iter().any(|entry| {
+        let entry_kind = entry.kind();
+        matches!(&*entry_kind, Object::Class(entry_data) if entry_data.name == needle)
+    })
+}
+
+fn class_display_name_for_type_expr(class: &ObjRef) -> String {
+    let class_kind = class.kind();
+    let Object::Class(class_data) = &*class_kind else {
+        return "<class ?>".to_string();
+    };
+    if class_data.name == "NoneType" {
+        return "None".to_string();
+    }
+    let module = class_data
+        .attrs
+        .get("__module__")
+        .and_then(|value| match value {
+            Value::Str(name) => Some(name.as_str()),
+            _ => None,
+        })
+        .unwrap_or("builtins");
+    let qualname = class_data
+        .attrs
+        .get("__qualname__")
+        .and_then(|value| match value {
+            Value::Str(name) => Some(name.as_str()),
+            _ => None,
+        })
+        .unwrap_or(class_data.name.as_str());
+    if module == "builtins" {
+        qualname.to_string()
+    } else {
+        format!("{module}.{qualname}")
+    }
+}
+
+fn generic_alias_parts_from_instance(
+    instance_data: &InstanceObject,
+) -> Option<(Value, Vec<Value>)> {
+    if !class_mro_has_name(&instance_data.class, "GenericAlias")
+        && !class_mro_has_name(&instance_data.class, "_GenericAlias")
+    {
+        return None;
+    }
+    let origin = instance_data.attrs.get("__origin__")?.clone();
+    let args = instance_data.attrs.get("__args__")?;
+    let Value::Tuple(args_tuple) = args else {
+        return None;
+    };
+    let Object::Tuple(items) = &*args_tuple.kind() else {
+        return None;
+    };
+    Some((origin, items.clone()))
+}
+
+fn format_type_expr_value(value: &Value) -> String {
+    match value {
+        Value::None => "None".to_string(),
+        Value::Class(class) => class_display_name_for_type_expr(class),
+        Value::Builtin(builtin) => builtin_type_object_name(*builtin)
+            .map(str::to_string)
+            .unwrap_or_else(|| format_value(value)),
+        Value::Instance(obj) => match &*obj.kind() {
+            Object::Instance(instance_data) => {
+                if let Some(rendered) = format_union_type_expr_from_instance(instance_data) {
+                    return rendered;
+                }
+                if let Some(rendered) = format_generic_alias_type_expr_from_instance(instance_data)
+                {
+                    return rendered;
+                }
+                format_value(value)
+            }
+            _ => format_value(value),
+        },
+        Value::Exception(exception) => format_exception_repr(exception),
+        _ => format_value(value),
+    }
+}
+
+fn format_generic_alias_type_expr_from_instance(instance_data: &InstanceObject) -> Option<String> {
+    let (origin, args) = generic_alias_parts_from_instance(instance_data)?;
+    let origin_text = format_type_expr_value(&origin);
+    if args.is_empty() {
+        return Some(format!("{origin_text}[]"));
+    }
+    if args.len() == 1 {
+        return Some(format!(
+            "{origin_text}[{}]",
+            format_type_expr_value(&args[0])
+        ));
+    }
+    let arg_text = args
+        .iter()
+        .map(format_type_expr_value)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!("{origin_text}[{arg_text}]"))
+}
+
+fn format_union_type_expr_from_instance(instance_data: &InstanceObject) -> Option<String> {
+    if !class_mro_has_name(&instance_data.class, "UnionType") {
+        return None;
+    }
+    let args = instance_data.attrs.get("__args__")?;
+    let Value::Tuple(args_tuple) = args else {
+        return None;
+    };
+    let Object::Tuple(items) = &*args_tuple.kind() else {
+        return None;
+    };
+    if items.is_empty() {
+        return Some("typing.Union".to_string());
+    }
+    Some(
+        items
+            .iter()
+            .map(format_type_expr_value)
+            .collect::<Vec<_>>()
+            .join(" | "),
+    )
 }
 
 pub fn format_value(value: &Value) -> String {
@@ -7720,6 +8023,12 @@ pub fn format_value(value: &Value) -> String {
         Value::Instance(obj) => match &*obj.kind() {
             Object::Instance(instance) => match &*instance.class.kind() {
                 Object::Class(class) => {
+                    if let Some(rendered) = format_union_type_expr_from_instance(instance) {
+                        return rendered;
+                    }
+                    if let Some(rendered) = format_generic_alias_type_expr_from_instance(instance) {
+                        return rendered;
+                    }
                     let module = class
                         .attrs
                         .get("__module__")
@@ -7781,6 +8090,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::ListInsert => "<bound method list.insert>".to_string(),
                     NativeMethodKind::ListRemove => "<bound method list.remove>".to_string(),
                     NativeMethodKind::ListPop => "<bound method list.pop>".to_string(),
+                    NativeMethodKind::QueueSimpleQueuePut => {
+                        "<bound method SimpleQueue.put>".to_string()
+                    }
                     NativeMethodKind::ListCount => "<bound method list.count>".to_string(),
                     NativeMethodKind::ListCopy => "<bound method list.copy>".to_string(),
                     NativeMethodKind::ListClear => "<bound method list.clear>".to_string(),
@@ -7803,6 +8115,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrReplace => "<bound method str.replace>".to_string(),
                     NativeMethodKind::StrUpper => "<bound method str.upper>".to_string(),
                     NativeMethodKind::StrLower => "<bound method str.lower>".to_string(),
+                    NativeMethodKind::StrSwapCase => "<bound method str.swapcase>".to_string(),
                     NativeMethodKind::StrCapitalize => "<bound method str.capitalize>".to_string(),
                     NativeMethodKind::StrTitle => "<bound method str.title>".to_string(),
                     NativeMethodKind::StrEncode => "<bound method str.encode>".to_string(),
@@ -7897,6 +8210,7 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method code.co_positions>".to_string()
                     }
                     NativeMethodKind::CodeCoLines => "<bound method code.co_lines>".to_string(),
+                    NativeMethodKind::FrameClear => "<bound method frame.clear>".to_string(),
                     NativeMethodKind::SetContains => "<bound method __contains__>".to_string(),
                     NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),
                     NativeMethodKind::SetDiscard => "<bound method set.discard>".to_string(),
@@ -7936,6 +8250,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::DescriptorReduceTypeError => {
                         "<bound method descriptor.__reduce_ex__>".to_string()
                     }
+                    NativeMethodKind::BoundMethodDescriptorGet => {
+                        "<bound method method_descriptor.__get__>".to_string()
+                    }
                     NativeMethodKind::FunctionDescriptorGet => {
                         "<bound method function.__get__>".to_string()
                     }
@@ -7956,6 +8273,78 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::ComplexReduceEx => {
                         "<bound method complex.__reduce_ex__>".to_string()
+                    }
+                    NativeMethodKind::GenericAliasReduceEx => {
+                        "<bound method GenericAlias.__reduce_ex__>".to_string()
+                    }
+                    NativeMethodKind::GenericAliasMroEntries => {
+                        "<bound method GenericAlias.__mro_entries__>".to_string()
+                    }
+                    NativeMethodKind::TypeParamCopy => {
+                        "<bound method type_parameter.__copy__>".to_string()
+                    }
+                    NativeMethodKind::TypeParamReduceEx => {
+                        "<bound method type_parameter.__reduce_ex__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyContains => {
+                        "<bound method mappingproxy.__contains__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyGetItem => {
+                        "<bound method mappingproxy.__getitem__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyIor => {
+                        "<bound method mappingproxy.__ior__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyIter => {
+                        "<bound method mappingproxy.__iter__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyLen => {
+                        "<bound method mappingproxy.__len__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyOr => {
+                        "<bound method mappingproxy.__or__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyReversed => {
+                        "<bound method mappingproxy.__reversed__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyRor => {
+                        "<bound method mappingproxy.__ror__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyCopy => {
+                        "<bound method mappingproxy.copy>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyGet => {
+                        "<bound method mappingproxy.get>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyItems => {
+                        "<bound method mappingproxy.items>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyKeys => {
+                        "<bound method mappingproxy.keys>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyValues => {
+                        "<bound method mappingproxy.values>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyEq => {
+                        "<bound method mappingproxy.__eq__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyNe => {
+                        "<bound method mappingproxy.__ne__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyHash => {
+                        "<bound method mappingproxy.__hash__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyRepr => {
+                        "<bound method mappingproxy.__repr__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyClassGetItem => {
+                        "<bound method mappingproxy.__class_getitem__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyValuesViewIter => {
+                        "<bound method mappingproxy_values_view.__iter__>".to_string()
+                    }
+                    NativeMethodKind::MappingProxyItemsViewIter => {
+                        "<bound method mappingproxy_items_view.__iter__>".to_string()
                     }
                     NativeMethodKind::ClassRegister => "<bound method register>".to_string(),
                     NativeMethodKind::PropertyGet => "<bound method property.__get__>".to_string(),
@@ -8100,6 +8489,40 @@ fn append_python_char_escape(out: &mut String, ch: char) {
     }
 }
 
+fn format_exception_repr(exception: &ExceptionObject) -> String {
+    let args = {
+        let attrs = exception.attrs.borrow();
+        if let Some(Value::Tuple(tuple_obj)) = attrs.get("args") {
+            if let Object::Tuple(items) = &*tuple_obj.kind() {
+                Some(items.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    if let Some(args) = args {
+        if args.is_empty() {
+            format!("{}()", exception.name)
+        } else {
+            format!(
+                "{}({})",
+                exception.name,
+                args.iter().map(format_repr).collect::<Vec<_>>().join(", ")
+            )
+        }
+    } else if let Some(message) = &exception.message {
+        format!(
+            "{}({})",
+            exception.name,
+            format_repr(&Value::Str(message.clone()))
+        )
+    } else {
+        format!("{}()", exception.name)
+    }
+}
+
 pub fn format_repr(value: &Value) -> String {
     match value {
         Value::Str(value) => format_repr_string(value),
@@ -8176,6 +8599,13 @@ pub fn format_repr(value: &Value) -> String {
         },
         Value::Instance(obj) => match &*obj.kind() {
             Object::Instance(instance_data) => {
+                if let Some(rendered) = format_union_type_expr_from_instance(instance_data) {
+                    return rendered;
+                }
+                if let Some(rendered) = format_generic_alias_type_expr_from_instance(instance_data)
+                {
+                    return rendered;
+                }
                 if let Object::Class(class_data) = &*instance_data.class.kind()
                     && class_data.name == "TypeAliasType"
                     && let Some(Value::Str(name)) = instance_data.attrs.get("__name__")
@@ -8192,6 +8622,7 @@ pub fn format_repr(value: &Value) -> String {
             }
             _ => format_value(value),
         },
+        Value::Exception(exception) => format_exception_repr(exception),
         _ => format_value(value),
     }
 }
@@ -8411,6 +8842,10 @@ impl RuntimeError {
         let name = name.into();
         let exception = ExceptionObject::new(name.clone(), message.clone());
         if is_import_error_family(name.as_str()) {
+            let parsed = message
+                .as_deref()
+                .map(extract_import_error_context)
+                .unwrap_or_default();
             let mut attrs = exception.attrs.borrow_mut();
             if !attrs.contains_key("msg") {
                 attrs.insert(
@@ -8421,15 +8856,17 @@ impl RuntimeError {
             if !attrs.contains_key("name") {
                 attrs.insert(
                     "name".to_string(),
-                    message
-                        .as_deref()
-                        .and_then(extract_import_error_name)
-                        .map(Value::Str)
-                        .unwrap_or(Value::None),
+                    parsed.name.map(Value::Str).unwrap_or(Value::None),
                 );
             }
             if !attrs.contains_key("path") {
-                attrs.insert("path".to_string(), Value::None);
+                attrs.insert(
+                    "path".to_string(),
+                    parsed.path.map(Value::Str).unwrap_or(Value::None),
+                );
+            }
+            if let Some(name_from) = parsed.name_from {
+                attrs.insert("name_from".to_string(), Value::Str(name_from));
             }
         }
         Self::from_exception(exception)
@@ -8576,14 +9013,25 @@ fn runtime_error_exception_from_message(message: &str) -> Option<ExceptionObject
 
     let exception = ExceptionObject::new(exception_type.clone(), exception_message.clone());
     if is_import_error_family(exception_type.as_str()) {
+        let parsed = extract_import_error_context(trimmed);
         let mut attrs = exception.attrs.borrow_mut();
         let msg = exception_message.unwrap_or_else(|| trimmed.to_string());
         attrs.insert("msg".to_string(), Value::Str(msg));
-        let module_name = extract_import_error_name(trimmed)
-            .map(Value::Str)
-            .unwrap_or(Value::None);
+        let module_name = parsed.name.map(Value::Str).unwrap_or(Value::None);
         attrs.insert("name".to_string(), module_name);
-        attrs.insert("path".to_string(), Value::None);
+        attrs.insert(
+            "path".to_string(),
+            parsed.path.map(Value::Str).unwrap_or(Value::None),
+        );
+        if let Some(name_from) = parsed.name_from {
+            attrs.insert("name_from".to_string(), Value::Str(name_from));
+        }
+    }
+    if exception_type == "NameError" || exception_type == "UnboundLocalError" {
+        let mut attrs = exception.attrs.borrow_mut();
+        if let Some(name) = extract_name_error_name(trimmed) {
+            attrs.insert("name".to_string(), Value::Str(name));
+        }
     }
     if is_os_error_family(exception_type.as_str()) {
         let mut attrs = exception.attrs.borrow_mut();
@@ -8772,22 +9220,65 @@ fn extract_os_error_strerror(message: &str) -> Option<String> {
     Some(line.to_string())
 }
 
-fn extract_import_error_name(message: &str) -> Option<String> {
+#[derive(Default)]
+struct ImportErrorContext {
+    name: Option<String>,
+    name_from: Option<String>,
+    path: Option<String>,
+}
+
+fn extract_import_error_context(message: &str) -> ImportErrorContext {
+    let mut context = ImportErrorContext::default();
     let trimmed = message.trim();
+    if let Some(start) = trimmed.find("cannot import name '") {
+        let rest = &trimmed[start + "cannot import name '".len()..];
+        if let Some(end_wrong_name) = rest.find('\'') {
+            context.name_from = Some(rest[..end_wrong_name].to_string());
+            let after_wrong = &rest[end_wrong_name + 1..];
+            if let Some(from_idx) = after_wrong.find(" from '") {
+                let after_from = &after_wrong[from_idx + " from '".len()..];
+                if let Some(end_module_name) = after_from.find('\'') {
+                    context.name = Some(after_from[..end_module_name].to_string());
+                    let after_module_name = after_from[end_module_name + 1..].trim();
+                    if after_module_name.starts_with('(') && after_module_name.ends_with(')') {
+                        let path = after_module_name[1..after_module_name.len() - 1].trim();
+                        if !path.is_empty() && path != "unknown location" {
+                            context.path = Some(path.to_string());
+                        }
+                    }
+                    return context;
+                }
+            }
+            return context;
+        }
+    }
     if let Some(start) = trimmed.find("No module named '") {
         let rest = &trimmed[start + "No module named '".len()..];
         if let Some(end) = rest.find('\'') {
-            return Some(rest[..end].to_string());
+            context.name = Some(rest[..end].to_string());
+            return context;
         }
     }
     if let Some(start) = trimmed.find("module '") {
         let rest = &trimmed[start + "module '".len()..];
         if let Some(end) = rest.find('\'') {
+            context.name = Some(rest[..end].to_string());
+            return context;
+        }
+    }
+    context
+}
+
+fn extract_name_error_name(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    if let Some(start) = trimmed.find("name '") {
+        let rest = &trimmed[start + "name '".len()..];
+        if let Some(end) = rest.find('\'') {
             return Some(rest[..end].to_string());
         }
     }
-    if let Some(start) = trimmed.find("cannot import name '") {
-        let rest = &trimmed[start + "cannot import name '".len()..];
+    if let Some(start) = trimmed.find("cannot access local variable '") {
+        let rest = &trimmed[start + "cannot access local variable '".len()..];
         if let Some(end) = rest.find('\'') {
             return Some(rest[..end].to_string());
         }
@@ -8861,6 +9352,10 @@ fn classify_runtime_error_message(message: &str) -> &'static str {
             }
             return exception;
         }
+    }
+
+    if message.contains("maximum recursion depth exceeded") {
+        return "RecursionError";
     }
 
     if runtime_error_line_matches_exception(trimmed, "StopIteration") {

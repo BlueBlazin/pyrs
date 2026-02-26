@@ -1173,6 +1173,17 @@ fn exposes_sys_exception_for_active_handler_context() {
 }
 
 #[test]
+fn user_exception_instances_expose_default_traceback_chain_attrs() {
+    let source = "class X(Exception):\n    pass\nx = X('boom')\nok = (hasattr(x, '__traceback__') and x.__traceback__ is None and hasattr(x, '__cause__') and x.__cause__ is None and hasattr(x, '__context__') and x.__context__ is None and hasattr(x, '__suppress_context__') and x.__suppress_context__ is False)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn traceback_helpers_can_read_exception_traceback_attr() {
     let source = "ok = False\ntry:\n    1 / 0\nexcept Exception as exc:\n    tb = exc.__traceback__\n    ok = (tb is not None and type(tb).__name__ == 'traceback' and tb.tb_frame is not None and tb.tb_frame.f_code is not None and isinstance(tb.tb_lineno, int) and isinstance(tb.tb_lasti, int))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -1181,6 +1192,24 @@ fn traceback_helpers_can_read_exception_traceback_attr() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn traceback_format_exception_without_tb_omits_traceback_header() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping traceback no-tb format test (CPython Lib path not available)");
+        return;
+    };
+    let source = "import traceback\nclass X(Exception):\n    def __str__(self):\n        1 / 0\nx = X()\nlines = traceback.format_exception(type(x), x, x.__traceback__)\nok = (bool(traceback.StackSummary()) is False and lines == ['X: <exception str() failed>\\n'])\n";
+    run_with_large_stack("traceback-format-no-tb-header", move || {
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        let value = vm.execute(&code).expect("execution should succeed");
+        assert_eq!(value, Value::None);
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -1437,6 +1466,17 @@ fn runtime_user_generic_class_subscript_uses_typing_generic_alias() {
 }
 
 #[test]
+fn runtime_subscript_supports_starred_type_arg_unpacking() {
+    let source = "class C:\n    def __getitem__(self, item):\n        return item\nc = C()\nresult = c[float, *tuple[int, ...]]\nmarker = result[1]\nok = (isinstance(result, tuple) and len(result) == 2 and result[0] is float and type(marker).__name__ == 'GenericAlias' and getattr(marker, '__origin__', None) is tuple and getattr(marker, '__args__', None) == (int, ...) and getattr(marker, '__unpacked__', False) is True and getattr(marker, '__typing_unpacked_tuple_args__', None) == (int, ...))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn compile_parse_error_raises_syntax_error_type() {
     let source = "ok = False\ntry:\n    compile('def broken(:\\n    pass\\n', '<broken>', 'exec')\nexcept SyntaxError:\n    ok = True\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -1448,8 +1488,52 @@ fn compile_parse_error_raises_syntax_error_type() {
 }
 
 #[test]
+fn compile_parse_error_populates_syntaxerror_location_attrs() {
+    let source = "ok = False\ntry:\n    compile('a $ b', '<string>', 'exec')\nexcept SyntaxError as exc:\n    ok = (exc.filename == '<string>' and exc.lineno == 1 and isinstance(exc.offset, int) and exc.text == 'a $ b')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_excepthook_exports_and_formats_syntaxerror_location() {
+    let source = "import sys\nclass Capture:\n    def __init__(self):\n        self.out = ''\n    def write(self, s):\n        self.out = self.out + s\n    def flush(self):\n        return None\nbuf = Capture()\norig = sys.stderr\nsys.stderr = buf\ntry:\n    try:\n        raise SyntaxError('msg', (b'bytes_filename', 123, 0, 'text'))\n    except SyntaxError:\n        sys.__excepthook__(*sys.exc_info())\nfinally:\n    sys.stderr = orig\nout = buf.out\nok = (hasattr(sys, '__excepthook__') and hasattr(sys, 'excepthook') and '  File \"b\\'bytes_filename\\'\", line 123\\n' in out and '    text\\n' in out and out.endswith('SyntaxError: msg\\n'))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_excepthook_reports_type_error_for_non_exception_value() {
+    let source = "import sys\nclass Capture:\n    def __init__(self):\n        self.out = ''\n    def write(self, s):\n        self.out = self.out + s\n    def flush(self):\n        return None\nbuf = Capture()\norig = sys.stderr\nsys.stderr = buf\ntry:\n    sys.excepthook(1, '1', 1)\nfinally:\n    sys.stderr = orig\nout = buf.out\nok = ('TypeError: print_exception(): Exception expected for value, str found' in out)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_displayhook_exports_and_sets_builtins_underscore() {
+    let source = "import builtins\nimport sys\nclass Capture:\n    def __init__(self):\n        self.out = ''\n    def write(self, s):\n        self.out = self.out + s\n    def flush(self):\n        return None\nbuf = Capture()\norig = sys.stdout\nif hasattr(builtins, '_'):\n    del builtins._\nsys.stdout = buf\ntry:\n    sys.__displayhook__(42)\n    first = (buf.out == '42\\n' and builtins._ == 42)\n    del builtins._\n    sys.__displayhook__(None)\n    ok = first and buf.out == '42\\n' and (not hasattr(builtins, '_')) and hasattr(sys, 'displayhook') and hasattr(sys, '__displayhook__')\nfinally:\n    sys.stdout = orig\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -1471,7 +1555,7 @@ fn exposes_time_perf_counter_helpers() {
 
 #[test]
 fn exposes_sys_jit_probe_flags() {
-    let source = "import sys\nok = hasattr(sys, '_jit') and isinstance(sys._jit.is_enabled(), bool) and isinstance(sys._jit.is_available(), bool)\n";
+    let source = "import sys\nok = (hasattr(sys, '_jit') and hasattr(sys._jit, 'is_active') and isinstance(sys._jit.is_enabled(), bool) and isinstance(sys._jit.is_available(), bool) and isinstance(sys._jit.is_active(), bool) and (sys._jit.is_active() is False))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -1780,6 +1864,17 @@ fn executes_function_annotations() {
 }
 
 #[test]
+fn executes_vararg_starred_annotation_syntax() {
+    let source = "from typing import TypeVarTuple\nTs = TypeVarTuple('Ts')\ndef f(*args: *Ts):\n    return args\nann = f.__annotations__['args']\nok = (f() == () and ('Unpack' in str(ann)))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_generator_for_loop() {
     let source =
         "def gen():\n    yield 1\n    yield 2\nvals = []\nfor x in gen():\n    vals += [x]\n";
@@ -2042,6 +2137,24 @@ try:
     coro.send(None)
 except Exception as exc:
     ok = (type(exc).__name__ == "TypeError")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn coroutine_send_propagates_stopiteration_value() {
+    let source = r#"async def f():
+    return 42
+coro = f()
+ok = False
+try:
+    coro.send(None)
+except StopIteration as e:
+    ok = (e.args == (42,) and getattr(e, "value", None) == 42)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -4281,6 +4394,30 @@ ok = (
 )
 "#;
     run_with_large_stack("re-sre-surface-smoke", move || {
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn re_split_includes_capturing_groups() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping re split capturing-group test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import re
+parts = re.split(r"(x)", "axbxc")
+byte_parts = re.split(b"(x)", b"axb")
+ok = (
+    parts == ["a", "x", "b", "x", "c"]
+    and byte_parts == [b"a", b"x", b"b"]
+)
+"#;
+    run_with_large_stack("re-split-capturing-groups", move || {
         let module = parser::parse_module(source).expect("parse should succeed");
         let code = compiler::compile_module(&module).expect("compile should succeed");
         let mut vm = Vm::new();
@@ -8018,6 +8155,28 @@ fn exposes_importlib_cache_path_helpers() {
 }
 
 #[test]
+fn importlib_cache_from_source_supports_optimization_kwarg() {
+    let source = "import importlib.util\nbase = importlib.util.cache_from_source('/tmp/demo.py', optimization='')\nopt1 = importlib.util.cache_from_source('/tmp/demo.py', optimization=1)\nopt2 = importlib.util.cache_from_source('/tmp/demo.py', optimization=2)\ndefault_cache = importlib.util.cache_from_source('/tmp/demo.py')\nok = ('__pycache__' in base) and base.endswith('.pyc') and '.opt-1.pyc' in opt1 and '.opt-2.pyc' in opt2 and ('.opt-' not in base) and ('.opt-' not in default_cache)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn stat_bootstrap_does_not_export_non_callable_s_ifmt() {
+    let source = "import _stat\ns_ifmt = getattr(_stat, 'S_IFMT', None)\nok = (s_ifmt is None) or callable(s_ifmt)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_importlib_invalidate_caches_and_spec_from_file_location() {
     let source = "import sys\nimport importlib\nimport importlib.util\nsys.path_importer_cache['/tmp/demo'] = 42\nbefore = '/tmp/demo' in sys.path_importer_cache\nimportlib.invalidate_caches()\nafter = '/tmp/demo' in sys.path_importer_cache\nspec = importlib.util.spec_from_file_location('demo', '/tmp/demo.py')\nloader_name = type(spec.loader).__name__\nsubscript_fails = False\ntry:\n    spec['name']\nexcept TypeError:\n    subscript_fails = True\nok = before and after and subscript_fails and spec.name == 'demo' and spec.origin == '/tmp/demo.py' and loader_name == 'SourceFileLoader' and spec.has_location and spec.cached[-4:] == '.pyc'\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -10497,6 +10656,37 @@ fn reraises_except_star_remainder() {
 }
 
 #[test]
+fn except_star_wraps_naked_exception_on_reraise() {
+    let source = "inner_name = ''\nouter_name = ''\nout_is_group = False\nouter_text = ''\nleaf_name = ''\nleaf_text = ''\nleaf_count = 0\ntry:\n    try:\n        raise Exception(42)\n    except* Exception as e:\n        inner_name = type(e).__name__\n        raise\nexcept BaseException as outer:\n    outer_name = type(outer).__name__\n    out_is_group = isinstance(outer, BaseExceptionGroup)\n    outer_text = str(outer)\n    if out_is_group:\n        leaf_count = len(outer.exceptions)\n        leaf_name = type(outer.exceptions[0]).__name__\n        leaf_text = str(outer.exceptions[0])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(
+        vm.get_global("inner_name"),
+        Some(Value::Str("ExceptionGroup".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("outer_name"),
+        Some(Value::Str("ExceptionGroup".to_string()))
+    );
+    assert_eq!(vm.get_global("out_is_group"), Some(Value::Bool(true)));
+    assert_eq!(
+        vm.get_global("outer_text"),
+        Some(Value::Str(" (1 sub-exception)".to_string()))
+    );
+    assert_eq!(vm.get_global("leaf_count"), Some(Value::Int(1)));
+    assert_eq!(
+        vm.get_global("leaf_name"),
+        Some(Value::Str("Exception".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("leaf_text"),
+        Some(Value::Str("42".to_string()))
+    );
+}
+
+#[test]
 fn executes_fstring_lowering() {
     let source = "name = 'Ada'\nout = f\"hello {name} {1 + 2}\"\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -10960,6 +11150,50 @@ fn sys_module_exposes_argv_and_executable() {
 fn sys_exit_raises_systemexit() {
     let source =
         "import sys\nok = False\ntry:\n    sys.exit(2)\nexcept SystemExit:\n    ok = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_exit_matches_cpython_code_and_args_shape() {
+    let source = "import sys\nrows = []\nfor arg in [None, 42, (42,), 'exit', (17, 23)]:\n    try:\n        if arg is None:\n            sys.exit()\n        else:\n            sys.exit(arg)\n    except SystemExit as exc:\n        rows.append((exc.code, exc.args))\nok = (rows[0] == (None, ()) and rows[1] == (42, (42,)) and rows[2] == (42, (42,)) and rows[3] == ('exit', ('exit',)) and rows[4] == ((17, 23), (17, 23)))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn os_waitpid_non_positive_pid_uses_childprocesserror_shape() {
+    let source = "import os\nok = False\ntry:\n    os.waitpid(-1, 0)\nexcept ChildProcessError:\n    ok = True\ntry:\n    os.waitpid(0, os.WNOHANG)\nexcept ChildProcessError:\n    ok = ok and True\nelse:\n    ok = False\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn format_bool_empty_spec_uses_true_false_text() {
+    let source = "ok = (format(False) == 'False' and format(True) == 'True' and format(False, 'd') == '0' and format(True, 'd') == '1')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn format_rejects_overflow_width_in_spec() {
+    let source = "ok = False\ntry:\n    format(1, '999999999999999999999999d')\nexcept ValueError as exc:\n    ok = ('Too many decimal digits in format string' in str(exc))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -13436,6 +13670,16 @@ fn sys_switchinterval_get_set_roundtrip_and_validation() {
 }
 
 #[test]
+fn sys_remote_debug_enabled_exposes_bool_noarg_api() {
+    let source = "import sys\nraised = False\ntry:\n    sys.is_remote_debug_enabled(1)\nexcept TypeError:\n    raised = True\nok = isinstance(sys.is_remote_debug_enabled(), bool) and raised\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn threading_thread_target_runs_with_distinct_ident() {
     let source = "import threading\nmain_ident = threading.get_ident()\nseen = [main_ident]\ndef worker():\n    seen.append(threading.get_ident())\nt = threading.Thread(target=worker)\nt.start()\nt.join()\nok = (len(seen) == 2 and isinstance(seen[1], int) and seen[1] != main_ident)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -13563,6 +13807,26 @@ fn executes_warnings_lock_helpers() {
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn fresh_import_of_warnings_module_works_with_fresh_warnings_extension() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping warnings fresh-import regression (CPython Lib path not available)");
+        return;
+    };
+    run_with_large_stack(
+        "fresh_import_of_warnings_module_works_with_fresh_warnings_extension",
+        move || {
+            let source = "from test.support.import_helper import import_fresh_module\nm = import_fresh_module('warnings', fresh=['_warnings', '_py_warnings'])\nok = (m is not None) and hasattr(m, '_set_module')\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib_path.clone());
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        },
+    );
 }
 
 #[test]
@@ -14003,7 +14267,7 @@ fn executes_frozen_importlib_external_helpers() {
     std::fs::write(&file, "value = 1\n").expect("write module");
     let file_literal = file.to_string_lossy().replace('\\', "\\\\");
     let source = format!(
-        "import _frozen_importlib_external as ext\nparts = ext._path_split('{file_literal}')\njoined = ext._path_join(parts[0], parts[1])\nstat = ext._path_stat('{file_literal}')\nu16 = ext._unpack_uint16(b'\\x01\\x02')\nu32 = ext._unpack_uint32(b'\\x01\\x02\\x03\\x04')\nu64 = ext._unpack_uint64(b'\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00')\nok = hasattr(ext, 'path_sep') and hasattr(ext, '_LoaderBasics') and parts[1] == 'demo.py' and joined[-7:] == 'demo.py' and stat.st_size >= 0 and u16 == 513 and u32 == 67305985 and u64 == 1\n"
+        "import _frozen_importlib_external as ext\nparts = ext._path_split('{file_literal}')\njoined = ext._path_join(parts[0], parts[1])\nstat = ext._path_stat('{file_literal}')\nu16 = ext._unpack_uint16(b'\\x01\\x02')\nu32 = ext._unpack_uint32(b'\\x01\\x02\\x03\\x04')\nu64 = ext._unpack_uint64(b'\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00')\npacked = ext._pack_uint32(0x01020304)\npacked_wrap = ext._pack_uint32(-1)\nok = hasattr(ext, 'path_sep') and hasattr(ext, '_LoaderBasics') and parts[1] == 'demo.py' and joined[-7:] == 'demo.py' and stat.st_size >= 0 and u16 == 513 and u32 == 67305985 and u64 == 1 and packed == b'\\x04\\x03\\x02\\x01' and packed_wrap == b'\\xff\\xff\\xff\\xff'\n"
     );
     let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -14051,6 +14315,16 @@ fn exposes_str_strip_method() {
 b = '..abc..'.strip('.')\n\
 c = 'xyz'.strip('')\n\
 ok = a == 'hi' and b == 'abc' and c == 'xyz'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn str_join_is_exposed_as_descriptor_on_str_type_object() {
+    let source = "kind = type(str.join).__name__\nok = callable(str.join) and kind in ('method_descriptor', 'builtin_function_or_method') and str.join('-', ['a', 'b']) == 'a-b'\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -14975,6 +15249,16 @@ fn email_message_set_content_smoke_does_not_overflow_stack() {
 fn colorize_decolor_strips_ansi_sequences() {
     let source =
         "import _colorize\ns = _colorize.decolor('\\x1b[31mhello\\x1b[0m')\nok = (s == 'hello')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn colorize_theme_sections_expose_items_mapping_api() {
+    let source = "import _colorize\nitems = dict(_colorize.default_theme.traceback.items())\nkeys = {'type', 'message', 'filename', 'line_no', 'frame', 'error_highlight', 'error_range', 'reset'}\nok = keys.issubset(set(items.keys()))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

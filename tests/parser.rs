@@ -1574,6 +1574,26 @@ fn parses_function_annotations() {
 }
 
 #[test]
+fn parses_vararg_starred_annotation_as_unpack_subscript() {
+    let source = "def f(*args: *Ts):\n    pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::FunctionDef { vararg, .. } => {
+            let vararg = vararg.as_ref().expect("missing vararg");
+            let annotation = vararg.annotation.as_ref().expect("missing annotation");
+            match &annotation.node {
+                ExprKind::Subscript { value, index } => {
+                    assert!(matches!(&value.node, ExprKind::Name(name) if name == "Unpack"));
+                    assert!(matches!(&index.node, ExprKind::Name(name) if name == "Ts"));
+                }
+                other => panic!("unexpected vararg annotation: {other:?}"),
+            }
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_yield_expression_statement() {
     let module = parser::parse_module("yield 1").expect("parse should succeed");
     match &strip_module(&module)[0].node {
@@ -1817,6 +1837,27 @@ fn parses_multi_item_subscript_with_slices() {
                 }
                 other => panic!("unexpected index: {other:?}"),
             },
+            other => panic!("unexpected expr: {other:?}"),
+        },
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_starred_subscript_type_arg_unpacking() {
+    let module = parser::parse_module("A[float, *tuple[int, ...]]").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Expr(expr) => match &expr.node {
+            ExprKind::Subscript { value, index } => {
+                assert_eq!(&value.node, &ExprKind::Name("A".to_string()));
+                match &index.node {
+                    ExprKind::Call { func, args } => {
+                        assert!(matches!(&func.node, ExprKind::Name(name) if name == "tuple"));
+                        assert_eq!(args.len(), 1);
+                    }
+                    other => panic!("unexpected index: {other:?}"),
+                }
+            }
             other => panic!("unexpected expr: {other:?}"),
         },
         other => panic!("unexpected stmt: {other:?}"),

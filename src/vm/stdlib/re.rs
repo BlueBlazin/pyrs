@@ -1119,8 +1119,8 @@ impl Vm {
                         break;
                     }
                     out.push(Value::Str(text[cursor..absolute_start].to_string()));
-                    if detail.captures.len() > 1 {
-                        for capture in detail.captures.iter().skip(1) {
+                    if !detail.captures.is_empty() {
+                        for capture in &detail.captures {
                             match capture {
                                 Some((capture_start, capture_end)) => {
                                     let capture_start = cursor + capture_start;
@@ -1175,8 +1175,8 @@ impl Vm {
                         self.heap
                             .alloc_bytes(bytes[cursor..absolute_start].to_vec()),
                     );
-                    if detail.captures.len() > 1 {
-                        for capture in detail.captures.iter().skip(1) {
+                    if !detail.captures.is_empty() {
+                        for capture in &detail.captures {
                             match capture {
                                 Some((capture_start, capture_end)) => {
                                     let capture_start = cursor + capture_start;

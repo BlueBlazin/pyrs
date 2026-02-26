@@ -1,27 +1,27 @@
 use super::{
     AttrAccessOutcome, AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, BigInt, BoundMethod,
     BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, ClassBuildOutcome, ClassObject, CodeObject,
-    DICT_BACKING_STORAGE_ATTR, ExceptionObject, FLOAT_BACKING_STORAGE_ATTR,
+    CompiledCodeMode, DICT_BACKING_STORAGE_ATTR, ExceptionObject, FLOAT_BACKING_STORAGE_ATTR,
     FROZENSET_BACKING_STORAGE_ATTR, Frame, GeneratorResumeKind, GeneratorResumeOutcome, HashMap,
-    HashSet, INT_BACKING_STORAGE_ATTR, InstanceObject, InternalCallOutcome, IteratorKind,
-    IteratorObject, LIST_BACKING_STORAGE_ATTR, MONITORING_EVENT_BRANCH,
-    MONITORING_EVENT_BRANCH_LEFT, MONITORING_EVENT_BRANCH_RIGHT, MONITORING_EVENT_C_RAISE,
-    MONITORING_EVENT_C_RETURN, MONITORING_EVENT_CALL, MONITORING_EVENT_SET_MAX,
-    MONITORING_LOCAL_EVENT_SET_MAX, MONITORING_MAX_USER_TOOL_ID, ModuleObject, NativeMethodKind,
-    NativeMethodObject, ObjRef, Object, Ordering, PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE,
-    Rc, RuntimeError, SET_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, SuperObject,
-    TUPLE_BACKING_STORAGE_ATTR, Value, Vm, Write, add_values, bigint_from_bytes,
-    bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup, class_attr_walk,
-    class_of_class, compare_ge, compare_gt, compare_in, compare_le, compare_lt, compare_order,
-    compiler, decode_text_bytes, dedup_hashable_values, dict_remove_value, dict_set_value,
-    dict_set_value_checked, div_values, encode_text_bytes, format_float_hex, format_repr,
-    format_value, frame_cell_value, invert_value, is_import_error_family,
-    is_missing_attribute_error, is_os_error_family, is_runtime_type_name_marker, matmul_values,
-    mul_values, neg_value, normalize_codec_encoding, normalize_codec_errors, or_values,
-    ordering_from_cmp_value, parse_hex_float_literal, parser, pos_value, round_float_with_ndigits,
-    runtime_error_matches_exception, sub_values, value_from_bigint, value_from_object_ref,
-    value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
-    with_bytes_like_source, xor_values,
+    INSTANCE_DICT_STORAGE_ATTR, INT_BACKING_STORAGE_ATTR, InstanceObject,
+    InternalCallOutcome, IteratorKind, IteratorObject, LIST_BACKING_STORAGE_ATTR,
+    MAPPING_PROXY_STORAGE_ATTR, MONITORING_EVENT_BRANCH, MONITORING_EVENT_BRANCH_LEFT,
+    MONITORING_EVENT_BRANCH_RIGHT, MONITORING_EVENT_C_RAISE, MONITORING_EVENT_C_RETURN,
+    MONITORING_EVENT_CALL, MONITORING_EVENT_SET_MAX, MONITORING_LOCAL_EVENT_SET_MAX,
+    MONITORING_MAX_USER_TOOL_ID, ModuleObject, NativeMethodKind, NativeMethodObject, ObjRef,
+    Object, Ordering, PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE, Rc, RuntimeError,
+    SET_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, SuperObject, TUPLE_BACKING_STORAGE_ATTR,
+    Value, Vm, Write, add_values, bigint_from_bytes, bytes_like_from_value,
+    call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, compare_ge,
+    compare_gt, compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
+    dedup_hashable_values, dict_remove_value, dict_set_value, dict_set_value_checked, div_values,
+    encode_text_bytes, format_float_hex, format_repr, format_value, frame_cell_value, invert_value,
+    is_import_error_family, is_missing_attribute_error, is_os_error_family,
+    is_runtime_type_name_marker, matmul_values, mul_values, neg_value, normalize_codec_encoding,
+    normalize_codec_errors, or_values, ordering_from_cmp_value, parse_hex_float_literal, parser,
+    pos_value, round_float_with_ndigits, runtime_error_matches_exception, sub_values,
+    value_from_bigint, value_from_object_ref, value_to_bigint, value_to_f64, value_to_int,
+    weakref_target_id, weakref_target_object, with_bytes_like_source, xor_values,
 };
 use crate::ast::{
     AssignTarget, AugOp as AstAugOp, BinaryOp as AstBinaryOp, BoolOp as AstBoolOp, CallArg,
@@ -33,7 +33,42 @@ use crate::ast::{
 };
 use crate::runtime::value_lookup_hash;
 use std::collections::hash_map::DefaultHasher;
+use std::ffi::CString;
 use std::hash::{Hash, Hasher};
+use std::os::raw::{c_char, c_int};
+
+unsafe extern "C" {
+    fn snprintf(buffer: *mut c_char, size: usize, format: *const c_char, ...) -> c_int;
+}
+
+#[derive(Clone, Copy)]
+struct NumericFormatSpec {
+    fill: char,
+    align: Option<char>,
+    sign: char,
+    alternate: bool,
+    zero_pad: bool,
+    width: Option<usize>,
+    grouping: Option<char>,
+    precision: Option<usize>,
+    ty: Option<char>,
+}
+
+impl Default for NumericFormatSpec {
+    fn default() -> Self {
+        Self {
+            fill: ' ',
+            align: None,
+            sign: '-',
+            alternate: false,
+            zero_pad: false,
+            width: None,
+            grouping: None,
+            precision: None,
+            ty: None,
+        }
+    }
+}
 
 impl Vm {
     fn exception_str_value(&self, exception: &ExceptionObject) -> String {
@@ -58,7 +93,172 @@ impl Vm {
                 return rendered;
             }
         }
+        if self.exception_inherits(exception.name.as_str(), "BaseExceptionGroup") {
+            let message = if let Some(message) = exception.message.clone() {
+                message
+            } else {
+                let attrs = exception.attrs.borrow();
+                match attrs.get("args") {
+                    Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
+                        Object::Tuple(args) if !args.is_empty() => format_value(&args[0]),
+                        _ => String::new(),
+                    },
+                    _ => String::new(),
+                }
+            };
+            let count = exception.exceptions.len();
+            let suffix = if count == 1 {
+                "1 sub-exception".to_string()
+            } else {
+                format!("{count} sub-exceptions")
+            };
+            return if message.is_empty() {
+                format!(" ({suffix})")
+            } else {
+                format!("{message} ({suffix})")
+            };
+        }
         exception.message.clone().unwrap_or_default()
+    }
+
+    fn exception_repr_value(&self, exception: &ExceptionObject) -> String {
+        let args = {
+            let attrs = exception.attrs.borrow();
+            if let Some(Value::Tuple(tuple_obj)) = attrs.get("args") {
+                if let Object::Tuple(items) = &*tuple_obj.kind() {
+                    Some(items.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(args) = args {
+            if args.is_empty() {
+                format!("{}()", exception.name)
+            } else {
+                format!(
+                    "{}({})",
+                    exception.name,
+                    args.iter().map(format_repr).collect::<Vec<_>>().join(", ")
+                )
+            }
+        } else if let Some(message) = &exception.message {
+            format!(
+                "{}({})",
+                exception.name,
+                format_repr(&Value::Str(message.clone()))
+            )
+        } else {
+            format!("{}()", exception.name)
+        }
+    }
+
+    fn value_to_str_text(&mut self, value: Value) -> Result<String, RuntimeError> {
+        match self.builtin_str(vec![value], HashMap::new())? {
+            Value::Str(text) => Ok(text),
+            _ => Err(RuntimeError::type_error("__str__ returned non-string")),
+        }
+    }
+
+    fn value_to_repr_text(&mut self, value: Value) -> Result<String, RuntimeError> {
+        match self.builtin_repr(vec![value], HashMap::new())? {
+            Value::Str(text) => Ok(text),
+            _ => Err(RuntimeError::type_error("__repr__ returned non-string")),
+        }
+    }
+
+    fn exception_instance_name_args_and_member_count(
+        &self,
+        instance: &ObjRef,
+    ) -> Option<(String, Vec<Value>, Option<usize>)> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        if !self.class_is_exception_class(&instance_data.class) {
+            return None;
+        }
+        let class_name = match &*instance_data.class.kind() {
+            Object::Class(class_data) => class_data.name.clone(),
+            _ => "BaseException".to_string(),
+        };
+        let args = match instance_data.attrs.get("args") {
+            Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
+                Object::Tuple(items) => items.clone(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        let member_count = if self.exception_inherits(class_name.as_str(), "BaseExceptionGroup") {
+            match instance_data.attrs.get("exceptions") {
+                Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
+                    Object::Tuple(items) => Some(items.len()),
+                    _ => Some(0),
+                },
+                _ => None,
+            }
+        } else {
+            None
+        };
+        Some((class_name, args, member_count))
+    }
+
+    fn exception_str_from_name_and_args(
+        &mut self,
+        class_name: &str,
+        args: &[Value],
+        member_count: Option<usize>,
+    ) -> Result<String, RuntimeError> {
+        if class_name == "KeyError" && args.len() == 1 {
+            return Ok(format_repr(&args[0]));
+        }
+        if self.exception_inherits(class_name, "BaseExceptionGroup") {
+            let message = if let Some(message) = args.first() {
+                self.value_to_str_text(message.clone())?
+            } else {
+                String::new()
+            };
+            let count = member_count.unwrap_or_else(|| {
+                args.get(1).map_or(0, |value| match value {
+                    Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                        Object::Tuple(items) => items.len(),
+                        _ => 0,
+                    },
+                    Value::List(list_obj) => match &*list_obj.kind() {
+                        Object::List(items) => items.len(),
+                        _ => 0,
+                    },
+                    _ => 0,
+                })
+            });
+            let suffix = if count == 1 {
+                "1 sub-exception".to_string()
+            } else {
+                format!("{count} sub-exceptions")
+            };
+            return Ok(if message.is_empty() {
+                format!(" ({suffix})")
+            } else {
+                format!("{message} ({suffix})")
+            });
+        }
+        match args.len() {
+            0 => Ok(String::new()),
+            1 => self.value_to_str_text(args[0].clone()),
+            _ => self.value_to_repr_text(self.heap.alloc_tuple(args.to_vec())),
+        }
+    }
+
+    fn exception_repr_from_name_and_args(&self, class_name: &str, args: &[Value]) -> String {
+        if args.is_empty() {
+            format!("{class_name}()")
+        } else {
+            format!(
+                "{class_name}({})",
+                args.iter().map(format_repr).collect::<Vec<_>>().join(", ")
+            )
+        }
     }
 
     pub(super) fn value_type_name_for_error(&self, value: &Value) -> String {
@@ -142,6 +342,40 @@ impl Vm {
     }
 
     pub(super) fn truthy_from_value(&mut self, value: &Value) -> Result<bool, RuntimeError> {
+        if let Value::Instance(instance) = value {
+            if let Some(values) = self.namedtuple_instance_values(instance) {
+                return Ok(!values.is_empty());
+            }
+            if let Some(backing_list) = self.instance_backing_list(instance)
+                && let Object::List(values) = &*backing_list.kind()
+            {
+                return Ok(!values.is_empty());
+            }
+            if let Some(backing_tuple) = self.instance_backing_tuple(instance)
+                && let Object::Tuple(values) = &*backing_tuple.kind()
+            {
+                return Ok(!values.is_empty());
+            }
+            if let Some(backing_str) = self.instance_backing_str(instance) {
+                return Ok(!backing_str.is_empty());
+            }
+            if let Some(backing_dict) = self.instance_backing_dict(instance)
+                && let Object::Dict(values) = &*backing_dict.kind()
+            {
+                return Ok(!values.is_empty());
+            }
+            if let Some(backing_set) = self.instance_backing_set(instance)
+                && let Object::Set(values) = &*backing_set.kind()
+            {
+                return Ok(!values.is_empty());
+            }
+            if let Some(backing_frozenset) = self.instance_backing_frozenset(instance)
+                && let Object::FrozenSet(values) = &*backing_frozenset.kind()
+            {
+                return Ok(!values.is_empty());
+            }
+        }
+
         match value {
             Value::None => Ok(false),
             Value::Bool(flag) => Ok(*flag),
@@ -319,6 +553,90 @@ impl Vm {
         Ok(Value::None)
     }
 
+    fn write_text_to_sys_stream(
+        &mut self,
+        stream_name: &str,
+        text: &str,
+    ) -> Result<(), RuntimeError> {
+        let stream = self.modules.get("sys").and_then(|sys_module| {
+            if let Object::Module(module_data) = &*sys_module.kind() {
+                module_data.globals.get(stream_name).cloned()
+            } else {
+                None
+            }
+        });
+        let Some(stream) = stream else {
+            return Err(RuntimeError::with_exception(
+                "RuntimeError",
+                Some(format!("lost sys.{stream_name}")),
+            ));
+        };
+        let write = self.builtin_getattr(
+            vec![stream.clone(), Value::Str("write".to_string())],
+            HashMap::new(),
+        )?;
+        match self.call_internal(write, vec![Value::Str(text.to_string())], HashMap::new())? {
+            InternalCallOutcome::Value(_) => {}
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception(&format!(
+                    "sys.{stream_name}.write() failed"
+                )));
+            }
+        }
+        if let Ok(flush) = self.builtin_getattr(
+            vec![stream, Value::Str("flush".to_string())],
+            HashMap::new(),
+        ) {
+            match self.call_internal(flush, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(_) => {}
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception(&format!(
+                        "sys.{stream_name}.flush() failed"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn write_text_to_sys_stderr(&mut self, text: &str) -> Result<(), RuntimeError> {
+        self.write_text_to_sys_stream("stderr", text)
+    }
+
+    fn set_builtins_global(&mut self, name: &str, value: Value) -> Result<(), RuntimeError> {
+        let Some(builtins) = self.modules.get("builtins").cloned() else {
+            return Err(RuntimeError::with_exception(
+                "RuntimeError",
+                Some("lost builtins".to_string()),
+            ));
+        };
+        let Object::Module(module_data) = &mut *builtins.kind_mut() else {
+            return Err(RuntimeError::with_exception(
+                "RuntimeError",
+                Some("builtins module is invalid".to_string()),
+            ));
+        };
+        module_data.globals.insert(name.to_string(), value.clone());
+        self.builtins.insert(name.to_string(), value);
+        self.touch_builtins_version();
+        Ok(())
+    }
+
+    fn write_text_to_sys_stderr_best_effort(&mut self, text: &str) {
+        if self.write_text_to_sys_stderr(text).is_err() {
+            self.clear_active_exception();
+            eprint!("{text}");
+        }
+    }
+
+    fn system_exit_code_from_args(&self, args: &[Value]) -> Value {
+        match args {
+            [] => Value::None,
+            [single] => single.clone(),
+            _ => self.heap.alloc_tuple(args.to_vec()),
+        }
+    }
+
     pub(super) fn builtin_input(
         &mut self,
         mut args: Vec<Value>,
@@ -380,6 +698,9 @@ impl Vm {
                     "ValueError: I/O operation on uninitialized object",
                 ));
             }
+        }
+        if let Value::Exception(exception) = &value {
+            return Ok(Value::Str(self.exception_repr_value(exception)));
         }
         if matches!(&value, Value::Instance(_) | Value::Exception(_)) {
             match self.builtin_getattr(
@@ -830,8 +1151,30 @@ impl Vm {
 
     fn hash_value_runtime_u64(&mut self, value: &Value) -> Result<u64, RuntimeError> {
         const HASH_CACHE_LIMIT: usize = 65_536;
+        if let Some(union_args) = self.union_args_from_value(value) {
+            return self.hash_union_args_runtime(value, &union_args);
+        }
+        if let Some((origin, args)) = self.generic_alias_parts_from_value(value) {
+            return self.hash_generic_alias_parts_runtime(&origin, &args);
+        }
         match value {
             Value::Instance(_) | Value::Class(_) | Value::Super(_) => {
+                if let Some(class_ref) = self.class_of_value(value)
+                    && matches!(class_attr_lookup(&class_ref, "__hash__"), Some(Value::None))
+                {
+                    let type_name = if matches!(value, Value::Class(_)) {
+                        match &*class_ref.kind() {
+                            Object::Class(class_data) => class_data.name.clone(),
+                            _ => self.value_type_name_for_error(value).to_string(),
+                        }
+                    } else {
+                        self.value_type_name_for_error(value).to_string()
+                    };
+                    return Err(RuntimeError::type_error(format!(
+                        "unhashable type: '{}'",
+                        type_name
+                    )));
+                }
                 let Some(hash_value) = self.call_special_method_with_fallback(
                     value,
                     "__hash__",
@@ -906,6 +1249,89 @@ impl Vm {
                 ))
             }),
         }
+    }
+
+    fn hash_generic_alias_parts_runtime(
+        &mut self,
+        origin: &Value,
+        args: &[Value],
+    ) -> Result<u64, RuntimeError> {
+        let mut hasher = DefaultHasher::new();
+        13u8.hash(&mut hasher);
+        self.hash_value_runtime_u64(origin)?.hash(&mut hasher);
+        args.len().hash(&mut hasher);
+        for item in args {
+            self.hash_value_runtime_u64(item)?.hash(&mut hasher);
+        }
+        Ok(hasher.finish())
+    }
+
+    fn hash_union_args_runtime(
+        &mut self,
+        value: &Value,
+        args: &[Value],
+    ) -> Result<u64, RuntimeError> {
+        let cached_unhashable_count = if let Value::Instance(instance) = value {
+            let instance_kind = instance.kind();
+            if let Object::Instance(instance_data) = &*instance_kind {
+                match instance_data.attrs.get("__pyrs_union_unhashable_count__") {
+                    Some(Value::Int(count)) => *count,
+                    _ => 0,
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        let mut element_hashes = Vec::with_capacity(args.len());
+        let mut first_type_error_message = None::<String>;
+        let mut type_error_count = 0i64;
+        for item in args {
+            match self.hash_value_runtime_u64(item) {
+                Ok(hash) => element_hashes.push(hash),
+                Err(err) if runtime_error_matches_exception(&err, "TypeError") => {
+                    type_error_count += 1;
+                    if first_type_error_message.is_none() {
+                        first_type_error_message = Some(err.message);
+                    }
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        if type_error_count == 0 && cached_unhashable_count > 1 {
+            return Err(RuntimeError::type_error(format!(
+                "union contains {} unhashable elements",
+                cached_unhashable_count
+            )));
+        }
+
+        if type_error_count > 0 {
+            if type_error_count > 1
+                && let Value::Instance(instance) = value
+                && let Object::Instance(instance_data) = &mut *instance.kind_mut()
+            {
+                instance_data.attrs.insert(
+                    "__pyrs_union_unhashable_count__".to_string(),
+                    Value::Int(type_error_count),
+                );
+            }
+            return Err(RuntimeError::type_error(
+                first_type_error_message.unwrap_or_else(|| "unhashable union element".to_string()),
+            ));
+        }
+
+        element_hashes.sort_unstable();
+
+        let mut hasher = DefaultHasher::new();
+        12u8.hash(&mut hasher);
+        element_hashes.len().hash(&mut hasher);
+        for hash in element_hashes {
+            hash.hash(&mut hasher);
+        }
+        Ok(hasher.finish())
     }
 
     pub(super) fn builtin_breakpoint(
@@ -1033,6 +1459,105 @@ impl Vm {
         };
         self.dispatch_sys_audit_event(&event_name, args)?;
         Ok(Value::None)
+    }
+
+    pub(super) fn builtin_sys_excepthook(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.excepthook() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 3 {
+            return Err(RuntimeError::type_error(format!(
+                "sys.excepthook() takes exactly 3 arguments ({} given)",
+                args.len()
+            )));
+        }
+        let value = args[1].clone();
+        let normalized = match self.normalize_exception_value(value.clone()) {
+            Ok(Value::Exception(exception)) => Value::Exception(exception),
+            Ok(_) | Err(_) => {
+                self.clear_active_exception();
+                let rendered = format!(
+                    "TypeError: print_exception(): Exception expected for value, {} found",
+                    self.value_type_name_for_error(&value)
+                );
+                self.write_text_to_sys_stderr_best_effort(&format!("{rendered}\n"));
+                return Ok(Value::None);
+            }
+        };
+        let mut rendered = self.format_traceback(&[], &normalized);
+        if !rendered.ends_with('\n') {
+            rendered.push('\n');
+        }
+        self.write_text_to_sys_stderr_best_effort(&rendered);
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_sys_displayhook(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.displayhook() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "sys.displayhook() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let value = args[0].clone();
+        if matches!(value, Value::None) {
+            return Ok(Value::None);
+        }
+
+        // Match CPython: clear builtins._ before repr/display.
+        self.set_builtins_global("_", Value::None)?;
+        let rendered = match self.builtin_repr(vec![value.clone()], HashMap::new())? {
+            Value::Str(text) => text,
+            other => {
+                return Err(RuntimeError::type_error(format!(
+                    "__repr__ returned non-string (type {})",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        self.write_text_to_sys_stream("stdout", &format!("{rendered}\n"))?;
+        self.set_builtins_global("_", value)?;
+        Ok(Value::None)
+    }
+
+    fn invoke_sys_displayhook(&mut self, value: Value) -> Result<(), RuntimeError> {
+        let Some(sys_module) = self.modules.get("sys").cloned() else {
+            return Err(RuntimeError::runtime_error("lost sys.displayhook"));
+        };
+        let displayhook = match self.builtin_getattr(
+            vec![
+                Value::Module(sys_module),
+                Value::Str("displayhook".to_string()),
+            ],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(err) if is_missing_attribute_error(&err) => {
+                return Err(RuntimeError::runtime_error("lost sys.displayhook"));
+            }
+            Err(err) => return Err(err),
+        };
+        match self.call_internal(displayhook, vec![value], HashMap::new())? {
+            InternalCallOutcome::Value(_) => Ok(()),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("sys.displayhook raised"))
+            }
+        }
     }
 
     pub(super) fn builtin_sys_clear_type_descriptors(
@@ -1755,18 +2280,32 @@ impl Vm {
         let code = match source {
             Value::Code(code) => code,
             Value::Str(source) => {
-                self.cache_source_text("<exec>", &source);
+                let filename = "<string>";
+                self.cache_source_text(filename, &source);
                 let module_ast = parser::parse_module(&source).map_err(|err| {
-                    RuntimeError::new(format!(
-                        "exec() parse error at {}: {}",
-                        err.offset, err.message
-                    ))
+                    self.compile_syntax_error_runtime_error(
+                        err.message,
+                        filename,
+                        &source,
+                        Some(err.line),
+                        Some(err.column),
+                    )
                 })?;
-                Rc::new(
-                    compiler::compile_module_with_filename(&module_ast, "<exec>").map_err(
-                        |err| RuntimeError::new(format!("exec() compile error: {}", err.message)),
+                let code = Rc::new(
+                    compiler::compile_module_with_filename(&module_ast, filename).map_err(
+                        |err| {
+                            self.compile_syntax_error_runtime_error(
+                                err.message,
+                                filename,
+                                &source,
+                                err.span.map(|span| span.line),
+                                err.span.map(|span| span.column),
+                            )
+                        },
                     )?,
-                )
+                );
+                self.register_compiled_code_metadata(&code, CompiledCodeMode::Exec, Some(&source));
+                code
             }
             _ => {
                 return Err(RuntimeError::new(
@@ -1876,7 +2415,7 @@ impl Vm {
             frame.globals_fallback = Some(globals_module.clone());
         }
         frame.discard_result = true;
-        self.frames.push(Box::new(frame));
+        self.push_frame_checked(Box::new(frame))?;
 
         let previous_stop = self.run_stop_depth;
         self.run_stop_depth = Some(caller_depth);
@@ -1948,18 +2487,36 @@ impl Vm {
                             .map_err(|_| RuntimeError::new("eval() source is not valid UTF-8"))?
                     }
                 };
-                self.cache_source_text("<eval>", &source_text);
+                let filename = "<string>";
+                self.cache_source_text(filename, &source_text);
                 let expr_ast = parser::parse_expression(&source_text).map_err(|err| {
-                    RuntimeError::new(format!(
-                        "eval() parse error at {}: {}",
-                        err.offset, err.message
-                    ))
+                    self.compile_syntax_error_runtime_error(
+                        err.message,
+                        filename,
+                        &source_text,
+                        Some(err.line),
+                        Some(err.column),
+                    )
                 })?;
-                Rc::new(
-                    compiler::compile_expression_with_filename(&expr_ast, "<eval>").map_err(
-                        |err| RuntimeError::new(format!("eval() compile error: {}", err.message)),
+                let code = Rc::new(
+                    compiler::compile_expression_with_filename(&expr_ast, filename).map_err(
+                        |err| {
+                            self.compile_syntax_error_runtime_error(
+                                err.message,
+                                filename,
+                                &source_text,
+                                err.span.map(|span| span.line),
+                                err.span.map(|span| span.column),
+                            )
+                        },
                     )?,
-                )
+                );
+                self.register_compiled_code_metadata(
+                    &code,
+                    CompiledCodeMode::Eval,
+                    Some(&source_text),
+                );
+                code
             }
         };
         if !code.freevars.is_empty() {
@@ -1967,6 +2524,43 @@ impl Vm {
                 "eval() code object may not contain free variables",
             ));
         }
+
+        let mut single_mode_displayhook = false;
+        let single_mode_source = self.compiled_code_metadata(&code).and_then(|metadata| {
+            if metadata.mode == CompiledCodeMode::Single {
+                metadata.source.clone()
+            } else {
+                None
+            }
+        });
+        let execution_code = if let Some(source_text) = single_mode_source.as_deref() {
+            if let Ok(module_ast) = parser::parse_module(source_text) {
+                if module_ast.body.len() == 1
+                    && let StmtKind::Expr(expr) = &module_ast.body[0].node
+                {
+                    let expr_code =
+                        compiler::compile_expression_with_filename(expr, &code.filename).map_err(
+                            |err| {
+                                self.compile_syntax_error_runtime_error(
+                                    err.message,
+                                    &code.filename,
+                                    source_text,
+                                    err.span.map(|span| span.line),
+                                    err.span.map(|span| span.column),
+                                )
+                            },
+                        )?;
+                    single_mode_displayhook = true;
+                    Rc::new(expr_code)
+                } else {
+                    code.clone()
+                }
+            } else {
+                code.clone()
+            }
+        } else {
+            code.clone()
+        };
 
         let caller_depth = self.frames.len();
         if caller_depth == 0 {
@@ -2061,13 +2655,20 @@ impl Vm {
             }
         }
 
-        let cells = self.build_cells(&code, Vec::new());
-        let mut frame = Frame::new(code, locals_module.clone(), true, false, cells, None);
+        let cells = self.build_cells(&execution_code, Vec::new());
+        let mut frame = Frame::new(
+            execution_code,
+            locals_module.clone(),
+            true,
+            false,
+            cells,
+            None,
+        );
         frame.function_globals = globals_module.clone();
         if locals_module.id() != globals_module.id() {
             frame.globals_fallback = Some(globals_module.clone());
         }
-        self.frames.push(Box::new(frame));
+        self.push_frame_checked(Box::new(frame))?;
 
         let previous_stop = self.run_stop_depth;
         self.run_stop_depth = Some(caller_depth);
@@ -2091,7 +2692,13 @@ impl Vm {
         let Some(caller_frame) = self.frames.get_mut(caller_index) else {
             return Err(RuntimeError::new("eval() caller frame unavailable"));
         };
-        Ok(caller_frame.stack.pop().unwrap_or(Value::None))
+        let result = caller_frame.stack.pop().unwrap_or(Value::None);
+        if single_mode_displayhook {
+            self.invoke_sys_displayhook(result)?;
+            Ok(Value::None)
+        } else {
+            Ok(result)
+        }
     }
 
     pub(super) fn builtin_len(
@@ -2427,10 +3034,43 @@ impl Vm {
                 }
                 Value::Instance(instance) => {
                     if let Object::Instance(instance_data) = &*instance.kind() {
-                        names.extend(instance_data.attrs.keys().cloned());
+                        names.extend(instance_data.attrs.keys().filter_map(|name| {
+                            if matches!(
+                                name.as_str(),
+                                LIST_BACKING_STORAGE_ATTR
+                                    | TUPLE_BACKING_STORAGE_ATTR
+                                    | STR_BACKING_STORAGE_ATTR
+                                    | BYTES_BACKING_STORAGE_ATTR
+                                    | INT_BACKING_STORAGE_ATTR
+                                    | FLOAT_BACKING_STORAGE_ATTR
+                                    | COMPLEX_BACKING_STORAGE_ATTR
+                                    | DICT_BACKING_STORAGE_ATTR
+                                    | SET_BACKING_STORAGE_ATTR
+                                    | FROZENSET_BACKING_STORAGE_ATTR
+                                    | INSTANCE_DICT_STORAGE_ATTR
+                                    | MAPPING_PROXY_STORAGE_ATTR
+                            ) {
+                                None
+                            } else {
+                                Some(name.clone())
+                            }
+                        }));
                         for entry in class_attr_walk(&instance_data.class) {
                             if let Object::Class(class_data) = &*entry.kind() {
-                                names.extend(class_data.attrs.keys().cloned());
+                                names.extend(class_data.attrs.keys().filter_map(|name| {
+                                    if matches!(
+                                        name.as_str(),
+                                        "__name__"
+                                            | "__qualname__"
+                                            | "__module__"
+                                            | "__bases__"
+                                            | "__mro__"
+                                    ) {
+                                        None
+                                    } else {
+                                        Some(name.clone())
+                                    }
+                                }));
                             }
                         }
                     }
@@ -2475,7 +3115,7 @@ impl Vm {
     }
 
     pub(super) fn builtin_sys_getframe(
-        &self,
+        &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -2490,91 +3130,211 @@ impl Vm {
             value_to_int(args.remove(0))?
         };
         if depth < 0 {
-            return Err(RuntimeError::new("call stack is not deep enough"));
+            return Err(RuntimeError::value_error("call stack is not deep enough"));
         }
         let depth = depth as usize;
         if depth >= self.frames.len() {
-            return Err(RuntimeError::new("call stack is not deep enough"));
+            return Err(RuntimeError::value_error("call stack is not deep enough"));
         }
         let frame_index = self.frames.len() - 1 - depth;
         Ok(self.build_frame_proxy_value(frame_index))
     }
 
-    pub(super) fn build_frame_proxy_value(&self, frame_index: usize) -> Value {
+    pub(super) fn builtin_sys_getframemodulename(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::type_error(
+                "sys._getframemodulename() takes at most one argument",
+            ));
+        }
+        let depth = if args.is_empty() {
+            0
+        } else {
+            value_to_int(args.remove(0))?
+        };
+        // CPython accepts negative depth values and treats them as 0.
+        let depth = depth.max(0) as usize;
+        if depth >= self.frames.len() {
+            return Ok(Value::None);
+        }
+        let frame_index = self.frames.len() - 1 - depth;
         let frame = &self.frames[frame_index];
-        let locals_value = if frame.is_module {
-            if let Object::Module(module_data) = &*frame.module.kind() {
-                let mut entries = Vec::with_capacity(module_data.globals.len());
-                for (name, value) in module_data.globals.iter() {
-                    entries.push((Value::Str(name.clone()), value.clone()));
-                }
-                self.heap.alloc_dict(entries)
-            } else {
-                self.heap.alloc_dict(Vec::new())
+        if let Object::Module(module_data) = &*frame.function_globals.kind() {
+            if let Some(Value::Str(name)) = module_data.globals.get("__name__") {
+                return Ok(Value::Str(name.clone()));
             }
-        } else {
-            // Keep f_locals lightweight and avoid retaining stale strong refs.
-            // We expose the local names but not copied local values.
-            let mut names = HashSet::new();
-            names.extend(frame.locals.keys().cloned());
-            for (idx, slot) in frame.fast_locals.iter().enumerate() {
-                if slot.is_some()
-                    && let Some(name) = frame.code.names.get(idx)
-                {
-                    names.insert(name.clone());
-                }
-            }
-            names.extend(frame.code.cellvars.iter().cloned());
-            names.extend(frame.code.freevars.iter().cloned());
-            let mut entries = Vec::with_capacity(names.len());
-            for name in names {
-                entries.push((Value::Str(name), Value::None));
-            }
-            let locals_dict = self.heap.alloc_dict(entries);
-            let proxy_class = match self
-                .heap
-                .alloc_class(ClassObject::new("FrameLocalsProxy".to_string(), Vec::new()))
-            {
-                Value::Class(class) => class,
-                _ => unreachable!(),
-            };
-            let proxy_instance = match self.heap.alloc_instance(InstanceObject::new(proxy_class)) {
-                Value::Instance(instance) => instance,
-                _ => unreachable!(),
-            };
-            if let Object::Instance(instance_data) = &mut *proxy_instance.kind_mut() {
-                instance_data
-                    .attrs
-                    .insert(DICT_BACKING_STORAGE_ATTR.to_string(), locals_dict);
-            }
-            Value::Instance(proxy_instance)
-        };
+            return Ok(Value::Str(module_data.name.clone()));
+        }
+        Ok(Value::None)
+    }
 
-        let globals_dict = if let Object::Module(module_data) = &*frame.function_globals.kind() {
-            let mut entries = Vec::with_capacity(module_data.globals.len());
-            for (name, value) in module_data.globals.iter() {
-                entries.push((Value::Str(name.clone()), value.clone()));
-            }
-            self.heap.alloc_dict(entries)
-        } else {
-            self.heap.alloc_dict(Vec::new())
-        };
-        let location = frame.code.locations.get(frame.last_ip);
-        let lineno = location.map(|loc| loc.line).unwrap_or(0);
-        let f_back = if frame_index > 0 {
-            self.build_frame_proxy_value(frame_index - 1)
-        } else {
-            Value::None
-        };
+    pub(super) fn builtin_sys_current_frames(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys._current_frames() takes no arguments",
+            ));
+        }
+        let mut entries = Vec::new();
+        if let Some(last_index) = self.frames.len().checked_sub(1) {
+            entries.push((
+                Value::Int(self.current_thread_ident_value()),
+                self.build_frame_proxy_value(last_index),
+            ));
+        }
+        Ok(self.heap.alloc_dict(entries))
+    }
 
-        let frame_obj = match self
+    fn current_frame_proxy_cache_key(&self) -> Vec<usize> {
+        self.frames.iter().map(|frame| frame.frame_id).collect()
+    }
+
+    fn alloc_frame_proxy_module(&self) -> ObjRef {
+        match self
             .heap
             .alloc_module(ModuleObject::new("<frame>".to_string()))
         {
             Value::Module(obj) => obj,
             _ => unreachable!(),
+        }
+    }
+
+    pub(super) fn builtins_mapping_value_from_dunder_builtins(
+        &self,
+        dunder_builtins: Option<Value>,
+    ) -> Value {
+        match dunder_builtins {
+            Some(Value::Dict(dict)) => Value::Dict(dict),
+            Some(Value::Module(module)) => {
+                if let Object::Module(module_data) = &*module.kind() {
+                    let mut entries = Vec::with_capacity(module_data.globals.len());
+                    for (name, value) in module_data.globals.iter() {
+                        entries.push((Value::Str(name.clone()), value.clone()));
+                    }
+                    self.heap.alloc_dict(entries)
+                } else {
+                    self.builtins_mapping_value_from_dunder_builtins(None)
+                }
+            }
+            _ => {
+                let mut entries = Vec::with_capacity(self.builtins.len());
+                for (name, value) in self.builtins.iter() {
+                    entries.push((Value::Str(name.clone()), value.clone()));
+                }
+                self.heap.alloc_dict(entries)
+            }
+        }
+    }
+
+    fn update_frame_proxy_module_for_frame(
+        &mut self,
+        frame_obj: &ObjRef,
+        frame_index: usize,
+        f_back: Value,
+    ) {
+        let (locals_value, globals_source, dunder_builtins, lineno, f_code) = {
+            let frame = &self.frames[frame_index];
+            let locals_value = if frame.is_module {
+                if let Object::Module(module_data) = &*frame.module.kind() {
+                    let mut entries = Vec::with_capacity(module_data.globals.len());
+                    for (name, value) in module_data.globals.iter() {
+                        entries.push((Value::Str(name.clone()), value.clone()));
+                    }
+                    self.heap.alloc_dict(entries)
+                } else {
+                    self.heap.alloc_dict(Vec::new())
+                }
+            } else {
+                let entries = Self::frame_trace(frame)
+                    .local_values
+                    .into_iter()
+                    .map(|(name, value)| (Value::Str(name), value))
+                    .collect::<Vec<_>>();
+                let locals_dict = self.heap.alloc_dict(entries);
+                let proxy_class = match self
+                    .heap
+                    .alloc_class(ClassObject::new("FrameLocalsProxy".to_string(), Vec::new()))
+                {
+                    Value::Class(class) => class,
+                    _ => unreachable!(),
+                };
+                let proxy_instance =
+                    match self.heap.alloc_instance(InstanceObject::new(proxy_class)) {
+                        Value::Instance(instance) => instance,
+                        _ => unreachable!(),
+                    };
+                if let Object::Instance(instance_data) = &mut *proxy_instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(DICT_BACKING_STORAGE_ATTR.to_string(), locals_dict);
+                }
+                Value::Instance(proxy_instance)
+            };
+            let globals_source = frame
+                .globals_fallback
+                .clone()
+                .unwrap_or_else(|| frame.function_globals.clone());
+            let dunder_builtins = if let Object::Module(module_data) = &*globals_source.kind() {
+                module_data.globals.get("__builtins__").cloned()
+            } else {
+                None
+            };
+            let lineno = frame
+                .code
+                .locations
+                .get(frame.last_ip)
+                .map(|loc| loc.line)
+                .unwrap_or(0);
+            (
+                locals_value,
+                globals_source,
+                dunder_builtins,
+                lineno,
+                Value::Code(frame.code.clone()),
+            )
         };
+
+        let globals_dict = if let Some(module_frame_index) = self.frames.iter().rposition(|entry| {
+            entry.is_module && entry.module.id() == globals_source.id()
+        }) {
+            Value::Dict(self.ensure_frame_module_locals_dict(module_frame_index))
+        } else if let Object::Module(module_data) = &mut *globals_source.kind_mut() {
+            if let Some(mapping) = module_data
+                .globals
+                .get(Self::FUNCTION_GLOBALS_MAPPING_KEY)
+                .cloned()
+            {
+                mapping
+            } else {
+                let mut entries = Vec::with_capacity(module_data.globals.len());
+                for (name, value) in module_data.globals.iter() {
+                    if name == Self::FUNCTION_GLOBALS_MAPPING_KEY {
+                        continue;
+                    }
+                    entries.push((Value::Str(name.clone()), value.clone()));
+                }
+                let mapping = self.heap.alloc_dict(entries);
+                module_data.globals.insert(
+                    Self::FUNCTION_GLOBALS_MAPPING_KEY.to_string(),
+                    mapping.clone(),
+                );
+                mapping
+            }
+        } else {
+            self.heap.alloc_dict(Vec::new())
+        };
+        let builtins_dict = self.builtins_mapping_value_from_dunder_builtins(dunder_builtins);
         if let Object::Module(module_data) = &mut *frame_obj.kind_mut() {
+            module_data.globals.clear();
+            module_data
+                .globals
+                .insert("__pyrs_frame_proxy__".to_string(), Value::Bool(true));
             module_data
                 .globals
                 .insert("f_locals".to_string(), locals_value);
@@ -2583,13 +3343,100 @@ impl Vm {
                 .insert("f_globals".to_string(), globals_dict);
             module_data
                 .globals
-                .insert("f_code".to_string(), Value::Code(frame.code.clone()));
+                .insert("f_builtins".to_string(), builtins_dict);
+            module_data
+                .globals
+                .insert("f_code".to_string(), f_code);
             module_data
                 .globals
                 .insert("f_lineno".to_string(), Value::Int(lineno as i64));
             module_data.globals.insert("f_back".to_string(), f_back);
         }
-        Value::Module(frame_obj)
+    }
+
+    pub(super) fn refresh_frame_proxy_cache(&mut self) {
+        let key = self.current_frame_proxy_cache_key();
+        if self.frame_proxy_cache_key.as_ref() != Some(&key)
+            || self.frame_proxy_cache.len() != self.frames.len()
+        {
+            let mut existing_by_frame_id = HashMap::new();
+            if let Some(existing_key) = &self.frame_proxy_cache_key {
+                for (index, frame_id) in existing_key.iter().copied().enumerate() {
+                    if let Some(proxy) = self.frame_proxy_cache.get(index) {
+                        existing_by_frame_id
+                            .entry(frame_id)
+                            .or_insert(proxy.clone());
+                    }
+                }
+            }
+            let mut refreshed = Vec::with_capacity(key.len());
+            for frame_id in &key {
+                if let Some(proxy) = existing_by_frame_id.remove(frame_id) {
+                    refreshed.push(proxy);
+                } else {
+                    refreshed.push(self.alloc_frame_proxy_module());
+                }
+            }
+            self.frame_proxy_cache = refreshed;
+        }
+
+        for frame_index in 0..self.frames.len() {
+            let f_back = if frame_index == 0 {
+                Value::None
+            } else {
+                Value::Module(self.frame_proxy_cache[frame_index - 1].clone())
+            };
+            let frame_obj = self.frame_proxy_cache[frame_index].clone();
+            self.update_frame_proxy_module_for_frame(&frame_obj, frame_index, f_back);
+        }
+
+        self.frame_proxy_cache_key = Some(key);
+    }
+
+    pub(super) fn refresh_frame_proxy_cache_if_active(&mut self, module: &ObjRef) {
+        if self.frame_proxy_cache.is_empty() && self.frame_proxy_cache_key.is_none() {
+            return;
+        }
+        if !self
+            .frame_proxy_cache
+            .iter()
+            .any(|proxy| proxy.id() == module.id())
+        {
+            return;
+        }
+        self.refresh_frame_proxy_cache();
+    }
+
+    pub(super) fn build_frame_proxy_value(&mut self, frame_index: usize) -> Value {
+        self.refresh_frame_proxy_cache();
+        self.frame_proxy_cache
+            .get(frame_index)
+            .cloned()
+            .map(Value::Module)
+            .unwrap_or(Value::None)
+    }
+
+    fn preferred_active_exception(&self) -> Option<Value> {
+        let mut fallback: Option<Value> = None;
+        for frame in self.frames.iter().rev() {
+            let Some(exc) = frame.active_exception.as_ref() else {
+                continue;
+            };
+            if fallback.is_none() {
+                fallback = Some(exc.clone());
+            }
+            let has_traceback = match exc {
+                Value::Exception(exception) => {
+                    !exception.traceback_frames.is_empty()
+                        || exception.attrs.borrow().contains_key("__traceback__")
+                }
+                _ => false,
+            };
+            if has_traceback {
+                return Some(exc.clone());
+            }
+        }
+        fallback
     }
 
     pub(super) fn builtin_sys_exception(
@@ -2600,35 +3447,85 @@ impl Vm {
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new("sys.exception() expects no arguments"));
         }
-        for frame in self.frames.iter().rev() {
-            if let Some(exc) = frame.active_exception.clone() {
-                return Ok(exc);
-            }
-        }
-        Ok(Value::None)
+        Ok(self.preferred_active_exception().unwrap_or(Value::None))
     }
 
     pub(super) fn builtin_sys_exc_info(
-        &self,
+        &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new("sys.exc_info() expects no arguments"));
         }
-        for frame in self.frames.iter().rev() {
-            if let Some(exc) = frame.active_exception.clone() {
-                let exc_type = match &exc {
-                    Value::Exception(exception) => Value::ExceptionType(exception.name.clone()),
-                    Value::ExceptionType(name) => Value::ExceptionType(name.clone()),
-                    _ => Value::None,
-                };
-                return Ok(self.heap.alloc_tuple(vec![exc_type, exc, Value::None]));
-            }
+        if let Some(exc) = self.preferred_active_exception() {
+            let exc_type = match &exc {
+                Value::Exception(exception) => exception
+                    .attrs
+                    .borrow()
+                    .get("__class__")
+                    .and_then(|value| match value {
+                        Value::Class(class) => Some(Value::Class(class.clone())),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| Value::ExceptionType(exception.name.clone())),
+                Value::ExceptionType(name) => Value::ExceptionType(name.clone()),
+                _ => Value::None,
+            };
+            let exc_tb = match &exc {
+                Value::Exception(exception) => {
+                    if let Some(cached) = exception.attrs.borrow().get("__traceback__").cloned() {
+                        cached
+                    } else {
+                        let traceback = self.traceback_value_from_frames(&exception.traceback_frames);
+                        exception
+                            .attrs
+                            .borrow_mut()
+                            .insert("__traceback__".to_string(), traceback.clone());
+                        traceback
+                    }
+                }
+                _ => Value::None,
+            };
+            return Ok(self.heap.alloc_tuple(vec![exc_type, exc, exc_tb]));
         }
         Ok(self
             .heap
             .alloc_tuple(vec![Value::None, Value::None, Value::None]))
+    }
+
+    pub(super) fn builtin_sys_call_tracing(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "sys.call_tracing() expects callable and argument tuple",
+            ));
+        }
+        let callable = args.remove(0);
+        let call_args = match args.remove(0) {
+            Value::Tuple(tuple) => match &*tuple.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "sys.call_tracing() argument 2 must be tuple",
+                    ));
+                }
+            },
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "sys.call_tracing() argument 2 must be tuple",
+                ));
+            }
+        };
+        match self.call_internal(callable, call_args, HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("sys.call_tracing() failed"))
+            }
+        }
     }
 
     pub(super) fn builtin_sys_exit(
@@ -2637,15 +3534,47 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() > 1 {
-            return Err(RuntimeError::new("sys.exit() expects at most one argument"));
+            return Err(RuntimeError::type_error(
+                "sys.exit() takes at most one argument",
+            ));
         }
-        if let Some(value) = args.pop() {
-            Err(RuntimeError::new(format!(
-                "SystemExit: {}",
-                format_value(&value)
-            )))
-        } else {
-            Err(RuntimeError::new("SystemExit"))
+        let call_args = match args.pop() {
+            Some(Value::Tuple(tuple)) => {
+                let tuple_values = {
+                    let kind = tuple.kind();
+                    match &*kind {
+                        Object::Tuple(values) => Some(values.clone()),
+                        _ => None,
+                    }
+                };
+                tuple_values.unwrap_or_else(|| vec![Value::Tuple(tuple)])
+            }
+            Some(value) => vec![value],
+            None => Vec::new(),
+        };
+        let code = self.system_exit_code_from_args(&call_args);
+        let exception = ExceptionObject::new("SystemExit", call_args.first().map(format_value));
+        {
+            let mut attrs = exception.attrs.borrow_mut();
+            attrs.insert("args".to_string(), self.heap.alloc_tuple(call_args));
+            attrs.insert("code".to_string(), code);
+        }
+        Err(RuntimeError::from_exception(exception))
+    }
+
+    pub(super) fn builtin_sys_intern(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "intern() takes exactly one argument",
+            ));
+        }
+        match args.remove(0) {
+            Value::Str(text) => Ok(Value::Str(text)),
+            _ => Err(RuntimeError::type_error("intern() argument must be str")),
         }
     }
 
@@ -2659,6 +3588,33 @@ impl Vm {
                 "sys.is_finalizing() expects no arguments",
             ));
         }
+        Ok(Value::Bool(self.is_finalizing))
+    }
+
+    pub(super) fn builtin_sys_is_gil_enabled(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys._is_gil_enabled() takes no arguments",
+            ));
+        }
+        Ok(Value::Bool(true))
+    }
+
+    pub(super) fn builtin_sys_is_remote_debug_enabled(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "sys.is_remote_debug_enabled() expects no arguments",
+            ));
+        }
+        // pyrs does not currently expose remote debugger entrypoints.
         Ok(Value::Bool(false))
     }
 
@@ -2859,13 +3815,15 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "sys.setrecursionlimit() expects one argument",
             ));
         }
         let limit = value_to_int(args[0].clone())?;
         if limit < 1 {
-            return Err(RuntimeError::new("recursion limit must be greater than 0"));
+            return Err(RuntimeError::value_error(
+                "recursion limit must be greater than 0",
+            ));
         }
         self.recursion_limit = limit;
         Ok(Value::None)
@@ -2890,11 +3848,28 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "sys.setswitchinterval() expects one argument",
             ));
         }
-        let interval = value_to_f64(args[0].clone())?;
+        let interval = match args[0].clone() {
+            Value::Float(value) => value,
+            Value::Int(value) => value as f64,
+            Value::BigInt(value) => value.to_f64(),
+            Value::Bool(value) => {
+                if value {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            other => {
+                return Err(RuntimeError::type_error(format!(
+                    "must be real number, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
         if interval <= 0.0 {
             return Err(RuntimeError::value_error(
                 "switch interval must be strictly positive",
@@ -4032,6 +5007,67 @@ impl Vm {
         self.build_ast_node(class_name, None, Vec::new())
     }
 
+    fn set_ast_node_end_location(
+        &mut self,
+        node: &Value,
+        end_lineno: usize,
+        end_col_offset: usize,
+    ) {
+        let Value::Instance(instance) = node else {
+            return;
+        };
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data
+                .attrs
+                .insert("end_lineno".to_string(), Value::Int(end_lineno as i64));
+            instance_data.attrs.insert(
+                "end_col_offset".to_string(),
+                Value::Int(end_col_offset as i64),
+            );
+        }
+    }
+
+    fn infer_expr_end_location(expr: &Expr) -> Option<(usize, usize)> {
+        let start = expr.span.column.saturating_sub(1);
+        match &expr.node {
+            ExprKind::Constant(constant) => {
+                let width = match constant {
+                    AstConstant::None => 4,
+                    AstConstant::Bool(true) => 4,
+                    AstConstant::Bool(false) => 5,
+                    AstConstant::Int(value) => value.to_string().chars().count(),
+                    AstConstant::Float(value) => value.value().to_string().chars().count(),
+                    AstConstant::Str(text) => text.chars().count().saturating_add(2),
+                };
+                Some((expr.span.line, start + width.max(1)))
+            }
+            ExprKind::Name(name) => Some((expr.span.line, start + name.chars().count())),
+            ExprKind::Attribute { value, name } => {
+                let (value_end_line, value_end_col) = Self::infer_expr_end_location(value)?;
+                if value_end_line == expr.span.line {
+                    Some((value_end_line, value_end_col + 1 + name.chars().count()))
+                } else {
+                    Some((expr.span.line, start + 1))
+                }
+            }
+            ExprKind::Call { func, args } => {
+                let last_arg_end = args.last().and_then(|arg| match arg {
+                    CallArg::Positional(value)
+                    | CallArg::Star(value)
+                    | CallArg::DoubleStar(value)
+                    | CallArg::Keyword { value, .. } => Self::infer_expr_end_location(value),
+                });
+                if let Some((last_arg_end_line, last_arg_end_col)) = last_arg_end {
+                    Some((last_arg_end_line, last_arg_end_col + 1))
+                } else {
+                    let (func_end_line, func_end_col) = Self::infer_expr_end_location(func)?;
+                    Some((func_end_line, func_end_col + 2))
+                }
+            }
+            _ => Some((expr.span.line, start + 1)),
+        }
+    }
+
     fn convert_ast_constant(&self, constant: &AstConstant) -> Value {
         match constant {
             AstConstant::None => Value::None,
@@ -4579,11 +5615,15 @@ impl Vm {
         match &expr.node {
             ExprKind::Name(name) => {
                 let ctx = self.build_ast_context_node("Load")?;
-                self.build_ast_node(
+                let node = self.build_ast_node(
                     "Name",
                     location,
                     vec![("id", Value::Str(name.clone())), ("ctx", ctx)],
-                )
+                )?;
+                if let Some((end_line, end_col_offset)) = Self::infer_expr_end_location(expr) {
+                    self.set_ast_node_end_location(&node, end_line, end_col_offset);
+                }
+                Ok(node)
             }
             ExprKind::Constant(value) => self.build_ast_node(
                 "Constant",
@@ -4797,7 +5837,7 @@ impl Vm {
                     }
                 }
                 let func_value = self.convert_expr_to_ast_node(func)?;
-                self.build_ast_node(
+                let node = self.build_ast_node(
                     "Call",
                     location,
                     vec![
@@ -4805,7 +5845,11 @@ impl Vm {
                         ("args", self.heap.alloc_list(positional)),
                         ("keywords", self.heap.alloc_list(keywords)),
                     ],
-                )
+                )?;
+                if let Some((end_line, end_col_offset)) = Self::infer_expr_end_location(expr) {
+                    self.set_ast_node_end_location(&node, end_line, end_col_offset);
+                }
+                Ok(node)
             }
             ExprKind::Attribute { value, name } => {
                 let value_node = self.convert_expr_to_ast_node(value)?;
@@ -5513,30 +6557,277 @@ impl Vm {
                 "compile() mode must be 'exec', 'eval', or 'single'",
             ));
         }
-        let syntax_error =
-            |message: String| RuntimeError::with_exception("SyntaxError", Some(message));
-        self.cache_source_text(&filename, &source_text);
+        let compiled_mode = match mode.as_str() {
+            "eval" => CompiledCodeMode::Eval,
+            "single" => CompiledCodeMode::Single,
+            _ => CompiledCodeMode::Exec,
+        };
+        let cacheable_filename = !filename.is_empty()
+            && !(filename.starts_with('<')
+                && filename.ends_with('>')
+                && !filename.starts_with("<frozen "));
+        if cacheable_filename {
+            self.cache_source_text(&filename, &source_text);
+        }
         if mode == "eval" {
-            let expr_ast =
-                parser::parse_expression(&source_text).map_err(|err| syntax_error(err.message))?;
+            let expr_ast = parser::parse_expression(&source_text).map_err(|err| {
+                self.compile_syntax_error_runtime_error(
+                    err.message,
+                    &filename,
+                    &source_text,
+                    Some(err.line),
+                    Some(err.column),
+                )
+            })?;
             if request_ast {
                 return self.convert_expression_to_ast_node(&expr_ast);
             }
-            let code = compiler::compile_expression_with_filename(&expr_ast, &filename)
-                .map_err(|err| syntax_error(err.message))?;
-            return Ok(Value::Code(Rc::new(code)));
+            let code = compiler::compile_expression_with_filename(&expr_ast, &filename).map_err(
+                |err| {
+                    self.compile_syntax_error_runtime_error(
+                        err.message,
+                        &filename,
+                        &source_text,
+                        err.span.map(|span| span.line),
+                        err.span.map(|span| span.column),
+                    )
+                },
+            )?;
+            let code = Rc::new(code);
+            self.register_compiled_code_metadata(&code, compiled_mode, Some(&source_text));
+            return Ok(Value::Code(code));
         }
 
-        let module_ast =
-            parser::parse_module(&source_text).map_err(|err| syntax_error(err.message))?;
+        let module_ast = parser::parse_module(&source_text).map_err(|err| {
+            self.compile_syntax_error_runtime_error(
+                err.message,
+                &filename,
+                &source_text,
+                Some(err.line),
+                Some(err.column),
+            )
+        })?;
         if request_ast {
             return self.convert_module_to_ast_node(&module_ast);
         }
-        let code = compiler::compile_module_with_filename(&module_ast, &filename)
-            .map_err(|err| syntax_error(err.message))?;
-        // `single` currently reuses module-compilation shape until REPL-specific
-        // code object semantics are modeled separately.
-        Ok(Value::Code(Rc::new(code)))
+        let code =
+            compiler::compile_module_with_filename(&module_ast, &filename).map_err(|err| {
+                self.compile_syntax_error_runtime_error(
+                    err.message,
+                    &filename,
+                    &source_text,
+                    err.span.map(|span| span.line),
+                    err.span.map(|span| span.column),
+                )
+            })?;
+        let code = Rc::new(code);
+        self.register_compiled_code_metadata(&code, compiled_mode, Some(&source_text));
+        Ok(Value::Code(code))
+    }
+
+    fn compile_syntax_error_runtime_error(
+        &mut self,
+        message: String,
+        filename: &str,
+        source_text: &str,
+        line: Option<usize>,
+        column: Option<usize>,
+    ) -> RuntimeError {
+        let line_end_column = |line_no: usize| -> Option<usize> {
+            source_text
+                .lines()
+                .nth(line_no.saturating_sub(1))
+                .map(|text| text.chars().count().saturating_add(1))
+        };
+        let detect_unexpected_top_level_indent = || -> Option<usize> {
+            for (idx, line_text) in source_text.lines().enumerate() {
+                if line_text.trim().is_empty() {
+                    continue;
+                }
+                if line_text
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_whitespace())
+                {
+                    return Some(idx + 1);
+                }
+                break;
+            }
+            None
+        };
+        let detect_last_unclosed_delimiter = || -> Option<(usize, usize)> {
+            let mut stack: Vec<(char, usize, usize)> = Vec::new();
+            let mut line_no = 1usize;
+            let mut col_no = 0usize;
+            let mut in_single_quote = false;
+            let mut in_double_quote = false;
+            let mut escaped = false;
+            let mut in_comment = false;
+            for ch in source_text.chars() {
+                if ch == '\n' {
+                    line_no += 1;
+                    col_no = 0;
+                    in_comment = false;
+                    escaped = false;
+                    continue;
+                }
+                col_no += 1;
+                if in_comment {
+                    continue;
+                }
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if in_single_quote {
+                    match ch {
+                        '\\' => escaped = true,
+                        '\'' => in_single_quote = false,
+                        _ => {}
+                    }
+                    continue;
+                }
+                if in_double_quote {
+                    match ch {
+                        '\\' => escaped = true,
+                        '"' => in_double_quote = false,
+                        _ => {}
+                    }
+                    continue;
+                }
+                match ch {
+                    '#' => in_comment = true,
+                    '\'' => in_single_quote = true,
+                    '"' => in_double_quote = true,
+                    '(' | '[' | '{' => stack.push((ch, line_no, col_no)),
+                    ')' => {
+                        if matches!(stack.last(), Some(('(', _, _))) {
+                            stack.pop();
+                        }
+                    }
+                    ']' => {
+                        if matches!(stack.last(), Some(('[', _, _))) {
+                            stack.pop();
+                        }
+                    }
+                    '}' => {
+                        if matches!(stack.last(), Some(('{', _, _))) {
+                            stack.pop();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            stack.last().map(|(_, line, col)| (*line, *col))
+        };
+        let lower = message.to_ascii_lowercase();
+        let mut error_type = "SyntaxError";
+        let mut normalized_message =
+            if message == "expected expression" || message.starts_with("unexpected character:") {
+                "invalid syntax".to_string()
+            } else {
+                message
+            };
+        let mut detail_line = line;
+        let mut detail_column = column;
+        if let Some(indent_line) = detect_unexpected_top_level_indent() {
+            if detail_line.is_none() || detail_line == Some(indent_line) {
+                error_type = "IndentationError";
+                normalized_message = "unexpected indent".to_string();
+                // Match CPython: show offending line without a caret.
+                detail_column = Some(0);
+            }
+        } else if lower.starts_with("expected indent") {
+            error_type = "IndentationError";
+            normalized_message = "expected an indented block".to_string();
+        } else if lower.contains("indentation does not match any outer level")
+            || lower.contains("unindent does not match any outer indentation level")
+            || lower.starts_with("expected dedent")
+        {
+            error_type = "IndentationError";
+            normalized_message = "unindent does not match any outer indentation level".to_string();
+            if let Some(line_no) = detail_line {
+                detail_column = line_end_column(line_no).or(detail_column);
+            }
+        } else if lower.starts_with("unexpected indent") {
+            error_type = "IndentationError";
+            normalized_message = "unexpected indent".to_string();
+            if detail_line == Some(1) {
+                // Match CPython top-level indentation errors: show source line without caret.
+                detail_column = Some(0);
+            }
+        }
+        if lower.starts_with("expected expression")
+            && let Some((open_line, open_column)) = detect_last_unclosed_delimiter()
+            && detail_line.is_none_or(|existing| existing >= open_line)
+        {
+            detail_line = Some(open_line);
+            detail_column = Some(open_column);
+        }
+        let infer_genexp_range_end = |line_text: &str, start_column: usize| -> Option<usize> {
+            if start_column == 0 {
+                return Some(0);
+            }
+            let chars = line_text.chars().collect::<Vec<_>>();
+            let start = start_column.saturating_sub(1);
+            if start >= chars.len() {
+                return None;
+            }
+            let mut depth = 0usize;
+            for (idx, ch) in chars.iter().enumerate().skip(start) {
+                match *ch {
+                    '(' | '[' | '{' => depth = depth.saturating_add(1),
+                    ')' | ']' | '}' => {
+                        if depth == 0 {
+                            return Some(idx + 1);
+                        }
+                        depth = depth.saturating_sub(1);
+                    }
+                    ',' if depth == 0 => return Some(idx + 1),
+                    _ => {}
+                }
+            }
+            Some(chars.len().saturating_add(1))
+        };
+        let exception = ExceptionObject::new(error_type, Some(normalized_message.clone()));
+        let mut call_args = vec![Value::Str(normalized_message)];
+        if let (Some(line), Some(column)) = (detail_line, detail_column) {
+            let source_line = source_text
+                .lines()
+                .nth(line.saturating_sub(1))
+                .unwrap_or("")
+                .to_string();
+            let mut end_column = if column == 0 {
+                0
+            } else {
+                column.saturating_add(1)
+            };
+            if call_args
+                .first()
+                .is_some_and(|value| matches!(value, Value::Str(text) if text == "Generator expression must be parenthesized"))
+                && let Some(inferred_end) = infer_genexp_range_end(&source_line, column)
+            {
+                end_column = inferred_end.max(column.saturating_add(1));
+            }
+            let line_value = i64::try_from(line).unwrap_or(i64::MAX);
+            let column_value = i64::try_from(column).unwrap_or(i64::MAX);
+            let end_column_value = i64::try_from(end_column).unwrap_or(i64::MAX);
+            let detail = self.heap.alloc_tuple(vec![
+                Value::Str(filename.to_string()),
+                Value::Int(line_value),
+                Value::Int(column_value),
+                Value::Str(source_line),
+                Value::Int(line_value),
+                Value::Int(end_column_value),
+            ]);
+            call_args.push(detail);
+        }
+        {
+            let mut attrs = exception.attrs.borrow_mut();
+            attrs.insert("args".to_string(), self.heap.alloc_tuple(call_args.clone()));
+            self.populate_syntax_error_attrs(&mut attrs, &call_args);
+        }
+        RuntimeError::from_exception(exception)
     }
 
     pub(super) fn builtin_platform_libc_ver(
@@ -5666,6 +6957,31 @@ impl Vm {
         }
     }
 
+    pub(super) fn types_module_or_private_class(&self, name: &str) -> Option<ObjRef> {
+        self.types_module_class(name)
+            .or_else(|| {
+                let module = self.modules.get("_types")?;
+                let Object::Module(module_data) = &*module.kind() else {
+                    return None;
+                };
+                match module_data.globals.get(name) {
+                    Some(Value::Class(class)) => Some(class.clone()),
+                    _ => None,
+                }
+            })
+            .or_else(|| {
+                let builtins = self.modules.get("builtins")?;
+                let Object::Module(module_data) = &*builtins.kind() else {
+                    return None;
+                };
+                let cache_key = format!("__pyrs_types_class_{name}");
+                match module_data.globals.get(&cache_key) {
+                    Some(Value::Class(class)) => Some(class.clone()),
+                    _ => None,
+                }
+            })
+    }
+
     pub(super) fn fallback_none_type_class(&mut self) -> ObjRef {
         if let Some(module) = self.modules.get("builtins").cloned()
             && let Object::Module(module_data) = &*module.kind()
@@ -5685,11 +7001,104 @@ impl Vm {
         class
     }
 
+    pub(super) fn fallback_function_type_class(&mut self) -> ObjRef {
+        if let Some(module) = self.modules.get("builtins").cloned()
+            && let Object::Module(module_data) = &*module.kind()
+            && let Some(Value::Class(class)) =
+                module_data.globals.get("__pyrs_function_type_class__")
+        {
+            return class.clone();
+        }
+        let class = self.alloc_synthetic_class("function");
+        let getset_descriptor_class = self.alloc_synthetic_class("getset_descriptor");
+        let member_descriptor_class = self.alloc_synthetic_class("member_descriptor");
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.attrs.insert(
+                "__code__".to_string(),
+                self.heap
+                    .alloc_instance(InstanceObject::new(getset_descriptor_class)),
+            );
+            class_data.attrs.insert(
+                "__globals__".to_string(),
+                self.heap
+                    .alloc_instance(InstanceObject::new(member_descriptor_class)),
+            );
+        }
+        if let Some(module) = self.modules.get("builtins").cloned()
+            && let Object::Module(module_data) = &mut *module.kind_mut()
+        {
+            module_data.globals.insert(
+                "__pyrs_function_type_class__".to_string(),
+                Value::Class(class.clone()),
+            );
+        }
+        class
+    }
+
     fn bound_method_is_python_method(&self, method: &ObjRef) -> bool {
         let Object::BoundMethod(method_data) = &*method.kind() else {
             return false;
         };
         matches!(&*method_data.function.kind(), Object::Function(_))
+    }
+
+    fn bound_method_is_builtin_unbound_descriptor(&self, method: &ObjRef) -> bool {
+        let Object::BoundMethod(method_data) = &*method.kind() else {
+            return false;
+        };
+        let Object::Module(module_data) = &*method_data.receiver.kind() else {
+            return false;
+        };
+        module_data.name.ends_with("_unbound_method__")
+    }
+
+    fn bound_method_is_builtin_unbound_slot_wrapper(&self, method: &ObjRef) -> bool {
+        let Object::BoundMethod(method_data) = &*method.kind() else {
+            return false;
+        };
+        if !matches!(&*method_data.receiver.kind(), Object::Class(_)) {
+            return false;
+        }
+        let Object::NativeMethod(native) = &*method_data.function.kind() else {
+            return false;
+        };
+        matches!(
+            native.kind,
+            NativeMethodKind::Builtin(BuiltinFunction::Repr | BuiltinFunction::Str)
+        )
+    }
+
+    fn bound_method_is_builtin_slot_wrapper(&self, method: &ObjRef) -> bool {
+        let Object::BoundMethod(method_data) = &*method.kind() else {
+            return false;
+        };
+        let receiver_is_slot_wrapper = matches!(&*method_data.receiver.kind(), Object::Instance(_))
+            || matches!(
+                &*method_data.receiver.kind(),
+                Object::Module(module_data) if module_data.name == "__int_method__"
+            );
+        if !receiver_is_slot_wrapper {
+            return false;
+        }
+        let Object::NativeMethod(native) = &*method_data.function.kind() else {
+            return false;
+        };
+        matches!(
+            native.kind,
+            NativeMethodKind::Builtin(
+                BuiltinFunction::Repr
+                    | BuiltinFunction::Str
+                    | BuiltinFunction::ObjectInit
+                    | BuiltinFunction::OperatorLt
+            )
+        )
+    }
+
+    fn builtin_is_classmethod_descriptor(&self, builtin: BuiltinFunction) -> bool {
+        matches!(
+            builtin,
+            BuiltinFunction::DictFromKeys | BuiltinFunction::IntFromBytes
+        )
     }
 
     pub(super) fn builtin_is_type_object(&self, builtin: BuiltinFunction) -> bool {
@@ -5757,28 +7166,68 @@ impl Vm {
                         }
                     })
                 }
-                Value::Function(_) => self.types_module_class("FunctionType").map(Value::Class),
+                Value::Function(_) => Some(Value::Class(
+                    self.types_module_or_private_class("FunctionType")
+                        .unwrap_or_else(|| self.fallback_function_type_class()),
+                )),
                 Value::BoundMethod(method) => {
                     if self.bound_method_is_python_method(method) {
-                        Some(Value::Builtin(BuiltinFunction::TypesMethodType))
+                        Some(
+                            self.types_module_or_private_class("MethodType")
+                                .map(Value::Class)
+                                .unwrap_or(Value::Builtin(BuiltinFunction::TypesMethodType)),
+                        )
+                    } else if self.bound_method_is_builtin_unbound_slot_wrapper(method) {
+                        self.types_module_or_private_class("WrapperDescriptorType")
+                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
+                            .map(Value::Class)
+                    } else if self.bound_method_is_builtin_unbound_descriptor(method) {
+                        self.types_module_or_private_class("MethodDescriptorType")
+                            .or_else(|| self.types_module_or_private_class("BuiltinMethodType"))
+                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
+                            .map(Value::Class)
+                    } else if self.bound_method_is_builtin_slot_wrapper(method) {
+                        self.types_module_or_private_class("MethodWrapperType")
+                            .or_else(|| self.types_module_or_private_class("BuiltinMethodType"))
+                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
+                            .map(Value::Class)
                     } else {
-                        self.types_module_class("BuiltinMethodType")
-                            .or_else(|| self.types_module_class("BuiltinFunctionType"))
+                        self.types_module_or_private_class("BuiltinMethodType")
+                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
                             .map(Value::Class)
                     }
                 }
                 Value::Builtin(builtin) => {
                     if self.builtin_is_type_object(*builtin) {
                         Some(Value::Builtin(BuiltinFunction::Type))
+                    } else if matches!(builtin, BuiltinFunction::ListAppendDescriptor) {
+                        self.types_module_or_private_class("MethodDescriptorType")
+                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
+                            .map(Value::Class)
+                    } else if self.builtin_is_classmethod_descriptor(*builtin) {
+                        self.types_module_or_private_class("ClassMethodDescriptorType")
+                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
+                            .map(Value::Class)
+                    } else if matches!(
+                        builtin,
+                        BuiltinFunction::ObjectInit
+                            | BuiltinFunction::ObjectNew
+                            | BuiltinFunction::OperatorLt
+                    ) {
+                        self.types_module_or_private_class("WrapperDescriptorType")
+                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
+                            .map(Value::Class)
                     } else {
-                        self.types_module_class("BuiltinFunctionType")
+                        self.types_module_or_private_class("BuiltinFunctionType")
                             .map(Value::Class)
                     }
                 }
                 Value::Dict(dict) if self.defaultdict_factories.contains_key(&dict.id()) => {
                     Some(Value::Builtin(BuiltinFunction::CollectionsDefaultDict))
                 }
-                Value::Code(_) => self.types_module_class("CodeType").map(Value::Class),
+                Value::Code(_) => self
+                    .types_module_or_private_class("CodeType")
+                    .map(Value::Class),
                 Value::Generator(generator) => {
                     let builtin = match &*generator.kind() {
                         Object::Generator(state) if state.is_async_generator => {
@@ -5791,8 +7240,24 @@ impl Vm {
                     };
                     Some(Value::Builtin(builtin))
                 }
+                Value::Instance(instance)
+                    if self
+                        .builtins
+                        .get("NotImplemented")
+                        .and_then(|value| match value {
+                            Value::Instance(singleton) => Some(singleton.id() == instance.id()),
+                            _ => None,
+                        })
+                        .unwrap_or(false) =>
+                {
+                    self.types_module_or_private_class("NotImplementedType")
+                        .map(Value::Class)
+                }
+                Value::Cell(_) => self
+                    .types_module_or_private_class("CellType")
+                    .map(Value::Class),
                 Value::None => Some(Value::Class(
-                    self.types_module_class("NoneType")
+                    self.types_module_or_private_class("NoneType")
                         .unwrap_or_else(|| self.fallback_none_type_class()),
                 )),
                 _ => None,
@@ -5807,7 +7272,7 @@ impl Vm {
             let metaclass = match &args[metaclass_index] {
                 Value::Class(class) => class.clone(),
                 _ => {
-                    return Err(RuntimeError::new(
+                    return Err(RuntimeError::type_error(
                         "type.__new__() argument 1 must be a type",
                     ));
                 }
@@ -5820,17 +7285,7 @@ impl Vm {
                     ));
                 }
             };
-            let base_values = match &args[name_index + 1] {
-                Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
-                    Object::Tuple(values) => values.clone(),
-                    _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
-                },
-                Value::List(list_obj) => match &*list_obj.kind() {
-                    Object::List(values) => values.clone(),
-                    _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
-                },
-                _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
-            };
+            let base_values = self.builtin_type_base_values(&args[name_index + 1])?;
             let mut base_classes = Vec::with_capacity(base_values.len());
             for base in base_values {
                 base_classes.push(self.class_from_base_value(base)?);
@@ -5844,6 +7299,7 @@ impl Vm {
                 Some(metaclass),
                 None,
             )?;
+            self.preserve_type_bases_tuple_subclass(&class_value, &args[name_index + 1]);
             if let Value::Class(class_ref) = &class_value
                 && self.call_init_subclass_hook(class_ref, &kwargs)?
             {
@@ -5864,17 +7320,7 @@ impl Vm {
                     ));
                 }
             };
-            let base_values = match &args[1] {
-                Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
-                    Object::Tuple(values) => values.clone(),
-                    _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
-                },
-                Value::List(list_obj) => match &*list_obj.kind() {
-                    Object::List(values) => values.clone(),
-                    _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
-                },
-                _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
-            };
+            let base_values = self.builtin_type_base_values(&args[1])?;
             let mut base_classes = Vec::with_capacity(base_values.len());
             for base in base_values {
                 base_classes.push(self.class_from_base_value(base)?);
@@ -5891,17 +7337,76 @@ impl Vm {
             return match self.class_value_from_module(
                 &class_module,
                 base_classes,
+                None,
                 explicit_metaclass,
                 class_keywords,
                 Some(namespace_value),
             )? {
-                ClassBuildOutcome::Value(value) => Ok(value),
+                ClassBuildOutcome::Value(value) => {
+                    self.preserve_type_bases_tuple_subclass(&value, &args[1]);
+                    Ok(value)
+                }
                 ClassBuildOutcome::ExceptionHandled => {
                     Err(self.runtime_error_from_active_exception("metaclass call failed"))
                 }
             };
         }
         BuiltinFunction::Type.call(&self.heap, args)
+    }
+
+    fn builtin_type_base_values(&self, bases: &Value) -> Result<Vec<Value>, RuntimeError> {
+        match bases {
+            Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                Object::Tuple(values) => Ok(values.clone()),
+                _ => Err(RuntimeError::type_error("type() bases must be tuple/list")),
+            },
+            Value::List(list_obj) => match &*list_obj.kind() {
+                Object::List(values) => Ok(values.clone()),
+                _ => Err(RuntimeError::type_error("type() bases must be tuple/list")),
+            },
+            Value::Instance(instance) => {
+                if let Some(backing_tuple) = self.instance_backing_tuple(instance) {
+                    if let Object::Tuple(values) = &*backing_tuple.kind() {
+                        return Ok(values.clone());
+                    }
+                }
+                if let Some(backing_list) = self.instance_backing_list(instance) {
+                    if let Object::List(values) = &*backing_list.kind() {
+                        return Ok(values.clone());
+                    }
+                }
+                Err(RuntimeError::type_error("type() bases must be tuple/list"))
+            }
+            _ => Err(RuntimeError::type_error("type() bases must be tuple/list")),
+        }
+    }
+
+    fn preserve_type_bases_tuple_subclass(&mut self, class_value: &Value, bases_value: &Value) {
+        let Value::Class(class_ref) = class_value else {
+            return;
+        };
+        let Value::Instance(instance) = bases_value else {
+            return;
+        };
+        if self.instance_backing_tuple(instance).is_none() {
+            return;
+        }
+        let tuple_subclass = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => return,
+        };
+        let is_exact_tuple = matches!(
+            &*tuple_subclass.kind(),
+            Object::Class(class_data) if class_data.name == "tuple"
+        );
+        if is_exact_tuple || !self.class_has_builtin_tuple_base(&tuple_subclass) {
+            return;
+        }
+        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+            class_data
+                .attrs
+                .insert("__bases__".to_string(), bases_value.clone());
+        }
     }
 
     pub(super) fn builtin_type_call(
@@ -6387,7 +7892,7 @@ impl Vm {
     }
 
     pub(super) fn builtin_isinstance(
-        &self,
+        &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -6400,7 +7905,7 @@ impl Vm {
     }
 
     pub(super) fn builtin_type_instancecheck(
-        &self,
+        &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -6415,7 +7920,7 @@ impl Vm {
     }
 
     pub(super) fn builtin_issubclass(
-        &self,
+        &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -6432,7 +7937,7 @@ impl Vm {
     }
 
     pub(super) fn builtin_type_subclasscheck(
-        &self,
+        &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -6688,6 +8193,213 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
+    pub(super) fn builtin_traceback_type_new(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "TracebackType() takes no keyword arguments",
+            ));
+        }
+        if args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "TracebackType() expects a class argument",
+            ));
+        }
+        let class_ref = match args.remove(0) {
+            Value::Class(class) => class,
+            Value::Builtin(builtin) if self.builtin_is_type_object(builtin) => {
+                self.class_from_base_value(Value::Builtin(builtin))?
+            }
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "TracebackType.__new__(X): X is not a type object",
+                ));
+            }
+        };
+
+        if args.len() != 4 {
+            return Err(RuntimeError::type_error(format!(
+                "TracebackType() takes exactly 4 arguments ({} given)",
+                args.len()
+            )));
+        }
+
+        let tb_next = args.remove(0);
+        let tb_frame = args.remove(0);
+        let tb_lasti = value_to_int(args.remove(0))?;
+        let tb_lineno = value_to_int(args.remove(0))?;
+
+        if !matches!(tb_next, Value::None) {
+            let is_traceback = match &tb_next {
+                Value::Instance(instance) => match &*instance.kind() {
+                    Object::Instance(instance_data) => {
+                        matches!(
+                            instance_data.attrs.get("__pyrs_traceback_marker__"),
+                            Some(Value::Bool(true))
+                        )
+                    }
+                    _ => false,
+                },
+                _ => false,
+            };
+            if !is_traceback {
+                return Err(RuntimeError::type_error(
+                    "tb_next must be a traceback object",
+                ));
+            }
+        }
+
+        let (f_code, f_lineno_opt, f_globals_opt, f_locals_opt, f_builtins_opt, f_back_opt) =
+            match &tb_frame {
+                Value::Module(module) => match &*module.kind() {
+                    Object::Module(module_data) => (
+                        module_data.globals.get("f_code").cloned(),
+                        module_data.globals.get("f_lineno").cloned(),
+                        module_data.globals.get("f_globals").cloned(),
+                        module_data.globals.get("f_locals").cloned(),
+                        module_data.globals.get("f_builtins").cloned(),
+                        module_data.globals.get("f_back").cloned(),
+                    ),
+                    _ => (None, None, None, None, None, None),
+                },
+                Value::Instance(instance) => match &*instance.kind() {
+                    Object::Instance(instance_data) => (
+                        instance_data.attrs.get("f_code").cloned(),
+                        instance_data.attrs.get("f_lineno").cloned(),
+                        instance_data.attrs.get("f_globals").cloned(),
+                        instance_data.attrs.get("f_locals").cloned(),
+                        instance_data.attrs.get("f_builtins").cloned(),
+                        instance_data.attrs.get("f_back").cloned(),
+                    ),
+                    _ => (None, None, None, None, None, None),
+                },
+                _ => (None, None, None, None, None, None),
+            };
+
+        let Some(Value::Code(code)) = f_code else {
+            return Err(RuntimeError::type_error("tb_frame must be a frame object"));
+        };
+        let filename = code.filename.clone();
+        let name = code.name.clone();
+        let frame_lineno = match f_lineno_opt {
+            Some(Value::Int(line)) if line >= 0 => line,
+            _ => 0,
+        };
+        let frame_code_value = if tb_lineno >= 0 {
+            let mut synthetic = CodeObject::new(code.name.clone(), code.filename.clone());
+            synthetic.first_line = tb_lineno.max(1) as usize;
+            synthetic
+                .instructions
+                .push(crate::bytecode::Instruction::new(
+                    crate::bytecode::Opcode::Nop,
+                    None,
+                ));
+            synthetic
+                .locations
+                .push(crate::bytecode::Location::with_end(
+                    tb_lineno as usize,
+                    1,
+                    tb_lineno as usize,
+                    1,
+                ));
+            Value::Code(Rc::new(synthetic))
+        } else {
+            Value::Code(code.clone())
+        };
+        let frame_value = match tb_frame {
+            Value::Module(_) => {
+                let frame_class = self
+                    .types_module_or_private_class("FrameType")
+                    .unwrap_or_else(|| {
+                        match self
+                            .heap
+                            .alloc_class(ClassObject::new("frame".to_string(), Vec::new()))
+                        {
+                            Value::Class(class) => class,
+                            _ => unreachable!(),
+                        }
+                    });
+                let frame_instance = match self
+                    .heap
+                    .alloc_instance(InstanceObject::new(frame_class.clone()))
+                {
+                    Value::Instance(instance) => instance,
+                    _ => unreachable!(),
+                };
+                if let Object::Instance(instance_data) = &mut *frame_instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert("f_code".to_string(), frame_code_value);
+                    instance_data.attrs.insert(
+                        "f_globals".to_string(),
+                        f_globals_opt.unwrap_or_else(|| self.heap.alloc_dict(Vec::new())),
+                    );
+                    instance_data.attrs.insert(
+                        "f_locals".to_string(),
+                        f_locals_opt.unwrap_or_else(|| self.heap.alloc_dict(Vec::new())),
+                    );
+                    instance_data.attrs.insert(
+                        "f_builtins".to_string(),
+                        self.builtins_mapping_value_from_dunder_builtins(f_builtins_opt),
+                    );
+                    instance_data
+                        .attrs
+                        .insert("f_lineno".to_string(), Value::Int(frame_lineno));
+                    instance_data
+                        .attrs
+                        .insert("f_back".to_string(), f_back_opt.unwrap_or(Value::None));
+                }
+                Value::Instance(frame_instance)
+            }
+            other => other,
+        };
+
+        let traceback = match self.heap.alloc_instance(InstanceObject::new(class_ref)) {
+            Value::Instance(instance) => instance,
+            _ => unreachable!(),
+        };
+        if let Object::Instance(instance_data) = &mut *traceback.kind_mut() {
+            instance_data
+                .attrs
+                .insert("__pyrs_traceback_marker__".to_string(), Value::Bool(true));
+            instance_data
+                .attrs
+                .insert("__pyrs_tb_filename__".to_string(), Value::Str(filename));
+            instance_data
+                .attrs
+                .insert("__pyrs_tb_name__".to_string(), Value::Str(name));
+            instance_data
+                .attrs
+                .insert("__pyrs_tb_column__".to_string(), Value::Int(0));
+            instance_data.attrs.insert(
+                "__pyrs_tb_end_line__".to_string(),
+                Value::Int(tb_lineno.max(frame_lineno)),
+            );
+            instance_data
+                .attrs
+                .insert("__pyrs_tb_end_column__".to_string(), Value::Int(0));
+            instance_data.attrs.insert(
+                "__pyrs_tb_frame_id__".to_string(),
+                Value::Int(self.id_of(&frame_value) as i64),
+            );
+            instance_data
+                .attrs
+                .insert("tb_lineno".to_string(), Value::Int(tb_lineno));
+            instance_data
+                .attrs
+                .insert("tb_lasti".to_string(), Value::Int(tb_lasti));
+            instance_data
+                .attrs
+                .insert("tb_frame".to_string(), frame_value);
+            instance_data.attrs.insert("tb_next".to_string(), tb_next);
+        }
+
+        Ok(Value::Instance(traceback))
+    }
+
     pub(super) fn builtin_object_init(
         &self,
         args: Vec<Value>,
@@ -6793,6 +8505,22 @@ impl Vm {
                         "BaseException.__init__() takes no keyword arguments",
                     ));
                 }
+                let group_members_tuple = if self
+                    .exception_inherits(exception_name.as_str(), "BaseExceptionGroup")
+                {
+                    let members_source = args
+                        .get(1)
+                        .cloned()
+                        .unwrap_or_else(|| self.heap.alloc_tuple(Vec::new()));
+                    let members = self.exception_members_from_value(&members_source)?;
+                    let member_values = members
+                        .into_iter()
+                        .map(|member| Value::Exception(Box::new(member)))
+                        .collect::<Vec<_>>();
+                    Some(self.heap.alloc_tuple(member_values))
+                } else {
+                    None
+                };
                 if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                     let is_stop_iteration = {
                         let class_kind = instance_data.class.kind();
@@ -6805,12 +8533,34 @@ impl Vm {
                                 )
                         )
                     };
+                    let is_system_exit =
+                        self.exception_inherits(exception_name.as_str(), "SystemExit");
                     instance_data
                         .attrs
                         .insert("args".to_string(), self.heap.alloc_tuple(args.clone()));
+                    instance_data
+                        .attrs
+                        .entry("__traceback__".to_string())
+                        .or_insert(Value::None);
+                    instance_data
+                        .attrs
+                        .entry("__cause__".to_string())
+                        .or_insert(Value::None);
+                    instance_data
+                        .attrs
+                        .entry("__context__".to_string())
+                        .or_insert(Value::None);
+                    instance_data
+                        .attrs
+                        .entry("__suppress_context__".to_string())
+                        .or_insert(Value::Bool(false));
                     if is_stop_iteration {
                         let value = args.first().cloned().unwrap_or(Value::None);
                         instance_data.attrs.insert("value".to_string(), value);
+                    }
+                    if is_system_exit {
+                        let code = self.system_exit_code_from_args(&args);
+                        instance_data.attrs.insert("code".to_string(), code);
                     }
                     if is_os_error_family(exception_name.as_str()) {
                         if let Some(errno) = args
@@ -6850,6 +8600,14 @@ impl Vm {
                             .attrs
                             .insert("path".to_string(), import_error_path);
                     }
+                    if self.exception_inherits(exception_name.as_str(), "SyntaxError") {
+                        self.populate_syntax_error_attrs(&mut instance_data.attrs, &args);
+                    }
+                    if let Some(group_members_tuple) = group_members_tuple {
+                        instance_data
+                            .attrs
+                            .insert("exceptions".to_string(), group_members_tuple);
+                    }
                     return Ok(Value::None);
                 }
                 Err(RuntimeError::new(
@@ -6882,8 +8640,29 @@ impl Vm {
                         "BaseException.__init__() takes no keyword arguments",
                     ));
                 }
+                let group_members = if self
+                    .exception_inherits(exception.name.as_str(), "BaseExceptionGroup")
+                {
+                    let members_source = args
+                        .get(1)
+                        .cloned()
+                        .unwrap_or_else(|| self.heap.alloc_tuple(Vec::new()));
+                    Some(self.exception_members_from_value(&members_source)?)
+                } else {
+                    None
+                };
                 let mut attrs = exception.attrs.borrow_mut();
                 attrs.insert("args".to_string(), self.heap.alloc_tuple(args.clone()));
+                attrs
+                    .entry("__traceback__".to_string())
+                    .or_insert(Value::None);
+                attrs.entry("__cause__".to_string()).or_insert(Value::None);
+                attrs
+                    .entry("__context__".to_string())
+                    .or_insert(Value::None);
+                attrs
+                    .entry("__suppress_context__".to_string())
+                    .or_insert(Value::Bool(false));
                 if matches!(
                     exception.name.as_str(),
                     "StopIteration" | "StopAsyncIteration"
@@ -6892,6 +8671,9 @@ impl Vm {
                         "value".to_string(),
                         args.first().cloned().unwrap_or(Value::None),
                     );
+                }
+                if self.exception_inherits(exception.name.as_str(), "SystemExit") {
+                    attrs.insert("code".to_string(), self.system_exit_code_from_args(&args));
                 }
                 if args.len() == 1 {
                     exception.message = Some(format_value(&args[0]));
@@ -6924,12 +8706,95 @@ impl Vm {
                     attrs.insert("name".to_string(), import_error_name);
                     attrs.insert("path".to_string(), import_error_path);
                 }
+                if self.exception_inherits(exception.name.as_str(), "SyntaxError") {
+                    self.populate_syntax_error_attrs(&mut attrs, &args);
+                }
+                if let Some(group_members) = group_members {
+                    let member_values = group_members
+                        .iter()
+                        .cloned()
+                        .map(|member| Value::Exception(Box::new(member)))
+                        .collect::<Vec<_>>();
+                    attrs.insert("exceptions".to_string(), self.heap.alloc_tuple(member_values));
+                    exception.exceptions = group_members;
+                    exception.message = args.first().map(format_value);
+                }
                 Ok(Value::None)
             }
             _ => Err(RuntimeError::new(
                 "descriptor '__init__' requires a 'BaseException' object",
             )),
         }
+    }
+
+    pub(super) fn builtin_exception_type_str(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "__str__() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error("__str__() takes no arguments"));
+        }
+        let receiver = args.remove(0);
+        let rendered = match receiver {
+            Value::Exception(exception) => self.exception_str_value(&exception),
+            Value::Instance(instance) => {
+                let Some((class_name, args, member_count)) =
+                    self.exception_instance_name_args_and_member_count(&instance)
+                else {
+                    return Err(RuntimeError::type_error(
+                        "descriptor '__str__' requires a 'BaseException' object",
+                    ));
+                };
+                self.exception_str_from_name_and_args(class_name.as_str(), &args, member_count)?
+            }
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "descriptor '__str__' requires a 'BaseException' object",
+                ));
+            }
+        };
+        Ok(Value::Str(rendered))
+    }
+
+    pub(super) fn builtin_exception_type_repr(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "__repr__() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error("__repr__() takes no arguments"));
+        }
+        let receiver = args.remove(0);
+        let rendered = match receiver {
+            Value::Exception(exception) => self.exception_repr_value(&exception),
+            Value::Instance(instance) => {
+                let Some((class_name, args, _)) =
+                    self.exception_instance_name_args_and_member_count(&instance)
+                else {
+                    return Err(RuntimeError::type_error(
+                        "descriptor '__repr__' requires a 'BaseException' object",
+                    ));
+                };
+                self.exception_repr_from_name_and_args(class_name.as_str(), &args)
+            }
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "descriptor '__repr__' requires a 'BaseException' object",
+                ));
+            }
+        };
+        Ok(Value::Str(rendered))
     }
 
     pub(super) fn class_allows_object_init_extra_args(&self, class: &ObjRef) -> bool {
@@ -7324,10 +9189,11 @@ impl Vm {
         Ok(Value::Module(module))
     }
 
-    pub(super) fn builtin_dict(
+    pub(super) fn builtin_dict_with_order(
         &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
     ) -> Result<Value, RuntimeError> {
         if args.len() > 2 {
             return Err(RuntimeError::type_error(
@@ -7397,11 +9263,27 @@ impl Vm {
             }
         }
 
+        let mut kwargs = kwargs;
+        if let Some(order) = kwargs_order {
+            for name in order {
+                if let Some(value) = kwargs.remove(&name) {
+                    dict_set_value_checked(&dict_obj, Value::Str(name), value)?;
+                }
+            }
+        }
         for (name, value) in kwargs {
             dict_set_value_checked(&dict_obj, Value::Str(name), value)?;
         }
 
         Ok(Value::Dict(dict_obj))
+    }
+
+    pub(super) fn builtin_dict(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_dict_with_order(args, kwargs, None)
     }
 
     fn dict_extend_from_mapping_protocol(
@@ -7804,102 +9686,582 @@ impl Vm {
         }
     }
 
-    pub(super) fn parse_int_format_spec(
+    fn parse_decimal_format_number(
         &self,
-        spec: &str,
-    ) -> Result<(char, bool, bool, usize, char), RuntimeError> {
+        chars: &[char],
+        idx: &mut usize,
+    ) -> Result<Option<usize>, RuntimeError> {
+        let start = *idx;
+        let mut value = 0usize;
+        while *idx < chars.len() && chars[*idx].is_ascii_digit() {
+            let digit = (chars[*idx] as u8 - b'0') as usize;
+            value = value
+                .checked_mul(10)
+                .and_then(|current| current.checked_add(digit))
+                .ok_or_else(|| {
+                    RuntimeError::value_error("Too many decimal digits in format string")
+                })?;
+            *idx += 1;
+        }
+        if *idx == start {
+            Ok(None)
+        } else {
+            Ok(Some(value))
+        }
+    }
+
+    fn parse_numeric_format_spec(&self, spec: &str) -> Result<NumericFormatSpec, RuntimeError> {
         if spec.is_empty() {
-            return Ok(('-', false, false, 0, 'd'));
+            return Ok(NumericFormatSpec::default());
         }
-        let mut chars = spec.chars().peekable();
-        let mut sign_style = '-';
-        if matches!(chars.peek(), Some('+') | Some('-') | Some(' ')) {
-            sign_style = chars.next().unwrap_or('-');
+
+        let chars: Vec<char> = spec.chars().collect();
+        let mut idx = 0usize;
+        let mut parsed = NumericFormatSpec::default();
+        let is_align = |ch: char| matches!(ch, '<' | '>' | '=' | '^');
+
+        if idx + 1 < chars.len() && is_align(chars[idx + 1]) {
+            parsed.fill = chars[idx];
+            parsed.align = Some(chars[idx + 1]);
+            idx += 2;
+        } else if idx < chars.len() && is_align(chars[idx]) {
+            parsed.align = Some(chars[idx]);
+            idx += 1;
         }
-        let mut alternate = false;
-        while matches!(chars.peek(), Some('#')) {
-            alternate = true;
-            chars.next();
+
+        if idx < chars.len() && matches!(chars[idx], '+' | '-' | ' ') {
+            parsed.sign = chars[idx];
+            idx += 1;
         }
-        let mut zero_pad = false;
-        if matches!(chars.peek(), Some('0')) {
-            zero_pad = true;
-            chars.next();
+
+        if idx < chars.len() && chars[idx] == '#' {
+            parsed.alternate = true;
+            idx += 1;
         }
-        let mut width = 0usize;
-        while let Some(ch) = chars.peek().copied() {
-            if ch.is_ascii_digit() {
-                width = width
-                    .saturating_mul(10)
-                    .saturating_add((ch as u8 - b'0') as usize);
-                chars.next();
-            } else {
-                break;
+
+        if idx < chars.len() && chars[idx] == '0' {
+            parsed.zero_pad = true;
+            idx += 1;
+        }
+
+        parsed.width = self.parse_decimal_format_number(&chars, &mut idx)?;
+
+        if idx < chars.len() && matches!(chars[idx], ',' | '_') {
+            parsed.grouping = Some(chars[idx]);
+            idx += 1;
+        }
+
+        if idx < chars.len() && chars[idx] == '.' {
+            idx += 1;
+            parsed.precision = Some(
+                self.parse_decimal_format_number(&chars, &mut idx)?
+                    .ok_or_else(|| {
+                        RuntimeError::value_error("Format specifier missing precision")
+                    })?,
+            );
+        }
+
+        if idx < chars.len() {
+            parsed.ty = Some(chars[idx]);
+            idx += 1;
+        }
+
+        if idx != chars.len() {
+            return Err(RuntimeError::value_error("Invalid format specifier"));
+        }
+
+        Ok(parsed)
+    }
+
+    fn resolve_fill_align(&self, spec: &NumericFormatSpec, numeric: bool) -> (char, char) {
+        let mut fill = spec.fill;
+        let mut align = spec.align.unwrap_or('>');
+        if spec.zero_pad && spec.align.is_none() {
+            fill = '0';
+            align = if numeric { '=' } else { '>' };
+        }
+        (fill, align)
+    }
+
+    fn apply_alignment(
+        &self,
+        text: String,
+        width: Option<usize>,
+        fill: char,
+        align: char,
+    ) -> String {
+        let Some(width) = width else {
+            return text;
+        };
+        let len = text.chars().count();
+        if len >= width {
+            return text;
+        }
+        let pad_len = width - len;
+        match align {
+            '<' => {
+                let mut out = text;
+                out.extend(std::iter::repeat_n(fill, pad_len));
+                out
+            }
+            '^' => {
+                let left = pad_len / 2;
+                let right = pad_len - left;
+                let mut out = String::new();
+                out.extend(std::iter::repeat_n(fill, left));
+                out.push_str(&text);
+                out.extend(std::iter::repeat_n(fill, right));
+                out
+            }
+            _ => {
+                let mut out = String::new();
+                out.extend(std::iter::repeat_n(fill, pad_len));
+                out.push_str(&text);
+                out
             }
         }
-        let ty = chars.next().unwrap_or('d');
-        if chars.next().is_some() || !matches!(ty, 'd' | 'o' | 'x' | 'X' | 'b') {
-            return Err(RuntimeError::new(format!(
-                "unsupported format string passed to int.__format__: '{spec}'"
+    }
+
+    fn apply_numeric_alignment_with_prefix(
+        &self,
+        prefix: &str,
+        body: &str,
+        width: Option<usize>,
+        fill: char,
+        align: char,
+    ) -> String {
+        let combined = format!("{prefix}{body}");
+        if align != '=' {
+            return self.apply_alignment(combined, width, fill, align);
+        }
+        let Some(width) = width else {
+            return combined;
+        };
+        let len = combined.chars().count();
+        if len >= width {
+            return combined;
+        }
+        let mut out = String::new();
+        out.push_str(prefix);
+        out.extend(std::iter::repeat_n(fill, width - len));
+        out.push_str(body);
+        out
+    }
+
+    fn group_digits(&self, digits: &str, separator: char, group_size: usize) -> String {
+        if digits.is_empty() || group_size == 0 {
+            return digits.to_string();
+        }
+        let chars: Vec<char> = digits.chars().collect();
+        if chars.len() <= group_size {
+            return digits.to_string();
+        }
+        let mut out = String::new();
+        for (idx, ch) in chars.iter().enumerate() {
+            if idx > 0 && (chars.len() - idx) % group_size == 0 {
+                out.push(separator);
+            }
+            out.push(*ch);
+        }
+        out
+    }
+
+    fn grouped_len(&self, digits_len: usize, group_size: usize) -> usize {
+        if digits_len == 0 || group_size == 0 {
+            return digits_len;
+        }
+        digits_len + (digits_len.saturating_sub(1) / group_size)
+    }
+
+    fn padded_digits_for_grouped_width(
+        &self,
+        target_len: usize,
+        min_digits_len: usize,
+        group_size: usize,
+    ) -> usize {
+        let mut digits_len = min_digits_len;
+        while self.grouped_len(digits_len, group_size) < target_len {
+            digits_len += 1;
+        }
+        digits_len
+    }
+
+    fn format_double_with_snprintf(
+        &self,
+        format_text: &str,
+        value: f64,
+    ) -> Result<String, RuntimeError> {
+        let c_format = CString::new(format_text)
+            .map_err(|_| RuntimeError::value_error("invalid format string"))?;
+        // SAFETY: `c_format` is NUL-terminated and valid for both calls.
+        let needed = unsafe { snprintf(std::ptr::null_mut(), 0, c_format.as_ptr(), value) };
+        if needed < 0 {
+            return Err(RuntimeError::value_error("failed to format float"));
+        }
+        let mut buffer = vec![0u8; needed as usize + 1];
+        // SAFETY: buffer is writable and large enough for output including trailing NUL.
+        let wrote = unsafe {
+            snprintf(
+                buffer.as_mut_ptr().cast::<c_char>(),
+                buffer.len(),
+                c_format.as_ptr(),
+                value,
+            )
+        };
+        if wrote < 0 {
+            return Err(RuntimeError::value_error("failed to format float"));
+        }
+        buffer.truncate(wrote as usize);
+        Ok(String::from_utf8_lossy(&buffer).into_owned())
+    }
+
+    fn apply_grouping_to_float_text(
+        &self,
+        text: &str,
+        separator: char,
+        width: Option<usize>,
+        fill: char,
+        align: char,
+    ) -> String {
+        let (sign_prefix, unsigned) =
+            if text.starts_with('-') || text.starts_with('+') || text.starts_with(' ') {
+                (&text[..1], &text[1..])
+            } else {
+                ("", text)
+            };
+
+        let (unsigned_core, percent_suffix) = if let Some(stripped) = unsigned.strip_suffix('%') {
+            (stripped, "%")
+        } else {
+            (unsigned, "")
+        };
+
+        let exponent_pos = unsigned_core.find(['e', 'E']);
+        let (mantissa, exponent_suffix) = if let Some(pos) = exponent_pos {
+            (&unsigned_core[..pos], &unsigned_core[pos..])
+        } else {
+            (unsigned_core, "")
+        };
+
+        let (integer_part, fractional_suffix) = if let Some(dot_pos) = mantissa.find('.') {
+            (&mantissa[..dot_pos], &mantissa[dot_pos..])
+        } else {
+            (mantissa, "")
+        };
+
+        if !integer_part.chars().all(|ch| ch.is_ascii_digit()) {
+            return self.apply_numeric_alignment_with_prefix(
+                sign_prefix,
+                unsigned,
+                width,
+                fill,
+                align,
+            );
+        }
+
+        let grouped_integer = if align == '=' && fill == '0' {
+            let Some(width) = width else {
+                return format!(
+                    "{sign_prefix}{}{}{}{}",
+                    self.group_digits(integer_part, separator, 3),
+                    fractional_suffix,
+                    exponent_suffix,
+                    percent_suffix
+                );
+            };
+            let sign_len = sign_prefix.chars().count();
+            let suffix_len = fractional_suffix.chars().count()
+                + exponent_suffix.chars().count()
+                + percent_suffix.chars().count();
+            if width <= sign_len + suffix_len {
+                self.group_digits(integer_part, separator, 3)
+            } else {
+                let target = width - sign_len - suffix_len;
+                let padded_len =
+                    self.padded_digits_for_grouped_width(target, integer_part.len(), 3);
+                let mut padded = "0".repeat(padded_len.saturating_sub(integer_part.len()));
+                padded.push_str(integer_part);
+                self.group_digits(&padded, separator, 3)
+            }
+        } else {
+            self.group_digits(integer_part, separator, 3)
+        };
+
+        let body = format!("{grouped_integer}{fractional_suffix}{exponent_suffix}{percent_suffix}");
+        self.apply_numeric_alignment_with_prefix(sign_prefix, &body, width, fill, align)
+    }
+
+    fn locale_format_string(
+        &mut self,
+        format_pattern: String,
+        value: Value,
+    ) -> Result<String, RuntimeError> {
+        let locale_module = self.import_module_object("locale")?;
+        let formatter = self.load_attr_module(&locale_module, "format_string")?;
+        let mut kwargs = HashMap::new();
+        kwargs.insert("grouping".to_string(), Value::Bool(true));
+        let result =
+            match self.call_internal(formatter, vec![Value::Str(format_pattern), value], kwargs)? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(
+                        self.runtime_error_from_active_exception("locale.format_string() failed")
+                    );
+                }
+            };
+        match result {
+            Value::Str(text) => Ok(text),
+            _ => Err(RuntimeError::type_error(
+                "locale.format_string() returned non-str value",
+            )),
+        }
+    }
+
+    fn format_float_with_spec(
+        &mut self,
+        value: f64,
+        spec: &NumericFormatSpec,
+        type_code: char,
+    ) -> Result<String, RuntimeError> {
+        if type_code == 'n' && spec.grouping.is_some() {
+            let group = spec.grouping.unwrap_or(',');
+            return Err(RuntimeError::value_error(format!(
+                "Cannot specify '{group}' with 'n'."
             )));
         }
-        Ok((sign_style, alternate, zero_pad, width, ty))
+
+        let (fill, align) = self.resolve_fill_align(spec, true);
+
+        if type_code == 'n' {
+            let mut pattern = String::from("%");
+            if spec.sign == '+' {
+                pattern.push('+');
+            } else if spec.sign == ' ' {
+                pattern.push(' ');
+            }
+            if spec.alternate {
+                pattern.push('#');
+            }
+            if let Some(precision) = spec.precision {
+                pattern.push('.');
+                pattern.push_str(&precision.to_string());
+            }
+            pattern.push('g');
+            let rendered = self.locale_format_string(pattern, Value::Float(value))?;
+            return Ok(
+                self.apply_numeric_alignment_with_prefix("", &rendered, spec.width, fill, align)
+            );
+        }
+
+        let mut c_pattern = String::from("%");
+        if spec.sign == '+' {
+            c_pattern.push('+');
+        } else if spec.sign == ' ' {
+            c_pattern.push(' ');
+        }
+        if spec.alternate {
+            c_pattern.push('#');
+        }
+        if let Some(precision) = spec.precision {
+            c_pattern.push('.');
+            c_pattern.push_str(&precision.to_string());
+        }
+
+        let rendered = if type_code == '%' {
+            c_pattern.push('f');
+            let mut out = self.format_double_with_snprintf(&c_pattern, value * 100.0)?;
+            out.push('%');
+            out
+        } else {
+            c_pattern.push(type_code);
+            self.format_double_with_snprintf(&c_pattern, value)?
+        };
+
+        if let Some(group) = spec.grouping {
+            return Ok(self.apply_grouping_to_float_text(&rendered, group, spec.width, fill, align));
+        }
+
+        if rendered.starts_with('-') || rendered.starts_with('+') || rendered.starts_with(' ') {
+            let prefix = &rendered[..1];
+            let body = &rendered[1..];
+            Ok(self.apply_numeric_alignment_with_prefix(prefix, body, spec.width, fill, align))
+        } else {
+            Ok(self.apply_numeric_alignment_with_prefix("", &rendered, spec.width, fill, align))
+        }
     }
 
     pub(super) fn format_bigint_with_spec(
-        &self,
+        &mut self,
         value: &BigInt,
-        spec: &str,
+        spec_text: &str,
     ) -> Result<String, RuntimeError> {
-        let (sign_style, alternate, zero_pad, width, ty) = self.parse_int_format_spec(spec)?;
-        let is_negative = value.is_negative();
+        let spec = self.parse_numeric_format_spec(spec_text)?;
+        let ty = spec.ty.unwrap_or('d');
+
+        if matches!(ty, 'e' | 'E' | 'f' | 'F' | 'g' | 'G' | '%') {
+            let float_value = value.to_f64();
+            if !float_value.is_finite() {
+                return Err(RuntimeError::overflow_error(
+                    "int too large to convert to float",
+                ));
+            }
+            return self.format_float_with_spec(float_value, &spec, ty);
+        }
+
+        if spec.precision.is_some() {
+            return Err(RuntimeError::value_error(
+                "Precision not allowed in integer format specifier",
+            ));
+        }
+
+        if ty == 'c' {
+            if spec.sign != '-' {
+                return Err(RuntimeError::value_error(
+                    "Sign not allowed with integer format specifier 'c'",
+                ));
+            }
+            if spec.alternate {
+                return Err(RuntimeError::value_error(
+                    "Alternate form (#) not allowed with integer format specifier 'c'",
+                ));
+            }
+            if let Some(group) = spec.grouping {
+                return Err(RuntimeError::value_error(format!(
+                    "Cannot specify '{group}' with 'c'."
+                )));
+            }
+
+            let Some(codepoint) = value.to_i64() else {
+                return Err(RuntimeError::overflow_error(
+                    "%c arg not in range(0x110000)",
+                ));
+            };
+            if !(0..=0x10ffff).contains(&codepoint) {
+                return Err(RuntimeError::overflow_error(
+                    "%c arg not in range(0x110000)",
+                ));
+            }
+            let ch = char::from_u32(codepoint as u32)
+                .ok_or_else(|| RuntimeError::overflow_error("%c arg not in range(0x110000)"))?;
+            let (fill, align) = self.resolve_fill_align(&spec, false);
+            return Ok(self.apply_alignment(ch.to_string(), spec.width, fill, align));
+        }
+
+        if ty == 'n' {
+            if let Some(group) = spec.grouping {
+                return Err(RuntimeError::value_error(format!(
+                    "Cannot specify '{group}' with 'n'."
+                )));
+            }
+            let mut pattern = String::from("%");
+            if spec.sign == '+' {
+                pattern.push('+');
+            } else if spec.sign == ' ' {
+                pattern.push(' ');
+            }
+            pattern.push('d');
+            let rendered = self.locale_format_string(pattern, value_from_bigint(value.clone()))?;
+            let (fill, align) = self.resolve_fill_align(&spec, true);
+            if rendered.starts_with('-') || rendered.starts_with('+') || rendered.starts_with(' ') {
+                return Ok(self.apply_numeric_alignment_with_prefix(
+                    &rendered[..1],
+                    &rendered[1..],
+                    spec.width,
+                    fill,
+                    align,
+                ));
+            }
+            return Ok(
+                self.apply_numeric_alignment_with_prefix("", &rendered, spec.width, fill, align)
+            );
+        }
+
+        if !matches!(ty, 'd' | 'b' | 'o' | 'x' | 'X') {
+            return Err(RuntimeError::value_error(format!(
+                "Unknown format code '{ty}' for object of type 'int'"
+            )));
+        }
+
+        if spec.grouping == Some(',') && !matches!(ty, 'd') {
+            return Err(RuntimeError::value_error(format!(
+                "Cannot specify ',' with '{ty}'."
+            )));
+        }
+
         let abs_value = value.abs();
         let mut digits = match ty {
             'd' => abs_value.to_string(),
-            'o' => abs_value
-                .to_str_radix(8)
-                .ok_or_else(|| RuntimeError::new("failed to format integer"))?,
-            'x' | 'X' => abs_value
-                .to_str_radix(16)
-                .ok_or_else(|| RuntimeError::new("failed to format integer"))?,
             'b' => abs_value
                 .to_str_radix(2)
-                .ok_or_else(|| RuntimeError::new("failed to format integer"))?,
+                .ok_or_else(|| RuntimeError::value_error("failed to format integer"))?,
+            'o' => abs_value
+                .to_str_radix(8)
+                .ok_or_else(|| RuntimeError::value_error("failed to format integer"))?,
+            'x' | 'X' => abs_value
+                .to_str_radix(16)
+                .ok_or_else(|| RuntimeError::value_error("failed to format integer"))?,
             _ => unreachable!(),
         };
         if ty == 'X' {
             digits = digits.to_ascii_uppercase();
         }
-        let sign = if is_negative {
+
+        let sign_prefix = if value.is_negative() {
             "-"
+        } else if spec.sign == '+' {
+            "+"
+        } else if spec.sign == ' ' {
+            " "
         } else {
-            match sign_style {
-                '+' => "+",
-                ' ' => " ",
-                _ => "",
-            }
+            ""
         };
-        let prefix = if alternate {
+
+        let base_prefix = if spec.alternate {
             match ty {
+                'b' => "0b",
                 'o' => "0o",
                 'x' => "0x",
                 'X' => "0X",
-                'b' => "0b",
                 _ => "",
             }
         } else {
             ""
         };
-        let base_len = sign.len() + prefix.len() + digits.len();
-        if width <= base_len {
-            return Ok(format!("{sign}{prefix}{digits}"));
-        }
-        let pad_len = width - base_len;
-        if zero_pad {
-            Ok(format!("{sign}{prefix}{}{digits}", "0".repeat(pad_len)))
+        let prefix = format!("{sign_prefix}{base_prefix}");
+        let (fill, align) = self.resolve_fill_align(&spec, true);
+
+        let grouped_digits = if let Some(group) = spec.grouping {
+            let group_size = if group == '_' && matches!(ty, 'b' | 'o' | 'x' | 'X') {
+                4
+            } else {
+                3
+            };
+            if align == '=' && fill == '0' {
+                if let Some(width) = spec.width {
+                    let prefix_len = prefix.chars().count();
+                    let target = width.saturating_sub(prefix_len);
+                    let padded_len =
+                        self.padded_digits_for_grouped_width(target, digits.len(), group_size);
+                    let mut padded = "0".repeat(padded_len.saturating_sub(digits.len()));
+                    padded.push_str(&digits);
+                    self.group_digits(&padded, group, group_size)
+                } else {
+                    self.group_digits(&digits, group, group_size)
+                }
+            } else {
+                self.group_digits(&digits, group, group_size)
+            }
         } else {
-            Ok(format!("{}{sign}{prefix}{digits}", " ".repeat(pad_len)))
-        }
+            digits
+        };
+
+        Ok(self.apply_numeric_alignment_with_prefix(
+            &prefix,
+            &grouped_digits,
+            spec.width,
+            fill,
+            align,
+        ))
     }
 
     pub(super) fn builtin_format(
@@ -7916,7 +10278,7 @@ impl Vm {
         } else {
             match args.remove(0) {
                 Value::Str(text) => text,
-                _ => return Err(RuntimeError::new("format() argument 2 must be str")),
+                _ => return Err(RuntimeError::type_error("format() argument 2 must be str")),
             }
         };
         if let Some(proxy_result) = self.cpython_proxy_format(&value, &spec) {
@@ -7928,26 +10290,39 @@ impl Vm {
                 self.format_bigint_with_spec(&BigInt::from_i64(*number), &spec)?
             }
             Value::Bool(flag) => {
-                let int_value = if *flag { 1 } else { 0 };
-                self.format_bigint_with_spec(&BigInt::from_i64(int_value), &spec)?
+                if spec.is_empty() {
+                    if *flag {
+                        "True".to_string()
+                    } else {
+                        "False".to_string()
+                    }
+                } else {
+                    let int_value = if *flag { 1 } else { 0 };
+                    self.format_bigint_with_spec(&BigInt::from_i64(int_value), &spec)?
+                }
             }
             Value::BigInt(number) => self.format_bigint_with_spec(number, &spec)?,
             Value::Str(text) => {
-                if spec.is_empty() {
+                if spec.is_empty() || spec == "s" {
                     text.clone()
                 } else {
-                    return Err(RuntimeError::new(format!(
+                    return Err(RuntimeError::value_error(format!(
                         "unsupported format string passed to str.__format__: '{spec}'"
                     )));
                 }
             }
             Value::Float(number) => {
                 if spec.is_empty() {
-                    format!("{number}")
+                    format_value(&value)
                 } else {
-                    return Err(RuntimeError::new(format!(
-                        "unsupported format string passed to float.__format__: '{spec}'"
-                    )));
+                    let parsed = self.parse_numeric_format_spec(&spec)?;
+                    let ty = parsed.ty.unwrap_or('g');
+                    if !matches!(ty, 'e' | 'E' | 'f' | 'F' | 'g' | 'G' | 'n' | '%') {
+                        return Err(RuntimeError::value_error(format!(
+                            "Unknown format code '{ty}' for object of type 'float'"
+                        )));
+                    }
+                    self.format_float_with_spec(*number, &parsed, ty)?
                 }
             }
             Value::Builtin(builtin) if self.builtin_is_type_object(*builtin) => {
@@ -8297,12 +10672,37 @@ impl Vm {
         }
     }
 
+    fn sequence_order_value(&mut self, value: &Value) -> Option<Value> {
+        match value {
+            Value::Tuple(_) | Value::List(_) => Some(value.clone()),
+            Value::Instance(instance) => {
+                if let Some(values) = self.namedtuple_instance_values(instance) {
+                    return Some(self.heap.alloc_tuple(values));
+                }
+                if let Some(tuple) = self.instance_backing_tuple(instance) {
+                    return Some(Value::Tuple(tuple));
+                }
+                if let Some(list) = self.instance_backing_list(instance) {
+                    return Some(Value::List(list));
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn compare_sequence_order_for_values(
         &mut self,
         left: &Value,
         right: &Value,
     ) -> Result<Option<Ordering>, RuntimeError> {
-        match (left, right) {
+        let Some(left_sequence) = self.sequence_order_value(left) else {
+            return Ok(None);
+        };
+        let Some(right_sequence) = self.sequence_order_value(right) else {
+            return Ok(None);
+        };
+        match (&left_sequence, &right_sequence) {
             (Value::Tuple(left_obj), Value::Tuple(right_obj)) => Ok(Some(
                 self.compare_sequence_objects_order(left_obj, right_obj)?,
             )),
@@ -9124,7 +11524,17 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         let trace = std::env::var_os("PYRS_TRACE_BINARY_OR_RUNTIME").is_some();
         match or_values(left.clone(), right.clone(), &self.heap) {
-            Ok(value) => Ok(value),
+            Ok(value) => {
+                if matches!(value, Value::Tuple(_))
+                    && (self.union_operand_value(&left)
+                        || self.union_operand_value(&right)
+                        || matches!(left, Value::None)
+                        || matches!(right, Value::None))
+                {
+                    return self.build_union_value_from_pair(left, right);
+                }
+                Ok(value)
+            }
             Err(err)
                 if err.message.contains("unsupported operand type")
                     && err.message.contains("for |") =>
@@ -9135,6 +11545,15 @@ impl Vm {
                         format_repr(&left),
                         format_repr(&right)
                     );
+                }
+                match self.build_union_value_from_pair(left.clone(), right.clone()) {
+                    Ok(value) => return Ok(value),
+                    Err(union_err)
+                        if !union_err.message.contains("unsupported operand type for |") =>
+                    {
+                        return Err(union_err);
+                    }
+                    Err(_) => {}
                 }
                 if let Some(value) =
                     self.call_binary_special_method(&left, "__or__", right.clone())?
@@ -9236,6 +11655,12 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         if let Some(ordering) = self.compare_cmp_to_key_wrappers(&left, &right)? {
             return Ok(Value::Bool(ordering == Ordering::Equal));
+        }
+        if let Some(result) = self.compare_eq_via_union_values(&left, &right)? {
+            return Ok(Value::Bool(result));
+        }
+        if let Some(result) = self.compare_eq_via_generic_alias_values(&left, &right)? {
+            return Ok(Value::Bool(result));
         }
         const PY_EQ: i32 = 2;
         let left_proxy_class = matches!(left, Value::Class(_))
@@ -9350,6 +11775,125 @@ impl Vm {
         Ok(Value::Bool(!self.truthy_from_value(&eq)?))
     }
 
+    fn compare_eq_via_union_values(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Result<Option<bool>, RuntimeError> {
+        let Some(left_args) = self.union_args_from_value(left) else {
+            return Ok(None);
+        };
+        let Some(right_args) = self.union_args_from_value(right) else {
+            return Ok(Some(false));
+        };
+        if left_args.len() != right_args.len() {
+            return Ok(Some(false));
+        }
+
+        let mut matched = vec![false; right_args.len()];
+        for left_arg in left_args {
+            let mut found = false;
+            for (index, right_arg) in right_args.iter().enumerate() {
+                if matched[index] {
+                    continue;
+                }
+                let eq = self.compare_eq_runtime(left_arg.clone(), right_arg.clone())?;
+                if self.truthy_from_value(&eq)? {
+                    matched[index] = true;
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return Ok(Some(false));
+            }
+        }
+        Ok(Some(true))
+    }
+
+    fn compare_eq_via_generic_alias_values(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Result<Option<bool>, RuntimeError> {
+        if let (Some(left_literal_args), Some(right_literal_args)) = (
+            self.literal_alias_args_from_value(left),
+            self.literal_alias_args_from_value(right),
+        ) {
+            return Ok(Some(Vm::literal_args_strict_equal(
+                &left_literal_args,
+                &right_literal_args,
+            )));
+        }
+        let Some((left_origin, left_args)) = self.generic_alias_parts_from_value(left) else {
+            return Ok(None);
+        };
+        let Some((right_origin, right_args)) = self.generic_alias_parts_from_value(right) else {
+            return Ok(Some(false));
+        };
+        if left_args.len() != right_args.len() {
+            return Ok(Some(false));
+        }
+        let origin_eq = self.compare_eq_runtime(left_origin, right_origin)?;
+        if !self.truthy_from_value(&origin_eq)? {
+            return Ok(Some(false));
+        }
+        for (left_arg, right_arg) in left_args.into_iter().zip(right_args.into_iter()) {
+            let arg_eq = self.compare_eq_runtime(left_arg.clone(), right_arg.clone())?;
+            if !self.truthy_from_value(&arg_eq)? {
+                if self.type_parameter_values_match_by_name(&left_arg, &right_arg) {
+                    continue;
+                }
+                return Ok(Some(false));
+            }
+        }
+        Ok(Some(true))
+    }
+
+    fn type_parameter_values_match_by_name(&self, left: &Value, right: &Value) -> bool {
+        if !self.is_type_parameter_value(left) || !self.is_type_parameter_value(right) {
+            return false;
+        }
+        let param_name = |value: &Value| -> Option<String> {
+            let Value::Instance(instance) = value else {
+                return None;
+            };
+            let instance_kind = instance.kind();
+            let Object::Instance(instance_data) = &*instance_kind else {
+                return None;
+            };
+            match instance_data.attrs.get("__name__") {
+                Some(Value::Str(name)) => Some(name.clone()),
+                _ => None,
+            }
+        };
+        let class_name = |value: &Value| -> Option<String> {
+            let Value::Instance(instance) = value else {
+                return None;
+            };
+            let instance_kind = instance.kind();
+            let Object::Instance(instance_data) = &*instance_kind else {
+                return None;
+            };
+            let class_kind = instance_data.class.kind();
+            match &*class_kind {
+                Object::Class(class_data) => Some(class_data.name.clone()),
+                _ => None,
+            }
+        };
+        match (
+            class_name(left),
+            class_name(right),
+            param_name(left),
+            param_name(right),
+        ) {
+            (Some(left_class), Some(right_class), Some(left_name), Some(right_name)) => {
+                left_class == right_class && left_name == right_name
+            }
+            _ => false,
+        }
+    }
+
     pub(super) fn compare_eq_via_bound_method(&self, left: &Value, right: &Value) -> Option<bool> {
         let (Value::BoundMethod(left_method), Value::BoundMethod(right_method)) = (left, right)
         else {
@@ -9388,6 +11932,21 @@ impl Vm {
         let int_like_value = |value: &Value| -> Option<BigInt> {
             match value {
                 Value::Instance(instance) => {
+                    let instance_is_enum = match &*instance.kind() {
+                        Object::Instance(instance_data) => self
+                            .class_mro_entries(&instance_data.class)
+                            .iter()
+                            .any(|entry| {
+                                matches!(
+                                    &*entry.kind(),
+                                    Object::Class(class_data) if class_data.name == "Enum"
+                                )
+                            }),
+                        _ => false,
+                    };
+                    if instance_is_enum {
+                        return None;
+                    }
                     let backing = self.instance_backing_int(instance)?;
                     int_like(&backing)
                 }
@@ -9569,10 +12128,9 @@ impl Vm {
                 return Ok(Some(false));
             }
             for (left_item, right_item) in left_values.into_iter().zip(right_values.into_iter()) {
-                match self.compare_eq_runtime(left_item, right_item)? {
-                    Value::Bool(true) => {}
-                    Value::Bool(false) => return Ok(Some(false)),
-                    _ => return Ok(None),
+                let item_eq = self.compare_eq_runtime(left_item, right_item)?;
+                if !self.truthy_from_value(&item_eq)? {
+                    return Ok(Some(false));
                 }
             }
             Ok(Some(true))
@@ -9626,10 +12184,9 @@ impl Vm {
                 return Ok(Some(false));
             }
             for (left_item, right_item) in left_values.into_iter().zip(right_values.into_iter()) {
-                match self.compare_eq_runtime(left_item, right_item)? {
-                    Value::Bool(true) => {}
-                    Value::Bool(false) => return Ok(Some(false)),
-                    _ => return Ok(None),
+                let item_eq = self.compare_eq_runtime(left_item, right_item)?;
+                if !self.truthy_from_value(&item_eq)? {
+                    return Ok(Some(false));
                 }
             }
             Ok(Some(true))
@@ -9838,7 +12395,8 @@ impl Vm {
         let source = args.remove(0);
         let mut values = self.collect_iterable_values(source)?;
         values.reverse();
-        Ok(self.heap.alloc_list(values))
+        let reversed_list = self.heap.alloc_list(values);
+        self.to_iterator_value(reversed_list)
     }
 
     pub(super) fn builtin_zip(
@@ -9902,8 +12460,106 @@ impl Vm {
         }
     }
 
+    fn try_custom_instancecheck(
+        &mut self,
+        class: &ObjRef,
+        value: &Value,
+    ) -> Result<Option<bool>, RuntimeError> {
+        let Some(meta_class) = self.class_of_value(&Value::Class(class.clone())) else {
+            return Ok(None);
+        };
+        if let Object::Class(class_data) = &*meta_class.kind()
+            && class_data.name == "type"
+        {
+            return Ok(None);
+        }
+        let meta_is_abc_meta = match &*meta_class.kind() {
+            Object::Class(class_data) => {
+                class_data.name == "ABCMeta"
+                    && matches!(
+                        class_data.attrs.get("__module__"),
+                        Some(Value::Str(module_name)) if module_name == "abc"
+                    )
+            }
+            _ => false,
+        };
+        if meta_is_abc_meta {
+            return Ok(None);
+        }
+        let Some(raw_instancecheck) = class_attr_lookup(&meta_class, "__instancecheck__") else {
+            return Ok(None);
+        };
+        if matches!(
+            raw_instancecheck,
+            Value::Builtin(BuiltinFunction::TypeInstanceCheck)
+        ) {
+            return Ok(None);
+        }
+        let Some(instancecheck) =
+            self.lookup_bound_special_method(&Value::Class(class.clone()), "__instancecheck__")?
+        else {
+            return Ok(None);
+        };
+        match self.call_internal(instancecheck, vec![value.clone()], HashMap::new())? {
+            InternalCallOutcome::Value(result) => Ok(Some(self.truthy_from_value(&result)?)),
+            InternalCallOutcome::CallerExceptionHandled => Err(self
+                .runtime_error_from_active_exception(
+                    "isinstance() custom __instancecheck__ failed",
+                )),
+        }
+    }
+
+    fn try_custom_subclasscheck(
+        &mut self,
+        class: &ObjRef,
+        candidate: &Value,
+    ) -> Result<Option<bool>, RuntimeError> {
+        let Some(meta_class) = self.class_of_value(&Value::Class(class.clone())) else {
+            return Ok(None);
+        };
+        if let Object::Class(class_data) = &*meta_class.kind()
+            && class_data.name == "type"
+        {
+            return Ok(None);
+        }
+        let meta_is_abc_meta = match &*meta_class.kind() {
+            Object::Class(class_data) => {
+                class_data.name == "ABCMeta"
+                    && matches!(
+                        class_data.attrs.get("__module__"),
+                        Some(Value::Str(module_name)) if module_name == "abc"
+                    )
+            }
+            _ => false,
+        };
+        if meta_is_abc_meta {
+            return Ok(None);
+        }
+        let Some(raw_subclasscheck) = class_attr_lookup(&meta_class, "__subclasscheck__") else {
+            return Ok(None);
+        };
+        if matches!(
+            raw_subclasscheck,
+            Value::Builtin(BuiltinFunction::TypeSubclassCheck)
+        ) {
+            return Ok(None);
+        }
+        let Some(subclasscheck) =
+            self.lookup_bound_special_method(&Value::Class(class.clone()), "__subclasscheck__")?
+        else {
+            return Ok(None);
+        };
+        match self.call_internal(subclasscheck, vec![candidate.clone()], HashMap::new())? {
+            InternalCallOutcome::Value(result) => Ok(Some(self.truthy_from_value(&result)?)),
+            InternalCallOutcome::CallerExceptionHandled => Err(self
+                .runtime_error_from_active_exception(
+                    "issubclass() custom __subclasscheck__ failed",
+                )),
+        }
+    }
+
     pub(super) fn value_is_instance_of(
-        &self,
+        &mut self,
         value: &Value,
         classinfo: &Value,
     ) -> Result<bool, RuntimeError> {
@@ -9935,6 +12591,15 @@ impl Vm {
         }
         let _depth_guard = IsInstanceDepthGuard::enter()?;
 
+        if let Some(items) = self.union_args_from_value(classinfo) {
+            for item in items {
+                if self.value_is_instance_of(value, &item)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+
         match classinfo {
             Value::Tuple(obj) => match &*obj.kind() {
                 Object::Tuple(items) => {
@@ -9963,7 +12628,13 @@ impl Vm {
                 )),
             },
             Value::Class(expected) => {
+                if let Some(custom_result) = self.try_custom_instancecheck(expected, value)? {
+                    return Ok(custom_result);
+                }
                 if let Object::Class(class_data) = &*expected.kind() {
+                    if matches!(value, Value::ExceptionType(_)) {
+                        return Ok(matches!(class_data.name.as_str(), "type" | "object"));
+                    }
                     let trace_seed_instance = std::env::var_os("PYRS_TRACE_ISINSTANCE_CLASS")
                         .is_some()
                         && matches!(value, Value::None)
@@ -9981,10 +12652,80 @@ impl Vm {
                     }
                     let marker_match = match class_data.name.as_str() {
                         "NoneType" => matches!(value, Value::None),
+                        "NotImplementedType" => self
+                            .builtins
+                            .get("NotImplemented")
+                            .and_then(|singleton| match singleton {
+                                Value::Instance(obj) => Some(matches!(
+                                    value,
+                                    Value::Instance(candidate) if candidate.id() == obj.id()
+                                )),
+                                _ => None,
+                            })
+                            .unwrap_or(false),
                         "function" => matches!(value, Value::Function(_)),
                         "method" => matches!(value, Value::BoundMethod(_)),
-                        "builtin_function_or_method" => matches!(value, Value::Builtin(_)),
+                        "builtin_function_or_method" => {
+                            matches!(value, Value::Builtin(_))
+                                || matches!(
+                                    value,
+                                    Value::BoundMethod(method)
+                                        if !self.bound_method_is_python_method(method)
+                                            && !self.bound_method_is_builtin_unbound_descriptor(method)
+                                            && !self.bound_method_is_builtin_slot_wrapper(method)
+                                )
+                        }
+                        "method_descriptor" => {
+                            matches!(
+                                value,
+                                Value::BoundMethod(method)
+                                    if self.bound_method_is_builtin_unbound_descriptor(method)
+                            ) || matches!(
+                                value,
+                                Value::Builtin(BuiltinFunction::ListAppendDescriptor)
+                            )
+                        }
+                        "method-wrapper" => matches!(
+                            value,
+                            Value::BoundMethod(method)
+                                if self.bound_method_is_builtin_slot_wrapper(method)
+                        ),
+                        "wrapper_descriptor" => {
+                            matches!(
+                                value,
+                                Value::Builtin(
+                                    BuiltinFunction::ObjectInit
+                                        | BuiltinFunction::ObjectNew
+                                        | BuiltinFunction::OperatorLt
+                                )
+                            ) || matches!(
+                                value,
+                                Value::BoundMethod(method)
+                                    if self.bound_method_is_builtin_unbound_slot_wrapper(method)
+                            )
+                        }
+                        "classmethod_descriptor" => matches!(
+                            value,
+                            Value::Builtin(builtin)
+                                if self.builtin_is_classmethod_descriptor(*builtin)
+                        ),
                         "code" => matches!(value, Value::Code(_)),
+                        "cell" => matches!(value, Value::Cell(_)),
+                        "traceback" | "frame" | "getset_descriptor" | "member_descriptor" => {
+                            matches!(
+                                value,
+                                Value::Instance(instance)
+                                    if matches!(
+                                        &*instance.kind(),
+                                        Object::Instance(instance_data)
+                                            if matches!(
+                                                &*instance_data.class.kind(),
+                                                Object::Class(instance_class)
+                                                    if instance_class.name == class_data.name
+                                            )
+                                    )
+                            )
+                        }
                         // CPython's numbers ABC tower treats these primitive
                         // runtime numerics as virtual subclasses.
                         "Number" | "Complex" => matches!(
@@ -10002,12 +12743,16 @@ impl Vm {
                         "Rational" | "Integral" => {
                             matches!(value, Value::Bool(_) | Value::Int(_) | Value::BigInt(_))
                         }
+                        "Awaitable" => self.value_matches_awaitable_protocol(value),
+                        "Coroutine" => self.value_matches_coroutine_protocol(value),
+                        "Generator" => self.value_matches_generator_protocol(value),
                         "Iterable" => self.value_has_iter_protocol(value),
                         "Sized" => self.value_has_len_protocol(value),
                         "Sequence" => {
                             self.value_has_len_protocol(value)
                                 && self.value_has_getitem_protocol(value)
                         }
+                        "Mapping" => matches!(value, Value::Dict(_)),
                         _ => false,
                     };
                     if marker_match {
@@ -10019,6 +12764,9 @@ impl Vm {
                         }
                         return Ok(true);
                     }
+                    if let Value::Exception(exception) = value {
+                        return Ok(self.exception_inherits(&exception.name, &class_data.name));
+                    }
                 }
                 match value {
                     Value::Instance(instance) => match &*instance.kind() {
@@ -10029,13 +12777,14 @@ impl Vm {
                         _ => Ok(false),
                     },
                     Value::Class(class) => {
-                        let Some(meta_class) = class_of_class(class) else {
+                        let Some(meta_class) = self.class_of_value(&Value::Class(class.clone()))
+                        else {
                             return Ok(false);
                         };
-                        Ok(self
-                            .class_mro_entries(&meta_class)
-                            .iter()
-                            .any(|entry| entry.id() == expected.id()))
+                        self.class_value_is_subclass_of(
+                            &Value::Class(meta_class),
+                            &Value::Class(expected.clone()),
+                        )
                     }
                     _ => Ok(false),
                 }
@@ -10052,10 +12801,10 @@ impl Vm {
                     },
                     _ => Ok(false),
                 },
-                Value::ExceptionType(candidate) => Ok(self.exception_inherits(candidate, name)),
+                Value::ExceptionType(_) => Ok(false),
                 _ => Ok(false),
             },
-            _ => Err(RuntimeError::new(
+            _ => Err(RuntimeError::type_error(
                 "isinstance() arg 2 must be a type or tuple of types",
             )),
         }
@@ -10073,6 +12822,32 @@ impl Vm {
             Value::Class(class) => class_attr_lookup(class, "__fspath__").is_some(),
             _ => false,
         }
+    }
+
+    fn value_supports_attr_runtime(&mut self, value: &Value, attr_name: &str) -> bool {
+        self.optional_getattr_value(value.clone(), attr_name)
+            .ok()
+            .flatten()
+            .is_some()
+    }
+
+    pub(super) fn value_matches_awaitable_protocol(&mut self, value: &Value) -> bool {
+        self.value_supports_attr_runtime(value, "__await__")
+    }
+
+    pub(super) fn value_matches_coroutine_protocol(&mut self, value: &Value) -> bool {
+        self.value_supports_attr_runtime(value, "__await__")
+            && self.value_supports_attr_runtime(value, "send")
+            && self.value_supports_attr_runtime(value, "throw")
+            && self.value_supports_attr_runtime(value, "close")
+    }
+
+    pub(super) fn value_matches_generator_protocol(&mut self, value: &Value) -> bool {
+        self.value_supports_attr_runtime(value, "__iter__")
+            && self.value_supports_attr_runtime(value, "__next__")
+            && self.value_supports_attr_runtime(value, "send")
+            && self.value_supports_attr_runtime(value, "throw")
+            && self.value_supports_attr_runtime(value, "close")
     }
 
     pub(super) fn value_has_iter_protocol(&self, value: &Value) -> bool {
@@ -10140,7 +12915,7 @@ impl Vm {
     }
 
     pub(super) fn class_value_is_subclass_of(
-        &self,
+        &mut self,
         candidate: &Value,
         classinfo: &Value,
     ) -> Result<bool, RuntimeError> {
@@ -10172,6 +12947,15 @@ impl Vm {
         }
         let _depth_guard = IsSubclassDepthGuard::enter()?;
 
+        if let Some(items) = self.union_args_from_value(classinfo) {
+            for item in items {
+                if self.class_value_is_subclass_of(candidate, &item)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+
         match classinfo {
             Value::Tuple(obj) => match &*obj.kind() {
                 Object::Tuple(items) => {
@@ -10199,11 +12983,45 @@ impl Vm {
                     "issubclass() arg 2 must be a type or tuple of types",
                 )),
             },
-            Value::Class(expected) => match candidate {
+            Value::Class(expected) => {
+                if matches!(
+                    candidate,
+                    Value::Class(_)
+                        | Value::Builtin(_)
+                        | Value::Exception(_)
+                        | Value::ExceptionType(_)
+                ) && let Some(custom_result) =
+                    self.try_custom_subclasscheck(expected, candidate)?
+                {
+                    return Ok(custom_result);
+                }
+                match candidate {
                 Value::Class(class) => {
                     if let Object::Class(expected_data) = &*expected.kind() {
                         if expected_data.name == "PathLike"
                             && class_attr_lookup(class, "__fspath__").is_some()
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "Awaitable"
+                            && class_attr_lookup(class, "__await__").is_some()
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "Coroutine"
+                            && class_attr_lookup(class, "__await__").is_some()
+                            && class_attr_lookup(class, "send").is_some()
+                            && class_attr_lookup(class, "throw").is_some()
+                            && class_attr_lookup(class, "close").is_some()
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "Generator"
+                            && class_attr_lookup(class, "__iter__").is_some()
+                            && class_attr_lookup(class, "__next__").is_some()
+                            && class_attr_lookup(class, "send").is_some()
+                            && class_attr_lookup(class, "throw").is_some()
+                            && class_attr_lookup(class, "close").is_some()
                         {
                             return Ok(true);
                         }
@@ -10215,6 +13033,11 @@ impl Vm {
                         if expected_data.name == "Sequence"
                             && class_attr_lookup(class, "__len__").is_some()
                             && class_attr_lookup(class, "__getitem__").is_some()
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "Mapping"
+                            && self.class_has_builtin_dict_base(class)
                         {
                             return Ok(true);
                         }
@@ -10247,6 +13070,18 @@ impl Vm {
                         "Rational" | "Integral" => matches!(
                             candidate,
                             Value::Builtin(BuiltinFunction::Int | BuiltinFunction::Bool)
+                        ),
+                        "Awaitable" => matches!(
+                            candidate,
+                            Value::Builtin(BuiltinFunction::CoroutineType)
+                        ),
+                        "Coroutine" => matches!(
+                            candidate,
+                            Value::Builtin(BuiltinFunction::CoroutineType)
+                        ),
+                        "Generator" => matches!(
+                            candidate,
+                            Value::Builtin(BuiltinFunction::GeneratorType)
                         ),
                         "Iterable" => matches!(
                             candidate,
@@ -10286,11 +13121,15 @@ impl Vm {
                                     | BuiltinFunction::MemoryView
                             )
                         ),
+                        "Mapping" => {
+                            matches!(candidate, Value::Builtin(BuiltinFunction::Dict))
+                        }
                         _ => false,
                     })
                 }
                 _ => Err(RuntimeError::type_error("issubclass() arg 1 must be a class")),
-            },
+            }
+            }
             Value::Builtin(expected_builtin) => match candidate {
                 Value::Builtin(candidate_builtin) => Ok(
                     candidate_builtin == expected_builtin
@@ -10343,7 +13182,7 @@ impl Vm {
                 }
                 _ => Ok(false),
             },
-            _ => Err(RuntimeError::new(
+            _ => Err(RuntimeError::type_error(
                 "issubclass() arg 2 must be a type or tuple of types",
             )),
         }
@@ -10624,11 +13463,11 @@ impl Vm {
         match iterator {
             Value::Generator(obj) => match self.generator_for_iter_next(&obj)? {
                 GeneratorResumeOutcome::Yield(value) => Ok(value),
-                GeneratorResumeOutcome::Complete(_) => {
+                GeneratorResumeOutcome::Complete(value) => {
                     if let Some(default) = default {
                         Ok(default)
                     } else {
-                        Err(RuntimeError::stop_iteration("StopIteration"))
+                        Err(self.stop_iteration_runtime_error(value))
                     }
                 }
                 GeneratorResumeOutcome::PropagatedException => {
@@ -10641,16 +13480,16 @@ impl Vm {
                 } else if let Some(default) = default {
                     Ok(default)
                 } else {
-                    Err(RuntimeError::stop_iteration("StopIteration"))
+                    Err(self.stop_iteration_runtime_error(Value::None))
                 }
             }
             Value::Instance(_) => match self.next_from_iterator_value(&iterator)? {
                 GeneratorResumeOutcome::Yield(value) => Ok(value),
-                GeneratorResumeOutcome::Complete(_) => {
+                GeneratorResumeOutcome::Complete(value) => {
                     if let Some(default) = default {
                         Ok(default)
                     } else {
-                        Err(RuntimeError::stop_iteration("StopIteration"))
+                        Err(self.stop_iteration_runtime_error(value))
                     }
                 }
                 GeneratorResumeOutcome::PropagatedException => {
@@ -11196,6 +14035,9 @@ impl Vm {
             }
             Value::Code(code) => self.load_attr_code(&code, &name),
             Value::Generator(generator) => {
+                if let Some(value) = self.load_attr_generator_property(&generator, &name) {
+                    return Ok(value);
+                }
                 let (kind, type_name) = match &*generator.kind() {
                     Object::Generator(state) if state.is_async_generator => (
                         match name.as_str() {
@@ -11307,15 +14149,12 @@ impl Vm {
                     }
                     Ok(self.alloc_native_bound_method(NativeMethodKind::ExceptionAddNote, wrapper))
                 }
-                "__notes__" => {
-                    if exception.notes.is_empty() {
-                        Ok(Value::None)
-                    } else {
-                        Ok(self
-                            .heap
-                            .alloc_list(exception.notes.iter().cloned().map(Value::Str).collect()))
-                    }
-                }
+                "__notes__" => Ok(exception
+                    .attrs
+                    .borrow()
+                    .get("__notes__")
+                    .cloned()
+                    .unwrap_or(Value::None)),
                 "__cause__" => Ok(exception
                     .cause
                     .as_ref()
@@ -11327,7 +14166,17 @@ impl Vm {
                     .map(|context| Value::Exception(Box::new((**context).clone())))
                     .unwrap_or(Value::None)),
                 "__traceback__" => {
-                    Ok(self.traceback_value_from_frames(&exception.traceback_frames))
+                    if let Some(cached) = exception.attrs.borrow().get("__traceback__").cloned() {
+                        Ok(cached)
+                    } else {
+                        let traceback =
+                            self.traceback_value_from_frames(&exception.traceback_frames);
+                        exception
+                            .attrs
+                            .borrow_mut()
+                            .insert("__traceback__".to_string(), traceback.clone());
+                        Ok(traceback)
+                    }
                 }
                 "__suppress_context__" => Ok(Value::Bool(exception.suppress_context)),
                 "exceptions" => {
