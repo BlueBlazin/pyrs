@@ -2474,9 +2474,13 @@ impl Vm {
                                     attr_name, class_name
                                 )));
                             }
-                            self.attach_owner_class_to_value(&value, &class);
-                            if let Object::Class(class_data) = &mut *class.kind_mut() {
-                                class_data.attrs.insert(attr_name, value);
+                            if attr_name == "__bases__" {
+                                self.update_class_bases_attr(&class, value)?;
+                            } else {
+                                self.attach_owner_class_to_value(&value, &class);
+                                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                                    class_data.attrs.insert(attr_name, value);
+                                }
                             }
                             self.touch_class_attr_version(&class);
                         }
@@ -2600,9 +2604,13 @@ impl Vm {
                                     attr_name, class_name
                                 )));
                             }
-                            self.attach_owner_class_to_value(&value, &class);
-                            if let Object::Class(class_data) = &mut *class.kind_mut() {
-                                class_data.attrs.insert(attr_name, value);
+                            if attr_name == "__bases__" {
+                                self.update_class_bases_attr(&class, value)?;
+                            } else {
+                                self.attach_owner_class_to_value(&value, &class);
+                                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                                    class_data.attrs.insert(attr_name, value);
+                                }
                             }
                             self.touch_class_attr_version(&class);
                         }
@@ -13962,7 +13970,10 @@ impl Vm {
                     })
             })
             .ok_or_else(|| RuntimeError::new("Cannot find Generic type"))?;
-        Ok(self.alloc_generic_alias_instance(generic, params))
+        match self.getitem_value(generic.clone(), params.clone()) {
+            Ok(value) => Ok(value),
+            Err(_) => Ok(self.alloc_generic_alias_instance(generic, params)),
+        }
     }
 
     fn intrinsic_make_type_alias(&mut self, value: Value) -> Result<Value, RuntimeError> {

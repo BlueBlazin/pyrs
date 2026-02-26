@@ -3973,6 +3973,82 @@ impl Vm {
             }
         }
     }
+
+    pub(super) fn class_base_values_from_value(
+        &self,
+        bases_value: &Value,
+    ) -> Result<Vec<Value>, RuntimeError> {
+        match bases_value {
+            Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                Object::Tuple(values) => Ok(values.clone()),
+                _ => Err(RuntimeError::type_error("bases must be types")),
+            },
+            Value::List(list_obj) => match &*list_obj.kind() {
+                Object::List(values) => Ok(values.clone()),
+                _ => Err(RuntimeError::type_error("bases must be types")),
+            },
+            Value::Instance(instance) => {
+                if let Some(backing_tuple) = self.instance_backing_tuple(instance)
+                    && let Object::Tuple(values) = &*backing_tuple.kind()
+                {
+                    return Ok(values.clone());
+                }
+                if let Some(backing_list) = self.instance_backing_list(instance)
+                    && let Object::List(values) = &*backing_list.kind()
+                {
+                    return Ok(values.clone());
+                }
+                Err(RuntimeError::type_error("bases must be types"))
+            }
+            _ => Err(RuntimeError::type_error("bases must be types")),
+        }
+    }
+
+    pub(super) fn update_class_bases_attr(
+        &mut self,
+        class: &ObjRef,
+        bases_value: Value,
+    ) -> Result<(), RuntimeError> {
+        let base_values = self.class_base_values_from_value(&bases_value)?;
+        let mut bases = Vec::with_capacity(base_values.len());
+        for base in base_values {
+            bases.push(self.class_from_base_value(base)?);
+        }
+        for (idx, base) in bases.iter().enumerate() {
+            if bases.iter().skip(idx + 1).any(|other| other.id() == base.id()) {
+                let base_name = match &*base.kind() {
+                    Object::Class(class_data) => class_data.name.clone(),
+                    _ => "object".to_string(),
+                };
+                return Err(RuntimeError::type_error(format!(
+                    "duplicate base class {}",
+                    base_name
+                )));
+            }
+        }
+        let mro = if bases.is_empty() {
+            vec![class.clone()]
+        } else {
+            self.build_class_mro(class, &bases).unwrap_or_else(|_| {
+                let mut fallback = vec![class.clone()];
+                fallback.extend(bases.iter().cloned());
+                fallback
+            })
+        };
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.bases = bases.clone();
+            class_data.mro = mro.clone();
+            class_data
+                .attrs
+                .insert("__bases__".to_string(), bases_value);
+            class_data.attrs.insert(
+                "__mro__".to_string(),
+                self.heap
+                    .alloc_tuple(mro.into_iter().map(Value::Class).collect::<Vec<_>>()),
+            );
+        }
+        Ok(())
+    }
 }
 
 fn tuple_is_typing_alias_shape(values: &[Value]) -> bool {

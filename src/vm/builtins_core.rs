@@ -15567,7 +15567,9 @@ impl Vm {
                         name, class_name
                     )));
                 }
-                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                if name == "__bases__" {
+                    self.update_class_bases_attr(&class, value)?;
+                } else if let Object::Class(class_data) = &mut *class.kind_mut() {
                     class_data.attrs.insert(name, value);
                 }
             }

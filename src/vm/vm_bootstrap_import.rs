@@ -4696,13 +4696,26 @@ impl Vm {
         if let Value::Class(class) = &typing_generic_class
             && let Object::Class(class_data) = &mut *class.kind_mut()
         {
+            let init_subclass_descriptor = match self
+                .heap
+                .alloc_module(ModuleObject::new("__classmethod__".to_string()))
+            {
+                Value::Module(module) => module,
+                _ => unreachable!(),
+            };
+            if let Object::Module(module_data) = &mut *init_subclass_descriptor.kind_mut() {
+                module_data.globals.insert(
+                    "__func__".to_string(),
+                    Value::Builtin(BuiltinFunction::TypingGenericInitSubclass),
+                );
+            }
             class_data.attrs.insert(
                 "__class_getitem__".to_string(),
                 Value::Builtin(BuiltinFunction::TypingGenericClassGetItem),
             );
             class_data.attrs.insert(
                 "__init_subclass__".to_string(),
-                Value::Builtin(BuiltinFunction::TypingGenericInitSubclass),
+                Value::Module(init_subclass_descriptor),
             );
         }
         let typing_union_class = self.alloc_bootstrap_class_value("Union", "typing");
