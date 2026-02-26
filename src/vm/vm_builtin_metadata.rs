@@ -5413,6 +5413,19 @@ impl Vm {
                 })
                 .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
                 .collect::<Vec<_>>();
+            let has_mutable_builtin_none_hash_base = self.class_has_builtin_list_base(class)
+                || self.class_has_builtin_dict_base(class)
+                || self.class_has_builtin_defaultdict_base(class)
+                || self.class_has_builtin_ordereddict_base(class)
+                || self.class_has_builtin_set_base(class)
+                || self.class_has_builtin_bytearray_base(class);
+            if has_mutable_builtin_none_hash_base
+                && !entries
+                    .iter()
+                    .any(|(name, _)| matches!(name, Value::Str(key) if key == "__hash__"))
+            {
+                entries.push((Value::Str("__hash__".to_string()), Value::None));
+            }
             let is_user_class = matches!(
                 class_data.attrs.get("__pyrs_user_class__"),
                 Some(Value::Bool(true))

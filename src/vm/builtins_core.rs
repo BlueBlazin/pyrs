@@ -14131,10 +14131,30 @@ impl Vm {
                         {
                             return Ok(true);
                         }
-                        if expected_data.name == "Hashable"
-                            && matches!(class_attr_lookup(class, "__hash__"), Some(value) if !matches!(value, Value::None))
-                        {
-                            return Ok(true);
+                        if expected_data.name == "Hashable" {
+                            let explicit_hash = match &*class.kind() {
+                                Object::Class(class_data) => {
+                                    class_data.attrs.get("__hash__").cloned()
+                                }
+                                _ => None,
+                            };
+                            if let Some(hash_attr) = explicit_hash {
+                                return Ok(!matches!(hash_attr, Value::None));
+                            }
+                            let inherits_builtin_unhashable_base =
+                                self.class_has_builtin_list_base(class)
+                                    || self.class_has_builtin_dict_base(class)
+                                    || self.class_has_builtin_defaultdict_base(class)
+                                    || self.class_has_builtin_ordereddict_base(class)
+                                    || self.class_has_builtin_set_base(class)
+                                    || self.class_has_builtin_bytearray_base(class);
+                            if inherits_builtin_unhashable_base {
+                                return Ok(false);
+                            }
+                            if matches!(class_attr_lookup(class, "__hash__"), Some(value) if !matches!(value, Value::None))
+                            {
+                                return Ok(true);
+                            }
                         }
                         if expected_data.name == "Sequence"
                             && ((class_attr_lookup(class, "__len__").is_some()
@@ -14329,6 +14349,7 @@ impl Vm {
                                     | BuiltinFunction::Dict
                                     | BuiltinFunction::Set
                                     | BuiltinFunction::ByteArray
+                                    | BuiltinFunction::CollectionsOrderedDict
                                     | BuiltinFunction::CollectionsDefaultDict
                             )
                         ),
