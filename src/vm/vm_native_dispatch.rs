@@ -6048,6 +6048,35 @@ impl Vm {
                 }
                 Ok(NativeCallResult::Value(Value::Instance(receiver)))
             }
+            NativeMethodKind::TypeParamRepr => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("__repr__() takes no arguments"));
+                }
+                let receiver_value = Value::Instance(receiver.clone());
+                let Some(kind) = self.typing_param_kind_name(&receiver_value) else {
+                    return Err(RuntimeError::new("type parameter repr receiver is invalid"));
+                };
+                let name = match self.builtin_getattr(
+                    vec![
+                        receiver_value.clone(),
+                        Value::Str("__name__".to_string()),
+                    ],
+                    HashMap::new(),
+                ) {
+                    Ok(Value::Str(name)) => name,
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "type parameter repr receiver is invalid",
+                        ));
+                    }
+                };
+                let rendered = match kind {
+                    "TypeVar" | "ParamSpec" => format!("~{name}"),
+                    "TypeVarTuple" => name,
+                    _ => return Err(RuntimeError::new("type parameter repr receiver is invalid")),
+                };
+                Ok(NativeCallResult::Value(Value::Str(rendered)))
+            }
             NativeMethodKind::TypeParamReduceEx => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new(

@@ -6473,6 +6473,12 @@ impl Vm {
         let is_types_generic_alias_instance =
             self.is_types_generic_alias_value(&Value::Instance(instance.clone()));
         if is_type_parameter_instance {
+            if attr_name == "__repr__" || attr_name == "__str__" {
+                return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                    NativeMethodKind::TypeParamRepr,
+                    instance.clone(),
+                )));
+            }
             if attr_name == "__copy__" || attr_name == "__deepcopy__" {
                 return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
                     NativeMethodKind::TypeParamCopy,

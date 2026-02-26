@@ -349,6 +349,7 @@ pub enum NativeMethodKind {
     GenericAliasCall,
     GenericAliasReduceEx,
     GenericAliasMroEntries,
+    TypeParamRepr,
     TypeParamCopy,
     TypeParamReduceEx,
     MappingProxyContains,
@@ -8406,6 +8407,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::GenericAliasMroEntries => {
                         "<bound method GenericAlias.__mro_entries__>".to_string()
+                    }
+                    NativeMethodKind::TypeParamRepr => {
+                        "<bound method type_parameter.__repr__>".to_string()
                     }
                     NativeMethodKind::TypeParamCopy => {
                         "<bound method type_parameter.__copy__>".to_string()
