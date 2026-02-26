@@ -4218,10 +4218,31 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         let class_code = self.compile_class(name, body)?;
         let code_idx = self.code.add_const(Value::Code(Rc::new(class_code)));
+        let type_param_bindings = if type_params.is_empty() {
+            None
+        } else {
+            Some(self.emit_type_param_temps(type_params)?)
+        };
+        let type_params_tuple_temp = if let Some(bindings) = &type_param_bindings {
+            let temp = self.fresh_temp("type_params_tuple");
+            self.emit_type_params_tuple_from_temps(bindings)?;
+            self.emit_store_name(&temp);
+            Some(temp)
+        } else {
+            None
+        };
         for base in bases {
             self.compile_expr(base)?;
         }
-        self.emit(Opcode::BuildTuple, Some(bases.len() as u32));
+        let mut total_bases = bases.len();
+        if let Some(tuple_temp) = &type_params_tuple_temp {
+            // PEP 695 classes inherit from Generic[...] in CPython, which
+            // provides __class_getitem__ and drives __parameters__ init paths.
+            self.emit_load_name(tuple_temp)?;
+            self.emit(Opcode::CallIntrinsic1, Some(10));
+            total_bases += 1;
+        }
+        self.emit(Opcode::BuildTuple, Some(total_bases as u32));
         let name_idx = self.code.add_const(Value::Str(name.to_string()));
         self.emit(Opcode::LoadConst, Some(name_idx));
         if let Some(meta) = metaclass {
@@ -4239,7 +4260,11 @@ impl Compiler {
             let class_temp = self.fresh_temp("class_tp");
             self.emit_store_name(&class_temp);
             self.emit_load_name(&class_temp)?;
-            self.emit_type_params_tuple(type_params)?;
+            self.emit_load_name(
+                type_params_tuple_temp
+                    .as_ref()
+                    .expect("type params tuple temp exists for generic class"),
+            )?;
             let type_params_idx = self.code.add_name("__type_params__".to_string());
             self.emit(Opcode::StoreAttr, Some(type_params_idx));
             self.emit_load_name(&class_temp)?;
@@ -4247,6 +4272,16 @@ impl Compiler {
                 self.emit_store_name_scoped(name)?;
             }
             self.emit_delete_name(&class_temp);
+            self.emit_delete_name(
+                type_params_tuple_temp
+                    .as_ref()
+                    .expect("type params tuple temp exists for generic class"),
+            );
+            self.emit_delete_type_param_temps(
+                type_param_bindings
+                    .as_ref()
+                    .expect("type param bindings exist for generic class"),
+            );
         } else if store_target {
             self.emit_store_name_scoped(name)?;
         }
