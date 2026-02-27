@@ -10168,24 +10168,6 @@ impl ModuleCapiContext {
                 refcount: 1,
             },
         );
-        if let Some(name_text) = self
-            .capsules
-            .get(&handle)
-            .and_then(|slot| slot.name.as_ref())
-            .and_then(|name| name.to_str().ok())
-            .map(|text| text.to_string())
-        {
-            let _ = self.sync_exported_capsule(
-                Some(name_text.as_str()),
-                pointer as usize,
-                0,
-                None,
-                false,
-            );
-            if let Some(slot) = self.capsules.get_mut(&handle) {
-                slot.exported_name = Some(name_text);
-            }
-        }
         Ok(handle)
     }
 
