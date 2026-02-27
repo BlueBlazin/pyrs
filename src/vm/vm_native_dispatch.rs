@@ -258,6 +258,7 @@ impl Vm {
                     | NativeMethodKind::RePatternMatch
                     | NativeMethodKind::RePatternFullMatch
                     | NativeMethodKind::FunctionAnnotate
+                    | NativeMethodKind::GenericAliasCall
                     | NativeMethodKind::Builtin(_)
             )
         {

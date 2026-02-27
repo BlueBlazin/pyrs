@@ -9921,6 +9921,74 @@ impl Vm {
         Ok(())
     }
 
+    fn seed_class_namespace_type_params_from_orig_bases(
+        &mut self,
+        namespace: &Value,
+        class_orig_bases: Option<&Value>,
+    ) -> Result<(), RuntimeError> {
+        if self
+            .class_namespace_lookup_name(namespace, "__type_params__")
+            .is_some()
+        {
+            return Ok(());
+        }
+        let Some(class_orig_bases) = class_orig_bases else {
+            return Ok(());
+        };
+        let base_values = match class_orig_bases {
+            Value::Tuple(tuple) => match &*tuple.kind() {
+                Object::Tuple(items) => items.clone(),
+                _ => return Ok(()),
+            },
+            Value::List(list) => match &*list.kind() {
+                Object::List(items) => items.clone(),
+                _ => return Ok(()),
+            },
+            _ => return Ok(()),
+        };
+        let mut seen_type_params = HashSet::new();
+        let mut type_params = Vec::new();
+        for base in base_values {
+            let Some(parameters_value) =
+                self.optional_getattr_value(base, "__parameters__")?
+            else {
+                continue;
+            };
+            let param_items = match parameters_value {
+                Value::Tuple(tuple) => match &*tuple.kind() {
+                    Object::Tuple(items) => items.clone(),
+                    _ => continue,
+                },
+                Value::List(list) => match &*list.kind() {
+                    Object::List(items) => items.clone(),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            for param in param_items {
+                if !self.is_type_parameter_value(&param) {
+                    continue;
+                }
+                let Value::Instance(instance) = &param else {
+                    continue;
+                };
+                if !seen_type_params.insert(instance.id()) {
+                    continue;
+                }
+                type_params.push(param);
+            }
+        }
+        if type_params.is_empty() {
+            return Ok(());
+        }
+        self.class_namespace_set_name(
+            namespace,
+            "__type_params__".to_string(),
+            self.heap.alloc_tuple(type_params),
+        )?;
+        Ok(())
+    }
+
     pub(super) fn class_value_from_module(
         &mut self,
         module: &ObjRef,
@@ -9945,13 +10013,17 @@ impl Vm {
                     .collect::<Vec<_>>(),
             )
         });
-        if let Some(orig_bases) = class_orig_bases {
+        if let Some(orig_bases) = class_orig_bases.clone() {
             self.class_namespace_set_name(
                 &namespace_value,
                 "__orig_bases__".to_string(),
                 orig_bases,
             )?;
         }
+        self.seed_class_namespace_type_params_from_orig_bases(
+            &namespace_value,
+            class_orig_bases.as_ref(),
+        )?;
         self.maybe_promote_class_annotations_to_annotate(
             &namespace_value,
             module,
@@ -9969,8 +10041,6 @@ impl Vm {
         } else {
             bases.clone()
         };
-        self.ensure_unique_base_classes(&default_bases)?;
-
         let resolved_metaclass =
             self.resolve_class_metaclass(&default_bases, metaclass.as_ref())?;
         let explicit_metaclass = metaclass.clone();
