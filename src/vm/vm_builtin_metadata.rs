@@ -1045,7 +1045,15 @@ impl Vm {
             "__new__"
                 if builtin != BuiltinFunction::Type && self.builtin_is_type_object(builtin) =>
             {
-                Ok(Value::Builtin(BuiltinFunction::ObjectNew))
+                if builtin == BuiltinFunction::ObjectNew {
+                    Ok(Value::Builtin(BuiltinFunction::ObjectNew))
+                } else {
+                    Ok(self.alloc_builtin_unbound_method(
+                        "__type_new_unbound_method__",
+                        Value::Builtin(builtin),
+                        BuiltinFunction::ObjectNew,
+                    ))
+                }
             }
             "__new__" => Ok(Value::Builtin(builtin)),
             "__init__" if builtin == BuiltinFunction::Type => {
@@ -1815,6 +1823,48 @@ impl Vm {
         class: &ObjRef,
         attr_name: &str,
     ) -> Option<Value> {
+        if attr_name == "__new__" {
+            let class_name = match &*class.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => String::new(),
+            };
+            if class_name == "bool" {
+                return Some(Value::Builtin(BuiltinFunction::Bool));
+            }
+            if self.class_has_builtin_int_base(class) {
+                return Some(Value::Builtin(BuiltinFunction::Int));
+            }
+            if self.class_has_builtin_float_base(class) {
+                return Some(Value::Builtin(BuiltinFunction::Float));
+            }
+            if self.class_has_builtin_complex_base(class) {
+                return Some(Value::Builtin(BuiltinFunction::Complex));
+            }
+            if self.class_has_builtin_str_base(class) {
+                return Some(Value::Builtin(BuiltinFunction::Str));
+            }
+            if self.class_has_builtin_bytes_base(class) {
+                return Some(Value::Builtin(BuiltinFunction::Bytes));
+            }
+            if self.class_has_builtin_bytearray_base(class) {
+                return Some(Value::Builtin(BuiltinFunction::ByteArray));
+            }
+            if self.class_has_builtin_tuple_base(class) {
+                return Some(Value::Builtin(BuiltinFunction::Tuple));
+            }
+            if self.class_has_builtin_list_base(class) {
+                return Some(Value::Builtin(BuiltinFunction::List));
+            }
+            if self.class_has_builtin_dict_base(class) {
+                return Some(Value::Builtin(BuiltinFunction::Dict));
+            }
+            if self.class_has_builtin_set_base(class) {
+                return Some(Value::Builtin(BuiltinFunction::Set));
+            }
+            if self.class_has_builtin_frozenset_base(class) {
+                return Some(Value::Builtin(BuiltinFunction::FrozenSet));
+            }
+        }
         if (self.class_has_builtin_list_base(class)
             || self.class_has_builtin_dict_base(class)
             || self.class_has_builtin_set_base(class)
@@ -5719,9 +5769,12 @@ impl Vm {
                     .iter()
                     .any(|(name, _)| matches!(name, Value::Str(key) if key == "__new__"))
             {
+                let default_new = self
+                    .load_attr_class_builtin_base_method(class, "__new__")
+                    .unwrap_or(Value::Builtin(BuiltinFunction::ObjectNew));
                 entries.push((
                     Value::Str("__new__".to_string()),
-                    Value::Builtin(BuiltinFunction::ObjectNew),
+                    default_new,
                 ));
             }
             let dict_value = self.heap.alloc_readonly_dict(entries);
@@ -5751,6 +5804,10 @@ impl Vm {
                 && let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name)
             {
                 return Ok(AttrAccessOutcome::Value(proxy_attr));
+            }
+            if let Some(inherited_new) = self.load_attr_class_builtin_base_method(class, attr_name)
+            {
+                return Ok(AttrAccessOutcome::Value(inherited_new));
             }
             if self.class_namedtuple_fields(class).is_some() {
                 return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(

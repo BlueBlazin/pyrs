@@ -216,11 +216,12 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 2 {
             return Err(RuntimeError::new("object.__ne__ expects two arguments"));
         }
-        let eq_value = match self.builtin_getattr(
-            vec![args[0].clone(), Value::Str("__eq__".to_string())],
-            HashMap::new(),
-        ) {
-            Ok(eq_callable) => match self.call_internal(eq_callable, vec![args[1].clone()], HashMap::new())? {
+        let eq_value = match self.lookup_bound_special_method(&args[0], "__eq__")? {
+            Some(eq_callable) => match self.call_internal(
+                eq_callable,
+                vec![args[1].clone()],
+                HashMap::new(),
+            )? {
                 InternalCallOutcome::Value(value) => value,
                 InternalCallOutcome::CallerExceptionHandled => {
                     return Err(self.runtime_error_from_active_exception(
@@ -228,10 +229,9 @@ impl Vm {
                     ));
                 }
             },
-            Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {
+            None => {
                 self.compare_eq_runtime(args[0].clone(), args[1].clone())?
             }
-            Err(err) => return Err(err),
         };
         let is_not_implemented = self
             .builtins

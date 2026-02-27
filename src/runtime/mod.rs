@@ -1322,6 +1322,7 @@ pub struct MemoryViewObject {
 
 #[derive(Debug)]
 pub struct Heap {
+    instance_id: u64,
     next_id: Cell<u64>,
     registry: RefCell<Vec<Weak<Obj>>>,
     memoryview_registry: RefCell<Vec<Weak<Obj>>>,
@@ -1355,7 +1356,12 @@ const SMALL_INT_MIN: i64 = -5;
 const SMALL_INT_MAX: i64 = 256;
 const SMALL_INT_COUNT: usize = (SMALL_INT_MAX - SMALL_INT_MIN + 1) as usize;
 
+static NEXT_HEAP_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_EXCEPTION_OBJECT_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_heap_instance_id() -> u64 {
+    NEXT_HEAP_INSTANCE_ID.fetch_add(1, AtomicOrdering::Relaxed)
+}
 
 fn next_exception_object_id() -> u64 {
     NEXT_EXCEPTION_OBJECT_ID.fetch_add(1, AtomicOrdering::Relaxed)
@@ -1370,6 +1376,7 @@ impl Default for Heap {
 impl Heap {
     pub fn new() -> Self {
         Self {
+            instance_id: next_heap_instance_id(),
             next_id: Cell::new(1),
             registry: RefCell::new(Vec::new()),
             memoryview_registry: RefCell::new(Vec::new()),
@@ -1382,6 +1389,10 @@ impl Heap {
             thread_lock_class: RefCell::new(None),
             allocation_count: Cell::new(0),
         }
+    }
+
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
     }
 
     fn next_id(&self) -> u64 {
@@ -3577,12 +3588,12 @@ pub enum BuiltinFunction {
 }
 
 thread_local! {
-    static TYPING_TYPEPARAM_CLASS_CACHE: RefCell<HashMap<(usize, &'static str), ObjRef>> =
+    static TYPING_TYPEPARAM_CLASS_CACHE: RefCell<HashMap<(u64, &'static str), ObjRef>> =
         RefCell::new(HashMap::new());
 }
 
 fn typing_typeparam_class(heap: &Heap, kind_name: &'static str) -> ObjRef {
-    let heap_key = heap as *const Heap as usize;
+    let heap_key = heap.instance_id();
     if let Some(existing) = TYPING_TYPEPARAM_CLASS_CACHE
         .with(|cache| cache.borrow().get(&(heap_key, kind_name)).cloned())
     {

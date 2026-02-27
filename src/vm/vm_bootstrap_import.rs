@@ -632,6 +632,26 @@ impl Vm {
                         module_data.globals.insert(alias.to_string(), value);
                     }
                 }
+                if let Some(Value::Class(iobase_class)) = module_data.globals.get("IOBase")
+                    && let Object::Class(iobase_data) = &mut *iobase_class.kind_mut()
+                    && !iobase_data.attrs.contains_key("register")
+                {
+                    let register_descriptor = match self
+                        .heap
+                        .alloc_module(ModuleObject::new("__classmethod__".to_string()))
+                    {
+                        Value::Module(module) => module,
+                        _ => unreachable!(),
+                    };
+                    if let Object::Module(descriptor_data) = &mut *register_descriptor.kind_mut() {
+                        descriptor_data
+                            .globals
+                            .insert("__func__".to_string(), Value::Builtin(BuiltinFunction::AbcRegister));
+                    }
+                    iobase_data
+                        .attrs
+                        .insert("register".to_string(), Value::Module(register_descriptor));
+                }
             }
         }
     }
@@ -1105,9 +1125,7 @@ impl Vm {
             pathlike_data
                 .attrs
                 .insert("register".to_string(), Value::Module(register_descriptor));
-            let class_getitem = if let Some(generic_alias_class) =
-                self.types_module_class("GenericAlias")
-            {
+            if let Some(generic_alias_class) = self.types_module_class("GenericAlias") {
                 let descriptor = match self
                     .heap
                     .alloc_module(ModuleObject::new("__classmethod__".to_string()))
@@ -1120,13 +1138,10 @@ impl Vm {
                         .globals
                         .insert("__func__".to_string(), Value::Class(generic_alias_class));
                 }
-                Value::Module(descriptor)
-            } else {
-                Value::Builtin(BuiltinFunction::TypingGenericClassGetItem)
-            };
-            pathlike_data
-                .attrs
-                .insert("__class_getitem__".to_string(), class_getitem);
+                pathlike_data
+                    .attrs
+                    .insert("__class_getitem__".to_string(), Value::Module(descriptor));
+            }
         }
         let posix_stat_result_class = self.alloc_tuple_backed_builtin_class("stat_result");
         self.install_builtin_module(
@@ -4508,6 +4523,28 @@ impl Vm {
                     .attrs
                     .insert("__module__".to_string(), Value::Str("builtins".to_string()));
             }
+        }
+        if let Some(os_module) = self.modules.get("os").cloned()
+            && let Object::Module(module_data) = &*os_module.kind()
+            && let Some(Value::Class(pathlike_class)) = module_data.globals.get("PathLike")
+            && let Object::Class(pathlike_data) = &mut *pathlike_class.kind_mut()
+        {
+            let descriptor = match self
+                .heap
+                .alloc_module(ModuleObject::new("__classmethod__".to_string()))
+            {
+                Value::Module(module) => module,
+                _ => unreachable!(),
+            };
+            if let Object::Module(descriptor_data) = &mut *descriptor.kind_mut() {
+                descriptor_data.globals.insert(
+                    "__func__".to_string(),
+                    Value::Class(generic_alias_class.clone()),
+                );
+            }
+            pathlike_data
+                .attrs
+                .insert("__class_getitem__".to_string(), Value::Module(descriptor));
         }
         if let Value::Class(class_obj) = &traceback_type_class
             && let Object::Class(class_data) = &mut *class_obj.kind_mut()
@@ -10211,7 +10248,12 @@ impl Vm {
                 .modules
                 .get(name)
                 .is_some_and(Self::module_is_initializing);
-            if !keep_cached_initializing {
+            let cached_module = self.modules.get(name).cloned();
+            let keep_cached_builtin = cached_module.as_ref().is_some_and(|module| {
+                Self::module_loader_name(module).as_deref() == Some(BUILTIN_MODULE_LOADER)
+                    && !self.should_prefer_filesystem_module(name, module)
+            });
+            if !keep_cached_initializing && !keep_cached_builtin {
                 self.modules.remove(name);
             }
         }
