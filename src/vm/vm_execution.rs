@@ -667,10 +667,55 @@ impl Vm {
         let mut current_module = module_obj.clone();
         let mut retried_with_canonical = false;
         loop {
-            if self.trace_flags.numpy_core_importfrom && requested_module_name == "numpy._core" {
+            if self.trace_flags.numpy_core_importfrom
+                && requested_module_name.starts_with("numpy._core")
+            {
+                let current_has_attr = match &*current_module.kind() {
+                    Object::Module(module_data) => module_data.globals.contains_key(attr_name),
+                    _ => false,
+                };
+                let cache_state = self
+                    .modules
+                    .get(&requested_module_name)
+                    .map(|cached| {
+                        let has_attr = match &*cached.kind() {
+                            Object::Module(module_data) => {
+                                module_data.globals.contains_key(attr_name)
+                            }
+                            _ => false,
+                        };
+                        format!("{}:{}", cached.id(), has_attr)
+                    })
+                    .unwrap_or_else(|| "-".to_string());
+                let sys_state = self
+                    .sys_dict_obj("modules")
+                    .and_then(|modules_dict| {
+                        dict_get_value(
+                            &modules_dict,
+                            &Value::Str(requested_module_name.clone()),
+                        )
+                    })
+                    .and_then(|value| match value {
+                        Value::Module(module) => {
+                            let has_attr = match &*module.kind() {
+                                Object::Module(module_data) => {
+                                    module_data.globals.contains_key(attr_name)
+                                }
+                                _ => false,
+                            };
+                            Some(format!("{}:{}", module.id(), has_attr))
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "-".to_string());
                 eprintln!(
-                    "[numpy-core-importfrom] attr={} module={}",
-                    attr_name, requested_module_name
+                    "[numpy-core-importfrom] attr={} module={} current={} current_has={} cache={} sys={}",
+                    attr_name,
+                    requested_module_name,
+                    current_module.id(),
+                    current_has_attr,
+                    cache_state,
+                    sys_state
                 );
             }
             let attr = match self.load_attr_module(&current_module, attr_name) {

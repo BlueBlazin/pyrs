@@ -1285,6 +1285,45 @@ impl Vm {
         Ok(if result == -1 { -2 } else { result })
     }
 
+    fn instance_declares_hash_attr(&self, instance: &ObjRef) -> bool {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return false;
+        };
+        match &*instance_data.class.kind() {
+            Object::Class(class_data) => class_data.attrs.contains_key("__hash__"),
+            _ => false,
+        }
+    }
+
+    fn instance_hashable_backing_value_for_runtime_hash(&self, instance: &ObjRef) -> Option<Value> {
+        if let Some(backing) = self.instance_backing_int(instance) {
+            return Some(backing);
+        }
+        if let Some(backing) = self.instance_backing_float(instance) {
+            return Some(Value::Float(backing));
+        }
+        if let Some((real, imag)) = self.instance_backing_complex(instance) {
+            return Some(Value::Complex { real, imag });
+        }
+        if let Some(backing) = self.instance_backing_str(instance) {
+            return Some(Value::Str(backing));
+        }
+        if let Some(backing) = self.instance_backing_tuple(instance) {
+            return Some(Value::Tuple(backing));
+        }
+        if let Some(backing) = self.instance_backing_frozenset(instance) {
+            return Some(Value::FrozenSet(backing));
+        }
+        let instance_kind = instance.kind();
+        let Object::Instance(instance_data) = &*instance_kind else {
+            return None;
+        };
+        match instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR) {
+            Some(Value::Bytes(backing)) => Some(Value::Bytes(backing.clone())),
+            _ => None,
+        }
+    }
+
     fn hash_value_runtime_u64(&mut self, value: &Value) -> Result<u64, RuntimeError> {
         const HASH_CACHE_LIMIT: usize = 65_536;
         if let Some(union_args) = self.union_args_from_value(value) {
@@ -1294,7 +1333,45 @@ impl Vm {
             return self.hash_generic_alias_parts_runtime(value, &origin, &args);
         }
         match value {
-            Value::Instance(_) | Value::Class(_) | Value::Super(_) => {
+            Value::Instance(instance) => {
+                if !self.instance_declares_hash_attr(instance)
+                    && let Some(backing) =
+                        self.instance_hashable_backing_value_for_runtime_hash(instance)
+                {
+                    return self.hash_value_runtime_u64(&backing);
+                }
+                if let Some(class_ref) = self.class_of_value(value)
+                    && matches!(class_attr_lookup(&class_ref, "__hash__"), Some(Value::None))
+                {
+                    let type_name = if matches!(value, Value::Class(_)) {
+                        match &*class_ref.kind() {
+                            Object::Class(class_data) => class_data.name.clone(),
+                            _ => self.value_type_name_for_error(value).to_string(),
+                        }
+                    } else {
+                        self.value_type_name_for_error(value).to_string()
+                    };
+                    return Err(RuntimeError::type_error(format!(
+                        "unhashable type: '{}'",
+                        type_name
+                    )));
+                }
+                let Some(hash_value) = self.call_special_method_with_fallback(
+                    value,
+                    "__hash__",
+                    Vec::new(),
+                    "hash special method raised",
+                )?
+                else {
+                    return Err(RuntimeError::type_error(format!(
+                        "unhashable type: '{}'",
+                        self.value_type_name_for_error(value)
+                    )));
+                };
+                let hash_value = value_to_int(hash_value)?;
+                Ok(hash_value as u64)
+            }
+            Value::Class(_) | Value::Super(_) => {
                 if let Some(class_ref) = self.class_of_value(value)
                     && matches!(class_attr_lookup(&class_ref, "__hash__"), Some(Value::None))
                 {
@@ -12768,12 +12845,30 @@ impl Vm {
         if let Some(result) = self.compare_eq_via_generic_alias_values(&left, &right)? {
             return Ok(Value::Bool(result));
         }
+        if let (Value::Class(left_class), Value::Class(right_class)) = (&left, &right) {
+            if let (Some(left_ptr), Some(right_ptr)) = (
+                Self::cpython_proxy_raw_ptr_from_value(&left),
+                Self::cpython_proxy_raw_ptr_from_value(&right),
+            ) {
+                return Ok(Value::Bool(left_ptr == right_ptr));
+            }
+            if Self::cpython_proxy_raw_ptr_from_value(&left).is_some()
+                || Self::cpython_proxy_raw_ptr_from_value(&right).is_some()
+            {
+                return Ok(Value::Bool(false));
+            }
+            if left_class.id() == right_class.id() {
+                return Ok(Value::Bool(true));
+            }
+            if self.class_has_default_type_metaclass(left_class)
+                && self.class_has_default_type_metaclass(right_class)
+            {
+                return Ok(Value::Bool(false));
+            }
+        }
         const PY_EQ: i32 = 2;
-        let left_proxy_class = matches!(left, Value::Class(_))
-            && Self::cpython_proxy_raw_ptr_from_value(&left).is_some();
-        let right_proxy_class = matches!(right, Value::Class(_))
-            && Self::cpython_proxy_raw_ptr_from_value(&right).is_some();
-        if !(left_proxy_class && right_proxy_class)
+        if !matches!(left, Value::Class(_))
+            && !matches!(right, Value::Class(_))
             && let Some(result) = self.cpython_proxy_richcmp_value(&left, &right, PY_EQ)
         {
             return result;
@@ -12828,12 +12923,30 @@ impl Vm {
         if let Some(ordering) = self.compare_cmp_to_key_wrappers(&left, &right)? {
             return Ok(Value::Bool(ordering != Ordering::Equal));
         }
+        if let (Value::Class(left_class), Value::Class(right_class)) = (&left, &right) {
+            if let (Some(left_ptr), Some(right_ptr)) = (
+                Self::cpython_proxy_raw_ptr_from_value(&left),
+                Self::cpython_proxy_raw_ptr_from_value(&right),
+            ) {
+                return Ok(Value::Bool(left_ptr != right_ptr));
+            }
+            if Self::cpython_proxy_raw_ptr_from_value(&left).is_some()
+                || Self::cpython_proxy_raw_ptr_from_value(&right).is_some()
+            {
+                return Ok(Value::Bool(true));
+            }
+            if left_class.id() == right_class.id() {
+                return Ok(Value::Bool(false));
+            }
+            if self.class_has_default_type_metaclass(left_class)
+                && self.class_has_default_type_metaclass(right_class)
+            {
+                return Ok(Value::Bool(true));
+            }
+        }
         const PY_NE: i32 = 3;
-        let left_proxy_class = matches!(left, Value::Class(_))
-            && Self::cpython_proxy_raw_ptr_from_value(&left).is_some();
-        let right_proxy_class = matches!(right, Value::Class(_))
-            && Self::cpython_proxy_raw_ptr_from_value(&right).is_some();
-        if !(left_proxy_class && right_proxy_class)
+        if !matches!(left, Value::Class(_))
+            && !matches!(right, Value::Class(_))
             && let Some(result) = self.cpython_proxy_richcmp_value(&left, &right, PY_NE)
         {
             return result;
@@ -12879,6 +12992,21 @@ impl Vm {
         }
         let eq = self.compare_eq_runtime(left, right)?;
         Ok(Value::Bool(!self.truthy_from_value(&eq)?))
+    }
+
+    fn class_has_default_type_metaclass(&self, class_ref: &ObjRef) -> bool {
+        let metaclass = match &*class_ref.kind() {
+            Object::Class(class_data) => class_data.metaclass.clone(),
+            _ => None,
+        }
+        .or_else(|| self.default_type_metaclass());
+        let Some(metaclass) = metaclass else {
+            return true;
+        };
+        matches!(
+            &*metaclass.kind(),
+            Object::Class(class_data) if class_data.name == "type"
+        )
     }
 
     fn compare_eq_via_union_values(

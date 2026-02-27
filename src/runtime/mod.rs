@@ -695,20 +695,28 @@ impl IndexBucket {
 pub struct DictObject {
     backend: DictBackend,
     readonly: bool,
+    // Some internal construction paths still seed entries with lookup-hash semantics.
+    // Keep a compatibility fallback switch so runtime-hash lookups can opt into a
+    // full linear scan only when needed.
+    legacy_hash_fallback: bool,
 }
 
 impl DictObject {
     pub fn new(entries: Vec<(Value, Value)>) -> Self {
+        let legacy_hash_fallback = !entries.is_empty();
         Self {
             backend: DictBackend::new(entries),
             readonly: false,
+            legacy_hash_fallback,
         }
     }
 
     pub fn new_readonly(entries: Vec<(Value, Value)>) -> Self {
+        let legacy_hash_fallback = !entries.is_empty();
         Self {
             backend: DictBackend::new(entries),
             readonly: true,
+            legacy_hash_fallback,
         }
     }
 
@@ -722,6 +730,7 @@ impl DictObject {
 
     pub fn clear(&mut self) {
         self.backend.clear();
+        self.legacy_hash_fallback = false;
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, (Value, Value)> {
@@ -741,7 +750,11 @@ impl DictObject {
     }
 
     pub fn remove(&mut self, index: usize) -> (Value, Value) {
-        self.backend.remove(index)
+        let removed = self.backend.remove(index);
+        if self.backend.is_empty() {
+            self.legacy_hash_fallback = false;
+        }
+        removed
     }
 
     pub fn retain<F>(&mut self, mut f: F)
@@ -749,6 +762,9 @@ impl DictObject {
         F: FnMut(&(Value, Value)) -> bool,
     {
         self.backend.retain(|entry| f(entry));
+        if self.backend.is_empty() {
+            self.legacy_hash_fallback = false;
+        }
     }
 
     pub fn find(&self, key: &Value) -> Option<&Value> {
@@ -787,6 +803,7 @@ impl DictObject {
     }
 
     pub fn insert(&mut self, key: Value, value: Value) {
+        self.legacy_hash_fallback = true;
         self.backend.insert(key, value);
     }
 
@@ -803,15 +820,27 @@ impl DictObject {
     }
 
     pub fn remove_key(&mut self, key: &Value) -> Option<(Value, Value)> {
-        self.backend.remove_key(key)
+        let removed = self.backend.remove_key(key);
+        if removed.is_some() && self.backend.is_empty() {
+            self.legacy_hash_fallback = false;
+        }
+        removed
     }
 
     pub fn remove_key_with_hash(&mut self, key: &Value, hash: u64) -> Option<(Value, Value)> {
-        self.backend.remove_key_with_hash(key, hash)
+        let removed = self.backend.remove_key_with_hash(key, hash);
+        if removed.is_some() && self.backend.is_empty() {
+            self.legacy_hash_fallback = false;
+        }
+        removed
     }
 
     pub fn is_readonly(&self) -> bool {
         self.readonly
+    }
+
+    pub fn requires_legacy_hash_fallback(&self) -> bool {
+        self.legacy_hash_fallback
     }
 }
 

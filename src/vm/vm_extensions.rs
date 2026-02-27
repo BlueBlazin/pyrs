@@ -5238,6 +5238,40 @@ impl ModuleCapiContext {
         self.first_error = None;
     }
 
+    fn runtime_error_from_current_error_state(
+        &mut self,
+        fallback: &str,
+    ) -> Option<RuntimeError> {
+        let state = self.current_error?;
+        let mut ptype = state.ptype;
+        let pvalue = state.pvalue;
+        if ptype.is_null() && !pvalue.is_null() {
+            let derived = cpython_exception_type_ptr(pvalue);
+            if !derived.is_null() {
+                ptype = derived;
+            }
+        }
+        let message = if !pvalue.is_null() {
+            self.error_message_from_ptr(pvalue)
+        } else {
+            self.last_error
+                .clone()
+                .or_else(|| self.first_error.clone())
+                .unwrap_or_else(|| fallback.to_string())
+        };
+        if let Some(exception_name) = cpython_exception_class_name_from_ptr(ptype) {
+            if message.is_empty() {
+                return Some(RuntimeError::with_exception(exception_name, None));
+            }
+            return Some(RuntimeError::with_exception(exception_name, Some(message)));
+        }
+        if message.is_empty() {
+            None
+        } else {
+            Some(RuntimeError::new(message))
+        }
+    }
+
     fn fetch_error_state(&mut self) -> CpythonErrorState {
         // Preserve errors set through context-local setters that may not have a
         // materialized exception instance pointer in thread-state storage.
@@ -7383,6 +7417,7 @@ impl ModuleCapiContext {
             );
         }
         if is_type_object {
+            self.populate_proxy_class_layout_attrs_from_type_object(&proxy_class, object);
             self.populate_proxy_class_attrs_from_type_dict(&proxy_class, object);
             if let Object::Class(class_data) = &mut *proxy_class.kind_mut() {
                 class_data.attrs.insert(
@@ -10782,12 +10817,34 @@ impl ModuleCapiContext {
                 md_def,
                 md_state,
             }) => {
+                let mut synced_globals = None;
                 if !md_dict.is_null()
                     && let Some(dict_handle) = self.cpython_handle_from_ptr(md_dict)
                 {
                     self.module_dict_handles.insert(dict_handle, module.clone());
                     self.module_dict_handle_by_module_id
                         .insert(module.id(), dict_handle);
+                    if let Some(slot) = self.objects.get(&dict_handle)
+                        && let Value::Dict(dict_obj) = &slot.value
+                        && let Object::Dict(entries) = &*dict_obj.kind()
+                    {
+                        let mut globals = HashMap::new();
+                        for (key, value) in entries {
+                            if let Value::Str(name) = key {
+                                globals.insert(name.clone(), value.clone());
+                            }
+                        }
+                        synced_globals = Some(globals);
+                    }
+                }
+                if let Some(globals) = synced_globals
+                    && let Object::Module(module_data) = &mut *module.kind_mut()
+                {
+                    // Merge CPython dict-backed updates without dropping attributes
+                    // seeded through module-method registration or bootstrap metadata.
+                    for (name, value) in globals {
+                        module_data.globals.insert(name, value);
+                    }
                 }
                 if !self.vm.is_null() {
                     // SAFETY: VM pointer is valid for active C-API context lifetime.
@@ -11299,6 +11356,44 @@ impl ModuleCapiContext {
                     has_init
                 );
             }
+        }
+    }
+
+    fn populate_proxy_class_layout_attrs_from_type_object(
+        &mut self,
+        proxy_class: &ObjRef,
+        type_ptr: *mut c_void,
+    ) {
+        if type_ptr.is_null() {
+            return;
+        }
+        // SAFETY: caller only invokes this in type-object proxy construction paths.
+        let type_ref = unsafe { type_ptr.cast::<CpythonTypeObject>().as_ref() };
+        let Some(type_ref) = type_ref else {
+            return;
+        };
+        let flags_value = match i64::try_from(type_ref.tp_flags) {
+            Ok(value) => Value::Int(value),
+            Err(_) => Value::BigInt(Box::new(BigInt::from_u64(type_ref.tp_flags as u64))),
+        };
+        if let Object::Class(class_data) = &mut *proxy_class.kind_mut() {
+            class_data.attrs.insert(
+                "__dictoffset__".to_string(),
+                Value::Int(type_ref.tp_dictoffset as i64),
+            );
+            class_data.attrs.insert(
+                "__weakrefoffset__".to_string(),
+                Value::Int(type_ref.tp_weaklistoffset as i64),
+            );
+            class_data.attrs.insert(
+                "__basicsize__".to_string(),
+                Value::Int(type_ref.tp_basicsize as i64),
+            );
+            class_data.attrs.insert(
+                "__itemsize__".to_string(),
+                Value::Int(type_ref.tp_itemsize as i64),
+            );
+            class_data.attrs.insert("__flags__".to_string(), flags_value);
         }
     }
 

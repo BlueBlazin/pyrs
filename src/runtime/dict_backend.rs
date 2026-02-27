@@ -17,6 +17,7 @@ enum DictSlot {
 #[derive(Debug, Clone)]
 pub(super) struct DictBackend {
     entries: Vec<(Value, Value)>,
+    entry_hashes: Vec<Option<u64>>,
     entry_slots: Vec<usize>,
     slots: Vec<DictSlot>,
     used: usize,
@@ -33,6 +34,7 @@ impl DictBackend {
     pub(super) fn new(initial_entries: Vec<(Value, Value)>) -> Self {
         let mut out = Self {
             entries: Vec::new(),
+            entry_hashes: Vec::new(),
             entry_slots: Vec::new(),
             slots: Vec::new(),
             used: 0,
@@ -54,6 +56,7 @@ impl DictBackend {
 
     pub(super) fn clear(&mut self) {
         self.entries.clear();
+        self.entry_hashes.clear();
         self.entry_slots.clear();
         self.slots.clear();
         self.used = 0;
@@ -147,6 +150,7 @@ impl DictBackend {
                 return;
             }
             self.entries.push((key, value));
+            self.entry_hashes.push(None);
             self.entry_slots.push(NO_SLOT);
             self.used = self.entries.len();
             return;
@@ -162,6 +166,7 @@ impl DictBackend {
         let mut slot = match self.lookup_slot(&key, hash) {
             SlotLookup::Found { entry } => {
                 self.entries[entry].1 = value;
+                self.entry_hashes[entry] = Some(hash);
                 return;
             }
             SlotLookup::Vacant(slot) => slot,
@@ -174,6 +179,7 @@ impl DictBackend {
 
         let entry = self.entries.len();
         self.entries.push((key, value));
+        self.entry_hashes.push(Some(hash));
         self.entry_slots.push(slot);
         self.used += 1;
         if matches!(self.slots[slot], DictSlot::Empty) {
@@ -202,6 +208,7 @@ impl DictBackend {
             self.remove_slot_for_entry(index, removed_slot);
         }
         let (removed_key, removed_value) = self.entries.remove(index);
+        self.entry_hashes.remove(index);
         self.entry_slots.remove(index);
         if removed_slot != NO_SLOT {
             self.adjust_slot_indices_after_remove(index);
@@ -215,7 +222,16 @@ impl DictBackend {
     where
         F: FnMut(&(Value, Value)) -> bool,
     {
-        self.entries.retain(|entry| f(entry));
+        let old_entries = std::mem::take(&mut self.entries);
+        let old_hashes = std::mem::take(&mut self.entry_hashes);
+        self.entries = Vec::with_capacity(old_entries.len());
+        self.entry_hashes = Vec::with_capacity(old_hashes.len());
+        for (entry, hash) in old_entries.into_iter().zip(old_hashes.into_iter()) {
+            if f(&entry) {
+                self.entries.push(entry);
+                self.entry_hashes.push(hash);
+            }
+        }
         self.rebuild_slots();
     }
 
@@ -264,8 +280,13 @@ impl DictBackend {
         self.entry_slots = vec![NO_SLOT; self.entries.len()];
         self.filled = 0;
         self.used = self.entries.len();
-        for (entry, (key, _)) in self.entries.iter().enumerate() {
-            if let Some(hash) = value_lookup_hash(key) {
+        for entry in 0..self.entries.len() {
+            let mut hash = self.entry_hashes.get(entry).copied().flatten();
+            if hash.is_none() {
+                hash = value_lookup_hash(&self.entries[entry].0);
+                self.entry_hashes[entry] = hash;
+            }
+            if let Some(hash) = hash {
                 let slot = self.lookup_vacant_slot(hash);
                 self.slots[slot] = DictSlot::Occupied { hash, entry };
                 self.entry_slots[entry] = slot;
@@ -534,5 +555,28 @@ mod tests {
             .expect("extra key");
         backend.insert(extra.clone(), Value::Int(1234));
         assert_eq!(backend.find(&extra), Some(&Value::Int(1234)));
+    }
+
+    #[test]
+    fn resize_preserves_insert_with_hash_entries() {
+        let mut backend = DictBackend::new(Vec::new());
+        // First resize threshold from 8 -> 16 is crossed on the sixth insert.
+        for idx in 0..9 {
+            let key = Value::Int(idx);
+            let forced_hash = 10_000 + idx as u64;
+            backend.insert_with_hash(key.clone(), Value::Int(idx), forced_hash);
+            assert_eq!(
+                backend.find_with_hash(&key, forced_hash),
+                Some(&Value::Int(idx))
+            );
+        }
+        for idx in 0..9 {
+            let key = Value::Int(idx);
+            let forced_hash = 10_000 + idx as u64;
+            assert_eq!(
+                backend.find_with_hash(&key, forced_hash),
+                Some(&Value::Int(idx))
+            );
+        }
     }
 }

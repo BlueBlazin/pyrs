@@ -297,28 +297,32 @@ impl Vm {
             return Ok(());
         }
         if self.extension_initialized_names.contains(module_name) {
-            if !module_flag_initialized {
-                if trace_slots {
-                    eprintln!(
-                        "[ext-load] module={} stale_initialized_flag=1; reinitializing current module object",
-                        module_name
-                    );
-                }
-                self.extension_initialized_names.remove(module_name);
-            } else {
-                if trace_slots {
-                    eprintln!("[ext-load] module={} skip=already_initialized", module_name);
-                }
-                if let Some(existing) = self.modules.get(module_name).cloned()
-                    && existing.id() != module.id()
-                {
-                    // Keep canonical cache authoritative. The caller will resolve through
-                    // `canonical_imported_module_for_name`, so cloning large globals maps into
-                    // transient duplicate module objects is unnecessary churn.
-                    self.modules.insert(module_name.to_string(), existing);
+            if trace_slots {
+                eprintln!(
+                    "[ext-load] module={} skip=already_initialized_name_guard",
+                    module_name
+                );
+            }
+            if let Some(existing) = self.modules.get(module_name).cloned() {
+                if existing.id() != module.id() {
+                    // Keep canonical cache authoritative. The caller resolves through
+                    // `canonical_imported_module_for_name`, so preserve the initialized object.
+                    self.modules.insert(module_name.to_string(), existing.clone());
+                    if let Object::Module(existing_data) = &*existing.kind()
+                        && let Object::Module(current_data) = &mut *module.kind_mut()
+                    {
+                        current_data.globals = existing_data.globals.clone();
+                    }
                 }
                 return Ok(());
             }
+            if module_flag_initialized {
+                return Ok(());
+            }
+            // CPython single-phase extension modules cannot be loaded more than once per process.
+            return Err(import_error(
+                "cannot load module more than once per process".to_string(),
+            ));
         }
         if module_flag_initialized {
             if trace_slots {
@@ -671,8 +675,17 @@ impl Vm {
                                             .clone()
                                             .or_else(|| module_ctx.first_error.clone())
                                             .unwrap_or_else(|| "Py_mod_exec failed".to_string());
-                                        let mut propagated_error = None;
-                                        let detailed_message = if module_ctx.vm.is_null() {
+                                        let mut propagated_error = module_ctx
+                                            .runtime_error_from_current_error_state(&message);
+                                        let detailed_message = if let Some(err) =
+                                            propagated_error.as_ref()
+                                        {
+                                            if err.message.is_empty() {
+                                                message.clone()
+                                            } else {
+                                                err.message.clone()
+                                            }
+                                        } else if module_ctx.vm.is_null() {
                                             message.clone()
                                         } else {
                                             // SAFETY: module C-API context owns a valid VM pointer
@@ -735,9 +748,13 @@ impl Vm {
                                         self.extension_init_failures
                                             .insert(module_name.to_string(), full_error.clone());
                                         if trace_slots {
+                                            let propagated_name = propagated_error
+                                                .as_ref()
+                                                .and_then(|err| err.exception_name())
+                                                .unwrap_or("<none>");
                                             eprintln!(
-                                                "[ext-load] module={} slot_exec_error={}",
-                                                module_name, detailed_message
+                                                "[ext-load] module={} slot_exec_error={} propagated={}",
+                                                module_name, detailed_message, propagated_name
                                             );
                                         }
                                         return Err(propagated_error

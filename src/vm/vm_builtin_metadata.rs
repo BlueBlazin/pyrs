@@ -3348,7 +3348,7 @@ impl Vm {
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::BoundMethodReduceEx, wrapper))
             }
-            "__self__" => self.receiver_value(&receiver),
+            "__self__" => self.bound_method_reduce_receiver_value(&receiver),
             "__func__" => as_value(&function_kind, &function)
                 .ok_or_else(|| RuntimeError::attribute_error("attribute access unsupported type")),
             "__name__" | "__qualname__" | "__module__" | "__doc__" | "__annotate__"
@@ -6619,7 +6619,8 @@ impl Vm {
                 | DICT_BACKING_STORAGE_ATTR
                 | SET_BACKING_STORAGE_ATTR
                 | FROZENSET_BACKING_STORAGE_ATTR
-                | INSTANCE_DICT_STORAGE_ATTR => None,
+                | INSTANCE_DICT_STORAGE_ATTR
+                | "__pyrs_cpython_proxy_ptr__" => None,
                 _ => Some((Value::Str(name.clone()), value.clone())),
             })
             .collect()
@@ -6835,6 +6836,14 @@ impl Vm {
         }
 
         if attr_name == "__dict__" {
+            if is_cpython_proxy_instance
+                && let Some(proxy_dict) = self.load_cpython_proxy_attr_for_value(
+                    &Value::Instance(instance.clone()),
+                    "__dict__",
+                )
+            {
+                return Ok(AttrAccessOutcome::Value(proxy_dict));
+            }
             let slot_layout = collect_slot_names(&class_ref);
             let inherited_slot_names = if slot_layout.is_none() {
                 let mut inherited = Vec::new();
@@ -7965,6 +7974,14 @@ impl Vm {
         class_ref: &ObjRef,
         slot_layout: Option<&Vec<String>>,
     ) -> bool {
+        let cpython_dictoffset_dynamic = matches!(
+            &*class_ref.kind(),
+            Object::Class(class_data)
+                if matches!(
+                    class_data.attrs.get("__dictoffset__"),
+                    Some(Value::Int(offset)) if *offset != 0
+                )
+        );
         let explicit_dynamic = match slot_layout {
             Some(allowed_slots) => allowed_slots.iter().any(|name| name == "__dict__"),
             None => matches!(
@@ -7976,7 +7993,7 @@ impl Vm {
                     )
             ),
         };
-        explicit_dynamic || class_inherits_dynamic_instance_dict(class_ref)
+        explicit_dynamic || cpython_dictoffset_dynamic || class_inherits_dynamic_instance_dict(class_ref)
     }
 
     fn class_assignment_layout_compatible(old_class: &ObjRef, new_class: &ObjRef) -> bool {

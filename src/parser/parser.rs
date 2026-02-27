@@ -404,6 +404,11 @@ impl Parser {
             }
             _ => {
                 let (expr, next) = self.parse_expr_with_tuple_tail(pos)?;
+                if matches!(self.token_at(next).kind, TokenKind::Colon)
+                    && matches!(expr.node, ExprKind::Lambda { .. })
+                {
+                    return Err(self.error_at(pos, "illegal target for annotation"));
+                }
                 Ok((self.make_stmt(start, StmtKind::Expr(expr)), next))
             }
         }
@@ -1101,9 +1106,6 @@ impl Parser {
 
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_expr_at(pos)?;
-        if matches!(self.token_at(next).kind, TokenKind::Colon) {
-            return Err(self.error_at(next, "illegal target for annotation"));
-        }
         Ok((
             self.make_expr(
                 start,

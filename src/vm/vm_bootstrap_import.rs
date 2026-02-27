@@ -8243,6 +8243,22 @@ impl Vm {
     }
 
     pub(super) fn unregister_module(&mut self, name: &str) {
+        if std::env::var_os("PYRS_TRACE_NUMPY_MODULE_REG").is_some()
+            && (name == "numpy._core" || name == "numpy._core._multiarray_umath")
+        {
+            eprintln!(
+                "[module-unregister-numpy] name={} frames={} stack={}",
+                name,
+                self.frames.len(),
+                self.frames
+                    .iter()
+                    .rev()
+                    .take(8)
+                    .map(|frame| format!("{}@{}", frame.code.name, frame.code.filename))
+                    .collect::<Vec<_>>()
+                    .join(" <- ")
+            );
+        }
         if std::env::var_os("PYRS_TRACE_MODULE_CTYPES").is_some()
             && (name == "ctypes" || name == "_ctypes")
         {
@@ -8433,6 +8449,38 @@ impl Vm {
     }
 
     pub(super) fn register_module(&mut self, name: &str, module: ObjRef) {
+        if let Some(existing) = self.modules.get(name) {
+            let existing_is_initialized_extension = self.extension_initialized_names.contains(name)
+                && Self::module_is_extension_initialized(existing);
+            let incoming_is_initialized_extension =
+                Self::module_is_extension_initialized(&module);
+            if existing_is_initialized_extension
+                && !incoming_is_initialized_extension
+                && existing.id() != module.id()
+            {
+                self.refresh_sys_modules_dict();
+                return;
+            }
+        }
+        if std::env::var_os("PYRS_TRACE_NUMPY_MODULE_REG").is_some()
+            && (name == "numpy._core" || name == "numpy._core._multiarray_umath")
+        {
+            let previous = self.modules.get(name).map(|existing| existing.id());
+            eprintln!(
+                "[module-register-numpy] name={} new_id={} prev_id={:?} frames={} stack={}",
+                name,
+                module.id(),
+                previous,
+                self.frames.len(),
+                self.frames
+                    .iter()
+                    .rev()
+                    .take(8)
+                    .map(|frame| format!("{}@{}", frame.code.name, frame.code.filename))
+                    .collect::<Vec<_>>()
+                    .join(" <- ")
+            );
+        }
         if std::env::var_os("PYRS_TRACE_MODULE_CTYPES").is_some()
             && (name == "ctypes" || name == "_ctypes")
         {
@@ -9783,7 +9831,14 @@ impl Vm {
             }
         }
         if missing_from_sys_modules {
-            self.modules.remove(&full_name);
+            let keep_cached_extension_initialized =
+                self.modules.get(&full_name).is_some_and(|module| {
+                    self.extension_initialized_names.contains(&full_name)
+                        && Self::module_is_extension_initialized(module)
+                });
+            if !keep_cached_extension_initialized {
+                self.modules.remove(&full_name);
+            }
         } else if let Some(module) = self.modules.get(&full_name).cloned() {
             return Ok(Some(module));
         }
@@ -10251,9 +10306,17 @@ impl Vm {
             let cached_module = self.modules.get(name).cloned();
             let keep_cached_builtin = cached_module.as_ref().is_some_and(|module| {
                 Self::module_loader_name(module).as_deref() == Some(BUILTIN_MODULE_LOADER)
+                    && name == "_types"
                     && !self.should_prefer_filesystem_module(name, module)
             });
-            if !keep_cached_initializing && !keep_cached_builtin {
+            let keep_cached_extension_initialized = cached_module.as_ref().is_some_and(|module| {
+                self.extension_initialized_names.contains(name)
+                    && Self::module_is_extension_initialized(module)
+            });
+            if !keep_cached_initializing
+                && !keep_cached_builtin
+                && !keep_cached_extension_initialized
+            {
                 self.modules.remove(name);
             }
         }
@@ -10382,6 +10445,7 @@ impl Vm {
         failed_name: &str,
         existing_modules: &HashSet<String>,
     ) {
+        let trace_cleanup = std::env::var_os("PYRS_TRACE_IMPORT_CLEANUP").is_some();
         let failed_prefix = format!("{failed_name}.");
         let failed_new_modules: Vec<String> = self
             .modules
@@ -10397,8 +10461,52 @@ impl Vm {
                 }
             })
             .collect();
+        if trace_cleanup {
+            eprintln!(
+                "[import-cleanup] failed_name={} candidates={:?} frames={} stack={}",
+                failed_name,
+                failed_new_modules,
+                self.frames.len(),
+                self.frames
+                    .iter()
+                    .rev()
+                    .take(8)
+                    .map(|frame| format!("{}@{}", frame.code.name, frame.code.filename))
+                    .collect::<Vec<_>>()
+                    .join(" <- ")
+            );
+        }
         for name in failed_new_modules {
-            self.remove_module_entry_and_parent_binding(&name);
+            let remove = if let Some(module) = self.modules.get(&name) {
+                let extension_initialized = self.extension_initialized_names.contains(&name)
+                    && Self::module_is_extension_initialized(module);
+                if name == failed_name {
+                    !extension_initialized
+                } else {
+                    let extension_failed = self.extension_init_failures.contains_key(&name)
+                        || matches!(
+                            &*module.kind(),
+                            Object::Module(module_data)
+                                if module_data
+                                    .globals
+                                    .contains_key("__pyrs_extension_init_error__")
+                        );
+                    !extension_initialized
+                        && (extension_failed
+                            || Self::module_is_initializing(module)
+                            || Self::module_is_uninitialized(module))
+                }
+            } else {
+                true
+            };
+            if remove {
+                if trace_cleanup {
+                    eprintln!("[import-cleanup] remove={}", name);
+                }
+                self.remove_module_entry_and_parent_binding(&name);
+            } else if trace_cleanup {
+                eprintln!("[import-cleanup] keep={}", name);
+            }
             self.extension_init_failures.remove(&name);
         }
         self.extension_init_failures.remove(failed_name);
@@ -10691,8 +10799,19 @@ impl Vm {
                     | "__spec__"
                     | "__file__"
                     | "__path__"
-            )
+                )
         })
+    }
+
+    pub(super) fn module_is_extension_initialized(module: &ObjRef) -> bool {
+        let module_kind = module.kind();
+        let Object::Module(module_data) = &*module_kind else {
+            return false;
+        };
+        matches!(
+            module_data.globals.get("__pyrs_extension_initialized__"),
+            Some(Value::Bool(true))
+        )
     }
 
     pub(super) fn mark_module_initializing(&self, module: &ObjRef) {

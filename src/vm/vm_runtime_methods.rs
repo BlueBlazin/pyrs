@@ -220,14 +220,16 @@ impl Vm {
         key: &Value,
     ) -> Result<Option<(usize, Value, Value, u64)>, RuntimeError> {
         let hash = self.hash_value_runtime(key)? as u64;
-        let (candidates, all_entries) = {
+        let (candidates, allow_legacy_fallback, all_entries) = {
             let dict_kind = dict.kind();
             let Object::Dict(entries) = &*dict_kind else {
                 return Ok(None);
             };
+            let allow_legacy_fallback = entries.requires_legacy_hash_fallback();
             (
                 entries.candidate_entries_with_hash(hash),
-                entries.to_vec().into_iter().enumerate().collect::<Vec<_>>(),
+                allow_legacy_fallback,
+                allow_legacy_fallback.then(|| entries.to_vec()),
             )
         };
         let mut tested_indices = Vec::with_capacity(candidates.len());
@@ -238,7 +240,13 @@ impl Vm {
             }
             tested_indices.push(index);
         }
-        for (index, (candidate_key, candidate_value)) in all_entries {
+        if !allow_legacy_fallback {
+            return Ok(None);
+        }
+        let Some(all_entries) = all_entries else {
+            return Ok(None);
+        };
+        for (index, (candidate_key, candidate_value)) in all_entries.into_iter().enumerate() {
             if tested_indices.contains(&index) {
                 continue;
             }
@@ -1036,11 +1044,12 @@ impl Vm {
                             .build_union_value_from_members_with_forward_lenient(members, true);
                     }
                     let class_value = Value::Class(class.clone());
-                    if let Some(class_getitem) = class_attr_lookup(&class, "__class_getitem__")
-                        .map(|method| self.bind_descriptor_method(method, &class_value))
-                        .transpose()?
-                        .flatten()
-                    {
+                    let class_getitem = class_attr_lookup(&class, "__class_getitem__")
+                        .or_else(|| self.load_cpython_proxy_attr(&class, "__class_getitem__"));
+                    if let Some(class_getitem_attr) = class_getitem {
+                        let class_getitem = self
+                            .bind_descriptor_method(class_getitem_attr.clone(), &class_value)?
+                            .unwrap_or(class_getitem_attr);
                         return match self.call_internal(class_getitem, vec![index], HashMap::new())?
                         {
                             InternalCallOutcome::Value(value) => Ok(value),
@@ -2118,14 +2127,7 @@ impl Vm {
             let existing_hash = self.hash_value_runtime(existing);
             let normalized_hash = self.hash_value_runtime(&normalized);
             match (&existing_hash, &normalized_hash) {
-                (Ok(left_hash), Ok(right_hash)) if left_hash != right_hash => {
-                    let both_class_like =
-                        matches!(existing, Value::Class(_) | Value::ExceptionType(_))
-                            && matches!(normalized, Value::Class(_) | Value::ExceptionType(_));
-                    if !both_class_like {
-                        continue;
-                    }
-                }
+                (Ok(left_hash), Ok(right_hash)) if left_hash != right_hash => continue,
                 (Err(left_err), _) if !runtime_error_matches_exception(left_err, "TypeError") => {
                     return Err(left_err.clone());
                 }
@@ -2274,8 +2276,7 @@ impl Vm {
         substitutions: &[(Value, Value)],
     ) -> Result<Option<Value>, RuntimeError> {
         for (param, replacement) in substitutions {
-            let is_equal = self.compare_eq_runtime(target.clone(), param.clone())?;
-            if self.truthy_from_value(&is_equal)? {
+            if target == param {
                 return Ok(Some(replacement.clone()));
             }
         }
@@ -2334,11 +2335,8 @@ impl Vm {
         value: Value,
         substitutions: &[(Value, Value)],
     ) -> Result<Value, RuntimeError> {
-        for (param, replacement) in substitutions {
-            let is_equal = self.compare_eq_runtime(value.clone(), param.clone())?;
-            if self.truthy_from_value(&is_equal)? {
-                return Ok(replacement.clone());
-            }
+        if let Some(replacement) = self.generic_alias_substitution_lookup(&value, substitutions)? {
+            return Ok(replacement);
         }
 
         if let Some(items) = Self::tuple_items_from_value(&value) {
@@ -2374,10 +2372,19 @@ impl Vm {
                 return Ok(value);
             }
             let mut subargs = Vec::new();
+            let mut changed = false;
             for subparam in subparams {
-                let replacement = self
-                    .generic_alias_substitution_lookup(&subparam, substitutions)?
+                let replacement_lookup =
+                    self.generic_alias_substitution_lookup(&subparam, substitutions)?;
+                let replacement = replacement_lookup
+                    .clone()
                     .unwrap_or(subparam.clone());
+                if !changed
+                    && replacement_lookup.is_some()
+                    && replacement != subparam
+                {
+                    changed = true;
+                }
                 if typing_typevartuple_param_marker(&subparam) {
                     if let Some(items) = Self::sequence_items_from_typing_value(&replacement) {
                         subargs.extend(items);
@@ -2387,6 +2394,14 @@ impl Vm {
                 } else {
                     subargs.push(replacement);
                 }
+            }
+            if let Some((_origin, current_args)) = self.generic_alias_parts_from_value(&value)
+                && current_args == subargs
+            {
+                return Ok(value);
+            }
+            if !changed {
+                return Ok(value);
             }
             return self.getitem_value(value, self.heap.alloc_tuple(subargs));
         }

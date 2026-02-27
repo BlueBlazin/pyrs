@@ -8120,8 +8120,7 @@ impl Vm {
                 let params = Self::typing_sequence_items(&params_value)?;
                 let mut index = None;
                 for (i, param) in params.iter().enumerate() {
-                    let equals = self.compare_eq_runtime(param.clone(), type_param.clone())?;
-                    if self.truthy_from_value(&equals)? {
+                    if param == &type_param {
                         index = Some(i);
                         break;
                     }
