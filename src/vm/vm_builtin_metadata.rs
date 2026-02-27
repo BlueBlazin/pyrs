@@ -1071,10 +1071,10 @@ impl Vm {
                 Ok(self.alloc_builtin_bound_method(BuiltinFunction::Id, wrapper))
             }
             "__eq__" if builtin == BuiltinFunction::ObjectNew => {
-                Ok(Value::Builtin(BuiltinFunction::OperatorEq))
+                Ok(Value::Builtin(BuiltinFunction::ObjectEq))
             }
             "__ne__" if builtin == BuiltinFunction::ObjectNew => {
-                Ok(Value::Builtin(BuiltinFunction::OperatorNe))
+                Ok(Value::Builtin(BuiltinFunction::ObjectNe))
             }
             "__lt__" if matches!(builtin, BuiltinFunction::ObjectNew | BuiltinFunction::Int) => {
                 Ok(Value::Builtin(BuiltinFunction::OperatorLt))

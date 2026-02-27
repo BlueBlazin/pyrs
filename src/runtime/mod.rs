@@ -2611,6 +2611,8 @@ pub enum BuiltinFunction {
     StaticMethod,
     Property,
     ObjectNew,
+    ObjectEq,
+    ObjectNe,
     TracebackTypeNew,
     ObjectInit,
     ObjectInitSubclass,
@@ -6770,6 +6772,8 @@ impl BuiltinFunction {
             | BuiltinFunction::WarningsAcquireLock
             | BuiltinFunction::WarningsReleaseLock
             | BuiltinFunction::ObjectNew
+            | BuiltinFunction::ObjectEq
+            | BuiltinFunction::ObjectNe
             | BuiltinFunction::TracebackTypeNew
             | BuiltinFunction::ObjectInit
             | BuiltinFunction::ObjectInitSubclass

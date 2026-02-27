@@ -1261,10 +1261,23 @@ impl Vm {
         } else {
             self.ensure_generic_alias_class()
         };
+        let origin_module = self.optional_getattr_value(origin.clone(), "__module__").ok().flatten();
         let alias = self.heap.alloc_instance(InstanceObject::new(alias_class));
         if let Value::Instance(instance) = &alias
             && let Object::Instance(instance_data) = &mut *instance.kind_mut()
         {
+            let typing_generic_alias_instance = {
+                let class_kind = instance_data.class.kind();
+                matches!(
+                    &*class_kind,
+                    Object::Class(class_data)
+                        if class_data.name.contains("GenericAlias")
+                            && matches!(
+                                class_data.attrs.get("__module__"),
+                                Some(Value::Str(module)) if module == "typing"
+                            )
+                )
+            };
             instance_data
                 .attrs
                 .insert("__origin__".to_string(), origin.clone());
@@ -1286,6 +1299,28 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("__unpacked__".to_string(), Value::Bool(false));
+            if typing_generic_alias_instance {
+                instance_data
+                    .attrs
+                    .entry("_name".to_string())
+                    .or_insert(Value::None);
+                instance_data
+                    .attrs
+                    .entry("_inst".to_string())
+                    .or_insert(Value::Bool(true));
+                let should_set_origin_module = match instance_data.attrs.get("_name") {
+                    None | Some(Value::None) => true,
+                    Some(Value::Str(name)) => name.is_empty(),
+                    _ => false,
+                };
+                if should_set_origin_module
+                    && let Some(module_name) = origin_module.clone()
+                {
+                    instance_data
+                        .attrs
+                        .insert("__module__".to_string(), module_name);
+                }
+            }
         }
         alias
     }
@@ -1629,10 +1664,33 @@ impl Vm {
 
         let origin = args.remove(0);
         let index = args.remove(0);
+        let origin_module = self.optional_getattr_value(origin.clone(), "__module__")?;
+        let mut name_attr: Option<Value> = None;
+        let mut inst_attr: Option<Value> = None;
+        let mut extra_attrs: Vec<(String, Value)> = Vec::new();
+        for (name, value) in kwargs {
+            match name.as_str() {
+                "name" => name_attr = Some(value),
+                "inst" => inst_attr = Some(value),
+                _ => extra_attrs.push((name, value)),
+            }
+        }
         let alias = self.heap.alloc_instance(InstanceObject::new(class));
         if let Value::Instance(instance) = &alias
             && let Object::Instance(instance_data) = &mut *instance.kind_mut()
         {
+            let typing_generic_alias_instance = {
+                let class_kind = instance_data.class.kind();
+                matches!(
+                    &*class_kind,
+                    Object::Class(class_data)
+                        if class_data.name.contains("GenericAlias")
+                            && matches!(
+                                class_data.attrs.get("__module__"),
+                                Some(Value::Str(module)) if module == "typing"
+                            )
+                )
+            };
             instance_data
                 .attrs
                 .insert("__origin__".to_string(), origin.clone());
@@ -1654,7 +1712,34 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("__unpacked__".to_string(), Value::Bool(false));
-            for (name, value) in kwargs {
+            if typing_generic_alias_instance {
+                instance_data
+                    .attrs
+                    .insert("_name".to_string(), name_attr.unwrap_or(Value::None));
+                instance_data
+                    .attrs
+                    .insert("_inst".to_string(), inst_attr.unwrap_or(Value::Bool(true)));
+                let should_set_origin_module = match instance_data.attrs.get("_name") {
+                    None | Some(Value::None) => true,
+                    Some(Value::Str(name)) => name.is_empty(),
+                    _ => false,
+                };
+                if should_set_origin_module
+                    && let Some(module_name) = origin_module.clone()
+                {
+                    instance_data
+                        .attrs
+                        .insert("__module__".to_string(), module_name);
+                }
+            } else {
+                if let Some(name_attr) = name_attr {
+                    instance_data.attrs.insert("name".to_string(), name_attr);
+                }
+                if let Some(inst_attr) = inst_attr {
+                    instance_data.attrs.insert("inst".to_string(), inst_attr);
+                }
+            }
+            for (name, value) in extra_attrs {
                 instance_data.attrs.insert(name, value);
             }
         }
@@ -2880,11 +2965,11 @@ impl Vm {
             );
             class_data.attrs.insert(
                 "__eq__".to_string(),
-                Value::Builtin(BuiltinFunction::OperatorEq),
+                Value::Builtin(BuiltinFunction::ObjectEq),
             );
             class_data.attrs.insert(
                 "__ne__".to_string(),
-                Value::Builtin(BuiltinFunction::OperatorNe),
+                Value::Builtin(BuiltinFunction::ObjectNe),
             );
             class_data.attrs.insert(
                 "__lt__".to_string(),

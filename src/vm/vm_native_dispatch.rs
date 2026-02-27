@@ -7287,6 +7287,21 @@ impl Vm {
             (origin, args)
         };
 
+        if !Self::origin_is_tuple_alias_target(&origin) {
+            let unpack = self.typing_helper_callable("Unpack").ok()?;
+            let unpacked = self
+                .getitem_value(unpack, Value::Instance(alias.clone()))
+                .ok()?;
+            let list = match self.heap.alloc_list(vec![unpacked]) {
+                Value::List(list) => list,
+                _ => unreachable!(),
+            };
+            return Some(self.heap.alloc_iterator(IteratorObject {
+                kind: IteratorKind::List(list),
+                index: 0,
+            }));
+        }
+
         let unpacked = self.alloc_generic_alias_instance(origin.clone(), args.clone());
         if let Value::Instance(unpacked_instance) = &unpacked
             && let Object::Instance(unpacked_data) = &mut *unpacked_instance.kind_mut()
@@ -9770,6 +9785,8 @@ impl Vm {
             BuiltinFunction::TypeSubclassCheck => self.builtin_type_subclasscheck(args, kwargs),
             BuiltinFunction::Property => self.builtin_property(args, kwargs),
             BuiltinFunction::ObjectNew => self.builtin_object_new(args, kwargs),
+            BuiltinFunction::ObjectEq => self.builtin_object_eq(args, kwargs),
+            BuiltinFunction::ObjectNe => self.builtin_object_ne(args, kwargs),
             BuiltinFunction::TracebackTypeNew => self.builtin_traceback_type_new(args, kwargs),
             BuiltinFunction::ObjectInit => self.builtin_object_init(args, kwargs),
             BuiltinFunction::ObjectInitSubclass => self.builtin_object_init_subclass(args, kwargs),

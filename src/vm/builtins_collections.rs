@@ -189,6 +189,42 @@ impl Vm {
         Ok(Value::Bool(args[0] == args[1]))
     }
 
+    pub(super) fn builtin_object_eq(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("object.__eq__ expects two arguments"));
+        }
+        if args[0] == args[1] {
+            return Ok(Value::Bool(true));
+        }
+        Ok(self
+            .builtins
+            .get("NotImplemented")
+            .cloned()
+            .unwrap_or(Value::None))
+    }
+
+    pub(super) fn builtin_object_ne(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("object.__ne__ expects two arguments"));
+        }
+        if args[0] == args[1] {
+            return Ok(Value::Bool(false));
+        }
+        Ok(self
+            .builtins
+            .get("NotImplemented")
+            .cloned()
+            .unwrap_or(Value::None))
+    }
+
     pub(super) fn builtin_operator_ne(
         &mut self,
         args: Vec<Value>,
