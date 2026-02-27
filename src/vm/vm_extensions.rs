@@ -10849,6 +10849,90 @@ impl ModuleCapiContext {
         }
     }
 
+    fn sync_unicode_raw_storage_from_text(&mut self, ptr: *mut c_void, text: &str) {
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: caller guarantees `ptr` references owned unicode-compatible storage.
+        let Some(ascii) = (unsafe { ptr.cast::<CpythonAsciiUnicodeCompatObject>().as_mut() }) else {
+            return;
+        };
+        let length = ascii.length.max(0) as usize;
+        let state = ascii.state;
+        let kind = (state >> 2) & 0b111;
+        let compact = ((state >> 5) & 1) != 0;
+        let is_ascii = ((state >> 6) & 1) != 0;
+        if !compact {
+            return;
+        }
+        let codepoints = text.chars().map(|ch| ch as u32).collect::<Vec<_>>();
+        if codepoints.len() != length {
+            return;
+        }
+        let max_char = codepoints.iter().copied().max().unwrap_or(0);
+        if is_ascii && max_char > 0x7f {
+            return;
+        }
+        // SAFETY: compact unicode objects store data immediately after the header.
+        let data_ptr = unsafe {
+            if is_ascii {
+                ptr.cast::<u8>()
+                    .add(std::mem::size_of::<CpythonAsciiUnicodeCompatObject>())
+            } else {
+                ptr.cast::<u8>()
+                    .add(std::mem::size_of::<CpythonCompactUnicodeCompatObject>())
+            }
+        };
+        match kind {
+            1 => {
+                if max_char > 0xff {
+                    return;
+                }
+                // SAFETY: kind=1 stores one byte per codepoint plus NUL.
+                unsafe {
+                    for (idx, ch) in codepoints.iter().enumerate() {
+                        *data_ptr.add(idx) = *ch as u8;
+                    }
+                    *data_ptr.add(codepoints.len()) = 0;
+                }
+            }
+            2 => {
+                if max_char > 0xffff {
+                    return;
+                }
+                let data = data_ptr.cast::<u16>();
+                // SAFETY: kind=2 stores one u16 per codepoint plus NUL.
+                unsafe {
+                    for (idx, ch) in codepoints.iter().enumerate() {
+                        *data.add(idx) = *ch as u16;
+                    }
+                    *data.add(codepoints.len()) = 0;
+                }
+            }
+            4 => {
+                let data = data_ptr.cast::<u32>();
+                // SAFETY: kind=4 stores one u32 per codepoint plus NUL.
+                unsafe {
+                    for (idx, ch) in codepoints.iter().enumerate() {
+                        *data.add(idx) = *ch;
+                    }
+                    *data.add(codepoints.len()) = 0;
+                }
+            }
+            _ => return,
+        }
+        ascii.hash = cpython_unicode_precomputed_hash(text);
+        if !is_ascii {
+            // SAFETY: non-ASCII compact strings use this extended header layout.
+            if let Some(compact_unicode) =
+                unsafe { ptr.cast::<CpythonCompactUnicodeCompatObject>().as_mut() }
+            {
+                compact_unicode.utf8_length = 0;
+                compact_unicode.utf8 = std::ptr::null_mut();
+            }
+        }
+    }
+
     fn unicode_text_from_raw_storage(&self, ptr: *mut c_void) -> Option<String> {
         if ptr.is_null() {
             return None;
@@ -11017,7 +11101,10 @@ impl ModuleCapiContext {
             _ => None,
         };
         let exception_state = self.exception_compat_state_from_value(&slot.value);
-        let is_unicode = matches!(&slot.value, Value::Str(_));
+        let unicode_text = match &slot.value {
+            Value::Str(text) => Some(text.clone()),
+            _ => None,
+        };
         // SAFETY: `raw` is owned allocation with `CpythonCompatObject` layout.
         unsafe {
             (*raw).ob_base.ob_base.ob_refcnt = slot.refcount.max(1) as isize;
@@ -11044,7 +11131,8 @@ impl ModuleCapiContext {
                 *data.add(bytes.len()) = 0;
                 return;
             }
-            if is_unicode {
+            if let Some(text) = unicode_text.as_ref() {
+                self.sync_unicode_raw_storage_from_text(raw.cast(), text);
                 return;
             }
             if let Some(exception_state) = exception_state.as_ref() {
