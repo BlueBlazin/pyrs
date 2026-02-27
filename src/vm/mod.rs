@@ -1918,7 +1918,13 @@ impl Vm {
     fn clone_exception_for_active_frame(exception: &ExceptionObject) -> Box<ExceptionObject> {
         let mut cloned = ExceptionObject::new(exception.name.clone(), exception.message.clone());
         cloned.object_id = exception.object_id;
+        cloned.traceback_frames = exception.traceback_frames.clone();
         cloned.notes = exception.notes.clone();
+        cloned.exceptions = exception
+            .exceptions
+            .iter()
+            .map(|member| *Self::clone_exception_for_active_frame(member))
+            .collect();
         cloned.suppress_context = exception.suppress_context;
         cloned.attrs = Rc::new(RefCell::new(exception.attrs.borrow().clone()));
         cloned.cause = exception

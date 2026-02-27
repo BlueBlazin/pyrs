@@ -7702,6 +7702,48 @@ impl Vm {
         }
     }
 
+    fn typing_typevar_subst_fallback(&mut self, mut arg: Value) -> Result<Value, RuntimeError> {
+        let type_check_message = "Parameters to generic types must be types.";
+        arg = match self.call_typing_helper(
+            "_type_check",
+            vec![arg.clone(), Value::Str(type_check_message.to_string())],
+        ) {
+            Ok(value) => value,
+            Err(err) if runtime_error_matches_exception(&err, "AttributeError") => arg,
+            Err(err) => return Err(err),
+        };
+
+        let class_name = match &arg {
+            Value::Instance(instance) => class_name_for_instance(instance),
+            _ => None,
+        };
+
+        let mut reject = false;
+        if class_name.as_deref() == Some("_GenericAlias")
+            && let Some(origin) = self.optional_getattr_value(arg.clone(), "__origin__")?
+        {
+            if let Ok(unpack) = self.typing_helper_callable("Unpack")
+                && Self::typing_marker_is_same(&origin, &unpack)
+            {
+                reject = true;
+            }
+        } else if class_name.as_deref() == Some("GenericAlias")
+            && let Some(unpacked) = self.optional_getattr_value(arg.clone(), "__unpacked__")?
+            && self.truthy_from_value(&unpacked)?
+        {
+            reject = true;
+        }
+
+        if reject {
+            return Err(RuntimeError::type_error(format!(
+                "{} is not valid as type argument",
+                format_value(&arg)
+            )));
+        }
+
+        Ok(arg)
+    }
+
     fn parse_name_error_missing_name(message: &str) -> Option<String> {
         let marker = "name '";
         let start = message.find(marker)? + marker.len();
@@ -8038,7 +8080,13 @@ impl Vm {
         let type_param = args.remove(0);
         let arg = args.remove(0);
         match self.typing_param_kind_name(&type_param) {
-            Some("TypeVar") => self.call_typing_helper("_typevar_subst", vec![type_param, arg]),
+            Some("TypeVar") => match self.call_typing_helper("_typevar_subst", vec![type_param, arg.clone()]) {
+                Ok(value) => Ok(value),
+                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {
+                    self.typing_typevar_subst_fallback(arg)
+                }
+                Err(err) => Err(err),
+            },
             Some("ParamSpec") => self.call_typing_helper("_paramspec_subst", vec![type_param, arg]),
             Some("TypeVarTuple") => Err(RuntimeError::type_error(
                 "Substitution of bare TypeVarTuple is not supported",

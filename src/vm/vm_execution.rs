@@ -9478,16 +9478,24 @@ impl Vm {
         }
         let mut output = String::new();
         if let Some(cause) = &exception.cause {
-            output.push_str(&self.format_exception_chain(cause, depth + 1, None));
+            let mut chain = self.format_exception_chain(cause, depth + 1, None);
+            while chain.ends_with('\n') {
+                chain.pop();
+            }
+            output.push_str(&chain);
             output.push_str(
-                "\nThe above exception was the direct cause of the following exception:\n\n",
+                "\n\nThe above exception was the direct cause of the following exception:\n\n",
             );
         } else if !exception.suppress_context
             && let Some(context) = &exception.context
         {
-            output.push_str(&self.format_exception_chain(context, depth + 1, None));
+            let mut chain = self.format_exception_chain(context, depth + 1, None);
+            while chain.ends_with('\n') {
+                chain.pop();
+            }
+            output.push_str(&chain);
             output.push_str(
-                "\nDuring handling of the above exception, another exception occurred:\n\n",
+                "\n\nDuring handling of the above exception, another exception occurred:\n\n",
             );
         }
         output.push_str(&self.format_exception_with_traceback(exception, fallback_frames));
