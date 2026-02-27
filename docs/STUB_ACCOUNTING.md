@@ -77,7 +77,7 @@ Shims are temporary bootstrap fallbacks and are not allowed to shadow CPython `L
 |---|---|---|---|
 | `enum` | Local `shims/enum.py` is removed; enum resolution now follows CPython `Lib/enum.py` only. | Keep `tests/vm.rs::cpython_enum_path_supports_member_value_and_name` and strict stdlib suites green without enum-specific fallback toggles. | CLOSED |
 | `pkgutil` | Local shim is removed (`shims/pkgutil.py` deleted); stdlib-less fallback is now native runtime (`pkgutil` builtin module surface). | Keep fallback resource and resolve-name regressions green without filesystem shim fallback. | CLOSED |
-| `importlib.resources` | Local shim is removed (`shims/importlib/resources.py` deleted); module now resolves through CPython stdlib path when available. | Keep CPython-stdlib-backed `importlib.resources` paths green and prevent shim fallback reintroduction. | CLOSED |
+| `importlib.resources` | Local shim is removed (`shims/importlib/resources.py` deleted), but CPython stdlib import is still blocked in current baseline by `os.PathLike[str]` generic-subscript parity (`TypeError: subscript unsupported type` from `importlib/resources/abc.py`). | Land CPython-shaped `os.PathLike` generic-subscript support (`__class_getitem__` / `GenericAlias`) and restore `importlib.resources` stdlib import/read regressions green without shim fallback. | IN_PROGRESS |
 | `pyexpat` | Local shim is removed (`shims/pyexpat.py` deleted); runtime-native parser baseline is active. | Keep XML parser regressions green on native path. | CLOSED |
 
 ## Remaining Intentional NoOp Scope

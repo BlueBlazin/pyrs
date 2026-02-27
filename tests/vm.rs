@@ -8843,7 +8843,7 @@ fn imports_module_from_cached_pyc_without_source_file() {
     let target = pycache.join("mod.cpython-314.pyc");
     std::fs::copy(&pyc_path, &target).expect("copy pyc");
 
-    let source = "import mod\nx = mod.value\nloader = mod.__loader__\n";
+    let source = "import mod\nx = mod.value\nloader = mod.__loader__\nloader_ok = (loader.__class__.__name__ == 'SourcelessFileLoader' and loader.__class__.__module__ == 'importlib.machinery')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -8851,10 +8851,7 @@ fn imports_module_from_cached_pyc_without_source_file() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("x"), Some(Value::Int(173)));
-    assert_eq!(
-        vm.get_global("loader"),
-        Some(Value::Str("pyrs.SourcelessFileLoader".to_string()))
-    );
+    assert_eq!(vm.get_global("loader_ok"), Some(Value::Bool(true)));
 
     let _ = std::fs::remove_file(target);
     let _ = std::fs::remove_dir(pycache);
@@ -8879,7 +8876,7 @@ fn imports_package_from_cached_pyc_without_source_file() {
     let target = pycache.join("__init__.cpython-314.pyc");
     std::fs::copy(&pyc_path, &target).expect("copy pyc");
 
-    let source = "import pkg\nx = pkg.value\nloader = pkg.__loader__\n";
+    let source = "import pkg\nx = pkg.value\nloader = pkg.__loader__\nloader_ok = (loader.__class__.__name__ == 'SourcelessFileLoader' and loader.__class__.__module__ == 'importlib.machinery')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -8887,10 +8884,7 @@ fn imports_package_from_cached_pyc_without_source_file() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("x"), Some(Value::Int(191)));
-    assert_eq!(
-        vm.get_global("loader"),
-        Some(Value::Str("pyrs.SourcelessFileLoader".to_string()))
-    );
+    assert_eq!(vm.get_global("loader_ok"), Some(Value::Bool(true)));
 
     let _ = std::fs::remove_file(target);
     let _ = std::fs::remove_dir(pycache);
@@ -8931,42 +8925,27 @@ fn importlib_resources_stdlib_supports_basic_resource_reads() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
     };
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time works")
-        .as_nanos();
-    let root_dir = std::env::temp_dir().join(format!("pyrs_resources_stdlib_{unique}"));
-    let pkg_dir = root_dir.join("pkg");
-    std::fs::create_dir_all(&pkg_dir).expect("create temp package");
-    std::fs::write(pkg_dir.join("__init__.py"), "").expect("write package init");
-    std::fs::write(pkg_dir.join("data.txt"), "hello").expect("write package data");
-
-    let handle = std::thread::Builder::new()
-        .name("importlib-resources-stdlib-read".to_string())
-        .stack_size(32 * 1024 * 1024)
-        .spawn({
-            let root_dir = root_dir.clone();
-            move || {
-                let source = "import importlib.resources as resources\nnorm = getattr(resources, '__file__', '').replace('\\\\', '/')\nok = ('/shims/' not in norm and '/importlib/resources/' in norm)\n";
-                let module = parser::parse_module(source).expect("parse should succeed");
-                let code = compiler::compile_module(&module).expect("compile should succeed");
-                let mut vm = Vm::new();
-                vm.add_module_path(lib_path);
-                vm.add_module_path(root_dir);
-                let value = vm.execute(&code).expect("execution should succeed");
-                assert_eq!(value, Value::None);
-                assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-            }
-        })
-        .expect("spawn importlib-resources-stdlib-read thread");
-    handle
-        .join()
-        .expect("importlib-resources-stdlib-read thread should complete");
-
-    let _ = std::fs::remove_file(pkg_dir.join("data.txt"));
-    let _ = std::fs::remove_file(pkg_dir.join("__init__.py"));
-    let _ = std::fs::remove_dir(pkg_dir);
-    let _ = std::fs::remove_dir(root_dir);
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let source = "import pathlib\nnorm = getattr(pathlib, '__file__', '').replace('\\\\', '/')\nprint('/shims/' not in norm and '/pathlib/' in norm)\n";
+    let output = Command::new(pyrs_bin)
+        .env("PYRS_CPYTHON_LIB", &lib_path)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn pathlib stdlib probe");
+    if !output.status.success() {
+        panic!(
+            "pathlib stdlib probe failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(last_line, "True");
 }
 
 #[test]

@@ -1082,6 +1082,52 @@ impl Vm {
                 ),
             ],
         );
+        if let Some(os_module) = self.modules.get("os").cloned()
+            && let Object::Module(module_data) = &*os_module.kind()
+            && let Some(Value::Class(pathlike_class)) = module_data.globals.get("PathLike")
+            && let Object::Class(pathlike_data) = &mut *pathlike_class.kind_mut()
+        {
+            pathlike_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("os".to_string()));
+            let register_descriptor = match self
+                .heap
+                .alloc_module(ModuleObject::new("__classmethod__".to_string()))
+            {
+                Value::Module(module) => module,
+                _ => unreachable!(),
+            };
+            if let Object::Module(descriptor_data) = &mut *register_descriptor.kind_mut() {
+                descriptor_data
+                    .globals
+                    .insert("__func__".to_string(), Value::Builtin(BuiltinFunction::AbcRegister));
+            }
+            pathlike_data
+                .attrs
+                .insert("register".to_string(), Value::Module(register_descriptor));
+            let class_getitem = if let Some(generic_alias_class) =
+                self.types_module_class("GenericAlias")
+            {
+                let descriptor = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__classmethod__".to_string()))
+                {
+                    Value::Module(module) => module,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(descriptor_data) = &mut *descriptor.kind_mut() {
+                    descriptor_data
+                        .globals
+                        .insert("__func__".to_string(), Value::Class(generic_alias_class));
+                }
+                Value::Module(descriptor)
+            } else {
+                Value::Builtin(BuiltinFunction::TypingGenericClassGetItem)
+            };
+            pathlike_data
+                .attrs
+                .insert("__class_getitem__".to_string(), class_getitem);
+        }
         let posix_stat_result_class = self.alloc_tuple_backed_builtin_class("stat_result");
         self.install_builtin_module(
             "posix",
@@ -8424,19 +8470,34 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new("object class is unavailable"))
             .and_then(|value| self.class_from_base_value(value))?;
 
+        let make_classmethod_descriptor = |func: BuiltinFunction| -> Value {
+            let descriptor = match self
+                .heap
+                .alloc_module(ModuleObject::new("__classmethod__".to_string()))
+            {
+                Value::Module(module) => module,
+                _ => unreachable!(),
+            };
+            if let Object::Module(module_data) = &mut *descriptor.kind_mut() {
+                module_data
+                    .globals
+                    .insert("__func__".to_string(), Value::Builtin(func));
+            }
+            Value::Module(descriptor)
+        };
         let mut abc_meta_attrs = HashMap::new();
         abc_meta_attrs.insert("__module__".to_string(), Value::Str("abc".to_string()));
         abc_meta_attrs.insert(
             "register".to_string(),
-            Value::Builtin(BuiltinFunction::AbcRegister),
+            make_classmethod_descriptor(BuiltinFunction::AbcRegister),
         );
         abc_meta_attrs.insert(
             "__instancecheck__".to_string(),
-            Value::Builtin(BuiltinFunction::AbcInstanceCheck),
+            make_classmethod_descriptor(BuiltinFunction::AbcInstanceCheck),
         );
         abc_meta_attrs.insert(
             "__subclasscheck__".to_string(),
-            Value::Builtin(BuiltinFunction::AbcSubclassCheck),
+            make_classmethod_descriptor(BuiltinFunction::AbcSubclassCheck),
         );
 
         let abc_meta = match self.build_default_class_value(
@@ -8693,11 +8754,46 @@ impl Vm {
                     NativeMethodKind::QueueSimpleQueuePut,
                 ),
             );
+            class_data.attrs.insert(
+                "put_nowait".to_string(),
+                self.alloc_native_unbound_method(
+                    "__queue_unbound_method__",
+                    Value::Class(simple_queue_class.clone()),
+                    NativeMethodKind::QueueSimpleQueuePut,
+                ),
+            );
+            class_data.attrs.insert(
+                "get".to_string(),
+                self.alloc_native_unbound_method(
+                    "__queue_unbound_method__",
+                    Value::Class(simple_queue_class.clone()),
+                    NativeMethodKind::QueueSimpleQueueGet,
+                ),
+            );
+            class_data.attrs.insert(
+                "get_nowait".to_string(),
+                self.alloc_native_unbound_method(
+                    "__queue_unbound_method__",
+                    Value::Class(simple_queue_class.clone()),
+                    NativeMethodKind::QueueSimpleQueueGetNowait,
+                ),
+            );
+            class_data.attrs.insert(
+                "empty".to_string(),
+                self.alloc_native_unbound_method(
+                    "__queue_unbound_method__",
+                    Value::Class(simple_queue_class.clone()),
+                    NativeMethodKind::QueueSimpleQueueEmpty,
+                ),
+            );
         }
         self.install_builtin_module(
             "_queue",
             &[],
-            vec![("SimpleQueue", Value::Class(simple_queue_class))],
+            vec![
+                ("SimpleQueue", Value::Class(simple_queue_class)),
+                ("Empty", Value::ExceptionType("Empty".to_string())),
+            ],
         );
     }
 
@@ -10116,13 +10212,7 @@ impl Vm {
                 .get(name)
                 .is_some_and(Self::module_is_initializing);
             if !keep_cached_initializing {
-                let preserve_builtin = self.modules.get(name).cloned().is_some_and(|module| {
-                    Self::module_loader_name(&module).as_deref() == Some(BUILTIN_MODULE_LOADER)
-                        && !self.should_prefer_filesystem_module(name, &module)
-                });
-                if !preserve_builtin {
-                    self.modules.remove(name);
-                }
+                self.modules.remove(name);
             }
         }
         if let Some(module) = self.modules.get(name).cloned() {
