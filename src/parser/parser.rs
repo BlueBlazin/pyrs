@@ -3936,15 +3936,26 @@ impl Parser {
         if matches!(self.token_at(annotation_pos).kind, TokenKind::Star) {
             let star_pos = annotation_pos;
             let (inner, next) = self.parse_expr_at(annotation_pos + 1)?;
-            let unpack_name = self.make_expr(star_pos, ExprKind::Name("Unpack".to_string()));
-            let unpack_expr = self.make_expr(
+            // CPython materializes `*T` vararg annotations as the runtime value
+            // produced by `(*T,)[0]`. We lower to `next(iter(T))`, which matches
+            // the single-item unpack protocol used by typing variadics.
+            let iter_name = self.make_expr(star_pos, ExprKind::Name("iter".to_string()));
+            let iter_expr = self.make_expr(
                 star_pos,
-                ExprKind::Subscript {
-                    value: Box::new(unpack_name),
-                    index: Box::new(inner),
+                ExprKind::Call {
+                    func: Box::new(iter_name),
+                    args: vec![CallArg::Positional(inner)],
                 },
             );
-            return Ok((Some(Box::new(unpack_expr)), next));
+            let next_name = self.make_expr(star_pos, ExprKind::Name("next".to_string()));
+            let next_expr = self.make_expr(
+                star_pos,
+                ExprKind::Call {
+                    func: Box::new(next_name),
+                    args: vec![CallArg::Positional(iter_expr)],
+                },
+            );
+            return Ok((Some(Box::new(next_expr)), next));
         }
         let (annotation, next) = self.parse_expr_at(annotation_pos)?;
         Ok((Some(Box::new(annotation)), next))

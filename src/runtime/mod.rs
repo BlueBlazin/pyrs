@@ -7991,7 +7991,7 @@ fn typing_type_param_display_name(instance_data: &InstanceObject) -> Option<Stri
             Some(format!("{prefix}{name}"))
         }
         "ParamSpec" => Some(format!("~{name}")),
-        "TypeVarTuple" => Some(format!("*{name}")),
+        "TypeVarTuple" => Some(name.to_string()),
         _ => None,
     }
 }
