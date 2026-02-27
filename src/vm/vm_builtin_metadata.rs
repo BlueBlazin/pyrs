@@ -4147,9 +4147,15 @@ impl Vm {
             return Ok(Some(self.heap.alloc_bound_method(bound)));
         }
         if let Value::Builtin(builtin) = attr.clone() {
-            return Ok(Some(
-                self.alloc_builtin_bound_method(builtin, class.clone()),
-            ));
+            // Metaclass `__call__` defaults to `type.__call__`, which must be
+            // bound to the target class. But custom metaclass assignments like
+            // `_TypedDictMeta.__call__ = dict` should remain unbound callables.
+            if matches!(builtin, BuiltinFunction::TypeCall) {
+                return Ok(Some(
+                    self.alloc_builtin_bound_method(builtin, class.clone()),
+                ));
+            }
+            return Ok(Some(Value::Builtin(builtin)));
         }
         let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
         if let Some(getter) = getter {
