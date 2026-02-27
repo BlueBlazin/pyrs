@@ -778,8 +778,13 @@ impl Vm {
         &mut self,
         fallback: &str,
     ) -> Result<RuntimeError, RuntimeError> {
-        if self.pending_generator_exception.is_some() {
-            self.propagate_pending_generator_exception()?;
+        if let Some(pending) = self.pending_generator_exception.take() {
+            let err = match pending {
+                Value::Exception(exception) => RuntimeError::from_exception(*exception),
+                Value::ExceptionType(name) => RuntimeError::with_exception(name, None),
+                value => RuntimeError::new(format_value(&value)),
+            };
+            return Ok(err);
         }
         Ok(self.runtime_error_from_active_exception(fallback))
     }

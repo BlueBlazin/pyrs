@@ -1826,6 +1826,15 @@ impl Vm {
             Value::Instance(instance) => instance,
             _ => return Err(RuntimeError::new("FileIO initialization failed")),
         };
+        if let Object::Instance(opened_data) = &mut *opened_instance.kind_mut() {
+            // Transfer descriptor ownership to the receiver instance below.
+            opened_data
+                .attrs
+                .insert("_closefd".to_string(), Value::Bool(false));
+            opened_data
+                .attrs
+                .insert("closefd".to_string(), Value::Bool(false));
+        }
         let attrs = match &*opened_instance.kind() {
             Object::Instance(instance_data) => instance_data.attrs.clone(),
             _ => {
@@ -2852,24 +2861,24 @@ impl Vm {
         }
         if let Err(err) = self.io_buffered_probe_raw_readinto_for_readline(&instance) {
             if let Some(cause_message) = err.message.strip_prefix("TypeError: ") {
-                let cause = Value::Exception(Box::new(ExceptionObject::new(
+                let cause = ExceptionObject::new(
                     "TypeError".to_string(),
                     Some(cause_message.trim().to_string()),
-                )));
-                let os_error = Value::Exception(Box::new(ExceptionObject::new(
+                );
+                let mut os_error = ExceptionObject::new(
                     "OSError".to_string(),
                     Some(cause_message.trim().to_string()),
-                )));
-                self.raise_exception_with_cause(os_error, Some(cause))?;
-                return Err(self.runtime_error_from_active_exception("buffered readline failed"));
+                );
+                os_error.cause = Some(Box::new(cause));
+                os_error.suppress_context = true;
+                return Err(RuntimeError::from_exception(os_error));
             }
             if let Some(message) = err.message.strip_prefix("ValueError: ") {
-                let os_error = Value::Exception(Box::new(ExceptionObject::new(
+                let os_error = ExceptionObject::new(
                     "OSError".to_string(),
                     Some(message.trim().to_string()),
-                )));
-                self.raise_exception(os_error)?;
-                return Err(self.runtime_error_from_active_exception("buffered readline failed"));
+                );
+                return Err(RuntimeError::from_exception(os_error));
             }
             return Err(err);
         }

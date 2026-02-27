@@ -1788,6 +1788,18 @@ impl Vm {
         self.touch_class_attr_version_by_id(class.id())
     }
 
+    fn normalize_class_annotations_after_attr_set(&mut self, class: &ObjRef, attr_name: &str) {
+        if !matches!(attr_name, "__annotate__" | "__annotate_func__") {
+            return;
+        }
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            // PEP 649/749-style class annotations are driven by __annotate__;
+            // replacing __annotate__ must invalidate any materialized dict state.
+            class_data.attrs.remove("__annotations__");
+            class_data.attrs.remove("__annotations_cache__");
+        }
+    }
+
     #[inline]
     fn next_type_cache_version_tag(&mut self) -> u32 {
         self.type_cache_version_tag = self.type_cache_version_tag.wrapping_add(1);
@@ -9973,6 +9985,30 @@ fn format_too_many_positional_arguments_error(
     )
 }
 
+fn function_name_for_argument_errors(func: &FunctionObject) -> String {
+    if let Some(dict) = &func.dict
+        && let Object::Dict(entries) = &*dict.kind()
+    {
+        for (key, value) in entries.iter() {
+            if matches!(key, Value::Str(name) if name == "__qualname__")
+                && let Value::Str(qualname) = value
+            {
+                return qualname.clone();
+            }
+        }
+    }
+    if let Some(owner_class) = &func.owner_class
+        && let Object::Class(class_data) = &*owner_class.kind()
+    {
+        let owner_qualname = match class_data.attrs.get("__qualname__") {
+            Some(Value::Str(qualname)) => qualname.clone(),
+            _ => class_data.name.clone(),
+        };
+        return format!("{owner_qualname}.{}", func.code.name);
+    }
+    func.code.name.clone()
+}
+
 fn bind_arguments(
     func: &FunctionObject,
     heap: &Heap,
@@ -9980,6 +10016,7 @@ fn bind_arguments(
     mut kwargs: HashMap<String, Value>,
     kwargs_order: Option<Vec<String>>,
 ) -> Result<BoundArguments, RuntimeError> {
+    let function_name = function_name_for_argument_errors(func);
     let posonly_len = func.code.posonly_params.len();
     let params_len = func.code.params.len();
     let kwonly_len = func.code.kwonly_params.len();
@@ -10016,12 +10053,12 @@ fn bind_arguments(
                     })
                     .collect::<Vec<_>>();
                 return Err(RuntimeError::type_error(
-                    format_missing_positional_arguments_error(&func.code.name, &missing),
+                    format_missing_positional_arguments_error(&function_name, &missing),
                 ));
             }
             return Err(RuntimeError::type_error(
                 format_too_many_positional_arguments_error(
-                    &func.code.name,
+                    &function_name,
                     total_positional,
                     total_positional,
                     positional.len(),
@@ -10066,7 +10103,7 @@ fn bind_arguments(
             let min_positional = total_positional.saturating_sub(defaults_len);
             return Err(RuntimeError::type_error(
                 format_too_many_positional_arguments_error(
-                    &func.code.name,
+                    &function_name,
                     min_positional,
                     total_positional,
                     positional.len(),
@@ -10104,7 +10141,7 @@ fn bind_arguments(
                 if !extra_kwargs_seen.insert(name.clone()) {
                     return Err(RuntimeError::type_error(format!(
                         "{}() got multiple values for argument '{}'",
-                        func.code.name, name
+                        function_name, name
                     )));
                 }
                 extra_kwargs.push((name, value));
@@ -10127,14 +10164,14 @@ fn bind_arguments(
             }
             return Err(RuntimeError::type_error(format!(
                 "{}() got an unexpected keyword argument '{}'",
-                func.code.name, name
+                function_name, name
             )));
         }
         if let Some(index) = func.code.params.iter().position(|param| param == &name) {
             if bound[posonly_len + index].is_some() {
                 return Err(RuntimeError::type_error(format!(
                     "{}() got multiple values for argument '{}'",
-                    func.code.name, name
+                    function_name, name
                 )));
             }
             bound[posonly_len + index] = Some(value);
@@ -10142,7 +10179,7 @@ fn bind_arguments(
             if kwonly_values.contains_key(&name) {
                 return Err(RuntimeError::type_error(format!(
                     "{}() got multiple values for argument '{}'",
-                    func.code.name, name
+                    function_name, name
                 )));
             }
             kwonly_values.insert(name, value);
@@ -10150,7 +10187,7 @@ fn bind_arguments(
             if !extra_kwargs_seen.insert(name.clone()) {
                 return Err(RuntimeError::type_error(format!(
                     "{}() got multiple values for argument '{}'",
-                    func.code.name, name
+                    function_name, name
                 )));
             }
             extra_kwargs.push((name, value));
@@ -10172,7 +10209,7 @@ fn bind_arguments(
             }
             return Err(RuntimeError::type_error(format!(
                 "{}() got an unexpected keyword argument '{}'",
-                func.code.name, name
+                function_name, name
             )));
         }
     }
@@ -10200,7 +10237,7 @@ fn bind_arguments(
             );
         }
         return Err(RuntimeError::type_error(
-            format_missing_positional_arguments_error(&func.code.name, &missing_required),
+            format_missing_positional_arguments_error(&function_name, &missing_required),
         ));
     }
 

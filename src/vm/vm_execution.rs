@@ -8,7 +8,7 @@ use super::{
     GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome, HashMap, HashSet,
     INSTANCE_DICT_STORAGE_ATTR, InstanceObject, Instruction, InternalCallOutcome,
     LoadAttrSiteCacheEntry, LoadAttrSiteCacheKind, LoadGlobalSiteCacheEntry, ModuleObject,
-    NativeMethodKind, NativeMethodObject, ObjRef, Object, OneArgCallHotPath,
+    MAPPING_PROXY_STORAGE_ATTR, NativeMethodKind, NativeMethodObject, ObjRef, Object, OneArgCallHotPath,
     OneArgCallSiteCacheEntry, Opcode, PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE,
     QuickenedSiteKind, Rc, RuntimeError, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame,
     Value, Vm, and_values, apply_bindings, bind_arguments, builtin_exception_parent,
@@ -2548,8 +2548,9 @@ impl Vm {
                             } else {
                                 self.attach_owner_class_to_value(&value, &class);
                                 if let Object::Class(class_data) = &mut *class.kind_mut() {
-                                    class_data.attrs.insert(attr_name, value);
+                                    class_data.attrs.insert(attr_name.clone(), value);
                                 }
+                                self.normalize_class_annotations_after_attr_set(&class, &attr_name);
                             }
                             self.touch_class_attr_version(&class);
                         }
@@ -2678,8 +2679,9 @@ impl Vm {
                             } else {
                                 self.attach_owner_class_to_value(&value, &class);
                                 if let Object::Class(class_data) = &mut *class.kind_mut() {
-                                    class_data.attrs.insert(attr_name, value);
+                                    class_data.attrs.insert(attr_name.clone(), value);
                                 }
+                                self.normalize_class_annotations_after_attr_set(&class, &attr_name);
                             }
                             self.touch_class_attr_version(&class);
                         }
@@ -4116,6 +4118,13 @@ impl Vm {
                                 self.dict_set_value_checked_runtime(&backing_dict, index, value)?;
                                 self.push_value(Value::Instance(instance));
                             } else {
+                                if let Object::Instance(instance_data) = &*instance.kind()
+                                    && instance_data.attrs.contains_key(MAPPING_PROXY_STORAGE_ATTR)
+                                {
+                                    return Err(RuntimeError::type_error(
+                                        "'mappingproxy' object does not support item assignment",
+                                    ));
+                                }
                                 if self.trace_flags.store_subscript {
                                     let target_value = Value::Instance(instance.clone());
                                     eprintln!(
@@ -7038,7 +7047,14 @@ impl Vm {
                 let iter = if let Some(iter) = iter_opt {
                     iter
                 } else {
-                    self.to_iterator_value(source_opt.expect("source present"))?
+                    match self.to_iterator_value(source_opt.expect("source present")) {
+                        Ok(iter) => iter,
+                        Err(err) => {
+                            let exc = self.runtime_error_to_exception_value(err);
+                            self.raise_exception(exc)?;
+                            return Ok(None);
+                        }
+                    }
                 };
                 match self.delegate_yield_from(&iter, sent, thrown, resume_kind)? {
                     GeneratorResumeOutcome::Yield(value) => {
@@ -14212,6 +14228,7 @@ impl Vm {
                 if let Object::Class(class_data) = &mut *class.kind_mut() {
                     class_data.attrs.insert(attr_name.to_string(), value);
                 }
+                self.normalize_class_annotations_after_attr_set(class, attr_name);
                 self.touch_class_attr_version(class);
                 Ok(())
             }

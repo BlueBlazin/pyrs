@@ -4459,10 +4459,24 @@ impl Compiler {
         compiler.future_annotations = self.future_annotations;
         compiler.future_annotations_import = self.future_annotations_import;
         compiler.code.first_line = self.current_span.line.max(1);
+        let mut body_start = 0usize;
+        if let Some(Stmt {
+            node:
+                StmtKind::Expr(Expr {
+                    node: ExprKind::Constant(Constant::Str(doc)),
+                    ..
+                }),
+            ..
+        }) = body.first()
+        {
+            compiler.emit_const(Value::Str(doc.clone()));
+            compiler.emit_store_name_scoped("__doc__")?;
+            body_start = 1;
+        }
         if body_has_ann_assign(body) {
             compiler.init_annotations()?;
         }
-        for stmt in body {
+        for stmt in body.iter().skip(body_start) {
             compiler.compile_stmt(stmt)?;
         }
         if compiler.scope.is_cell("__class__") {

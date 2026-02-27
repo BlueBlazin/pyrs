@@ -47,7 +47,7 @@ impl Vm {
         &mut self,
         parser: &ObjRef,
         syntax_error: ExpatSyntaxError,
-    ) -> Result<RuntimeError, RuntimeError> {
+    ) -> RuntimeError {
         self.pyexpat_set_error_position(parser, syntax_error.lineno, syntax_error.offset);
         let exception = ExceptionObject::new("ExpatError".to_string(), Some(syntax_error.message));
         exception
@@ -62,8 +62,7 @@ impl Vm {
             .attrs
             .borrow_mut()
             .insert("offset".to_string(), Value::Int(syntax_error.offset));
-        self.raise_exception(Value::Exception(Box::new(exception)))?;
-        Ok(self.runtime_error_from_active_exception("pyexpat parser error"))
+        RuntimeError::from_exception(exception)
     }
 
     fn pyexpat_error_position(text: &str, byte_index: usize) -> (i64, i64) {
@@ -638,7 +637,7 @@ impl Vm {
         match self.pyexpat_parse_document(&parser, &text) {
             Ok(()) => Ok(Value::Int(1)),
             Err(ExpatParseFailure::Callback(err)) => Err(err),
-            Err(ExpatParseFailure::Syntax(err)) => Err(self.pyexpat_raise_error(&parser, err)?),
+            Err(ExpatParseFailure::Syntax(err)) => Err(self.pyexpat_raise_error(&parser, err)),
         }
     }
 
