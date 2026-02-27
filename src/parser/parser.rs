@@ -1101,6 +1101,9 @@ impl Parser {
 
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_expr_at(pos)?;
+        if matches!(self.token_at(next).kind, TokenKind::Colon) {
+            return Err(self.error_at(next, "illegal target for annotation"));
+        }
         Ok((
             self.make_expr(
                 start,

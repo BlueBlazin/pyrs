@@ -1248,19 +1248,12 @@ fn parses_lambda_with_varargs() {
 }
 
 #[test]
-fn parses_lambda_with_annotations() {
-    let module = parser::parse_module("lambda x: int: x").expect("parse should succeed");
-    match &strip_module(&module)[0].node {
-        StmtKind::Expr(expr) => match &expr.node {
-            ExprKind::Lambda { params, .. } => {
-                assert_eq!(params.len(), 1);
-                assert_eq!(params[0].name, "x");
-                assert!(params[0].annotation.is_some());
-            }
-            other => panic!("unexpected expr: {other:?}"),
-        },
-        other => panic!("unexpected stmt: {other:?}"),
-    }
+fn rejects_lambda_with_annotations() {
+    let err = parser::parse_module("lambda x: int: x").expect_err("parse should fail");
+    assert!(
+        err.message.contains("illegal target for annotation"),
+        "unexpected error: {err:?}"
+    );
 }
 
 #[test]
@@ -1588,9 +1581,27 @@ fn parses_vararg_starred_annotation_as_unpack_subscript() {
             let vararg = vararg.as_ref().expect("missing vararg");
             let annotation = vararg.annotation.as_ref().expect("missing annotation");
             match &annotation.node {
-                ExprKind::Subscript { value, index } => {
-                    assert!(matches!(&value.node, ExprKind::Name(name) if name == "Unpack"));
-                    assert!(matches!(&index.node, ExprKind::Name(name) if name == "Ts"));
+                ExprKind::Call { func, args } => {
+                    assert!(matches!(&func.node, ExprKind::Name(name) if name == "next"));
+                    assert_eq!(args.len(), 1);
+                    match &args[0] {
+                        CallArg::Positional(iter_expr) => match &iter_expr.node {
+                            ExprKind::Call {
+                                func: iter_func,
+                                args: iter_args,
+                            } => {
+                                assert!(matches!(&iter_func.node, ExprKind::Name(name) if name == "iter"));
+                                assert_eq!(iter_args.len(), 1);
+                                assert!(matches!(
+                                    &iter_args[0],
+                                    CallArg::Positional(ts_expr)
+                                        if matches!(&ts_expr.node, ExprKind::Name(name) if name == "Ts")
+                                ));
+                            }
+                            other => panic!("unexpected iter call: {other:?}"),
+                        },
+                        other => panic!("unexpected next args: {other:?}"),
+                    }
                 }
                 other => panic!("unexpected vararg annotation: {other:?}"),
             }
