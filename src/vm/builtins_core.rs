@@ -739,6 +739,29 @@ impl Vm {
                         }
                     }
                     other => {
+                        let has_origin =
+                            vm.optional_getattr_value(other.clone(), "__origin__")?.is_some();
+                        let has_args =
+                            vm.optional_getattr_value(other.clone(), "__args__")?.is_some();
+                        if !(has_origin && has_args) {
+                            let qualname = match vm
+                                .optional_getattr_value(other.clone(), "__qualname__")?
+                            {
+                                Some(Value::Str(text)) => Some(text),
+                                _ => None,
+                            };
+                            let module_name =
+                                match vm.optional_getattr_value(other.clone(), "__module__")? {
+                                    Some(Value::Str(text)) => Some(text),
+                                    _ => None,
+                                };
+                            if let (Some(qualname), Some(module_name)) = (qualname, module_name) {
+                                if module_name == "builtins" {
+                                    return Ok(qualname);
+                                }
+                                return Ok(format!("{module_name}.{qualname}"));
+                            }
+                        }
                         let Value::Str(text) = vm.builtin_repr(vec![other], HashMap::new())? else {
                             return Err(RuntimeError::type_error("__repr__ returned non-string"));
                         };

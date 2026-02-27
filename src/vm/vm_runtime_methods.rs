@@ -2179,6 +2179,9 @@ impl Vm {
         &mut self,
         mut flat_members: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
+        if flat_members.is_empty() {
+            return Err(RuntimeError::type_error("Cannot take a Union of no types."));
+        }
         if flat_members.len() == 1 {
             return Ok(flat_members.remove(0));
         }
@@ -3948,7 +3951,12 @@ impl Vm {
             }
             if matches!(
                 class_data.name.as_str(),
-                "TypeVar" | "TypeVarTuple" | "ParamSpec" | "ParamSpecArgs" | "ParamSpecKwargs"
+                "TypeVar"
+                    | "TypeVarTuple"
+                    | "ParamSpec"
+                    | "ParamSpecArgs"
+                    | "ParamSpecKwargs"
+                    | "Union"
             ) {
                 return Some(class_data.name.clone());
             }
@@ -3974,6 +3982,17 @@ impl Vm {
             }
             Value::Instance(instance) => {
                 if let Some(name) = typing_non_base_name_from_instance(&instance) {
+                    if name == "Union" {
+                        let repr_text = match self
+                            .builtin_repr(vec![Value::Instance(instance.clone())], HashMap::new())
+                        {
+                            Ok(Value::Str(text)) => text,
+                            _ => "typing.Union".to_string(),
+                        };
+                        return Err(RuntimeError::type_error(format!(
+                            "Cannot subclass {repr_text}"
+                        )));
+                    }
                     return Err(RuntimeError::type_error(format!(
                         "Cannot subclass an instance of {name}"
                     )));
