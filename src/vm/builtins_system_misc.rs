@@ -2210,14 +2210,9 @@ impl Vm {
             HashMap::new()
         };
 
-        let (thread_ident, outcome) =
+        let (thread_ident, _outcome) =
             self.call_internal_in_synthetic_thread(callable, call_args, call_kwargs)?;
-        match outcome {
-            InternalCallOutcome::Value(_) => Ok(Value::Int(thread_ident)),
-            InternalCallOutcome::CallerExceptionHandled => {
-                Err(RuntimeError::new("start_new_thread() callable raised"))
-            }
-        }
+        Ok(Value::Int(thread_ident))
     }
 
     pub(super) fn builtin_thread_lock_enter(
@@ -2545,14 +2540,7 @@ impl Vm {
                 Self::instance_attr_set(&instance, "_alive", Value::Bool(false))?;
                 return Ok(Value::None);
             }
-            let (_, outcome) =
-                self.call_internal_in_synthetic_thread(target, call_args, call_kwargs)?;
-            match outcome {
-                InternalCallOutcome::Value(_) => {}
-                InternalCallOutcome::CallerExceptionHandled => {
-                    return Err(RuntimeError::new("thread target raised"));
-                }
-            }
+            let _ = self.call_internal_in_synthetic_thread(target, call_args, call_kwargs);
         }
         Self::instance_attr_set(&instance, "_alive", Value::Bool(false))?;
         Ok(Value::None)
@@ -2815,9 +2803,11 @@ impl Vm {
         let _instance = self.take_bound_instance_arg(&mut args, "Condition.wait")?;
         let timeout = kwargs.remove("timeout").or_else(|| args.pop());
         if let Some(timeout) = timeout {
-            let timeout = value_to_f64(timeout)?;
-            if timeout.is_sign_negative() {
-                return Err(RuntimeError::value_error("timeout must be non-negative"));
+            if !matches!(timeout, Value::None) {
+                let timeout = value_to_f64(timeout)?;
+                if timeout.is_sign_negative() {
+                    return Err(RuntimeError::value_error("timeout must be non-negative"));
+                }
             }
         }
         Ok(Value::Bool(true))
@@ -4395,24 +4385,18 @@ impl Vm {
         attr_name: &str,
         recursive_builtin: BuiltinFunction,
     ) -> Option<Value> {
-        let warnings_module_from_sys = if let Some(modules_dict) = self.sys_dict_obj("modules")
-            && let Some(Value::Module(warnings_module)) =
-                dict_get_value(&modules_dict, &Value::Str("warnings".to_string()))
-        {
-            Some(warnings_module)
-        } else {
-            None
-        };
-
         if let Some(modules_dict) = self.sys_dict_obj("modules")
             && let Some(Value::Module(warnings_module)) =
                 dict_get_value(&modules_dict, &Value::Str("warnings".to_string()))
-            && let Ok(callable) = self.load_attr_module(&warnings_module, attr_name)
-            && !matches!(callable, Value::Builtin(builtin) if builtin == recursive_builtin)
         {
-            return Some(callable);
-        }
-        if let Some(warnings_module) = warnings_module_from_sys {
+            if let Ok(callable) = self.load_attr_module(&warnings_module, attr_name) {
+                if !matches!(callable, Value::Builtin(builtin) if builtin == recursive_builtin) {
+                    return Some(callable);
+                }
+                // CPython's _warnings and _py_warnings keep different filter tuple shapes.
+                // If warnings.<attr> resolves back to this builtin, stay on builtin path.
+                return None;
+            }
             if let Ok(set_module) = self.load_attr_module(&warnings_module, "_set_module") {
                 let _ = self.call_internal_preserving_caller(
                     set_module,
@@ -4420,15 +4404,6 @@ impl Vm {
                     HashMap::new(),
                 );
                 self.clear_active_exception();
-            }
-            if let Ok(filterwarnings_callable) =
-                self.load_attr_module(&warnings_module, "filterwarnings")
-                && let Value::Function(function_obj) = filterwarnings_callable
-                && let Object::Function(function_data) = &*function_obj.kind()
-                && let Ok(callable) = self.load_attr_module(&function_data.module, attr_name)
-                && !matches!(callable, Value::Builtin(builtin) if builtin == recursive_builtin)
-            {
-                return Some(callable);
             }
         }
         if let Ok(module) = self.load_module("_py_warnings")
