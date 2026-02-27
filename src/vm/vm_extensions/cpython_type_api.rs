@@ -597,6 +597,24 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
             )));
         }
         if attr_name == "__module__" {
+            // CPython exposes `type.__module__` from the class dictionary when present.
+            // Fall back to registry/tp_name synthesis only when the dict has no entry.
+            // SAFETY: `type_ptr` is non-null and points to a type object.
+            let dict_ptr = unsafe { (*type_ptr).tp_dict };
+            if !dict_ptr.is_null() {
+                // SAFETY: `dict_ptr` is a dictionary object for the active type.
+                let module_attr =
+                    unsafe { PyDict_GetItemString(dict_ptr, c"__module__".as_ptr()) };
+                if !module_attr.is_null() {
+                    // SAFETY: returning borrowed dict entry as new reference.
+                    unsafe { Py_IncRef(module_attr) };
+                    return module_attr;
+                }
+                // `_PyType_Lookup`-style callers must not leak incidental errors.
+                if unsafe { !PyErr_Occurred().is_null() } {
+                    unsafe { PyErr_Clear() };
+                }
+            }
             let module_name = cpython_heap_type_registry()
                 .lock()
                 .ok()

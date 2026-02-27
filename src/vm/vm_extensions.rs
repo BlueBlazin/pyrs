@@ -5075,13 +5075,29 @@ impl ModuleCapiContext {
                 );
             }
         }
-        if !pvalue.is_null() {
-            let derived = cpython_exception_type_ptr(pvalue);
-            if !derived.is_null() {
-                ptype = derived;
+        // Only derive `ptype` from `pvalue` when `pvalue` is exception-like.
+        // For APIs like PyErr_SetString/PyErr_SetObject(exc, "msg"), `pvalue`
+        // is typically a message object and must not replace `ptype`.
+        if !pvalue.is_null()
+            && let Some(value) = self.cpython_value_from_ptr_or_proxy(pvalue)
+        {
+            let value_is_exception_like = match &value {
+                Value::Exception(_) | Value::ExceptionType(_) => true,
+                Value::Instance(instance_obj) => cpython_is_exception_instance(self, instance_obj),
+                _ => false,
+            };
+            if value_is_exception_like {
+                if let Some(derived) = cpython_exception_type_ptr_for_value(self, &value) {
+                    ptype = derived;
+                } else {
+                    let derived = cpython_exception_type_ptr(pvalue);
+                    if !derived.is_null() {
+                        ptype = derived;
+                    }
+                }
             }
         }
-        if !ptype.is_null() {
+        if !ptype.is_null() && self.value_ptr_is_exception_instance(ptype) {
             let derived = cpython_exception_type_ptr(ptype);
             if !derived.is_null() {
                 ptype = derived;
@@ -5223,7 +5239,11 @@ impl ModuleCapiContext {
     }
 
     fn fetch_error_state(&mut self) -> CpythonErrorState {
-        self.sync_current_error_from_thread_state();
+        // Preserve errors set through context-local setters that may not have a
+        // materialized exception instance pointer in thread-state storage.
+        if self.current_error.is_none() {
+            self.sync_current_error_from_thread_state();
+        }
         let state = self.current_error.take().unwrap_or(CpythonErrorState {
             ptype: std::ptr::null_mut(),
             pvalue: std::ptr::null_mut(),

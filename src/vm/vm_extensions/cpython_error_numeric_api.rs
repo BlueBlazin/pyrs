@@ -1211,7 +1211,12 @@ pub unsafe extern "C" fn PyExceptionClass_Name(exception_class: *mut c_void) -> 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_Occurred() -> *mut c_void {
     match with_active_cpython_context_mut(|context| {
-        context.sync_current_error_from_thread_state();
+        // Do not overwrite a context-local error indicator with an empty
+        // thread-state view; some C-API setters intentionally record only
+        // `(ptype, message)` without a materialized exception instance pointer.
+        if context.current_error.is_none() {
+            context.sync_current_error_from_thread_state();
+        }
         let ptr = context
             .current_error
             .as_ref()
@@ -1335,6 +1340,16 @@ pub(in crate::vm::vm_extensions) fn cpython_exception_type_ptr(ptr: *mut c_void)
     .unwrap_or_else(|_| cpython_exception_value_from_ptr(ptr as usize).is_some());
     if !pointer_is_safe {
         return std::ptr::null_mut();
+    }
+    let mapped_type_like = with_active_cpython_context_mut(|context| {
+        matches!(
+            context.cpython_value_from_ptr_or_proxy(ptr),
+            Some(Value::Class(_)) | Some(Value::ExceptionType(_))
+        )
+    })
+    .unwrap_or(false);
+    if mapped_type_like {
+        return ptr;
     }
     if cpython_ptr_is_type_object(ptr) {
         return ptr;
@@ -2836,57 +2851,9 @@ pub unsafe extern "C" fn PyErr_SetObject(_exception: *mut c_void, value: *mut c_
                 );
             }
         }
-        let safe_to_normalize_ptype = if ptype.is_null() || context.vm.is_null() {
-            false
-        } else {
-            // SAFETY: VM pointer is valid for active C-API context lifetime.
-            let vm = unsafe { &mut *context.vm };
-            if let Some(Value::ExceptionType(name)) = cpython_exception_value_from_ptr(ptype as usize)
-            {
-                vm.exception_inherits(&name, "BaseException")
-            } else {
-                match context.cpython_value_from_ptr_or_proxy(ptype) {
-                    Some(Value::Class(class_obj)) => {
-                        let proxy_ptr_matches =
-                            ModuleCapiContext::cpython_proxy_raw_ptr_from_value(&Value::Class(
-                                class_obj.clone(),
-                            ))
-                            .is_none_or(|raw| raw == ptype);
-                        proxy_ptr_matches && vm.class_is_exception_class(&class_obj)
-                    }
-                    Some(Value::ExceptionType(name)) => {
-                        vm.exception_inherits(&name, "BaseException")
-                    }
-                    Some(_) => false,
-                    None => false,
-                }
-            }
-        };
-        if safe_to_normalize_ptype
-            && let Some(normalized) = cpython_make_exception_instance_from_type_and_value(
-                context,
-                ptype,
-                value_obj.clone(),
-            )
-        {
-            let message = context.error_message_from_ptr(normalized);
-            if message.contains("__exit__")
-                && std::env::var_os("PYRS_TRACE_CPY_ATTR_EXIT").is_some()
-            {
-                let exception_name = cpython_exception_class_name_from_ptr(ptype)
-                    .unwrap_or_else(|| cpython_type_name_for_object_ptr(ptype));
-                eprintln!(
-                    "[cpy-attr-exit] path=normalized ptype={:p} name={} value_ptr={:p} message={} bt={:?}",
-                    ptype,
-                    exception_name,
-                    value,
-                    message,
-                    Backtrace::force_capture()
-                );
-            }
-            context.set_error_state(ptype, normalized, std::ptr::null_mut(), message);
-            return;
-        }
+        // Match CPython: store the given `(ptype, pvalue)` pair as-is.
+        // Exception instance normalization belongs to `PyErr_NormalizeException`
+        // and related retrieval APIs, not `PyErr_SetObject` itself.
         let message = context.error_message_from_ptr(value);
         if message.contains("__exit__") && std::env::var_os("PYRS_TRACE_CPY_ATTR_EXIT").is_some()
         {
