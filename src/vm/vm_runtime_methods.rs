@@ -1567,12 +1567,17 @@ impl Vm {
         self.is_union_type_class(class) || self.is_typing_union_class(class)
     }
 
-    fn none_type_value(&self) -> Option<Value> {
-        let module = self.modules.get("types")?;
-        let Object::Module(module_data) = &*module.kind() else {
-            return None;
-        };
-        module_data.globals.get("NoneType").cloned()
+    fn none_type_value(&mut self) -> Value {
+        if let Some(module) = self.modules.get("types")
+            && let Object::Module(module_data) = &*module.kind()
+            && let Some(none_type) = module_data.globals.get("NoneType")
+        {
+            return none_type.clone();
+        }
+        Value::Class(
+            self.types_module_or_private_class("NoneType")
+                .unwrap_or_else(|| self.fallback_none_type_class()),
+        )
     }
 
     pub(super) fn generic_alias_parts_from_value(
@@ -2087,7 +2092,7 @@ impl Vm {
         }
 
         let normalized = match value {
-            Value::None => self.none_type_value().unwrap_or(Value::None),
+            Value::None => self.none_type_value(),
             Value::Str(text) if allow_forward_ref_strings => {
                 self.forward_ref_value_from_string(text)
             }

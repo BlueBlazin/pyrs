@@ -1089,21 +1089,13 @@ fn executes_module_annotations() {
 
 #[test]
 fn executes_type_union_operator_for_annotations() {
-    let source = "x: type[Warning] | None = None\ny = type[Warning] | None\nz = y | int\n";
+    let source = "x: type[Warning] | None = None\ny = type[Warning] | None\nz = y | int\nok = (type(y).__module__ == 'typing' and type(y).__name__ == 'Union' and y.__args__ == (type[Warning], type(None)) and z.__args__ == (type[Warning], type(None), int))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    let y = tuple_values(vm.get_global("y")).expect("y should be a tuple");
-    assert_eq!(y.len(), 2);
-    assert!(matches!(y[0], Value::Instance(_)));
-    assert_eq!(y[1], Value::None);
-    let z = tuple_values(vm.get_global("z")).expect("z should be a tuple");
-    assert_eq!(z.len(), 3);
-    assert!(matches!(z[0], Value::Instance(_)));
-    assert!(z.contains(&Value::None));
-    assert!(z.contains(&Value::Builtin(BuiltinFunction::Int)));
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -1972,7 +1964,7 @@ fn types_functiontype_accepts_kwdefaults_and_dict_subclass_globals() {
 
 #[test]
 fn executes_function_annotations() {
-    let source = "def f(x: int, y: str = 'a') -> int:\n    z: int\n    return __annotations__\n\nout = f(1)\nann = f.__annotations__\n";
+    let source = "def f(x: int, y: str = 'a') -> int:\n    z: int\n    return 1\n\nout = f(1)\nann = f.__annotations__\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -1981,26 +1973,17 @@ fn executes_function_annotations() {
     assert_eq!(
         dict_entries(vm.get_global("ann")),
         Some(vec![
-            (Value::Str("x".to_string()), Value::Str("int".to_string())),
-            (Value::Str("y".to_string()), Value::Str("str".to_string())),
-            (
-                Value::Str("return".to_string()),
-                Value::Str("int".to_string()),
-            ),
+            (Value::Str("x".to_string()), Value::Builtin(BuiltinFunction::Int)),
+            (Value::Str("y".to_string()), Value::Builtin(BuiltinFunction::Str)),
+            (Value::Str("return".to_string()), Value::Builtin(BuiltinFunction::Int)),
         ])
     );
-    assert_eq!(
-        dict_entries(vm.get_global("out")),
-        Some(vec![(
-            Value::Str("z".to_string()),
-            Value::Str("int".to_string())
-        )])
-    );
+    assert_eq!(vm.get_global("out"), Some(Value::Int(1)));
 }
 
 #[test]
 fn executes_vararg_starred_annotation_syntax() {
-    let source = "from typing import TypeVarTuple\nTs = TypeVarTuple('Ts')\ndef f(*args: *Ts):\n    return args\nann = f.__annotations__['args']\nok = (f() == () and ('Unpack' in str(ann)))\n";
+    let source = "def f(*args: *tuple[int]):\n    return args\nann = f.__annotations__['args']\nok = (f(1, 2) == (1, 2) and str(ann) == '*tuple[int]')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -4808,13 +4791,16 @@ else:
 data = pickle.dumps(Warning, protocol=0)
 loaded = pickle.loads(data)
 ok = (meta_ok and accel_ok and loaded is Warning)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+"#
+    .to_string();
+    run_with_large_stack("vm-exception-type-metatype-pickle", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -4828,13 +4814,16 @@ name_ok = (len.__name__ == "len" and isinstance(len.__name__, str))
 data = pickle.dumps(len, protocol=0)
 loaded = pickle.loads(data)
 ok = (name_ok and loaded is len)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+"#
+    .to_string();
+    run_with_large_stack("vm-builtin-function-pickle-roundtrip", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -5066,7 +5055,12 @@ fn c_pickler_newobj_ex_argument_type_errors_match_cpython_protocols_2_through_5(
             let source = r#"import copyreg
 import io
 import _pickle
-from test.pickletester import REX
+
+class REX:
+    def __init__(self, reduce_value):
+        self.reduce_value = reduce_value
+    def __reduce_ex__(self, protocol):
+        return self.reduce_value
 
 ok = True
 for proto in (2, 3, 4, 5):
@@ -6912,7 +6906,7 @@ fn executes_try_except_statement() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("x"), Some(Value::Int(1)));
-    assert_exception_global(&vm, "err", "ValueError", Some("bad"));
+    assert_eq!(vm.get_global("err"), None);
 }
 
 #[test]
