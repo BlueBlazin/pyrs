@@ -2229,6 +2229,13 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
+        if self.union_args_from_value(&left).is_some() || self.union_args_from_value(&right).is_some()
+        {
+            return self.build_union_value_from_members_with_forward_lenient(
+                vec![left, right],
+                true,
+            );
+        }
         self.build_union_value_from_members(vec![left, right])
     }
 
