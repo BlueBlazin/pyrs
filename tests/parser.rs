@@ -1,5 +1,5 @@
 use pyrs::ast::{
-    AssignTarget, ComprehensionClause, Constant, DictEntry, Expr, ExprKind, FloatLiteral,
+    AssignTarget, CallArg, ComprehensionClause, Constant, DictEntry, Expr, ExprKind, FloatLiteral,
     MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind, TypeParamKind,
 };
 use pyrs::parser;
@@ -73,7 +73,7 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
         } => StmtKind::ClassDef {
             name: name.clone(),
             type_params: type_params.clone(),
-            bases: bases.iter().map(strip_expr).collect(),
+            bases: bases.iter().map(strip_call_arg).collect(),
             metaclass: metaclass.as_ref().map(strip_expr),
             keywords: keywords
                 .iter()
@@ -156,10 +156,12 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
             target,
             annotation,
             value,
+            simple,
         } => StmtKind::AnnAssign {
             target: strip_target(target),
             annotation: strip_expr(annotation),
             value: value.as_ref().map(strip_expr),
+            simple: *simple,
         },
         StmtKind::With {
             is_async,
@@ -208,22 +210,7 @@ fn strip_expr(expr: &Expr) -> Expr {
         },
         ExprKind::Call { func, args } => ExprKind::Call {
             func: Box::new(strip_expr(func)),
-            args: args
-                .iter()
-                .map(|arg| match arg {
-                    pyrs::ast::CallArg::Positional(expr) => {
-                        pyrs::ast::CallArg::Positional(strip_expr(expr))
-                    }
-                    pyrs::ast::CallArg::Keyword { name, value } => pyrs::ast::CallArg::Keyword {
-                        name: name.clone(),
-                        value: strip_expr(value),
-                    },
-                    pyrs::ast::CallArg::Star(expr) => pyrs::ast::CallArg::Star(strip_expr(expr)),
-                    pyrs::ast::CallArg::DoubleStar(expr) => {
-                        pyrs::ast::CallArg::DoubleStar(strip_expr(expr))
-                    }
-                })
-                .collect(),
+            args: args.iter().map(strip_call_arg).collect(),
         },
         ExprKind::List(values) => ExprKind::List(values.iter().map(strip_expr).collect()),
         ExprKind::Tuple(values) => ExprKind::Tuple(values.iter().map(strip_expr).collect()),
@@ -327,6 +314,18 @@ fn strip_expr(expr: &Expr) -> Expr {
         },
     };
     spanned_expr(node)
+}
+
+fn strip_call_arg(arg: &CallArg) -> CallArg {
+    match arg {
+        CallArg::Positional(expr) => CallArg::Positional(strip_expr(expr)),
+        CallArg::Keyword { name, value } => CallArg::Keyword {
+            name: name.clone(),
+            value: strip_expr(value),
+        },
+        CallArg::Star(expr) => CallArg::Star(strip_expr(expr)),
+        CallArg::DoubleStar(expr) => CallArg::DoubleStar(strip_expr(expr)),
+    }
 }
 
 fn strip_param(param: &Parameter) -> Parameter {
@@ -1026,9 +1025,12 @@ fn parses_class_definition_with_base() {
         } => {
             assert_eq!(name, "Child");
             assert_eq!(bases.len(), 1);
-            match &bases[0].node {
-                ExprKind::Name(name) => assert_eq!(name, "Base"),
-                other => panic!("unexpected base: {other:?}"),
+            match &bases[0] {
+                CallArg::Positional(expr) => match &expr.node {
+                    ExprKind::Name(name) => assert_eq!(name, "Base"),
+                    other => panic!("unexpected base expression: {other:?}"),
+                },
+                other => panic!("unexpected base arg: {other:?}"),
             }
             assert_eq!(body, &vec![spanned_stmt(StmtKind::Pass)]);
         }
@@ -1048,9 +1050,12 @@ fn parses_class_definition_with_keywords() {
             ..
         } => {
             assert_eq!(bases.len(), 1);
-            match &bases[0].node {
-                ExprKind::Name(name) => assert_eq!(name, "Enum"),
-                other => panic!("unexpected base: {other:?}"),
+            match &bases[0] {
+                CallArg::Positional(expr) => match &expr.node {
+                    ExprKind::Name(name) => assert_eq!(name, "Enum"),
+                    other => panic!("unexpected base expression: {other:?}"),
+                },
+                other => panic!("unexpected base arg: {other:?}"),
             }
             match metaclass {
                 Some(expr) => match &expr.node {
@@ -1542,6 +1547,7 @@ fn parses_annotated_assignment() {
             target,
             annotation,
             value,
+            ..
         } => {
             assert_eq!(target, &AssignTarget::Name("x".to_string()));
             assert_eq!(&annotation.node, &ExprKind::Name("int".to_string()));
