@@ -2661,10 +2661,9 @@ pub unsafe extern "C" fn PyErr_WriteUnraisable(object: *mut c_void) {
         if context.vm.is_null() {
             return;
         }
-        let exception = if !state.pvalue.is_null() {
-            context.cpython_value_from_ptr_or_proxy(state.pvalue)
-        } else if !state.ptype.is_null() {
-            context.cpython_value_from_ptr_or_proxy(state.ptype)
+        let raised = cpython_raised_exception_ptr_from_state(context, state);
+        let exception = if !raised.is_null() {
+            context.cpython_value_from_ptr_or_proxy(raised)
         } else {
             None
         }
