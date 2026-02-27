@@ -1814,7 +1814,7 @@ fn os_popen_supports_basic_read_mode() {
 
 #[test]
 fn exposes_object_dunder_ne_and_float_getformat() {
-    let source = "a = object.__ne__(1, 2)\nb = float.__getformat__('double')\nok = (a is True) and isinstance(b, str)\n";
+    let source = "a = object.__ne__(1, 2)\nb = float.__getformat__('double')\nok = (a is True) and (b == 'IEEE, little-endian' or b == 'IEEE, big-endian')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -17929,29 +17929,27 @@ ok = (result == (1, 7, 7))
 }
 
 #[test]
-fn import_http_client_runs_package_init_first() {
-    let Some(lib) = cpython_lib_path() else {
-        return;
-    };
-    let handle = std::thread::Builder::new()
-        .name("http-client-import".to_string())
-        .stack_size(32 * 1024 * 1024)
-        .spawn(move || {
-            let source = r#"import http.client
-import http
-ok = (hasattr(http, "HTTPStatus") and http.client.HTTPConnection is not None)
+fn import_submodule_runs_package_init_first() {
+    let temp_dir = unique_temp_dir("pyrs_pkg_init_order");
+    let package_dir = temp_dir.join("orderpkg");
+    std::fs::create_dir_all(&package_dir).expect("create package dir");
+    std::fs::write(package_dir.join("__init__.py"), "flag = 'ready'\n").expect("write init");
+    std::fs::write(
+        package_dir.join("sub.py"),
+        "import orderpkg\nok = (orderpkg.flag == 'ready')\n",
+    )
+    .expect("write submodule");
+
+    let source = r#"import orderpkg.sub
+import orderpkg
+ok = orderpkg.sub.ok
 "#;
-            let module = parser::parse_module(source).expect("parse should succeed");
-            let code = compiler::compile_module(&module).expect("compile should succeed");
-            let mut vm = Vm::new();
-            vm.add_module_path(lib);
-            vm.execute(&code).expect("execution should succeed");
-            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-        })
-        .expect("spawn http-client-import thread");
-    handle
-        .join()
-        .expect("http-client-import thread should complete");
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(temp_dir);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]

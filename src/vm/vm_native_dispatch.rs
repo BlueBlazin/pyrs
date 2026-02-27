@@ -240,6 +240,8 @@ impl Vm {
                     | NativeMethodKind::StrFind
                     | NativeMethodKind::StrIndex
                     | NativeMethodKind::StrRFind
+                    | NativeMethodKind::QueueSimpleQueuePut
+                    | NativeMethodKind::QueueSimpleQueueGet
                     | NativeMethodKind::BytesDecode
                     | NativeMethodKind::BytesHex
                     | NativeMethodKind::BytesCount
@@ -1425,15 +1427,39 @@ impl Vm {
                 Ok(NativeCallResult::Value(values.remove(normalized as usize)))
             }
             NativeMethodKind::QueueSimpleQueuePut => {
-                if args.is_empty() {
+                let mut method_args = args;
+                let queue_receiver = match &*receiver.kind() {
+                    Object::Instance(_) => receiver.clone(),
+                    Object::Module(module_data) if module_data.name == "__queue_unbound_method__" => {
+                        if method_args.is_empty() {
+                            return Err(RuntimeError::type_error(
+                                "descriptor 'put' for '_queue.SimpleQueue' objects needs an argument",
+                            ));
+                        }
+                        match method_args.remove(0) {
+                            Value::Instance(instance) => instance,
+                            _ => {
+                                return Err(RuntimeError::type_error(
+                                    "put() receiver must be _queue.SimpleQueue",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "put() receiver must be _queue.SimpleQueue",
+                        ));
+                    }
+                };
+                if method_args.is_empty() {
                     return Err(RuntimeError::type_error(
                         "put() missing required argument 'item' (pos 1)",
                     ));
                 }
-                if args.len() > 3 {
+                if method_args.len() > 3 {
                     return Err(RuntimeError::type_error(format!(
                         "put() takes at most 3 positional arguments ({} given)",
-                        args.len()
+                        method_args.len()
                     )));
                 }
                 let allowed_kwargs = ["block", "timeout"];
@@ -1445,9 +1471,9 @@ impl Vm {
                         )));
                     }
                 }
-                let item = args.remove(0);
+                let item = method_args.remove(0);
                 let storage = {
-                    let mut receiver_kind = receiver.kind_mut();
+                    let mut receiver_kind = queue_receiver.kind_mut();
                     let Object::Instance(instance_data) = &mut *receiver_kind else {
                         return Err(RuntimeError::type_error(
                             "put() receiver must be _queue.SimpleQueue",
@@ -1474,6 +1500,214 @@ impl Vm {
                 };
                 values.push(item);
                 Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::QueueSimpleQueueGet => {
+                let mut method_args = args;
+                let queue_receiver = match &*receiver.kind() {
+                    Object::Instance(_) => receiver.clone(),
+                    Object::Module(module_data) if module_data.name == "__queue_unbound_method__" => {
+                        if method_args.is_empty() {
+                            return Err(RuntimeError::type_error(
+                                "descriptor 'get' for '_queue.SimpleQueue' objects needs an argument",
+                            ));
+                        }
+                        match method_args.remove(0) {
+                            Value::Instance(instance) => instance,
+                            _ => {
+                                return Err(RuntimeError::type_error(
+                                    "get() receiver must be _queue.SimpleQueue",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "get() receiver must be _queue.SimpleQueue",
+                        ));
+                    }
+                };
+                if method_args.len() > 2 {
+                    return Err(RuntimeError::type_error(format!(
+                        "get() takes at most 2 positional arguments ({} given)",
+                        method_args.len()
+                    )));
+                }
+                let allowed_kwargs = ["block", "timeout"];
+                for name in kwargs.keys() {
+                    if !allowed_kwargs.contains(&name.as_str()) {
+                        return Err(RuntimeError::type_error(format!(
+                            "get() got an unexpected keyword argument '{}'",
+                            name
+                        )));
+                    }
+                }
+                let block = if let Some(value) = kwargs.remove("block") {
+                    if !method_args.is_empty() {
+                        return Err(RuntimeError::type_error(
+                            "get() got multiple values for argument 'block'",
+                        ));
+                    }
+                    self.truthy_from_value(&value)?
+                } else if let Some(value) = method_args.first() {
+                    self.truthy_from_value(value)?
+                } else {
+                    true
+                };
+                if kwargs.contains_key("timeout") && method_args.len() > 1 {
+                    return Err(RuntimeError::type_error(
+                        "get() got multiple values for argument 'timeout'",
+                    ));
+                }
+                let _timeout = kwargs.remove("timeout").or_else(|| method_args.get(1).cloned());
+                let storage = {
+                    let mut receiver_kind = queue_receiver.kind_mut();
+                    let Object::Instance(instance_data) = &mut *receiver_kind else {
+                        return Err(RuntimeError::type_error(
+                            "get() receiver must be _queue.SimpleQueue",
+                        ));
+                    };
+                    if let Some(existing) =
+                        instance_data.attrs.get(SIMPLE_QUEUE_STORAGE_ATTR).cloned()
+                    {
+                        existing
+                    } else {
+                        let list = self.heap.alloc_list(Vec::new());
+                        instance_data
+                            .attrs
+                            .insert(SIMPLE_QUEUE_STORAGE_ATTR.to_string(), list.clone());
+                        list
+                    }
+                };
+                let Value::List(storage_list) = storage else {
+                    return Err(RuntimeError::type_error("SimpleQueue storage is invalid"));
+                };
+                let mut storage_kind = storage_list.kind_mut();
+                let Object::List(values) = &mut *storage_kind else {
+                    return Err(RuntimeError::type_error("SimpleQueue storage is invalid"));
+                };
+                if !values.is_empty() {
+                    return Ok(NativeCallResult::Value(values.remove(0)));
+                }
+                let _ = block;
+                Err(RuntimeError::from_exception(ExceptionObject::new(
+                    "Empty",
+                    None,
+                )))
+            }
+            NativeMethodKind::QueueSimpleQueueGetNowait => {
+                let mut method_args = args;
+                let queue_receiver = match &*receiver.kind() {
+                    Object::Instance(_) => receiver.clone(),
+                    Object::Module(module_data) if module_data.name == "__queue_unbound_method__" => {
+                        if method_args.is_empty() {
+                            return Err(RuntimeError::type_error(
+                                "descriptor 'get_nowait' for '_queue.SimpleQueue' objects needs an argument",
+                            ));
+                        }
+                        match method_args.remove(0) {
+                            Value::Instance(instance) => instance,
+                            _ => {
+                                return Err(RuntimeError::type_error(
+                                    "get_nowait() receiver must be _queue.SimpleQueue",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "get_nowait() receiver must be _queue.SimpleQueue",
+                        ));
+                    }
+                };
+                if !kwargs.is_empty() || !method_args.is_empty() {
+                    return Err(RuntimeError::type_error(
+                        "get_nowait() takes no arguments",
+                    ));
+                }
+                let storage = {
+                    let mut receiver_kind = queue_receiver.kind_mut();
+                    let Object::Instance(instance_data) = &mut *receiver_kind else {
+                        return Err(RuntimeError::type_error(
+                            "get_nowait() receiver must be _queue.SimpleQueue",
+                        ));
+                    };
+                    if let Some(existing) =
+                        instance_data.attrs.get(SIMPLE_QUEUE_STORAGE_ATTR).cloned()
+                    {
+                        existing
+                    } else {
+                        let list = self.heap.alloc_list(Vec::new());
+                        instance_data
+                            .attrs
+                            .insert(SIMPLE_QUEUE_STORAGE_ATTR.to_string(), list.clone());
+                        list
+                    }
+                };
+                let Value::List(storage_list) = storage else {
+                    return Err(RuntimeError::type_error("SimpleQueue storage is invalid"));
+                };
+                let mut storage_kind = storage_list.kind_mut();
+                let Object::List(values) = &mut *storage_kind else {
+                    return Err(RuntimeError::type_error("SimpleQueue storage is invalid"));
+                };
+                if values.is_empty() {
+                    return Err(RuntimeError::from_exception(ExceptionObject::new(
+                        "Empty",
+                        None,
+                    )));
+                }
+                Ok(NativeCallResult::Value(values.remove(0)))
+            }
+            NativeMethodKind::QueueSimpleQueueEmpty => {
+                let mut method_args = args;
+                let queue_receiver = match &*receiver.kind() {
+                    Object::Instance(_) => receiver.clone(),
+                    Object::Module(module_data) if module_data.name == "__queue_unbound_method__" => {
+                        if method_args.is_empty() {
+                            return Err(RuntimeError::type_error(
+                                "descriptor 'empty' for '_queue.SimpleQueue' objects needs an argument",
+                            ));
+                        }
+                        match method_args.remove(0) {
+                            Value::Instance(instance) => instance,
+                            _ => {
+                                return Err(RuntimeError::type_error(
+                                    "empty() receiver must be _queue.SimpleQueue",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "empty() receiver must be _queue.SimpleQueue",
+                        ));
+                    }
+                };
+                if !kwargs.is_empty() || !method_args.is_empty() {
+                    return Err(RuntimeError::type_error("empty() takes no arguments"));
+                }
+                let storage = {
+                    let receiver_kind = queue_receiver.kind();
+                    let Object::Instance(instance_data) = &*receiver_kind else {
+                        return Err(RuntimeError::type_error(
+                            "empty() receiver must be _queue.SimpleQueue",
+                        ));
+                    };
+                    instance_data.attrs.get(SIMPLE_QUEUE_STORAGE_ATTR).cloned()
+                };
+                let is_empty = match storage {
+                    Some(Value::List(storage_list)) => match &*storage_list.kind() {
+                        Object::List(values) => values.is_empty(),
+                        _ => {
+                            return Err(RuntimeError::type_error("SimpleQueue storage is invalid"));
+                        }
+                    },
+                    Some(_) => {
+                        return Err(RuntimeError::type_error("SimpleQueue storage is invalid"));
+                    }
+                    None => true,
+                };
+                Ok(NativeCallResult::Value(Value::Bool(is_empty)))
             }
             NativeMethodKind::ListCount => {
                 if args.len() != 1 {
@@ -8434,15 +8668,6 @@ impl Vm {
         if let Some(abstract_methods) = class_data.attrs.get("__abstractmethods__") {
             let names = self.abstract_method_names_from_value(abstract_methods);
             if let Some(first) = names.first() {
-                let module_name = match class_data.attrs.get("__module__") {
-                    Some(Value::Str(name)) => name.clone(),
-                    _ => "builtins".to_string(),
-                };
-                let qualified_name = if module_name == "builtins" {
-                    class_data.name.clone()
-                } else {
-                    format!("{}.{}", module_name, class_data.name)
-                };
                 let methods = if names.len() == 1 {
                     format!("'{first}'")
                 } else {
@@ -8454,25 +8679,13 @@ impl Vm {
                 };
                 return Some(format!(
                     "Can't instantiate abstract class {} without an implementation for abstract method{} {}",
-                    qualified_name,
+                    class_data.name,
                     if names.len() == 1 { "" } else { "s" },
                     methods
                 ));
             }
             if is_truthy(abstract_methods) {
-                let module_name = match class_data.attrs.get("__module__") {
-                    Some(Value::Str(name)) => name.clone(),
-                    _ => "builtins".to_string(),
-                };
-                let qualified_name = if module_name == "builtins" {
-                    class_data.name.clone()
-                } else {
-                    format!("{}.{}", module_name, class_data.name)
-                };
-                return Some(format!(
-                    "Can't instantiate abstract class {}",
-                    qualified_name
-                ));
+                return Some(format!("Can't instantiate abstract class {}", class_data.name));
             }
         }
         let runtime_disallow = matches!(
@@ -9559,15 +9772,15 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        let class_target_id = args.first().and_then(|value| match value {
-            Value::Class(class) => Some(class.id()),
+        let class_target = args.first().and_then(|value| match value {
+            Value::Class(class) => Some(class.clone()),
             _ => None,
         });
         let result = self.builtin_setattr(args, kwargs);
         if result.is_ok()
-            && let Some(class_id) = class_target_id
+            && let Some(class) = class_target
         {
-            self.touch_class_attr_version_by_id(class_id);
+            self.touch_class_attr_version(&class);
         }
         result
     }
@@ -9577,15 +9790,15 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        let class_target_id = args.first().and_then(|value| match value {
-            Value::Class(class) => Some(class.id()),
+        let class_target = args.first().and_then(|value| match value {
+            Value::Class(class) => Some(class.clone()),
             _ => None,
         });
         let result = self.builtin_delattr(args, kwargs);
         if result.is_ok()
-            && let Some(class_id) = class_target_id
+            && let Some(class) = class_target
         {
-            self.touch_class_attr_version_by_id(class_id);
+            self.touch_class_attr_version(&class);
         }
         result
     }
@@ -9759,6 +9972,7 @@ impl Vm {
             BuiltinFunction::Bytes => self.builtin_bytes_constructor(args, kwargs),
             BuiltinFunction::ByteArray => self.builtin_bytearray_constructor(args, kwargs),
             BuiltinFunction::MemoryView => self.builtin_memoryview(args, kwargs),
+            BuiltinFunction::FloatGetFormat => self.builtin_float_getformat(args, kwargs),
             BuiltinFunction::FloatFromHex => self.builtin_float_fromhex(args, kwargs),
             BuiltinFunction::FloatHex => self.builtin_float_hex(args, kwargs),
             BuiltinFunction::BytesFromHex => self.builtin_bytes_fromhex(args, kwargs),

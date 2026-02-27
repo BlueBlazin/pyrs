@@ -1054,6 +1054,9 @@ impl Vm {
             "__init__" if self.builtin_is_type_object(builtin) => {
                 Ok(Value::Builtin(BuiltinFunction::ObjectInit))
             }
+            "default_factory" if builtin == BuiltinFunction::CollectionsDefaultDict => {
+                Ok(Value::None)
+            }
             "__hash__" if self.builtin_type_has_none_hash(builtin) => Ok(Value::None),
             "__hash__" => {
                 let wrapper = match self
@@ -1080,7 +1083,7 @@ impl Vm {
                 Ok(Value::Builtin(BuiltinFunction::OperatorLt))
             }
             "__getformat__" if builtin == BuiltinFunction::Float => {
-                Ok(Value::Builtin(BuiltinFunction::Str))
+                Ok(Value::Builtin(BuiltinFunction::FloatGetFormat))
             }
             "from_iterable" if builtin == BuiltinFunction::ItertoolsChain => {
                 Ok(Value::Builtin(BuiltinFunction::ItertoolsChainFromIterable))
@@ -1812,6 +1815,14 @@ impl Vm {
         class: &ObjRef,
         attr_name: &str,
     ) -> Option<Value> {
+        if (self.class_has_builtin_list_base(class)
+            || self.class_has_builtin_dict_base(class)
+            || self.class_has_builtin_set_base(class)
+            || self.class_has_builtin_bytearray_base(class))
+            && attr_name == "__hash__"
+        {
+            return Some(Value::None);
+        }
         if (self.class_has_builtin_int_base(class)
             || self.class_has_builtin_float_base(class)
             || self.class_has_builtin_str_base(class))
@@ -2567,6 +2578,15 @@ impl Vm {
         owner: Option<Value>,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "default_factory" {
+            if let Some(default_factory) = self.defaultdict_factories.get(&dict.id()) {
+                return Ok(default_factory.clone());
+            }
+            return Err(RuntimeError::attribute_error(format!(
+                "dict has no attribute '{}'",
+                attr_name
+            )));
+        }
         if attr_name == "__len__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, dict));
         }
@@ -2898,6 +2918,21 @@ impl Vm {
                             "attribute access unsupported type",
                         ));
                     };
+                    let dict_qualname = func_data.dict.as_ref().and_then(|dict| match &*dict.kind()
+                    {
+                        Object::Dict(entries) => entries.iter().find_map(|(key, value)| {
+                            if matches!(key, Value::Str(name) if name == "__qualname__")
+                                && let Value::Str(text) = value
+                            {
+                                return Some(text.clone());
+                            }
+                            None
+                        }),
+                        _ => None,
+                    });
+                    if let Some(qualname) = dict_qualname {
+                        return Ok(Value::Str(qualname));
+                    }
                     let base_name = func_data.code.name.clone();
                     if let Some(owner_class) = &func_data.owner_class {
                         if let Object::Class(class_data) = &*owner_class.kind() {
@@ -3706,13 +3741,28 @@ impl Vm {
                 )),
             },
             "__annotate__" => {
-                if !matches!(value, Value::None) && !self.is_callable_value(&value) {
+                let annotate_is_callable = self.is_callable_value(&value);
+                if !matches!(value, Value::None) && !annotate_is_callable {
                     return Err(RuntimeError::type_error(
                         "__annotate__ must be callable or None",
                     ));
                 }
+                if annotate_is_callable {
+                    let mut func_ref = func.kind_mut();
+                    let Object::Function(func_data) = &mut *func_ref else {
+                        return Err(RuntimeError::type_error(
+                            "attribute assignment unsupported type",
+                        ));
+                    };
+                    // Callable __annotate__ replaces the source-of-truth for
+                    // function annotations; force lazy re-materialization.
+                    func_data.annotations = None;
+                }
                 let dict = self.ensure_function_dict(func)?;
                 self.dict_set_str_key(&dict, attr_name, value)?;
+                if annotate_is_callable {
+                    self.dict_remove_str_key(&dict, "__annotations__")?;
+                }
                 self.dict_remove_str_key(&dict, "__pyrs_annotations_resolved__")?;
                 Ok(())
             }
@@ -5429,7 +5479,24 @@ impl Vm {
             }
             value
         };
-        let attr = if let Some(attr) = class_attr_lookup(class, attr_name) {
+        let attr = if attr_name == "__hash__"
+            && (self.class_has_builtin_list_base(class)
+                || self.class_has_builtin_dict_base(class)
+                || self.class_has_builtin_set_base(class)
+                || self.class_has_builtin_bytearray_base(class))
+        {
+            let class_kind = class.kind();
+            let Object::Class(class_data) = &*class_kind else {
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
+            };
+            class_data
+                .attrs
+                .get("__hash__")
+                .cloned()
+                .unwrap_or(Value::None)
+        } else if let Some(attr) = class_attr_lookup(class, attr_name) {
             attr
         } else if let Some(attr) = proxy_base_attr {
             attr
@@ -7096,6 +7163,34 @@ impl Vm {
         }
 
         if let Some(attr) = class_attr {
+            if let Value::BoundMethod(method_obj) = &attr {
+                let rebound_native = {
+                    let method_ref = method_obj.kind();
+                    let Object::BoundMethod(method_data) = &*method_ref else {
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
+                    };
+                    let is_unbound_wrapper = matches!(
+                        &*method_data.receiver.kind(),
+                        Object::Module(module_data)
+                            if module_data.name.ends_with("_unbound_method__")
+                    );
+                    if !is_unbound_wrapper {
+                        None
+                    } else {
+                        match &*method_data.function.kind() {
+                            Object::NativeMethod(native) => Some(
+                                self.alloc_native_bound_method(native.kind, instance.clone()),
+                            ),
+                            _ => None,
+                        }
+                    }
+                };
+                if let Some(bound_native) = rebound_native {
+                    return Ok(AttrAccessOutcome::Value(bound_native));
+                }
+            }
             if let Some(bound) = self.bind_classmethod_attr(&class_ref, &attr) {
                 return Ok(AttrAccessOutcome::Value(bound));
             }

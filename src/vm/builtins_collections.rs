@@ -6,7 +6,8 @@ use super::{
     class_name_for_instance, compare_ge, compare_gt, compare_le, compare_lt, dict_remove_value,
     dict_set_value_checked, div_values, ensure_hashable, floor_div_values, format_repr,
     is_missing_attribute_error, is_truthy, lshift_values, mod_values, mul_values, pow_values,
-    rshift_values, sub_values, unary_predicate, value_to_int, xor_values,
+    rshift_values, runtime_error_matches_exception, sub_values, unary_predicate, value_to_int,
+    xor_values,
 };
 use crate::runtime::FunctionObject;
 
@@ -215,14 +216,38 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 2 {
             return Err(RuntimeError::new("object.__ne__ expects two arguments"));
         }
-        if args[0] == args[1] {
-            return Ok(Value::Bool(false));
-        }
-        Ok(self
+        let eq_value = match self.builtin_getattr(
+            vec![args[0].clone(), Value::Str("__eq__".to_string())],
+            HashMap::new(),
+        ) {
+            Ok(eq_callable) => match self.call_internal(eq_callable, vec![args[1].clone()], HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception(
+                        "object.__ne__ comparison failed",
+                    ));
+                }
+            },
+            Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {
+                self.compare_eq_runtime(args[0].clone(), args[1].clone())?
+            }
+            Err(err) => return Err(err),
+        };
+        let is_not_implemented = self
             .builtins
             .get("NotImplemented")
-            .cloned()
-            .unwrap_or(Value::None))
+            .is_some_and(|marker| match (&eq_value, marker) {
+                (Value::Instance(left), Value::Instance(right)) => left.id() == right.id(),
+                _ => &eq_value == marker,
+            });
+        if is_not_implemented {
+            return Ok(self
+                .builtins
+                .get("NotImplemented")
+                .cloned()
+                .unwrap_or(Value::None));
+        }
+        Ok(Value::Bool(!self.truthy_from_value(&eq_value)?))
     }
 
     pub(super) fn builtin_operator_ne(
@@ -2950,11 +2975,7 @@ impl Vm {
                 let has_default = default.is_some();
                 let default_value = default.unwrap_or_else(|| parameter_empty.clone());
                 let rendered = if has_default {
-                    let default_text =
-                        match self.builtin_repr(vec![default_value.clone()], HashMap::new()) {
-                            Ok(Value::Str(text)) => text,
-                            _ => format_repr(&default_value),
-                        };
+                    let default_text = format_repr(&default_value);
                     format!("{name}={default_text}")
                 } else {
                     name.clone()
@@ -3002,6 +3023,7 @@ impl Vm {
                 defaults,
                 kwonly_defaults,
                 annotations,
+                function_dict,
             ) = {
                 let function_ref = func.kind();
                 let function = match &*function_ref {
@@ -3017,13 +3039,27 @@ impl Vm {
                     function.defaults.clone(),
                     function.kwonly_defaults.clone(),
                     function.annotations.clone(),
+                    function.dict.clone(),
                 )
             };
+            let dict_annotations = function_dict.as_ref().and_then(|dict| match &*dict.kind() {
+                Object::Dict(entries) => entries.iter().find_map(|(key, value)| {
+                    if matches!(key, Value::Str(name) if name == "__annotations__")
+                        && let Value::Dict(dict_obj) = value
+                    {
+                        return Some(dict_obj.clone());
+                    }
+                    None
+                }),
+                _ => None,
+            });
+            let annotations_dict = dict_annotations.or(annotations);
             let posonly_len = posonly_params.len();
             let positional_len = posonly_len + positional_params.len();
             let default_start = positional_len.saturating_sub(defaults.len());
             let skip = usize::from(skip_first);
             let mut rendered_posonly = 0usize;
+            let params_start = params.len();
 
             for (idx, name) in posonly_params.iter().enumerate() {
                 if idx < skip {
@@ -3079,19 +3115,44 @@ impl Vm {
                 params.push(entry);
             }
 
-            if let Some(annotations) = &annotations
+            if let Some(annotations) = annotations_dict
                 && let Object::Dict(entries) = &*annotations.kind()
-                && let Some((_, value)) = entries
-                    .iter()
-                    .find(|(key, _)| matches!(key, Value::Str(name) if name == "return"))
             {
-                return_annotation = value.clone();
+                for (key, value) in entries.iter() {
+                    let Value::Str(name) = key else {
+                        continue;
+                    };
+                    if name == "return" {
+                        return_annotation = value.clone();
+                        continue;
+                    }
+                    for (_param_name, param) in params.iter_mut().skip(params_start) {
+                        let Value::Instance(param_instance) = param else {
+                            continue;
+                        };
+                        let Object::Instance(param_data) = &mut *param_instance.kind_mut() else {
+                            continue;
+                        };
+                        if matches!(
+                            param_data.attrs.get("name"),
+                            Some(Value::Str(param_name)) if param_name == name
+                        ) {
+                            param_data
+                                .attrs
+                                .insert("annotation".to_string(), value.clone());
+                        }
+                    }
+                }
             }
             Ok(())
         };
 
+        let mut live_annotations_function: Option<ObjRef> = None;
         match callable {
-            Value::Function(func) => populate_from_function(func, false)?,
+            Value::Function(func) => {
+                live_annotations_function = Some(func.clone());
+                populate_from_function(func, false)?;
+            }
             Value::BoundMethod(method_obj) => {
                 let mut handled_native_descriptor = false;
                 if let Object::BoundMethod(method_data) = &*method_obj.kind()
@@ -3126,6 +3187,7 @@ impl Vm {
             }
             Value::Class(class_ref) => {
                 if let Some(Value::Function(func)) = class_attr_lookup(&class_ref, "__init__") {
+                    live_annotations_function = Some(func.clone());
                     populate_from_function(func, true)?;
                 } else if text_signature_override.is_none() {
                     let (args_rendered, args_entry) =
@@ -3149,6 +3211,24 @@ impl Vm {
                     parts.push(format!("**{kwargs_rendered}"));
                     params.push(kwargs_entry);
                 }
+            }
+        }
+        if let Some(func) = live_annotations_function {
+            match self.optional_getattr_value(Value::Function(func), "__annotations__") {
+                Ok(Some(Value::Dict(annotations))) => {
+                    if let Object::Dict(entries) = &*annotations.kind()
+                        && let Some((_, value)) = entries
+                            .iter()
+                            .find(|(key, _)| matches!(key, Value::Str(name) if name == "return"))
+                    {
+                        return_annotation = value.clone();
+                    }
+                }
+                Ok(_) => {}
+                Err(err)
+                    if runtime_error_matches_exception(&err, "NotImplementedError")
+                        || runtime_error_matches_exception(&err, "RecursionError") => {}
+                Err(err) => return Err(err),
             }
         }
 
@@ -4187,7 +4267,7 @@ impl Vm {
     }
 
     pub(super) fn builtin_inspect_get_dunder_dict_of_class(
-        &self,
+        &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -4196,22 +4276,34 @@ impl Vm {
                 "_get_dunder_dict_of_class() expects one argument",
             ));
         }
-        match args.first() {
-            Some(Value::Class(class_ref)) => match &*class_ref.kind() {
-                Object::Class(class_data) => Ok(self.heap.alloc_dict(
-                    class_data
-                        .attrs
-                        .iter()
-                        .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
-                        .collect::<Vec<_>>(),
-                )),
-                _ => Err(RuntimeError::new(
-                    "_get_dunder_dict_of_class() expects a class-like argument",
-                )),
-            },
-            Some(Value::Builtin(builtin)) => Ok(self
-                .heap
-                .alloc_dict(self.builtin_type_dict_entries(*builtin))),
+        match args.first().cloned() {
+            Some(Value::Class(class_value)) => self
+                .builtin_getattr(
+                    vec![
+                        Value::Class(class_value),
+                        Value::Str("__dict__".to_string()),
+                    ],
+                    HashMap::new(),
+                )
+                .map_err(|err| {
+                    if runtime_error_matches_exception(&err, "AttributeError") {
+                        RuntimeError::new("_get_dunder_dict_of_class() expects a class-like argument")
+                    } else {
+                        err
+                    }
+                }),
+            Some(Value::Builtin(builtin)) => self
+                .builtin_getattr(
+                    vec![Value::Builtin(builtin), Value::Str("__dict__".to_string())],
+                    HashMap::new(),
+                )
+                .map_err(|err| {
+                    if runtime_error_matches_exception(&err, "AttributeError") {
+                        RuntimeError::new("_get_dunder_dict_of_class() expects a class-like argument")
+                    } else {
+                        err
+                    }
+                }),
             Some(Value::ExceptionType(name)) => Ok(self.heap.alloc_dict(vec![
                 (Value::Str("__name__".to_string()), Value::Str(name.clone())),
                 (
@@ -4664,13 +4756,20 @@ impl Vm {
     fn value_supports_mapping_protocol(&self, value: &Value) -> bool {
         match value {
             Value::Dict(_) => true,
+            Value::List(_) | Value::Tuple(_) => false,
             Value::Instance(instance) => match &*instance.kind() {
                 Object::Instance(instance_data) => {
                     if self.instance_backing_dict(instance).is_some() {
                         return true;
                     }
+                    if self.instance_backing_list(instance).is_some()
+                        || self.instance_backing_tuple(instance).is_some()
+                        || self.class_has_builtin_list_base(&instance_data.class)
+                        || self.class_has_builtin_tuple_base(&instance_data.class)
+                    {
+                        return false;
+                    }
                     class_attr_lookup(&instance_data.class, "__getitem__").is_some()
-                        && class_attr_lookup(&instance_data.class, "keys").is_some()
                 }
                 _ => false,
             },

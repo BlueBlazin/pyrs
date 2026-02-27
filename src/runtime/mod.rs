@@ -239,6 +239,9 @@ pub enum NativeMethodKind {
     ListRemove,
     ListPop,
     QueueSimpleQueuePut,
+    QueueSimpleQueueGet,
+    QueueSimpleQueueGetNowait,
+    QueueSimpleQueueEmpty,
     ListCount,
     ListCopy,
     ListClear,
@@ -2558,6 +2561,7 @@ pub enum BuiltinFunction {
     IntBitLength,
     IntFromBytes,
     Float,
+    FloatGetFormat,
     FloatFromHex,
     FloatHex,
     Str,
@@ -4227,6 +4231,9 @@ impl BuiltinFunction {
                     },
                     _ => Err(RuntimeError::type_error("float() unsupported type")),
                 }
+            }
+            BuiltinFunction::FloatGetFormat => {
+                Err(RuntimeError::new("float.__getformat__() requires VM context"))
             }
             BuiltinFunction::Str => {
                 if args.is_empty() {
@@ -8339,6 +8346,15 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::QueueSimpleQueuePut => {
                         "<bound method SimpleQueue.put>".to_string()
                     }
+                    NativeMethodKind::QueueSimpleQueueGet => {
+                        "<bound method SimpleQueue.get>".to_string()
+                    }
+                    NativeMethodKind::QueueSimpleQueueGetNowait => {
+                        "<bound method SimpleQueue.get_nowait>".to_string()
+                    }
+                    NativeMethodKind::QueueSimpleQueueEmpty => {
+                        "<bound method SimpleQueue.empty>".to_string()
+                    }
                     NativeMethodKind::ListCount => "<bound method list.count>".to_string(),
                     NativeMethodKind::ListCopy => "<bound method list.copy>".to_string(),
                     NativeMethodKind::ListClear => "<bound method list.clear>".to_string(),
@@ -8931,6 +8947,7 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::Bool => "bool".to_string(),
         BuiltinFunction::Int => "int".to_string(),
         BuiltinFunction::Float => "float".to_string(),
+        BuiltinFunction::FloatGetFormat => "float.__getformat__".to_string(),
         BuiltinFunction::Complex => "complex".to_string(),
         BuiltinFunction::Str => "str".to_string(),
         BuiltinFunction::List => "list".to_string(),

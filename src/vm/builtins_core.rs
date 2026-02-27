@@ -857,24 +857,8 @@ impl Vm {
                         _ => false,
                     };
                     if !is_recursive_builtin_repr {
-                        let repr_guard_id = match &value {
-                            Value::Class(class_ref) => Some(class_ref.id()),
-                            Value::Instance(instance_ref) => Some(instance_ref.id()),
-                            _ => None,
-                        };
-                        if let Some(id) = repr_guard_id
-                            && self.repr_in_progress.contains(&id)
-                        {
-                            return Ok(Value::Str(format_repr(&value)));
-                        }
-                        if let Some(id) = repr_guard_id {
-                            self.repr_in_progress.push(id);
-                        }
                         let repr_outcome =
                             self.call_internal(repr_method, Vec::new(), HashMap::new());
-                        if repr_guard_id.is_some() {
-                            self.repr_in_progress.pop();
-                        }
                         match repr_outcome? {
                             InternalCallOutcome::Value(Value::Str(text)) => {
                                 return Ok(Value::Str(text));
@@ -4406,6 +4390,39 @@ impl Vm {
         Ok(Value::Float(parsed))
     }
 
+    pub(super) fn builtin_float_getformat(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "__getformat__() expects one argument",
+            ));
+        }
+        let spec = match args.remove(0) {
+            Value::Str(text) => text,
+            other => {
+                return Err(RuntimeError::type_error(format!(
+                    "__getformat__() argument must be str, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        if spec != "double" && spec != "float" {
+            return Err(RuntimeError::value_error(
+                "__getformat__() argument 1 must be 'double' or 'float'",
+            ));
+        }
+        #[cfg(target_endian = "little")]
+        let format = "IEEE, little-endian";
+        #[cfg(target_endian = "big")]
+        let format = "IEEE, big-endian";
+        #[cfg(not(any(target_endian = "little", target_endian = "big")))]
+        let format = "unknown";
+        Ok(Value::Str(format.to_string()))
+    }
+
     pub(super) fn builtin_float_hex(
         &self,
         mut args: Vec<Value>,
@@ -7908,8 +7925,19 @@ impl Vm {
             };
         }
 
-        let annotate_callable =
-            self.optional_getattr_value(Value::Class(class.clone()), "__annotate__")?;
+        let annotate_callable = {
+            let class_ref = class.kind();
+            let Object::Class(class_data) = &*class_ref else {
+                return Err(RuntimeError::new(
+                    "__annotations__ descriptor requires a type object",
+                ));
+            };
+            class_data
+                .attrs
+                .get("__annotate__")
+                .cloned()
+                .or_else(|| class_data.attrs.get("__annotate_func__").cloned())
+        };
         let annotations = if let Some(annotate_callable) = annotate_callable {
             if self.is_callable_value(&annotate_callable) {
                 let mut annotate_format = Value::Int(1);
@@ -12066,18 +12094,37 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         match compare_lt(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
-            Err(err)
-                if runtime_error_matches_exception(&err, "TypeError")
-                    && err
-                        .message
-                        .contains("unsupported operand type for comparison") =>
+            Err(err) if Self::is_unsupported_comparison_type_error(&err) => match self
+                .compare_order_with_fallback(left.clone(), right.clone())
             {
-                Ok(Value::Bool(
-                    self.compare_order_with_fallback(left, right)? == Ordering::Less,
-                ))
-            }
+                Ok(ordering) => Ok(Value::Bool(ordering == Ordering::Less)),
+                Err(fallback_err) if Self::is_unsupported_comparison_type_error(&fallback_err) => {
+                    Err(self.unsupported_comparison_between_instances_error("<", &left, &right))
+                }
+                Err(fallback_err) => Err(fallback_err),
+            },
             Err(err) => Err(err),
         }
+    }
+
+    fn is_unsupported_comparison_type_error(err: &RuntimeError) -> bool {
+        runtime_error_matches_exception(err, "TypeError")
+            && err
+                .message
+                .contains("unsupported operand type for comparison")
+    }
+
+    fn unsupported_comparison_between_instances_error(
+        &self,
+        operator: &str,
+        left: &Value,
+        right: &Value,
+    ) -> RuntimeError {
+        RuntimeError::type_error(format!(
+            "'{operator}' not supported between instances of '{}' and '{}'",
+            self.value_type_name_for_error(left),
+            self.value_type_name_for_error(right)
+        ))
     }
 
     fn contains_via_iteration(
@@ -13382,16 +13429,17 @@ impl Vm {
         }
         match compare_le(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
-            Err(err)
-                if runtime_error_matches_exception(&err, "TypeError")
-                    && err
-                        .message
-                        .contains("unsupported operand type for comparison") =>
+            Err(err) if Self::is_unsupported_comparison_type_error(&err) => match self
+                .compare_order_with_fallback(left.clone(), right.clone())
             {
-                Ok(Value::Bool(
-                    self.compare_order_with_fallback(left, right)? != Ordering::Greater,
-                ))
-            }
+                Ok(ordering) => Ok(Value::Bool(ordering != Ordering::Greater)),
+                Err(fallback_err) if Self::is_unsupported_comparison_type_error(&fallback_err) => {
+                    Err(self.unsupported_comparison_between_instances_error(
+                        "<=", &left, &right,
+                    ))
+                }
+                Err(fallback_err) => Err(fallback_err),
+            },
             Err(err) => Err(err),
         }
     }
@@ -13403,16 +13451,15 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         match compare_gt(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
-            Err(err)
-                if runtime_error_matches_exception(&err, "TypeError")
-                    && err
-                        .message
-                        .contains("unsupported operand type for comparison") =>
+            Err(err) if Self::is_unsupported_comparison_type_error(&err) => match self
+                .compare_order_with_fallback(left.clone(), right.clone())
             {
-                Ok(Value::Bool(
-                    self.compare_order_with_fallback(left, right)? == Ordering::Greater,
-                ))
-            }
+                Ok(ordering) => Ok(Value::Bool(ordering == Ordering::Greater)),
+                Err(fallback_err) if Self::is_unsupported_comparison_type_error(&fallback_err) => {
+                    Err(self.unsupported_comparison_between_instances_error(">", &left, &right))
+                }
+                Err(fallback_err) => Err(fallback_err),
+            },
             Err(err) => Err(err),
         }
     }
@@ -13434,16 +13481,17 @@ impl Vm {
         }
         match compare_ge(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
-            Err(err)
-                if runtime_error_matches_exception(&err, "TypeError")
-                    && err
-                        .message
-                        .contains("unsupported operand type for comparison") =>
+            Err(err) if Self::is_unsupported_comparison_type_error(&err) => match self
+                .compare_order_with_fallback(left.clone(), right.clone())
             {
-                Ok(Value::Bool(
-                    self.compare_order_with_fallback(left, right)? != Ordering::Less,
-                ))
-            }
+                Ok(ordering) => Ok(Value::Bool(ordering != Ordering::Less)),
+                Err(fallback_err) if Self::is_unsupported_comparison_type_error(&fallback_err) => {
+                    Err(self.unsupported_comparison_between_instances_error(
+                        ">=", &left, &right,
+                    ))
+                }
+                Err(fallback_err) => Err(fallback_err),
+            },
             Err(err) => Err(err),
         }
     }
@@ -15113,7 +15161,8 @@ impl Vm {
                     }
                 }
                 GeneratorResumeOutcome::PropagatedException => {
-                    Err(self.iteration_error_from_state("next() iteration failed")?)
+                    self.propagate_pending_generator_exception()?;
+                    Ok(Value::None)
                 }
             },
             Value::Iterator(iterator_ref) => {
@@ -15135,7 +15184,8 @@ impl Vm {
                     }
                 }
                 GeneratorResumeOutcome::PropagatedException => {
-                    Err(self.iteration_error_from_state("next() iteration failed")?)
+                    self.propagate_pending_generator_exception()?;
+                    Ok(Value::None)
                 }
             },
             _ => Err(RuntimeError::new("next() argument is not iterable")),
@@ -15948,8 +15998,9 @@ impl Vm {
                 if name == "__bases__" {
                     self.update_class_bases_attr(&class, value)?;
                 } else if let Object::Class(class_data) = &mut *class.kind_mut() {
-                    class_data.attrs.insert(name, value);
+                    class_data.attrs.insert(name.clone(), value);
                 }
+                self.normalize_class_annotations_after_attr_set(&class, &name);
             }
             Value::Function(func) => self.store_attr_function(&func, name, value)?,
             Value::Cell(cell) => self.store_attr_cell(&cell, &name, value)?,
