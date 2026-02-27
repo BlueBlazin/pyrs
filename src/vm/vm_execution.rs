@@ -5178,20 +5178,11 @@ impl Vm {
                     }
                 }
                 let module_name = self
-                    .frames
-                    .last()
-                    .and_then(|frame| {
-                        if let Object::Module(module_data) = &*frame.function_globals.kind() {
-                            module_data
-                                .globals
-                                .get("__name__")
-                                .and_then(|value| match value {
-                                    Value::Str(name) => Some(name.clone()),
-                                    _ => None,
-                                })
-                        } else {
-                            None
-                        }
+                    .lookup_name_with_index(usize::MAX, "__name__")
+                    .ok()
+                    .and_then(|value| match value {
+                        Value::Str(name) => Some(name),
+                        _ => None,
                     })
                     .unwrap_or_else(|| "__main__".to_string());
                 if self
