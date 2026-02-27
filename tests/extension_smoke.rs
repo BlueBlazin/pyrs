@@ -533,7 +533,7 @@ fn imports_manifest_backed_hello_extension() {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import hello_ext\nassert hello_ext.EXTENSION_LOADED is True\nassert hello_ext.ENTRYPOINT == 'hello_ext'\nassert hello_ext.MESSAGE == 'hello from hello_ext'\nassert hello_ext.__loader__ == 'pyrs.ExtensionFileLoader'\nassert hello_ext.__pyrs_extension__ is True",
+        "import hello_ext\nassert hello_ext.EXTENSION_LOADED is True\nassert hello_ext.ENTRYPOINT == 'hello_ext'\nassert hello_ext.MESSAGE == 'hello from hello_ext'\nassert hello_ext.__loader__.__class__.__name__ == 'ExtensionFileLoader'\nassert hello_ext.__loader__ is hello_ext.__spec__.loader\nassert hello_ext.__pyrs_extension__ is True",
     )
     .expect("manifest hello_ext import should succeed");
 
@@ -672,7 +672,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_manifest_ext\nassert native_manifest_ext.EXTENSION_LOADED is True\nassert native_manifest_ext.ANSWER == 42\nassert native_manifest_ext.ENTRYPOINT == 'pyrs_extension_init_v1'\nassert native_manifest_ext.__loader__ == 'pyrs.ExtensionFileLoader'\nassert native_manifest_ext.__pyrs_extension_abi__ == 'pyrs314'\nassert native_manifest_ext.__pyrs_extension_expected_symbol__ == 'pyrs_extension_init_v1'\nassert native_manifest_ext.__pyrs_extension_symbol_family__ == 'pyrs-v1'",
+        "import native_manifest_ext\nassert native_manifest_ext.EXTENSION_LOADED is True\nassert native_manifest_ext.ANSWER == 42\nassert native_manifest_ext.ENTRYPOINT == 'pyrs_extension_init_v1'\nassert native_manifest_ext.__loader__.__class__.__name__ == 'ExtensionFileLoader'\nassert native_manifest_ext.__loader__ is native_manifest_ext.__spec__.loader\nassert native_manifest_ext.__pyrs_extension_abi__ == 'pyrs314'\nassert native_manifest_ext.__pyrs_extension_expected_symbol__ == 'pyrs_extension_init_v1'\nassert native_manifest_ext.__pyrs_extension_symbol_family__ == 'pyrs-v1'",
     )
     .expect("manifest dynamic extension import should succeed");
 
@@ -724,7 +724,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import direct_native\nassert direct_native.DIRECT_LOADED is True\nassert direct_native.SOURCE == 'direct-shared-object'\nassert direct_native.__loader__ == 'pyrs.ExtensionFileLoader'\nassert direct_native.__pyrs_extension_entrypoint__ == 'dynamic:pyrs_extension_init_v1'\nassert direct_native.__pyrs_extension_expected_symbol__ == 'pyrs_extension_init_v1'\nassert direct_native.__pyrs_extension_symbol_family__ == 'pyrs-v1'",
+        "import direct_native\nassert direct_native.DIRECT_LOADED is True\nassert direct_native.SOURCE == 'direct-shared-object'\nassert direct_native.__loader__.__class__.__name__ == 'ExtensionFileLoader'\nassert direct_native.__loader__ is direct_native.__spec__.loader\nassert direct_native.__pyrs_extension_entrypoint__ == 'dynamic:pyrs_extension_init_v1'\nassert direct_native.__pyrs_extension_expected_symbol__ == 'pyrs_extension_init_v1'\nassert direct_native.__pyrs_extension_symbol_family__ == 'pyrs-v1'",
     )
     .expect("direct shared object import should succeed");
 
