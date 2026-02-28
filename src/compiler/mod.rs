@@ -1,4 +1,9 @@
-//! AST to bytecode compiler (minimal subset).
+//! AST-to-bytecode compiler.
+//!
+//! Pipeline overview:
+//! 1) classify names into local/global/cell/free scope sets,
+//! 2) emit pyrs bytecode with CPython-compatible control-flow and binding rules,
+//! 3) finalize `CodeObject` layout indexes for runtime fast-path lookups.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -42,6 +47,7 @@ enum ScopeType {
 }
 
 #[derive(Debug, Clone)]
+/// Name/scope classification used during code generation.
 struct ScopeInfo {
     scope_type: ScopeType,
     locals: HashSet<String>,
@@ -146,6 +152,10 @@ impl IrrefutablePatternKind {
     }
 }
 
+/// Compute scope classification for a module/function/class/lambda body.
+///
+/// The resulting `ScopeInfo` drives opcode choice (`LOAD_FAST`/`LOAD_DEREF`/etc.)
+/// and closure cell/freevar materialization.
 fn analyze_scope(
     scope_type: ScopeType,
     posonly_params: &[Parameter],
@@ -2867,14 +2877,17 @@ fn expr_has_await(expr: &Expr) -> bool {
     }
 }
 
+/// Compile a module AST into an executable `CodeObject`.
 pub fn compile_module(module: &Module) -> Result<CodeObject, CompileError> {
     compile_module_with_filename(module, "<module>")
 }
 
+/// Compile a single expression AST into expression-mode `CodeObject`.
 pub fn compile_expression(expr: &Expr) -> Result<CodeObject, CompileError> {
     compile_expression_with_filename(expr, "<string>")
 }
 
+/// Compile a module AST using an explicit source filename for diagnostics.
 pub fn compile_module_with_filename(
     module: &Module,
     filename: &str,
@@ -2885,6 +2898,7 @@ pub fn compile_module_with_filename(
     Ok(compiler.finish())
 }
 
+/// Compile a single expression AST using an explicit source filename.
 pub fn compile_expression_with_filename(
     expr: &Expr,
     filename: &str,
@@ -2901,6 +2915,7 @@ pub fn compile_expression_with_filename(
     Ok(compiler.finish_expression())
 }
 
+/// Stateful code generator over one scope/code-object emission pass.
 struct Compiler {
     code: CodeObject,
     temp_counter: usize,
@@ -2965,6 +2980,7 @@ impl Compiler {
         self.code
     }
 
+    /// Emit bytecode for module body statements in source order.
     fn compile_module(&mut self, module: &Module) -> Result<(), CompileError> {
         let future_annotations_import = self.validate_future_imports(&module.body)?;
         self.future_annotations_import = future_annotations_import;

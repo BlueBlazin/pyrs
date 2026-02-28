@@ -1,3 +1,9 @@
+//! CPython marshal/`pyc` decoding and translation into pyrs bytecode.
+//!
+//! The translation path is intentionally strict: decode CPython payloads,
+//! validate control-flow metadata, map opcodes/locals/constants, then emit a
+//! `CodeObject` consumable by the pyrs VM.
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -23,6 +29,7 @@ impl CpythonError {
 }
 
 #[derive(Debug, Clone)]
+/// Minimal CPython code-object payload shape extracted from marshal data.
 pub struct CpythonCode {
     pub argcount: i32,
     pub posonlyargcount: i32,
@@ -71,6 +78,7 @@ pub enum PyObject {
     },
 }
 
+/// Load a `.pyc` payload and return the embedded CPython code object.
 pub fn load_pyc(bytes: &[u8]) -> Result<CpythonCode, CpythonError> {
     let (_header, offset) =
         parse_pyc_header(bytes).map_err(|err| CpythonError::new(err.message))?;
@@ -82,6 +90,7 @@ pub fn load_pyc(bytes: &[u8]) -> Result<CpythonCode, CpythonError> {
     }
 }
 
+/// Serialize a CPython code object into `.pyc` bytes with the provided header.
 pub fn dump_pyc(code: &CpythonCode, header: &PycHeader) -> Result<Vec<u8>, CpythonError> {
     let mut bytes = Vec::new();
     write_pyc_header(header, &mut bytes).map_err(|err| CpythonError::new(err.message))?;
@@ -102,6 +111,7 @@ pub fn marshal_load_object(bytes: &[u8], allow_code: bool) -> Result<PyObject, C
     reader.read_object(allow_code)
 }
 
+/// Translate CPython bytecode metadata/opcodes into a pyrs `CodeObject`.
 pub fn translate_code(code: &CpythonCode, heap: &mut Heap) -> Result<CodeObject, CpythonError> {
     let mut translator = Translator::new(code, heap)?;
     translator.translate()
@@ -125,6 +135,7 @@ fn default_opcode_map() -> Result<&'static HashMap<u8, String>, CpythonError> {
     }
 }
 
+/// Stateful translator for one CPython code object.
 struct Translator<'a> {
     code: &'a CpythonCode,
     heap: &'a mut Heap,
@@ -158,6 +169,10 @@ impl<'a> Translator<'a> {
         })
     }
 
+    /// Execute full translation for the active CPython code object.
+    ///
+    /// This includes name/locals mapping, constant conversion, opcode lowering,
+    /// location table decoding, and exception-table parsing.
     fn translate(&mut self) -> Result<CodeObject, CpythonError> {
         self.build_name_maps()?;
         self.constants = self.convert_constants(&self.code.consts)?;
@@ -930,6 +945,7 @@ const PY_CODE_LOCATION_INFO_NO_COLUMNS: u8 = 13;
 const PY_CODE_LOCATION_INFO_LONG: u8 = 14;
 const PY_CODE_LOCATION_INFO_NONE: u8 = 15;
 
+/// Decode CPython 3.11+ compressed location table into per-instruction spans.
 fn decode_cpython_linetable_locations(
     linetable: &[u8],
     firstlineno: i32,
@@ -1157,6 +1173,7 @@ fn for_iter_target(idx: usize, arg: u32) -> Result<u32, CpythonError> {
     u32::try_from(target).map_err(|_| CpythonError::new("FOR_ITER target overflow"))
 }
 
+/// Validate CPython-side jump/control-flow targets before lowering.
 fn validate_cpython_control_flow(instructions: &[CpInstr]) -> Result<(), CpythonError> {
     let len = instructions.len();
     for (idx, instr) in instructions.iter().enumerate() {
@@ -1205,6 +1222,7 @@ fn validate_cpython_control_flow(instructions: &[CpInstr]) -> Result<(), Cpython
     Ok(())
 }
 
+/// Validate translated pyrs bytecode stack/jump consistency.
 fn validate_translated_code(instructions: &[Instruction]) -> Result<(), CpythonError> {
     let mut queue = VecDeque::new();
     let mut seen: HashSet<usize> = HashSet::new();
@@ -1258,6 +1276,7 @@ fn parse_varint(bytes: &[u8], index: &mut usize) -> Result<u32, CpythonError> {
     Ok(value)
 }
 
+/// Parse CPython exception table entries and map them to pyrs handlers.
 fn parse_exception_table(
     bytes: &[u8],
     instruction_count: usize,
