@@ -1,3 +1,9 @@
+//! CPython C-API compatibility layer and extension-runtime substrate.
+//!
+//! This module translates raw CPython-facing pointers/calls into pyrs runtime
+//! objects while tracking ownership/lifetime through `ModuleCapiContext` and
+//! VM-global C-API registries.
+
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_uint, c_ulong, c_void};
@@ -622,6 +628,10 @@ struct CapiCapsuleSlot {
 }
 
 #[derive(Clone, Copy)]
+/// Mirror of CPython's thread-local `(type, value, traceback)` error tuple.
+///
+/// Pointers are context-relative; they must be interpreted only while the
+/// owning `ModuleCapiContext` is active.
 struct CpythonErrorState {
     ptype: *mut c_void,
     pvalue: *mut c_void,
@@ -4032,6 +4042,11 @@ unsafe extern "C" {
     fn free(ptr: *mut c_void);
 }
 
+/// Per-extension-call bridge context between raw C-API pointers and pyrs values.
+///
+/// The context owns temporary compat allocations and pointer/handle maps created
+/// during extension calls. On drop it either frees or promotes allocations into
+/// VM-pinned ownership depending on observed escape/pin state.
 struct ModuleCapiContext {
     vm: *mut Vm,
     module: ObjRef,
@@ -4075,6 +4090,12 @@ struct ModuleCapiContext {
 }
 
 impl Drop for ModuleCapiContext {
+    /// Tear down context-owned C-API allocations.
+    ///
+    /// This drop path is responsible for:
+    /// - clearing thread-state exception pointers that still point into this context,
+    /// - transferring escaped allocations into VM pinned ownership when required,
+    /// - freeing non-escaped compat/aux allocations exactly once.
     fn drop(&mut self) {
         self.clear_thread_state_error_if_owned_by_context();
         self.codec_error_handlers.clear();
@@ -4731,6 +4752,7 @@ impl ModuleCapiContext {
         }
     }
 
+    /// Create a fresh C-API bridge context for one extension/module operation.
     fn new(vm: *mut Vm, module: ObjRef) -> Self {
         initialize_cpython_compat_type_objects();
         let mut known_type_ptrs = HashSet::new();
@@ -5089,6 +5111,10 @@ impl ModuleCapiContext {
     }
 
     #[track_caller]
+    /// Store CPython-style error state and synchronize thread-state views.
+    ///
+    /// `ptype` is only derived from `pvalue` when `pvalue` is exception-like;
+    /// message payload objects must not replace the declared exception type.
     fn set_error_state(
         &mut self,
         ptype: *mut c_void,
@@ -6672,6 +6698,10 @@ impl ModuleCapiContext {
         }
     }
 
+    /// Convert a runtime `Value` into a CPython-facing pointer.
+    ///
+    /// Returns existing pinned/proxy pointers when possible; otherwise allocates
+    /// context-owned compat storage and records it for drop-time lifecycle handling.
     fn alloc_cpython_ptr_for_value(&mut self, value: Value) -> *mut c_void {
         let trace_bound_ptr = std::env::var_os("PYRS_TRACE_BOUND_METHOD_PTR").is_some();
         let is_bound_method = matches!(value, Value::BoundMethod(_));

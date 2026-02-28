@@ -1,3 +1,8 @@
+//! Active `ModuleCapiContext` access helpers and cross-context error plumbing.
+//!
+//! Most helpers in this module require an active thread-local context and should
+//! only be used while extension calls are executing.
+
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::{Mutex, OnceLock};
@@ -11,6 +16,9 @@ use super::{
     cpython_keyword_args_from_dict_object, cpython_positional_args_from_tuple_object,
 };
 
+/// Access the active C-API context for the current thread.
+///
+/// Returns an error when called outside extension-init/call scopes.
 pub(in crate::vm::vm_extensions) fn with_active_cpython_context_mut<R>(
     f: impl FnOnce(&mut ModuleCapiContext) -> R,
 ) -> Result<R, String> {
@@ -40,6 +48,7 @@ pub(in crate::vm::vm_extensions) struct ActiveCpythonContextGuard {
 }
 
 impl ActiveCpythonContextGuard {
+    /// Push a context as the active thread-local context until this guard drops.
     pub(in crate::vm::vm_extensions) fn push(context: *mut ModuleCapiContext) -> Self {
         let previous = cpython_set_active_context(context);
         Self { context, previous }
@@ -185,6 +194,7 @@ pub(in crate::vm::vm_extensions) fn cpython_error_message_indicates_missing_attr
 }
 
 #[track_caller]
+/// Set a generic runtime error message on the active CPython context.
 pub(in crate::vm::vm_extensions) fn cpython_set_error(message: impl Into<String>) {
     let message = message.into();
     if cpython_trace_flag_enabled("PYRS_TRACE_UNKNOWN_PTR")
@@ -213,6 +223,7 @@ pub(in crate::vm::vm_extensions) fn cpython_set_error(message: impl Into<String>
 }
 
 #[track_caller]
+/// Set a typed CPython error state on the active context.
 pub(in crate::vm::vm_extensions) fn cpython_set_typed_error(
     ptype: *mut c_void,
     message: impl Into<String>,
@@ -251,6 +262,7 @@ pub(in crate::vm::vm_extensions) fn cpython_set_typed_error(
     });
 }
 
+/// Resolve a raw pointer to a runtime `Value` in the active context.
 pub(in crate::vm::vm_extensions) fn cpython_value_from_ptr(
     object: *mut c_void,
 ) -> Result<Value, String> {

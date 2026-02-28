@@ -1,7 +1,14 @@
+//! VM-global registry for C-API pointer ownership and lifecycle bookkeeping.
+//!
+//! The registry tracks pointer provenance and transition state so C-API bridges
+//! can decide when a raw pointer is safe to free, must stay pinned, or should be
+//! treated as borrowed-only.
+
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
+/// Origin of a tracked C-API pointer.
 pub(crate) enum CapiPtrProvenance {
     OwnedCompat,
     ExternalRef,
@@ -9,6 +16,7 @@ pub(crate) enum CapiPtrProvenance {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Lifecycle state for an entry in `CapiObjectRegistry`.
 pub(crate) enum CapiPtrLifecycleState {
     Alive,
     PendingFree,
@@ -16,6 +24,7 @@ pub(crate) enum CapiPtrLifecycleState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Ref semantics observed at the API boundary.
 pub(crate) enum CapiRefKind {
     Borrowed,
     Owned,
@@ -117,6 +126,10 @@ pub(crate) struct CapiRegistryStats {
 }
 
 #[derive(Debug, Default)]
+/// Central pointer registry shared by VM/C-API contexts.
+///
+/// Entries are keyed by raw pointer address and survive reuse of the same
+/// address so lifetime transitions can be reasoned about explicitly.
 pub(crate) struct CapiObjectRegistry {
     entries: HashMap<usize, CapiPtrEntry>,
     object_ptr_by_id: HashMap<u64, usize>,
@@ -124,6 +137,7 @@ pub(crate) struct CapiObjectRegistry {
 }
 
 impl CapiObjectRegistry {
+    /// Register or refresh a pointer entry as live.
     pub(crate) fn register_ptr(
         &mut self,
         ptr: usize,
@@ -361,6 +375,7 @@ impl CapiObjectRegistry {
         })
     }
 
+    /// Move a live entry to `PendingFree` so free decisions can be deferred.
     pub(crate) fn mark_pending_free(&mut self, ptr: usize) {
         if ptr == 0 {
             return;
@@ -383,6 +398,7 @@ impl CapiObjectRegistry {
         entry.lifecycle = CapiPtrLifecycleState::Alive;
     }
 
+    /// Mark a pointer entry as permanently freed and clear pin/GC state.
     pub(crate) fn mark_freed(&mut self, ptr: usize) {
         if ptr == 0 {
             return;
@@ -419,6 +435,9 @@ impl CapiObjectRegistry {
             .is_some_and(|entry| entry.lifecycle == CapiPtrLifecycleState::Alive)
     }
 
+    /// Return whether an entry may be physically freed immediately.
+    ///
+    /// External and static pointers are never freed by pyrs.
     pub(crate) fn should_free_now(&self, ptr: usize) -> bool {
         let Some(entry) = self.entries.get(&ptr) else {
             return false;

@@ -1,3 +1,8 @@
+//! Module/capsule state helpers for `ModuleCapiContext`.
+//!
+//! These helpers synchronize CPython extension module state (`m_state`-like data
+//! and exported capsule pointers) with VM-level registries.
+
 use std::ffi::c_void;
 
 use crate::extensions::{
@@ -79,6 +84,10 @@ impl ModuleCapiContext {
         })
     }
 
+    /// Update VM-owned extension module state for the active module.
+    ///
+    /// Replacing state tears down prior state/finalizers using the extension's
+    /// callbacks to match CPython module-state lifecycle expectations.
     pub(in crate::vm::vm_extensions) fn module_set_state(
         &mut self,
         state: *mut c_void,
@@ -204,6 +213,7 @@ impl ModuleCapiContext {
         Ok(state)
     }
 
+    /// Synchronize an exported capsule entry into the VM-global capsule registry.
     pub(in crate::vm::vm_extensions) fn sync_exported_capsule(
         &mut self,
         exported_name: Option<&str>,

@@ -1,3 +1,8 @@
+//! Runtime bridge for CPython proxy objects and type-backed operations.
+//!
+//! Proxy helpers here map pyrs values to raw CPython pointers and route selected
+//! operations through CPython slots/call conventions when a proxy boundary is hit.
+
 use crate::runtime::format_repr;
 use std::collections::HashMap;
 use std::ffi::{CString, c_void};
@@ -103,6 +108,7 @@ impl Vm {
         }
     }
 
+    /// Extract the raw CPython pointer carried by a proxy class/instance value.
     pub(in crate::vm) fn cpython_proxy_raw_ptr_from_value(value: &Value) -> Option<*mut c_void> {
         match value {
             Value::Class(class_obj) => {
@@ -138,6 +144,10 @@ impl Vm {
         }
     }
 
+    /// Call a CPython proxy object or proxy type constructor.
+    ///
+    /// Executes through a temporary `ModuleCapiContext` so pointer ownership and
+    /// error-state translation remain consistent with normal C-API call paths.
     pub(in crate::vm) fn call_cpython_proxy_object(
         &mut self,
         proxy_value: &Value,
