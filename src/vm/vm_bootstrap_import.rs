@@ -8788,13 +8788,23 @@ impl Vm {
             .unwrap_or(Value::None)
     }
 
+    fn warnings_compile_module_filter_pattern(&mut self, pattern: &str) -> Value {
+        self.call_builtin(
+            BuiltinFunction::ReCompile,
+            vec![Value::Str(pattern.to_string())],
+            HashMap::new(),
+        )
+        .unwrap_or(Value::None)
+    }
+
     fn warnings_default_filter_entries(&mut self) -> Vec<Value> {
+        let main_module_pattern = self.warnings_compile_module_filter_pattern("__main__");
         vec![
             self.heap.alloc_tuple(vec![
                 Value::Str("default".to_string()),
                 Value::None,
                 self.warning_class_value("DeprecationWarning"),
-                Value::Str("__main__".to_string()),
+                main_module_pattern,
                 Value::Int(0),
             ]),
             self.heap.alloc_tuple(vec![

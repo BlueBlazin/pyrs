@@ -7,6 +7,7 @@ use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;
 use std::rc::{Rc, Weak};
@@ -103,7 +104,6 @@ impl FunctionObject {
     }
 }
 
-#[derive(Debug)]
 pub struct ClassObject {
     pub name: String,
     pub bases: Vec<ObjRef>,
@@ -123,6 +123,20 @@ impl ClassObject {
             slots: None,
             metaclass: None,
         }
+    }
+}
+
+impl fmt::Debug for ClassObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let metaclass = self.metaclass.as_ref().map(ObjRef::id);
+        f.debug_struct("ClassObject")
+            .field("name", &self.name)
+            .field("bases_len", &self.bases.len())
+            .field("mro_len", &self.mro.len())
+            .field("attrs_len", &self.attrs.len())
+            .field("slots", &self.slots)
+            .field("metaclass_id", &metaclass)
+            .finish()
     }
 }
 
@@ -430,7 +444,7 @@ pub struct Obj {
     kind: RefCell<Object>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ObjRef(Rc<Obj>);
 
 impl ObjRef {
@@ -460,6 +474,12 @@ impl ObjRef {
 
     pub fn from_rc(rc: Rc<Obj>) -> Self {
         Self(rc)
+    }
+}
+
+impl fmt::Debug for ObjRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ObjRef({})", self.id())
     }
 }
 
