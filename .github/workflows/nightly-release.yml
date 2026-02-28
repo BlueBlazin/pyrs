@@ -135,7 +135,7 @@ jobs:
             --method PATCH \
             /repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly \
             -f sha=${GITHUB_SHA} \
-            -f force=true \
+            -F force=true \
           || gh api \
             --method POST \
             /repos/${GITHUB_REPOSITORY}/git/refs \
