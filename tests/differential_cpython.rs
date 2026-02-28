@@ -129,11 +129,36 @@ fn run_pyrs_json(source: &str) -> Result<String, String> {
 }
 
 fn pyrs_bin_path() -> Option<PathBuf> {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_pyrs") {
+        let candidate = PathBuf::from(path);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_pyrs") {
         let candidate = PathBuf::from(path);
         if candidate.is_file() {
             return Some(candidate);
         }
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(debug_dir) = exe.parent().and_then(|p| p.parent())
+    {
+        let candidate = debug_dir.join("pyrs");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        let candidate = PathBuf::from(target_dir).join("debug/pyrs");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    let llvm_cov_candidate =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/llvm-cov-target/debug/pyrs");
+    if llvm_cov_candidate.is_file() {
+        return Some(llvm_cov_candidate);
     }
     let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/pyrs");
     if candidate.is_file() {
