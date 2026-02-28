@@ -1,6 +1,7 @@
 fn main() {
     let src = "src/vm/capi_variadics.c";
     println!("cargo:rerun-if-changed={src}");
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
 
     let mut build = cc::Build::new();
     build.file(src);
@@ -17,4 +18,11 @@ fn main() {
     }
 
     build.compile("pyrs_capi_variadics");
+
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os == "linux" {
+        // Export C-API symbols from the executable so dlopen'd extension modules
+        // can resolve references back into the running pyrs process.
+        println!("cargo:rustc-link-arg-bin=pyrs=-Wl,--export-dynamic");
+    }
 }

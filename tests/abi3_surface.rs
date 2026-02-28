@@ -5,19 +5,74 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn pyrs_bin() -> PathBuf {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_pyrs") {
+        let candidate = PathBuf::from(path);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_pyrs") {
         let candidate = PathBuf::from(path);
         if candidate.is_file() {
             return candidate;
         }
     }
-    let debug = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/pyrs");
-    if debug.is_file() {
-        return debug;
+
+    let mut target_roots = Vec::new();
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        target_roots.push(PathBuf::from(target_dir));
     }
-    let release = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/pyrs");
-    assert!(release.is_file(), "missing pyrs binary at {release:?}");
-    release
+    target_roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"));
+
+    let mut target_triples = Vec::new();
+    if let Ok(target) = std::env::var("CARGO_BUILD_TARGET")
+        && !target.is_empty()
+    {
+        target_triples.push(target);
+    }
+    if let Ok(target) = std::env::var("TARGET")
+        && !target.is_empty()
+        && !target_triples.iter().any(|entry| entry == &target)
+    {
+        target_triples.push(target);
+    }
+
+    let mut tried = Vec::new();
+    for root in &target_roots {
+        for profile in ["debug", "release"] {
+            let direct = root.join(profile).join("pyrs");
+            if direct.is_file() {
+                return direct;
+            }
+            tried.push(direct);
+            for triple in &target_triples {
+                let with_triple = root.join(triple).join(profile).join("pyrs");
+                if with_triple.is_file() {
+                    return with_triple;
+                }
+                tried.push(with_triple);
+            }
+        }
+    }
+
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(profile_dir) = exe.parent().and_then(|deps| deps.parent())
+    {
+        let sibling = profile_dir.join("pyrs");
+        if sibling.is_file() {
+            return sibling;
+        }
+        tried.push(sibling);
+    }
+
+    panic!(
+        "missing pyrs binary; looked in:\n{}",
+        tried
+            .iter()
+            .map(|path| format!("  - {}", path.display()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 }
 
 fn exported_symbols(bin: &Path) -> HashSet<String> {

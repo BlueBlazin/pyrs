@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -287,24 +288,30 @@ fn run_source_in_subprocess(bin: &Path, source: &str, timeout: Duration) -> Resu
     let mut child = Command::new(bin)
         .arg("-c")
         .arg(source)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| format!("failed to spawn subprocess harness: {err}"))?;
     let start = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
+                let (stdout, stderr) = capture_child_output(&mut child);
                 if status.success() {
                     return Ok(());
                 }
-                return Err(format!("subprocess harness failed with status {status}"));
+                return Err(format!(
+                    "subprocess harness failed with status {status}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+                ));
             }
             Ok(None) => {
                 if start.elapsed() > timeout {
                     let _ = child.kill();
                     let _ = child.wait();
+                    let (stdout, stderr) = capture_child_output(&mut child);
                     return Err(format!(
-                        "subprocess harness timed out after {}s",
-                        timeout.as_secs()
+                        "subprocess harness timed out after {}s\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                        timeout.as_secs(),
                     ));
                 }
                 thread::sleep(Duration::from_millis(50));
@@ -312,6 +319,21 @@ fn run_source_in_subprocess(bin: &Path, source: &str, timeout: Duration) -> Resu
             Err(err) => return Err(format!("failed to poll subprocess harness: {err}")),
         }
     }
+}
+
+fn capture_child_output(child: &mut Child) -> (String, String) {
+    let mut stdout_buf = Vec::new();
+    let mut stderr_buf = Vec::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        let _ = stdout.read_to_end(&mut stdout_buf);
+    }
+    if let Some(mut stderr) = child.stderr.take() {
+        let _ = stderr.read_to_end(&mut stderr_buf);
+    }
+    (
+        String::from_utf8_lossy(&stdout_buf).to_string(),
+        String::from_utf8_lossy(&stderr_buf).to_string(),
+    )
 }
 
 #[derive(Clone, Copy)]
