@@ -18,7 +18,7 @@ use reedline::{EditCommand, Highlighter, Hinter};
 
 use super::{error_style, format_compile_error, format_syntax_error};
 use crate::VERSION;
-use crate::ast::{AssignTarget, Module, StmtKind};
+use crate::ast::{AssignTarget, ImportAlias, Module, StmtKind};
 use crate::compiler;
 use crate::parser::{self, ParseError};
 use crate::runtime::{Object, Value};
@@ -202,8 +202,35 @@ fn repl_module_completion_plan(module: &Module) -> CompletionRefreshPlan {
                 CompletionRefreshPlan::Symbols(symbols)
             }
         }
+        StmtKind::Import { names } => import_stmt_completion_symbols(names, false),
+        StmtKind::ImportFrom { names, .. } => import_stmt_completion_symbols(names, true),
         _ => CompletionRefreshPlan::Full,
     }
+}
+
+fn import_stmt_completion_symbols(names: &[ImportAlias], from_import: bool) -> CompletionRefreshPlan {
+    let mut symbols = Vec::new();
+    for alias in names {
+        if from_import && alias.name == "*" {
+            return CompletionRefreshPlan::Full;
+        }
+        let symbol = if let Some(asname) = &alias.asname {
+            asname.clone()
+        } else if from_import {
+            alias.name.clone()
+        } else {
+            alias
+                .name
+                .split('.')
+                .next()
+                .unwrap_or(alias.name.as_str())
+                .to_string()
+        };
+        symbols.push(symbol);
+    }
+    normalize_completion_symbols(symbols).map_or(CompletionRefreshPlan::None, |names| {
+        CompletionRefreshPlan::Symbols(names)
+    })
 }
 
 fn assignment_target_symbols(targets: &[AssignTarget]) -> Vec<String> {
@@ -615,7 +642,7 @@ fn refresh_completion_state(vm: &Vm, state: &Arc<Mutex<CompletionState>>) {
 }
 
 fn refresh_completion_symbols(vm: &Vm, state: &Arc<Mutex<CompletionState>>, symbols: &[String]) {
-    const MAX_COMPLETION_DEPTH: usize = 6;
+    const MAX_COMPLETION_DEPTH: usize = 2;
     if symbols.is_empty() {
         return;
     }
@@ -659,7 +686,7 @@ fn apply_completion_refresh_plan(
 }
 
 fn build_completion_state(vm: &Vm) -> CompletionState {
-    const MAX_COMPLETION_DEPTH: usize = 6;
+    const MAX_COMPLETION_DEPTH: usize = 2;
     let mut state = CompletionState::default();
     let mut visited = HashSet::new();
     for (name, value) in vm.repl_root_bindings() {
@@ -2197,6 +2224,41 @@ mod tests {
         );
         assert_eq!(
             repl_module_completion_plan(&import_module),
+            CompletionRefreshPlan::Symbols(vec!["os".to_string()])
+        );
+    }
+
+    #[test]
+    fn completion_refresh_plan_handles_import_bindings_incrementally() {
+        let import_nested =
+            parser::parse_module("import os.path\n").expect("parse nested import module");
+        let import_as =
+            parser::parse_module("import os.path as osp\n").expect("parse import-as module");
+        let from_import =
+            parser::parse_module("from os import path\n").expect("parse from-import module");
+        let from_import_as =
+            parser::parse_module("from os import path as p\n").expect("parse from-import-as");
+        let from_import_star =
+            parser::parse_module("from os import *\n").expect("parse from-import-star module");
+
+        assert_eq!(
+            repl_module_completion_plan(&import_nested),
+            CompletionRefreshPlan::Symbols(vec!["os".to_string()])
+        );
+        assert_eq!(
+            repl_module_completion_plan(&import_as),
+            CompletionRefreshPlan::Symbols(vec!["osp".to_string()])
+        );
+        assert_eq!(
+            repl_module_completion_plan(&from_import),
+            CompletionRefreshPlan::Symbols(vec!["path".to_string()])
+        );
+        assert_eq!(
+            repl_module_completion_plan(&from_import_as),
+            CompletionRefreshPlan::Symbols(vec!["p".to_string()])
+        );
+        assert_eq!(
+            repl_module_completion_plan(&from_import_star),
             CompletionRefreshPlan::Full
         );
     }
