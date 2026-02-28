@@ -1,3 +1,9 @@
+//! VM instruction execution, exception unwind, and traceback plumbing.
+//!
+//! This file contains the hot-path interpreter loop plus the control-flow
+//! machinery that maps runtime failures into CPython-shaped exception and
+//! traceback behavior.
+
 #[cfg(not(debug_assertions))]
 use super::FusedDirectOneArgNoCellsMetadata;
 #[cfg(not(debug_assertions))]
@@ -36,6 +42,9 @@ thread_local! {
     static DEBUG_EXEC_INSTR_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
+/// Optional recursion/depth guard used while debugging unwind/raise flows.
+///
+/// The guard is only active when `PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH` is set.
 struct DebugDepthGuard {
     key: &'static std::thread::LocalKey<Cell<usize>>,
 }
@@ -8413,6 +8422,11 @@ impl Vm {
         }
     }
 
+    /// Core exception propagation routine.
+    ///
+    /// Walks frame/block stacks until a handler is found, while incrementally
+    /// extending traceback frames in CPython order. When no handler remains,
+    /// produces an unhandled `RuntimeError` that preserves the exception object.
     fn unwind_exception_internal(
         &mut self,
         mut exc: Value,
@@ -8569,6 +8583,8 @@ impl Vm {
         exception.attrs.borrow_mut().remove("__traceback__");
     }
 
+    /// Raise an exception value, attaching implicit context and optional
+    /// explicit cause per CPython chaining rules.
     pub(super) fn raise_exception_with_cause(
         &mut self,
         value: Value,
@@ -8637,6 +8653,10 @@ impl Vm {
         self.unwind_exception(exc)
     }
 
+    /// Convert internal `RuntimeError` values into VM exception propagation.
+    ///
+    /// If the runtime error already contains a concrete exception object it is
+    /// reused; otherwise a `RuntimeError` instance is synthesized.
     pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
         let _debug_depth_guard =
             DebugDepthGuard::enter(&DEBUG_HANDLE_RUNTIME_DEPTH, "handle_runtime_error");

@@ -1,4 +1,8 @@
-//! Bytecode virtual machine (minimal subset).
+//! Bytecode VM runtime and import substrate.
+//!
+//! This module owns the interpreter process state (`Vm`), per-activation execution
+//! state (`Frame`), and the call/import/C-API registries that must remain coherent
+//! with CPython 3.14 semantics.
 
 mod builtins_collections;
 mod builtins_core;
@@ -751,6 +755,14 @@ fn env_var_present_cached(name: &'static str) -> bool {
     }
 }
 
+/// Per-activation interpreter state for one executing `CodeObject`.
+///
+/// Invariants:
+/// - `fast_locals` is authoritative for names mapped by `code.name_to_index`.
+/// - `locals` is sparse fallback storage for names without fast slots.
+/// - transient control-flow state (`stack`, `blocks`, class build fields,
+///   active exception slots, generator resume fields) must be empty before
+///   a frame is returned to frame pools.
 struct Frame {
     frame_id: usize,
     code: Rc<CodeObject>,
@@ -1009,6 +1021,12 @@ impl Frame {
     }
 }
 
+/// Root interpreter state for a single pyrs process.
+///
+/// `Vm` owns heap/runtime objects, active and pooled frames, import/module state,
+/// extension/C-API registries, and subsystem-specific native state used by stdlib
+/// shims. Changes to caches or registries here must preserve CPython-visible
+/// behavior first; performance fast paths are secondary.
 pub struct Vm {
     frames: Vec<Box<Frame>>,
     frame_pool: Vec<Box<Frame>>,
@@ -9987,6 +10005,10 @@ pub(super) fn builtin_exception_parent(name: &str) -> Option<&'static str> {
     }
 }
 
+/// Canonical argument binding output before locals/cell assignment.
+///
+/// Values are split by CPython-style parameter kinds so call binding and frame
+/// assignment can remain decoupled.
 struct BoundArguments {
     posonly: Vec<Value>,
     positional: Vec<Value>,
@@ -10067,6 +10089,11 @@ fn function_name_for_argument_errors(func: &FunctionObject) -> String {
     func.code.name.clone()
 }
 
+/// Bind positional/keyword call inputs to a function signature.
+///
+/// Semantics intentionally follow CPython 3.14 for positional-only handling,
+/// default filling, duplicate detection, and keyword insertion order preservation
+/// (`kwargs_order`) for `**kwargs`.
 fn bind_arguments(
     func: &FunctionObject,
     heap: &Heap,
@@ -10382,6 +10409,7 @@ fn assign_binding(frame: &mut Frame, code: &CodeObject, name: &str, value: Value
     frame.locals.insert(name.to_string(), value);
 }
 
+/// Materialize `BoundArguments` into frame locals/cells using `CodeObject` layout.
 fn apply_bindings(frame: &mut Frame, code: &CodeObject, bindings: BoundArguments, heap: &Heap) {
     for (name, value) in code.posonly_params.iter().zip(bindings.posonly.into_iter()) {
         assign_binding(frame, code, name, value);

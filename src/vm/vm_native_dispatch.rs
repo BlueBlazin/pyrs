@@ -1,3 +1,9 @@
+//! Native builtin/stdlib method dispatch implementations.
+//!
+//! This module hosts CPython-parity method bodies for builtin/native receiver
+//! types and returns either a value or explicit propagated-exception markers to
+//! integrate with VM-level unwind logic.
+
 use std::cell::Cell;
 
 use super::{
@@ -30,6 +36,7 @@ thread_local! {
 
 const SIMPLE_QUEUE_STORAGE_ATTR: &str = "__pyrs_simple_queue_items__";
 
+/// Parse and validate the optional `shape=` argument for `memoryview.cast`.
 fn parse_memoryview_cast_shape(value: &Value) -> Result<Vec<usize>, RuntimeError> {
     let shape_items = match value {
         Value::List(obj) => match &*obj.kind() {
@@ -198,6 +205,12 @@ impl Vm {
         Err(RuntimeError::type_error("str receiver is invalid"))
     }
 
+    /// Dispatch a native receiver method using CPython argument contracts.
+    ///
+    /// Return shape:
+    /// - `NativeCallResult::Value` for normal completion.
+    /// - `NativeCallResult::PropagatedException` when the callee has already
+    ///   installed frame-local exception state and unwind should continue.
     pub(super) fn call_native_method(
         &mut self,
         kind: NativeMethodKind,
