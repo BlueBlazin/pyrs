@@ -2330,6 +2330,25 @@ result = {
 }
 
 #[test]
+fn differential_exception_group_except_star_split_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+try:
+    raise ExceptionGroup("eg", [ValueError(1), TypeError(2)])
+except* ValueError as eg:
+    left = [len(eg.exceptions), type(eg.exceptions[0]).__name__]
+except* TypeError as tg:
+    right = [len(tg.exceptions), type(tg.exceptions[0]).__name__]
+result = {"left": left, "right": right}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
 fn differential_runtime_class_type_params_parity() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;

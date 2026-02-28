@@ -7657,11 +7657,14 @@ impl Vm {
         }
     }
 
-    fn typing_helper_callable(&mut self, helper_name: &str) -> Result<Value, RuntimeError> {
+    pub(super) fn typing_helper_callable(
+        &mut self,
+        helper_name: &str,
+    ) -> Result<Value, RuntimeError> {
         let module = if let Some(module) = self.modules.get("typing").cloned() {
             module
         } else {
-            self.load_module("typing")?
+            self.import_module_object("typing")?
         };
         self.builtin_getattr(
             vec![Value::Module(module), Value::Str(helper_name.to_string())],

@@ -11347,6 +11347,23 @@ fn executes_except_star_with_exceptiongroup_split_semantics() {
 }
 
 #[test]
+fn except_star_binding_preserves_leaf_exception_member_types() {
+    let source = "left_kind = ''\nright_kind = ''\ntry:\n    raise ExceptionGroup('eg', [ValueError(1), TypeError(2)])\nexcept* ValueError as eg:\n    left_kind = type(eg.exceptions[0]).__name__\nexcept* TypeError as tg:\n    right_kind = type(tg.exceptions[0]).__name__\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(
+        vm.get_global("left_kind"),
+        Some(Value::Str("ValueError".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("right_kind"),
+        Some(Value::Str("TypeError".to_string()))
+    );
+}
+
+#[test]
 fn reraises_except_star_remainder() {
     let source = "caught = False\nremaining = 0\ntry:\n    try:\n        raise ExceptionGroup('outer', [ValueError('a'), RuntimeError('b')])\n    except* ValueError:\n        pass\nexcept ExceptionGroup as eg:\n    caught = True\n    remaining = len(eg.exceptions)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

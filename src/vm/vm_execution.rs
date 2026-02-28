@@ -8957,12 +8957,21 @@ impl Vm {
         exception: &ExceptionObject,
         handler_type: &Value,
     ) -> Result<(Option<ExceptionObject>, Option<ExceptionObject>), RuntimeError> {
+        self.exception_split_for_star_object_mode(exception, handler_type, true)
+    }
+
+    fn exception_split_for_star_object_mode(
+        &self,
+        exception: &ExceptionObject,
+        handler_type: &Value,
+        wrap_leaf_matches: bool,
+    ) -> Result<(Option<ExceptionObject>, Option<ExceptionObject>), RuntimeError> {
         if self.exception_inherits(&exception.name, "BaseExceptionGroup") {
             let mut matched_members = Vec::new();
             let mut remaining_members = Vec::new();
             for member in &exception.exceptions {
                 let (matched, remaining) =
-                    self.exception_split_for_star_object(member, handler_type)?;
+                    self.exception_split_for_star_object_mode(member, handler_type, false)?;
                 if let Some(matched) = matched {
                     matched_members.push(matched);
                 }
@@ -8986,7 +8995,11 @@ impl Vm {
         let matches =
             self.exception_matches(&Value::Exception(Box::new(exception.clone())), handler_type)?;
         if matches {
-            Ok((Some(self.wrap_naked_exception_for_star(exception)), None))
+            if wrap_leaf_matches {
+                Ok((Some(self.wrap_naked_exception_for_star(exception)), None))
+            } else {
+                Ok((Some(exception.clone()), None))
+            }
         } else {
             Ok((None, Some(exception.clone())))
         }
