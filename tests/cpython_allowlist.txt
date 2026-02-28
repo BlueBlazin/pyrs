@@ -1,5 +1,4 @@
 test/test_descr.py|parser-3.14-gap|pyrs
 test/test_fstring.py|parser-3.14-gap|pyrs
 test/test_annotationlib.py|parser-3.14-gap|pyrs
-test/test_genericalias.py|parser-3.14-gap|pyrs
 test/test_tokenize.py|parser-3.14-gap|pyrs
