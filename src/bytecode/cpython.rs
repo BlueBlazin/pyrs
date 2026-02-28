@@ -1580,7 +1580,7 @@ fn decode_instructions(
     bytes: &[u8],
     opmap: &HashMap<u8, String>,
 ) -> Result<Vec<CpInstr>, CpythonError> {
-    if !bytes.len().is_multiple_of(2) {
+    if bytes.len() % 2 != 0 {
         return Err(CpythonError::new("bytecode length must be even"));
     }
     let mut instructions = Vec::with_capacity(bytes.len() / 2);

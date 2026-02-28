@@ -119,7 +119,7 @@ fn pickle_profile_record(name: &'static str, elapsed_ns: u128) {
     }
     let event_count = PICKLE_PROFILE_EVENTS.fetch_add(1, AtomicOrdering::Relaxed) + 1;
     let emit_every = pickle_profile_emit_every();
-    if event_count.is_multiple_of(emit_every) {
+    if emit_every != 0 && event_count % emit_every == 0 {
         pickle_profile_emit_summary(event_count);
     }
 }
@@ -870,7 +870,7 @@ impl Vm {
                 b'u' => {
                     let mark = marks.pop()?;
                     let items = stack.split_off(mark);
-                    if !items.len().is_multiple_of(2) {
+                    if items.len() % 2 != 0 {
                         return None;
                     }
                     let dict_obj = match stack.last().cloned()? {

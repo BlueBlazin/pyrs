@@ -353,7 +353,7 @@ pub unsafe extern "C" fn PyMutex_Lock(mutex: *mut c_void) {
             continue;
         }
         spins = spins.saturating_add(1);
-        if spins.is_multiple_of(64) {
+        if spins % 64 == 0 {
             std::thread::yield_now();
         } else {
             std::hint::spin_loop();
