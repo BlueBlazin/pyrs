@@ -574,7 +574,9 @@ impl Vm {
                 let converter =
                     number_methods.and_then(|methods| methods.nb_int.or(methods.nb_index));
                 if let Some(converter) = converter {
-                    if (converter as usize) == (PyNumber_Long as usize) {
+                    if (converter as *const () as usize)
+                        == (PyNumber_Long as *const () as usize)
+                    {
                         Err(RuntimeError::type_error("int() unsupported type"))
                     } else {
                         // SAFETY: converter slot comes from validated number methods table.
@@ -657,7 +659,7 @@ impl Vm {
                 let converter = number_methods
                     .and_then(|methods| (!methods.nb_float.is_null()).then_some(methods.nb_float));
                 if let Some(converter) = converter {
-                    if converter as usize == PyNumber_Float as usize {
+                    if (converter as *const ()) == (PyNumber_Float as *const ()) {
                         Err(RuntimeError::type_error("float() unsupported type"))
                     } else {
                         // SAFETY: converter slot comes from validated number methods table.

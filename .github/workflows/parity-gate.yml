@@ -27,6 +27,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install Linux native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev
+
       - name: Download CPython 3.14.3 Lib
         run: |
           curl -fsSL -o /tmp/Python-3.14.3.tgz https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz
@@ -107,6 +112,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install Linux native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev
+
       - name: Install pyrs from local path
         run: cargo install --path . --locked --root /tmp/pyrs-install-smoke
 
@@ -136,6 +146,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install Linux native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev
+
       - name: Download CPython 3.14.3 Lib
         run: |
           curl -fsSL -o /tmp/Python-3.14.3.tgz https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz
@@ -164,6 +179,11 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev
 
       - name: Download CPython 3.14.3 Lib
         run: |
@@ -203,6 +223,11 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev
 
       - name: Install cargo-llvm-cov
         run: |
@@ -244,6 +269,11 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev
 
       - name: Download CPython 3.14.3 Lib
         run: |
@@ -333,6 +363,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install Linux native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev
+
       - name: Dispatch hotpath benchmark smoke (non-blocking)
         run: ./scripts/bench_dispatch_hotpath.sh 5
 
@@ -365,6 +400,11 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev
 
       - name: Download CPython 3.14.3 Lib
         run: |
