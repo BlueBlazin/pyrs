@@ -1,3 +1,8 @@
+//! Native `sqlite3` substrate for stdlib module parity.
+//!
+//! Wraps SQLite C APIs and maps connection/cursor/blob state into runtime-owned
+//! VM structures with thread-affinity and callback error-propagation checks.
+
 use super::super::{
     BigInt, BuiltinFunction, ExceptionObject, HashMap, InternalCallOutcome, ObjRef, Object,
     RuntimeError, Value, Vm, bytes_like_from_value, dict_get_value, dict_set_value_checked,
@@ -276,6 +281,7 @@ thread_local! {
     static SQLITE_CALLBACK_VM: Cell<*mut Vm> = const { Cell::new(ptr::null_mut()) };
 }
 
+/// Thread-local VM pointer guard used by SQLite C callbacks.
 struct SqliteCallbackVmGuard {
     previous: *mut Vm,
 }
@@ -311,6 +317,7 @@ struct SqliteVmCallbackState {
 }
 
 #[derive(Debug)]
+/// Runtime state for one sqlite3 connection object.
 pub(in crate::vm) struct SqliteConnectionState {
     handle: Option<NonNull<Sqlite3Db>>,
     check_same_thread: bool,
@@ -403,6 +410,7 @@ impl Drop for SqliteConnectionState {
 }
 
 #[derive(Debug, Clone)]
+/// Runtime state for one sqlite3 cursor object.
 pub(in crate::vm) struct SqliteCursorState {
     pub(in crate::vm) connection_id: u64,
     pub(in crate::vm) rows: Vec<Value>,
@@ -435,6 +443,7 @@ enum SqliteParams {
 }
 
 #[derive(Debug)]
+/// Runtime state for one sqlite3 blob handle object.
 pub(in crate::vm) struct SqliteBlobState {
     handle: Option<NonNull<Sqlite3Blob>>,
     pub(in crate::vm) connection_id: u64,

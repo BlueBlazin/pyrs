@@ -1,3 +1,8 @@
+//! Native pickle accelerator and CPython-parity fallback bridge.
+//!
+//! This module provides fast-path encoding/decoding for common object graphs,
+//! and delegates to pure-Python pickle surfaces when compatibility requires it.
+
 use super::super::{
     AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, BuiltinFunction, HashMap,
     INSTANCE_DICT_STORAGE_ATTR, InternalCallOutcome, IteratorKind, IteratorObject,
@@ -58,6 +63,9 @@ const UNPICKLER_BUFFERS_ATTR: &str = "__pyrs_unpickle_buffers__";
 const UNPICKLER_FALLBACK_ATTR: &str = "__pyrs_unpickle_fallback__";
 const UNPICKLER_BUSY_ATTR: &str = "__pyrs_unpickle_busy__";
 
+/// Minimal encoder for fast-path pickle payload emission.
+///
+/// Used only when protocol/object-graph constraints match supported subsets.
 struct FastPickleEncoder {
     protocol: i64,
     payload: Vec<u8>,
@@ -338,6 +346,7 @@ impl Vm {
         i64::try_from(value).ok()
     }
 
+    /// Try to encode a value graph through the native fast-pickle subset.
     fn fast_pickle_encode_value(
         &self,
         encoder: &mut FastPickleEncoder,
@@ -722,6 +731,7 @@ impl Vm {
         Some(idx)
     }
 
+    /// Decode a fast-path pickle payload back into runtime values.
     fn fast_pickle_decode_payload(&mut self, payload: &[u8]) -> Option<Value> {
         let mut stack: Vec<Value> = Vec::new();
         let mut marks: Vec<usize> = Vec::new();

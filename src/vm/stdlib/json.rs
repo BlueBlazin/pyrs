@@ -1,9 +1,15 @@
+//! Native JSON helper implementations used by stdlib `json` accelerator hooks.
+//!
+//! The goal here is CPython-compatible behavior for core `dumps`/`loads` paths,
+//! while explicitly rejecting unsupported option families with typed errors.
+
 use super::super::{
     BigInt, BuiltinFunction, HashMap, Heap, InternalCallOutcome, ModuleObject, Object,
     RuntimeError, Value, Vm, is_truthy, value_to_int,
 };
 
 #[derive(Clone)]
+/// Normalized option set for `json.dumps`-style serialization.
 struct JsonDumpsOptions {
     skipkeys: bool,
     ensure_ascii: bool,
@@ -520,6 +526,7 @@ fn json_escape_string(text: &str, ensure_ascii: bool) -> String {
     out
 }
 
+/// Serialize a runtime value into JSON text using current option semantics.
 fn json_serialize_value(
     vm: &mut Vm,
     value: &Value,
@@ -641,6 +648,7 @@ enum JsonNode {
     Object(Vec<(String, JsonNode)>),
 }
 
+/// Small recursive-descent parser for JSON text input.
 struct JsonParser<'a> {
     source: &'a [u8],
     pos: usize,
@@ -654,6 +662,7 @@ impl<'a> JsonParser<'a> {
         }
     }
 
+    /// Parse the full input and require trailing-whitespace-only remainder.
     fn parse(mut self) -> Result<JsonNode, RuntimeError> {
         self.skip_ws();
         let value = self.parse_value()?;
