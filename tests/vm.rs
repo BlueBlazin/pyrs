@@ -11469,16 +11469,17 @@ fn import_fresh_module_json_with_accelerator_present() {
         return;
     };
     let source = "from test.support import import_helper\n\
+import json\n\
 cjson = import_helper.import_fresh_module('json', fresh=['_json'])\n\
 pyjson = import_helper.import_fresh_module('json', blocked=['_json'])\n\
 has_py_scanner = pyjson is not None and 'scanner' in pyjson.__dict__\n\
 py_scanner_mod = pyjson.__dict__['scanner'].make_scanner.__module__ if has_py_scanner else ''\n\
+cjson.JSONDecodeError = cjson.decoder.JSONDecodeError = json.JSONDecodeError\n\
 cjson_ok = (\n\
-    cjson is None or (\n\
-        hasattr(cjson, 'decoder') and\n\
-        hasattr(cjson, 'JSONDecodeError') and\n\
-        cjson.scanner.make_scanner.__module__ == '_json'\n\
-    )\n\
+    cjson is not None and\n\
+    hasattr(cjson, 'decoder') and\n\
+    hasattr(cjson, 'JSONDecodeError') and\n\
+    cjson.scanner.make_scanner.__module__ == '_json'\n\
 )\n\
 ok = (\n\
     pyjson is not None and\n\

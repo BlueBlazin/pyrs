@@ -1903,6 +1903,22 @@ impl Vm {
     #[inline]
     fn ensure_can_push_python_frame(&self) -> Result<(), RuntimeError> {
         if self.frames.len() as i64 >= self.recursion_limit {
+            if std::env::var_os("PYRS_TRACE_RECURSION_LIMIT").is_some() {
+                let frame_summary = self
+                    .frames
+                    .iter()
+                    .rev()
+                    .take(8)
+                    .map(|frame| format!("{}@{}", frame.code.name, frame.code.filename))
+                    .collect::<Vec<_>>()
+                    .join(" <= ");
+                eprintln!(
+                    "[recursion-limit] frames={} limit={} top={}",
+                    self.frames.len(),
+                    self.recursion_limit,
+                    frame_summary
+                );
+            }
             return Err(self.recursion_limit_error());
         }
         Ok(())

@@ -4406,6 +4406,82 @@ impl Vm {
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|limit| *limit > 0)
             .unwrap_or_else(|| self.recursion_limit.max(1) as usize * 4);
+        if std::env::var_os("PYRS_TRACE_CALL_DEPTH").is_some()
+            && call_depth >= hard_limit.saturating_sub(16)
+        {
+            let callable_type = self.value_type_name_for_error(&callable);
+            let callable_detail = match &callable {
+                Value::BoundMethod(method) => match &*method.kind() {
+                    Object::BoundMethod(method_data) => {
+                        let receiver_type = match &*method_data.receiver.kind() {
+                            Object::Class(class_data) => format!("class:{}", class_data.name),
+                            Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                                Object::Class(class_data) => {
+                                    format!("instance:{}", class_data.name)
+                                }
+                                _ => "instance:<unknown>".to_string(),
+                            },
+                            Object::Module(module_data) => {
+                                format!("module:{}", module_data.name)
+                            }
+                            _ => "<other>".to_string(),
+                        };
+                        let fn_type = match &*method_data.function.kind() {
+                            Object::Function(function_data) => {
+                                format!("function:{}", function_data.code.name)
+                            }
+                            Object::NativeMethod(kind) => format!("native:{kind:?}"),
+                            Object::Class(class_data) => format!("class:{}", class_data.name),
+                            Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                                Object::Class(class_data) => {
+                                    format!("instance:{}", class_data.name)
+                                }
+                                _ => "instance:<unknown>".to_string(),
+                            },
+                            _ => "<other>".to_string(),
+                        };
+                        format!("bound receiver={receiver_type} fn={fn_type}")
+                    }
+                    _ => "<invalid-bound-method>".to_string(),
+                },
+                Value::Instance(instance) => match &*instance.kind() {
+                    Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                        Object::Class(class_data) => {
+                            let mut keys = instance_data
+                                .attrs
+                                .keys()
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            keys.sort();
+                            keys.truncate(6);
+                            format!("instance_class={} attrs={keys:?}", class_data.name)
+                        }
+                        _ => "instance_class=<unknown>".to_string(),
+                    },
+                    _ => "<invalid-instance>".to_string(),
+                },
+                _ => String::new(),
+            };
+            let frame_summary = self
+                .frames
+                .iter()
+                .rev()
+                .take(6)
+                .map(|frame| format!("{}@{}", frame.code.name, frame.code.filename))
+                .collect::<Vec<_>>()
+                .join(" <= ");
+            eprintln!(
+                "[call-depth] depth={} limit={} callable={} type={} detail={} argc={} kwargc={} frames={}",
+                call_depth,
+                hard_limit,
+                format_repr(&callable),
+                callable_type,
+                callable_detail,
+                args.len(),
+                kwargs.len(),
+                frame_summary
+            );
+        }
         if call_depth > hard_limit {
             return Err(self.recursion_limit_error());
         }
@@ -4514,22 +4590,6 @@ impl Vm {
                         let receiver_is_proxy =
                             Self::cpython_proxy_raw_ptr_from_value(&receiver_value).is_some();
                         let callable_type_name = self.value_type_name_for_error(&callable);
-                        if callable_is_proxy
-                            && receiver_is_proxy
-                            && callable_type_name == "cython_function_or_method"
-                            && let Some(bound_callable) = self
-                                .bind_cpython_proxy_descriptor_callable(
-                                    &callable,
-                                    &receiver_value,
-                                )?
-                        {
-                            return self.call_internal_with_kwarg_order(
-                                bound_callable,
-                                args,
-                                kwargs,
-                                kwargs_order.clone(),
-                            );
-                        }
                         let proxy_callable_is_already_bound = callable_is_proxy
                             && receiver_is_proxy
                             && (matches!(
@@ -5546,6 +5606,10 @@ impl Vm {
                 .get("__hash__")
                 .cloned()
                 .unwrap_or(Value::None)
+        } else if is_cpython_proxy_class
+            && let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name)
+        {
+            proxy_attr
         } else if let Some(attr) = class_attr_lookup(class, attr_name) {
             attr
         } else if let Some(attr) = proxy_base_attr {
@@ -5851,6 +5915,10 @@ impl Vm {
             Value::None
         } else if attr_name == "__flags__" {
             Value::Int(PY_TPFLAGS_HEAPTYPE)
+        } else if is_cpython_proxy_class
+            && let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name)
+        {
+            proxy_attr
         } else if let Some(inherited) = self.load_attr_class_builtin_base_method(class, attr_name) {
             inherited
         } else if let Some(meta) = class_metaclass {
@@ -6967,16 +7035,8 @@ impl Vm {
             "__name__" | "__qualname__" | "__base__" | "__bases__" | "__mro__" | "__flags__"
         );
         let mut class_attr_owner: Option<ObjRef> = None;
-        let mut class_attr = if suppress_class_metadata {
-            None
-        } else {
-            class_attr_walk(&class_ref).into_iter().find_map(|candidate| {
-                class_attr_lookup_direct(&candidate, attr_name).inspect(|_value| {
-                    class_attr_owner = Some(candidate);
-                })
-            })
-        };
-        if class_attr.is_none() && !suppress_class_metadata {
+        let mut class_attr = None;
+        if !suppress_class_metadata {
             for candidate in class_attr_walk(&class_ref) {
                 let is_proxy_class = matches!(
                     &*candidate.kind(),
@@ -6986,12 +7046,18 @@ impl Vm {
                             Some(Value::Bool(true))
                         )
                 );
-                if !is_proxy_class {
-                    continue;
-                }
-                if let Some(proxy_attr) = self.load_cpython_proxy_attr(&candidate, attr_name) {
+                // Proxy classes should prefer CPython-backed attribute lookup before
+                // runtime fallback attrs inherited from local `object` scaffolding.
+                if is_proxy_class
+                    && let Some(proxy_attr) = self.load_cpython_proxy_attr(&candidate, attr_name)
+                {
                     class_attr_owner = Some(candidate);
                     class_attr = Some(proxy_attr);
+                    break;
+                }
+                if let Some(local_attr) = class_attr_lookup_direct(&candidate, attr_name) {
+                    class_attr_owner = Some(candidate);
+                    class_attr = Some(local_attr);
                     break;
                 }
             }

@@ -9,7 +9,7 @@ use super::{
     bigint_to_fixed_bytes, bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup,
     class_name_for_instance, decode_text_bytes, dict_get_value, dict_remove_value, dict_set_value,
     dict_set_value_checked, encode_text_bytes, ensure_hashable, exception_is_named,
-    find_bytes_subslice, format_repr, format_value, is_truthy, memoryview_bounds, memoryview_decode_tolist,
+    find_bytes_subslice, format_value, is_truthy, memoryview_bounds, memoryview_decode_tolist,
     memoryview_format_for_view, memoryview_shape_and_strides_from_parts, normalize_codec_encoding,
     normalize_codec_errors, parse_memoryview_cast_format, parse_string_formatter,
     py_rsplit_whitespace, py_split_whitespace, py_splitlines, re_pattern_from_compiled_module,
@@ -220,6 +220,27 @@ impl Vm {
         }
         let _depth_guard = CallNativeMethodDepthGuard;
         let hard_limit = (self.recursion_limit.max(1) as usize).saturating_mul(4);
+        if std::env::var_os("PYRS_TRACE_NATIVE_CALL_DEPTH").is_some()
+            && depth >= hard_limit.saturating_sub(16)
+        {
+            let receiver_name = match &*receiver.kind() {
+                Object::Class(class_data) => format!("class:{}", class_data.name),
+                Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                    Object::Class(class_data) => format!("instance:{}", class_data.name),
+                    _ => "instance:<unknown>".to_string(),
+                },
+                other => format!("{other:?}"),
+            };
+            eprintln!(
+                "[native-depth] depth={} limit={} kind={:?} receiver={} argc={} kwargc={}",
+                depth,
+                hard_limit,
+                kind,
+                receiver_name,
+                args.len(),
+                kwargs.len()
+            );
+        }
         if depth > hard_limit {
             return Err(self.recursion_limit_error());
         }
@@ -11459,20 +11480,25 @@ impl Vm {
                             );
                         }
                         if let Some(bound) = bound_value {
-                            let bound_is_valid = match &bound {
-                                Value::Builtin(_) | Value::Class(_) | Value::ExceptionType(_) => {
-                                    true
-                                }
-                                Value::Instance(_) => self.union_args_from_value(&bound).is_some(),
-                                _ => false,
-                            };
-                            if !bound_is_valid {
-                                return Err(RuntimeError::type_error(format!(
-                                    "Bound must be a type. Got {}.",
-                                    format_repr(&bound)
-                                )));
-                            }
-                            instance_data.attrs.insert("__bound__".to_string(), bound);
+                            let checked_bound =
+                                match self.call_typing_helper(
+                                    "_type_check",
+                                    vec![
+                                        bound.clone(),
+                                        Value::Str("Bound must be a type.".to_string()),
+                                    ],
+                                ) {
+                                    Ok(value) => value,
+                                    Err(err)
+                                        if runtime_error_matches_exception(&err, "AttributeError") =>
+                                    {
+                                        bound
+                                    }
+                                    Err(err) => return Err(err),
+                                };
+                            instance_data
+                                .attrs
+                                .insert("__bound__".to_string(), checked_bound);
                         }
                         let mut pop_bool_kw = |name: &str| -> Result<bool, RuntimeError> {
                             match kwargs.remove(name) {

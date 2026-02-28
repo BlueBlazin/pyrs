@@ -1963,20 +1963,7 @@ impl Vm {
                 ),
             ],
         );
-        self.install_builtin_module(
-            "_json",
-            &[
-                ("encode_basestring", BuiltinFunction::JsonEncodeBaseString),
-                (
-                    "encode_basestring_ascii",
-                    BuiltinFunction::JsonEncodeBaseStringAscii,
-                ),
-                ("make_encoder", BuiltinFunction::JsonMakeEncoder),
-                ("make_scanner", BuiltinFunction::JsonScannerMakeScanner),
-                ("scanstring", BuiltinFunction::JsonDecoderScanString),
-            ],
-            Vec::new(),
-        );
+        self.install_json_accelerator_module();
         let build_hash_type = |module_name: &str, class_name: &str| {
             let class = match self
                 .heap
@@ -8882,6 +8869,23 @@ impl Vm {
         );
     }
 
+    fn install_json_accelerator_module(&mut self) {
+        self.install_builtin_module(
+            "_json",
+            &[
+                ("encode_basestring", BuiltinFunction::JsonEncodeBaseString),
+                (
+                    "encode_basestring_ascii",
+                    BuiltinFunction::JsonEncodeBaseStringAscii,
+                ),
+                ("make_encoder", BuiltinFunction::JsonMakeEncoder),
+                ("make_scanner", BuiltinFunction::JsonScannerMakeScanner),
+                ("scanstring", BuiltinFunction::JsonDecoderScanString),
+            ],
+            Vec::new(),
+        );
+    }
+
     fn install_builtin_import_fallback(&mut self, name: &str) -> Result<bool, RuntimeError> {
         match name {
             "abc" => {
@@ -8918,6 +8922,10 @@ impl Vm {
                 self.install_warnings_fallback_module();
                 self.refresh_warnings_fallback_defaults();
                 Ok(self.modules.contains_key("_warnings"))
+            }
+            "_json" => {
+                self.install_json_accelerator_module();
+                Ok(self.modules.contains_key("_json"))
             }
             "_queue" => {
                 self.install_queue_fallback_module();

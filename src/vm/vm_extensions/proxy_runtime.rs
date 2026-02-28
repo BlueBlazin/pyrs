@@ -18,6 +18,37 @@ use super::{
 const PY_TPFLAGS_DISALLOW_INSTANTIATION: i64 = 1 << 7;
 
 impl Vm {
+    fn cpython_proxy_text_from_unicode_result_ptr(
+        call_ctx: &ModuleCapiContext,
+        result_ptr: *mut c_void,
+    ) -> Option<String> {
+        if result_ptr.is_null() {
+            return None;
+        }
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        let raw = result_ptr as usize;
+        if raw < MIN_VALID_PTR || raw % std::mem::align_of::<CpythonObjectHead>() != 0 {
+            return None;
+        }
+        // SAFETY: guarded by null/address/alignment checks above.
+        let type_ptr = unsafe {
+            result_ptr
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if !cpython_valid_type_ptr(type_ptr) {
+            return None;
+        }
+        // SAFETY: `type_ptr` was validated by `cpython_valid_type_ptr`.
+        let type_name = unsafe { c_name_to_string((*type_ptr).tp_name).ok() }?;
+        if type_name != "str" {
+            return None;
+        }
+        call_ctx.unicode_text_from_raw_storage(result_ptr)
+    }
+
     pub(in crate::vm) fn cpython_proxy_raw_ptr_is_callable(raw_ptr: *mut c_void) -> bool {
         if raw_ptr.is_null() {
             return false;
@@ -173,6 +204,10 @@ impl Vm {
             .try_native_tp_call(raw_ptr, &args, &kwargs)
             .unwrap_or(std::ptr::null_mut());
         if result_ptr.is_null() {
+            if let Some(err) = call_ctx.runtime_error_from_current_error_state("proxy call failed")
+            {
+                return Err(err);
+            }
             if std::env::var_os("PYRS_TRACE_PROXY_CALL_FAIL").is_some() {
                 const MIN_VALID_PTR: usize = 0x1_0000_0000;
                 let valid_object_ptr = (raw_ptr as usize) >= MIN_VALID_PTR
@@ -868,10 +903,10 @@ impl Vm {
         }
         Some(match call_ctx.cpython_value_from_owned_ptr(result_ptr) {
             Some(Value::Str(text)) => Ok(text),
-            Some(_) => Err(RuntimeError::new("proxy str() returned non-string")),
-            None => Err(RuntimeError::new(
-                "proxy str() returned unknown object pointer",
-            )),
+            Some(_) => Self::cpython_proxy_text_from_unicode_result_ptr(&call_ctx, result_ptr)
+                .ok_or_else(|| RuntimeError::new("proxy str() returned non-string")),
+            None => Self::cpython_proxy_text_from_unicode_result_ptr(&call_ctx, result_ptr)
+                .ok_or_else(|| RuntimeError::new("proxy str() returned unknown object pointer")),
         })
     }
 
@@ -932,10 +967,10 @@ impl Vm {
         }
         Some(match call_ctx.cpython_value_from_owned_ptr(result_ptr) {
             Some(Value::Str(text)) => Ok(text),
-            Some(_) => Err(RuntimeError::new("proxy repr() returned non-string")),
-            None => Err(RuntimeError::new(
-                "proxy repr() returned unknown object pointer",
-            )),
+            Some(_) => Self::cpython_proxy_text_from_unicode_result_ptr(&call_ctx, result_ptr)
+                .ok_or_else(|| RuntimeError::new("proxy repr() returned non-string")),
+            None => Self::cpython_proxy_text_from_unicode_result_ptr(&call_ctx, result_ptr)
+                .ok_or_else(|| RuntimeError::new("proxy repr() returned unknown object pointer")),
         })
     }
 
@@ -1303,6 +1338,8 @@ impl Vm {
                 | "__ne__"
                 | "__gt__"
                 | "__ge__"
+                | "__repr__"
+                | "__str__"
                 | "__bool__"
                 | "__int__"
                 | "__float__"
@@ -1319,7 +1356,6 @@ impl Vm {
         if !is_proxy_type_object
             && (slot_dunder_fastpath
                 || std::env::var_os("PYRS_ENABLE_PROXY_TP_DICT_FASTPATH").is_some())
-            && !matches!(attr_name, "__repr__" | "__str__")
             && let Some(attr_ptr) = call_ctx.lookup_type_attr_via_tp_dict(raw_ptr, attr_name)
             && !attr_ptr.is_null()
         {
@@ -1388,7 +1424,13 @@ impl Vm {
             }
             let _active_context_guard =
                 ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
-            let attr_ptr = unsafe { cpython_type_tp_getattro(raw_ptr, name_ptr) };
+            let mut attr_ptr = unsafe { cpython_type_tp_getattro(raw_ptr, name_ptr) };
+            if attr_ptr.is_null() {
+                // Some extension metatypes resolve attributes correctly only through their
+                // generic attribute path; fall back before treating this as a soft miss.
+                call_ctx.clear_error();
+                attr_ptr = unsafe { PyObject_GetAttrString(raw_ptr, c_name.as_ptr()) };
+            }
             if attr_ptr.is_null() {
                 call_ctx.clear_error();
                 return None;
@@ -1396,12 +1438,16 @@ impl Vm {
             return call_ctx.cpython_value_from_owned_ptr(attr_ptr);
         }
         // Guard fallback `PyObject_GetAttrString` dispatch against same-target/same-attr
-        // re-entry loops. This keeps native fallback enabled while preventing unbounded
-        // recursion when attribute resolution routes back through proxy lookup.
-        let Some(_fallback_reentry_guard) =
-            ProxyAttrLookupReentryGuard::enter(raw_ptr as usize, attr_name, is_proxy_type_object)
-        else {
-            return None;
+        // re-entry loops. `__repr__`/`__str__` already hold a guard above, so avoid
+        // double-entering the same key in this path.
+        let _fallback_reentry_guard = if _reentry_guard.is_some() {
+            None
+        } else {
+            Some(ProxyAttrLookupReentryGuard::enter(
+                raw_ptr as usize,
+                attr_name,
+                is_proxy_type_object,
+            )?)
         };
         let _active_context_guard =
             ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));

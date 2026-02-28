@@ -1050,9 +1050,26 @@ impl Vm {
                         let class_getitem = self
                             .bind_descriptor_method(class_getitem_attr.clone(), &class_value)?
                             .unwrap_or(class_getitem_attr);
-                        return match self.call_internal(class_getitem, vec![index], HashMap::new())?
+                        return match self.call_internal(
+                            class_getitem,
+                            vec![index.clone()],
+                            HashMap::new(),
+                        )?
                         {
-                            InternalCallOutcome::Value(value) => Ok(value),
+                            InternalCallOutcome::Value(value) => {
+                                if value == class_value
+                                    && typing_alias_index_shape(&index)
+                                    && Self::cpython_proxy_raw_ptr_from_value(&class_value)
+                                        .is_some()
+                                {
+                                    Ok(self.alloc_generic_alias_instance(
+                                        class_value.clone(),
+                                        index.clone(),
+                                    ))
+                                } else {
+                                    Ok(value)
+                                }
+                            }
                             InternalCallOutcome::CallerExceptionHandled => Err(self
                                 .runtime_error_from_active_exception("subscript lookup failed")),
                         };
@@ -1907,7 +1924,7 @@ impl Vm {
         self.union_operand_value_with_forward(value, false)
     }
 
-    fn collect_union_type_parameters_from_value(&self, value: &Value, out: &mut Vec<Value>) {
+    fn collect_union_type_parameters_from_value(&mut self, value: &Value, out: &mut Vec<Value>) {
         if self.is_type_parameter_value(value) {
             if !out.contains(value) {
                 out.push(value.clone());
@@ -1952,6 +1969,12 @@ impl Vm {
                     maybe_parameters = class_attr_lookup(&instance_data.class, "__parameters__");
                 }
             }
+        }
+        if maybe_parameters.is_none() {
+            maybe_parameters = self
+                .optional_getattr_value(value.clone(), "__parameters__")
+                .ok()
+                .flatten();
         }
         if let Some(parameters) = maybe_parameters {
             if let Some(items) = Self::tuple_items_from_value(&parameters) {

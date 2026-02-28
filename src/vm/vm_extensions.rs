@@ -857,6 +857,8 @@ const CPY_SLOT_EQ_NAME: &[u8] = b"__eq__\0";
 const CPY_SLOT_NE_NAME: &[u8] = b"__ne__\0";
 const CPY_SLOT_GT_NAME: &[u8] = b"__gt__\0";
 const CPY_SLOT_GE_NAME: &[u8] = b"__ge__\0";
+const CPY_SLOT_REPR_NAME: &[u8] = b"__repr__\0";
+const CPY_SLOT_STR_NAME: &[u8] = b"__str__\0";
 const CPY_SLOT_BOOL_NAME: &[u8] = b"__bool__\0";
 const CPY_SLOT_INT_NAME: &[u8] = b"__int__\0";
 const CPY_SLOT_FLOAT_NAME: &[u8] = b"__float__\0";
@@ -905,6 +907,18 @@ static mut CPY_SLOT_GT_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
 static mut CPY_SLOT_GE_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
     ml_name: CPY_SLOT_GE_NAME.as_ptr().cast::<c_char>(),
     ml_meth: Some(cpython_slot_dunder_ge),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_REPR_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_REPR_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_repr),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_STR_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_STR_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_str),
     ml_flags: METH_VARARGS,
     ml_doc: std::ptr::null(),
 };
@@ -1912,6 +1926,14 @@ fn cpython_slot_richcompare_method_def(attr_name: &str) -> Option<*mut CpythonMe
     }
 }
 
+fn cpython_slot_repr_str_method_def(attr_name: &str) -> Option<*mut CpythonMethodDef> {
+    match attr_name {
+        "__repr__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_REPR_METHOD_DEF)),
+        "__str__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_STR_METHOD_DEF)),
+        _ => None,
+    }
+}
+
 fn cpython_slot_unary_method_def(attr_name: &str) -> Option<*mut CpythonMethodDef> {
     match attr_name {
         "__bool__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_BOOL_METHOD_DEF)),
@@ -2139,6 +2161,48 @@ unsafe fn cpython_find_iter_slot(type_ptr: *mut CpythonTypeObject) -> *mut c_voi
     std::ptr::null_mut()
 }
 
+unsafe fn cpython_find_repr_slot(type_ptr: *mut CpythonTypeObject) -> *mut c_void {
+    let mut current = type_ptr;
+    for _ in 0..64 {
+        if current.is_null() {
+            break;
+        }
+        // SAFETY: type slot metadata is read-only.
+        let slot = unsafe { (*current).tp_repr };
+        if !slot.is_null() {
+            return slot;
+        }
+        // SAFETY: type hierarchy link read-only.
+        let next = unsafe { (*current).tp_base };
+        if next.is_null() || next == current {
+            break;
+        }
+        current = next;
+    }
+    std::ptr::null_mut()
+}
+
+unsafe fn cpython_find_str_slot(type_ptr: *mut CpythonTypeObject) -> *mut c_void {
+    let mut current = type_ptr;
+    for _ in 0..64 {
+        if current.is_null() {
+            break;
+        }
+        // SAFETY: type slot metadata is read-only.
+        let slot = unsafe { (*current).tp_str };
+        if !slot.is_null() {
+            return slot;
+        }
+        // SAFETY: type hierarchy link read-only.
+        let next = unsafe { (*current).tp_base };
+        if next.is_null() || next == current {
+            break;
+        }
+        current = next;
+    }
+    std::ptr::null_mut()
+}
+
 unsafe fn cpython_find_setitem_slot(
     type_ptr: *mut CpythonTypeObject,
 ) -> (
@@ -2230,6 +2294,17 @@ unsafe fn cpython_slot_unary_available(type_ptr: *mut CpythonTypeObject, attr_na
     }
 }
 
+unsafe fn cpython_slot_repr_str_available(
+    type_ptr: *mut CpythonTypeObject,
+    attr_name: &str,
+) -> bool {
+    match attr_name {
+        "__repr__" => unsafe { !cpython_find_repr_slot(type_ptr).is_null() },
+        "__str__" => unsafe { !cpython_find_str_slot(type_ptr).is_null() },
+        _ => false,
+    }
+}
+
 unsafe fn cpython_slot_getitem_available(type_ptr: *mut CpythonTypeObject) -> bool {
     // SAFETY: helper performs bounded type hierarchy walk.
     unsafe { !cpython_find_getitem_mapping_slot(type_ptr).is_null() }
@@ -2291,6 +2366,72 @@ fn cpython_slot_init_method_def() -> *mut CpythonMethodDef {
         }
     });
     std::ptr::addr_of_mut!(CPY_SLOT_INIT_METHOD_DEF)
+}
+
+unsafe extern "C" fn cpython_slot_dunder_repr(
+    self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    // SAFETY: wrapper validates tuple arity and returns either `self_obj` or arg0.
+    let target = unsafe { cpython_slot_unary_target(self_obj, args, "__repr__") };
+    if target.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `target` is a valid candidate object pointer.
+    let type_ptr = unsafe {
+        target
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if type_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: helper performs bounded type hierarchy walk.
+    let slot = unsafe { cpython_find_repr_slot(type_ptr) };
+    if slot.is_null() {
+        cpython_set_error("TypeError: descriptor '__repr__' is unavailable for this object");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `tp_repr` follows unary reprfunc ABI.
+    let repr_fn: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+        unsafe { std::mem::transmute(slot) };
+    // SAFETY: slot invocation follows CPython ABI.
+    unsafe { repr_fn(target) }
+}
+
+unsafe extern "C" fn cpython_slot_dunder_str(
+    self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    // SAFETY: wrapper validates tuple arity and returns either `self_obj` or arg0.
+    let target = unsafe { cpython_slot_unary_target(self_obj, args, "__str__") };
+    if target.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `target` is a valid candidate object pointer.
+    let type_ptr = unsafe {
+        target
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if type_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: helper performs bounded type hierarchy walk.
+    let slot = unsafe { cpython_find_str_slot(type_ptr) };
+    if slot.is_null() {
+        cpython_set_error("TypeError: descriptor '__str__' is unavailable for this object");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `tp_str` follows unary reprfunc ABI.
+    let str_fn: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+        unsafe { std::mem::transmute(slot) };
+    // SAFETY: slot invocation follows CPython ABI.
+    unsafe { str_fn(target) }
 }
 
 unsafe fn cpython_slot_richcompare_dunder_call(
@@ -8508,16 +8649,10 @@ impl ModuleCapiContext {
         if self.owns_cpython_allocation_ptr(mapping_ptr) {
             return std::ptr::null_mut();
         }
-        let mapping_ptr_known_live = if self.vm.is_null() {
-            false
-        } else {
-            // SAFETY: VM pointer is valid for active C-API context lifetime.
-            let vm = unsafe { &*self.vm };
-            vm.capi_registry_contains_live_or_pending(mapping_ptr as usize)
-        };
-        if !mapping_ptr_known_live && self.cpython_handle_from_ptr(mapping_ptr).is_none() {
-            return std::ptr::null_mut();
-        }
+        // External `tp_dict` pointers are usually not registry-tracked in our runtime.
+        // Require structural pointer/type validation below, but do not require prior
+        // registry enrollment; otherwise class-attribute lookups miss valid foreign
+        // entries (for example `numpy.generic.__format__`).
         let key_c_name = match CString::new(key) {
             Ok(name) => name,
             Err(_) => return std::ptr::null_mut(),
@@ -9278,6 +9413,30 @@ impl ModuleCapiContext {
                         return Some(callable_ptr);
                     }
                 }
+                if let Some(method_def) = cpython_slot_repr_str_method_def(attr_name)
+                    && unsafe { cpython_slot_repr_str_available(current, attr_name) }
+                {
+                    let callable_ptr = self.alloc_cpython_method_cfunction_ptr(
+                        method_def,
+                        object,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    );
+                    if !callable_ptr.is_null() {
+                        if trace_lookup_branch {
+                            let branch = match attr_name {
+                                "__repr__" => "tp_repr_bound_slot_wrapper",
+                                "__str__" => "tp_str_bound_slot_wrapper",
+                                _ => "tp_repr_str_bound_slot_wrapper",
+                            };
+                            eprintln!(
+                                "[proxy-lookup-branch] attr={} branch={} object={:p} current={:p} value_ptr={:p}",
+                                attr_name, branch, object, current, callable_ptr
+                            );
+                        }
+                        return Some(callable_ptr);
+                    }
+                }
                 if let Some(method_def) = cpython_slot_descriptor_method_def(attr_name)
                     && unsafe { cpython_slot_descriptor_available(current, attr_name) }
                 {
@@ -9416,6 +9575,30 @@ impl ModuleCapiContext {
                         return Some(callable_ptr);
                     }
                 }
+                if let Some(method_def) = cpython_slot_repr_str_method_def(attr_name)
+                    && unsafe { cpython_slot_repr_str_available(current, attr_name) }
+                {
+                    let callable_ptr = self.alloc_cpython_method_cfunction_ptr(
+                        method_def,
+                        object,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    );
+                    if !callable_ptr.is_null() {
+                        if trace_lookup_branch {
+                            let branch = match attr_name {
+                                "__repr__" => "tp_repr_slot_wrapper",
+                                "__str__" => "tp_str_slot_wrapper",
+                                _ => "tp_repr_str_slot_wrapper",
+                            };
+                            eprintln!(
+                                "[proxy-lookup-branch] attr={} branch={} object={:p} current={:p} value_ptr={:p}",
+                                attr_name, branch, object, current, callable_ptr
+                            );
+                        }
+                        return Some(callable_ptr);
+                    }
+                }
             }
             if attr_name == "__init__" && unsafe { !(*current).tp_init.is_null() } {
                 let method_def = cpython_slot_init_method_def();
@@ -9518,6 +9701,30 @@ impl ModuleCapiContext {
                         return Some(callable_ptr);
                     }
                 }
+                if let Some(method_def) = cpython_slot_repr_str_method_def(attr_name)
+                    && unsafe { cpython_slot_repr_str_available(current, attr_name) }
+                {
+                    let callable_ptr = self.alloc_cpython_method_cfunction_ptr(
+                        method_def,
+                        object,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    );
+                    if !callable_ptr.is_null() {
+                        if trace_lookup_branch {
+                            let branch = match attr_name {
+                                "__repr__" => "tp_repr_bound_slot_wrapper_fallback",
+                                "__str__" => "tp_str_bound_slot_wrapper_fallback",
+                                _ => "tp_repr_str_bound_slot_wrapper_fallback",
+                            };
+                            eprintln!(
+                                "[proxy-lookup-branch] attr={} branch={} object={:p} current={:p} value_ptr={:p}",
+                                attr_name, branch, object, current, callable_ptr
+                            );
+                        }
+                        return Some(callable_ptr);
+                    }
+                }
             } else {
                 if let Some(method_def) = cpython_slot_richcompare_method_def(attr_name)
                     && unsafe { !(*current).tp_richcompare.is_null() }
@@ -9533,6 +9740,30 @@ impl ModuleCapiContext {
                             eprintln!(
                                 "[proxy-lookup-branch] attr={} branch=tp_richcompare_slot_wrapper_fallback object={:p} current={:p} value_ptr={:p}",
                                 attr_name, object, current, callable_ptr
+                            );
+                        }
+                        return Some(callable_ptr);
+                    }
+                }
+                if let Some(method_def) = cpython_slot_repr_str_method_def(attr_name)
+                    && unsafe { cpython_slot_repr_str_available(current, attr_name) }
+                {
+                    let callable_ptr = self.alloc_cpython_method_cfunction_ptr(
+                        method_def,
+                        object,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    );
+                    if !callable_ptr.is_null() {
+                        if trace_lookup_branch {
+                            let branch = match attr_name {
+                                "__repr__" => "tp_repr_slot_wrapper_fallback",
+                                "__str__" => "tp_str_slot_wrapper_fallback",
+                                _ => "tp_repr_str_slot_wrapper_fallback",
+                            };
+                            eprintln!(
+                                "[proxy-lookup-branch] attr={} branch={} object={:p} current={:p} value_ptr={:p}",
+                                attr_name, branch, object, current, callable_ptr
                             );
                         }
                         return Some(callable_ptr);

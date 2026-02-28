@@ -2389,6 +2389,7 @@ impl Vm {
                     }
                 });
                 let mut touched_module_version: Option<(u64, u64)> = None;
+                let mut removed_from_module_locals_dict: Option<ObjRef> = None;
                 if let Some(frame) = self.frames.last_mut() {
                     if !frame.is_module {
                         if let Some(slot_idx) = frame.code.name_to_index.get(&name).copied()
@@ -2404,6 +2405,9 @@ impl Vm {
                     }
                     if !removed && let Some(dict) = frame.module_locals_dict.clone() {
                         removed = dict_remove_value(&dict, &Value::Str(name.clone())).is_some();
+                        if removed && frame.is_module && !frame.return_class {
+                            removed_from_module_locals_dict = Some(dict);
+                        }
                     }
                     if !removed {
                         let deref_idx = frame
@@ -2450,6 +2454,13 @@ impl Vm {
                 }
                 if !removed {
                     return Err(RuntimeError::new(format!("name '{}' is not defined", name)));
+                }
+                if let Some(dict) = removed_from_module_locals_dict {
+                    self.sync_module_global_from_locals_dict_write(
+                        &dict,
+                        &Value::Str(name.clone()),
+                        None,
+                    );
                 }
                 if let Some((module_id, version)) = touched_module_version {
                     self.propagate_module_globals_version(module_id, version);
