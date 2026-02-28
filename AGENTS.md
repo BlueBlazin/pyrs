@@ -66,6 +66,7 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 
 ## Scope and Constraints
 - Target version: CPython 3.14
+- Platform support priority: Linux and macOS (`x86_64` + `aarch64`) are required release targets; Windows support is non-priority for now.
 - Current goals:
   - Run Python source code
   - Execute CPython 3.14 bytecode (`.pyc`)
