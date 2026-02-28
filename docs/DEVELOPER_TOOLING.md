@@ -30,6 +30,9 @@ cargo nextest run --test vm
 
 # single test by name
 cargo nextest run --test differential_cpython differential_traceback_identifier_caret_span_matches_cpython
+
+# quieter summary output (optional)
+cargo nextest run --status-level fail --final-status-level fail
 ```
 
 Use `cargo test` only when you specifically need `cargo test` semantics.
