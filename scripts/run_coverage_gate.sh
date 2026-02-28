@@ -95,16 +95,17 @@ fi
 echo "[coverage] cleaning previous llvm-cov artifacts"
 cargo llvm-cov clean --workspace
 
-echo "[coverage] building pyrs binary under coverage instrumentation"
-cargo llvm-cov --no-report --bin pyrs -q
-
+coverage_run_cmd=(cargo llvm-cov --no-report --bin pyrs -q)
+echo "[coverage] running targeted coverage bins"
 for test_bin in "${targeted_test_bins[@]}"; do
   if [[ -z "$test_bin" ]]; then
     continue
   fi
-  echo "[coverage] running test target: $test_bin"
-  cargo llvm-cov --no-report --test "$test_bin" -q
+  echo "[coverage] include test target: $test_bin"
+  coverage_run_cmd+=(--test "$test_bin")
 done
+
+"${coverage_run_cmd[@]}"
 
 summary_cmd=(cargo llvm-cov report --summary-only)
 if [[ -n "$ignore_regex" ]]; then
