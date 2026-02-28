@@ -16958,6 +16958,18 @@ print(ok)
 }
 
 #[test]
+fn numpy_scalar_sum_repr_matches_cpython_shape() {
+    let source = r#"import numpy as np
+x = np.array([0, 1, 2, 3]).reshape((2, 2)).sum()
+expected = f"np.{type(x).__name__}(6)"
+text = repr(x)
+ok = (text == expected and str(x) == "6" and not text.startswith("<class "))
+print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
 fn numpy_ndarray_subclass_inherits_array_finalize_descriptor() {
     let source = r#"import numpy as np
 class M(np.ndarray):

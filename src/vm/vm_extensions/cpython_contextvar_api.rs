@@ -163,11 +163,20 @@ pub unsafe extern "C" fn PyContextVar_Get(
                 }
             }
         } else {
-            let has_default = dict_get_value(
+            let has_default = match dict_get_value(
                 &var_dict,
                 &Value::Str(CONTEXTVAR_HAS_DEFAULT_KEY.to_string()),
-            );
-            if matches!(has_default, Some(Value::Bool(true))) {
+            ) {
+                Some(Value::Bool(flag)) => flag,
+                // Compatibility: Python-level `_contextvars.ContextVar` objects created by
+                // older bootstrap paths may omit the explicit has-default marker.
+                _ => dict_contains_key_checked(
+                    &var_dict,
+                    &Value::Str(CONTEXTVAR_DEFAULT_KEY.to_string()),
+                )
+                .unwrap_or(false),
+            };
+            if has_default {
                 dict_get_value(&var_dict, &Value::Str(CONTEXTVAR_DEFAULT_KEY.to_string()))
                     .or(Some(Value::None))
             } else {

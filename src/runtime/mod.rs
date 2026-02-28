@@ -5030,10 +5030,15 @@ impl BuiltinFunction {
                     Value::Str(value) => value.clone(),
                     _ => return Err(RuntimeError::new("ContextVar() name must be string")),
                 };
+                let has_default = args.get(1).is_some();
                 let mut entries = vec![
                     (
                         Value::Str("__pyrs_contextvar__".to_string()),
                         Value::Bool(true),
+                    ),
+                    (
+                        Value::Str("__pyrs_contextvar_has_default__".to_string()),
+                        Value::Bool(has_default),
                     ),
                     (Value::Str("name".to_string()), Value::Str(name)),
                 ];
