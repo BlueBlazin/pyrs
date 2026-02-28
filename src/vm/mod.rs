@@ -11075,13 +11075,6 @@ fn class_inherits_dynamic_instance_dict(class: &ObjRef) -> bool {
     false
 }
 
-fn class_of_class(class: &ObjRef) -> Option<ObjRef> {
-    match &*class.kind() {
-        Object::Class(class_data) => class_data.metaclass.clone(),
-        _ => None,
-    }
-}
-
 fn first_whitespace_run(text: &str) -> Option<(usize, usize)> {
     let mut run_start: Option<usize> = None;
     for (idx, ch) in text.char_indices() {

@@ -2970,7 +2970,7 @@ impl Vm {
         let mut parts = Vec::new();
         let mut return_annotation = signature_empty;
 
-        let mut make_param =
+        let make_param =
             |name: String, kind: &str, default: Option<Value>| -> (String, (Value, Value)) {
                 let has_default = default.is_some();
                 let default_value = default.unwrap_or_else(|| parameter_empty.clone());

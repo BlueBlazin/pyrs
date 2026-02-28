@@ -602,11 +602,7 @@ void *PyErr_Format(void *exception, const char *format, ...)
         (strstr(message, "not subscriptable") != NULL ||
          strstr(message, "dot() missing required argument") != NULL)) {
         void *ret0 = __builtin_return_address(0);
-        void *ret1 = __builtin_return_address(1);
-        void *ret2 = __builtin_return_address(2);
         Dl_info info0;
-        Dl_info info1;
-        Dl_info info2;
         if (dladdr(ret0, &info0) != 0) {
             fprintf(
                 stderr,
@@ -618,24 +614,6 @@ void *PyErr_Format(void *exception, const char *format, ...)
             );
         } else {
             fprintf(stderr, "[pyerr-format-caller] msg=%s return0=%p\n", message, ret0);
-        }
-        if (ret1 != NULL && dladdr(ret1, &info1) != 0) {
-            fprintf(
-                stderr,
-                "[pyerr-format-caller] return1=%p sym1=%s image1=%s\n",
-                ret1,
-                info1.dli_sname != NULL ? info1.dli_sname : "<unknown>",
-                info1.dli_fname != NULL ? info1.dli_fname : "<unknown>"
-            );
-        }
-        if (ret2 != NULL && dladdr(ret2, &info2) != 0) {
-            fprintf(
-                stderr,
-                "[pyerr-format-caller] return2=%p sym2=%s image2=%s\n",
-                ret2,
-                info2.dli_sname != NULL ? info2.dli_sname : "<unknown>",
-                info2.dli_fname != NULL ? info2.dli_fname : "<unknown>"
-            );
         }
     }
 #endif

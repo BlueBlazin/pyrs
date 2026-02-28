@@ -10126,10 +10126,6 @@ impl Vm {
         }
     }
 
-    pub(super) fn loader_spec_value(&mut self, loader_name: Option<&str>) -> Value {
-        self.loader_spec_value_for_module("", None, loader_name, &[], false)
-    }
-
     pub(super) fn build_module_spec_value(
         &mut self,
         name: &str,

@@ -237,6 +237,7 @@ fn normalize_completion_symbols(mut symbols: Vec<String>) -> Option<Vec<String>>
     Some(symbols)
 }
 
+#[cfg(test)]
 fn build_vm(import_site: bool, interactive: bool) -> Result<Vm, String> {
     build_vm_with_warnoptions(import_site, interactive, &[], None)
 }

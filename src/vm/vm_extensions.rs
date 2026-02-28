@@ -19,8 +19,8 @@ use crate::extensions::{
     PyrsWritableBufferViewV1,
 };
 use crate::runtime::{
-    BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, InstanceObject,
-    NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value, value_lookup_hash,
+    BigInt, BoundMethod, BuiltinFunction, ClassObject, InstanceObject, NativeMethodKind,
+    NativeMethodObject, Object, RuntimeError, Value, value_lookup_hash,
 };
 use crate::vm::ExtensionModuleStateEntry;
 
@@ -4844,116 +4844,6 @@ impl ModuleCapiContext {
                 cpython_is_exception_instance(self, &instance_obj)
             }
             _ => false,
-        }
-    }
-
-    fn error_state_type_ptr_is_trusted(&mut self, ptype: *mut c_void) -> bool {
-        if ptype.is_null() {
-            return false;
-        }
-        if cpython_exception_value_from_ptr(ptype as usize).is_some() {
-            return true;
-        }
-        let pointer_is_known = if self.owns_cpython_allocation_ptr(ptype) {
-            true
-        } else if self.vm.is_null() {
-            false
-        } else {
-            // SAFETY: VM pointer is valid for active C-API context lifetime.
-            let vm = unsafe { &*self.vm };
-            vm.capi_registry_contains_alive(ptype as usize)
-        };
-        if !pointer_is_known {
-            let mapped = self.cpython_value_from_ptr_or_proxy(ptype);
-            if mapped.is_none() {
-                return false;
-            }
-        }
-        let mapped = self
-            .cpython_value_from_ptr(ptype)
-            .or_else(|| self.cpython_value_from_ptr_or_proxy(ptype));
-        let Some(value) = mapped else {
-            return false;
-        };
-        if self.vm.is_null() {
-            return false;
-        }
-        // SAFETY: VM pointer is valid for active C-API context lifetime.
-        let vm = unsafe { &mut *self.vm };
-        match value {
-            Value::ExceptionType(name) => vm.exception_inherits(&name, "BaseException"),
-            Value::Class(class_obj) => vm.class_is_exception_class(&class_obj),
-            Value::Instance(instance_obj) => cpython_is_exception_instance(self, &instance_obj),
-            Value::Exception(_) => true,
-            _ => false,
-        }
-    }
-
-    fn normalize_exception_state_type_and_value(
-        &mut self,
-        mut ptype: *mut c_void,
-        mut pvalue: *mut c_void,
-    ) -> (*mut c_void, *mut c_void) {
-        if pvalue.is_null() && !ptype.is_null() && self.value_ptr_is_exception_instance(ptype) {
-            pvalue = ptype;
-            let derived = cpython_exception_type_ptr(ptype);
-            if !derived.is_null() {
-                ptype = derived;
-            }
-            return (ptype, pvalue);
-        }
-
-        if self.value_ptr_is_exception_instance(pvalue) {
-            let derived = cpython_exception_type_ptr(pvalue);
-            if !derived.is_null() {
-                ptype = derived;
-            }
-            return (ptype, pvalue);
-        }
-
-        if !ptype.is_null() {
-            if !self.error_state_type_ptr_is_trusted(ptype) {
-                ptype = unsafe { PyExc_RuntimeError };
-            }
-            if let Some(exception_name) = cpython_exception_class_name_from_ptr(ptype) {
-                let message = if pvalue.is_null() {
-                    self.last_error.clone()
-                } else {
-                    self.cpython_value_from_ptr_or_proxy(pvalue)
-                        .and_then(|value| self.exception_message_for_value(&value))
-                        .or_else(|| self.last_error.clone())
-                };
-                let exception = ExceptionObject::new(exception_name, message);
-                pvalue = self.alloc_cpython_ptr_for_value(Value::Exception(Box::new(exception)));
-                let derived = cpython_exception_type_ptr(pvalue);
-                if !derived.is_null() {
-                    ptype = derived;
-                }
-                return (ptype, pvalue);
-            }
-        }
-
-        if !ptype.is_null() && !self.error_state_type_ptr_is_trusted(ptype) {
-            ptype = unsafe { PyExc_RuntimeError };
-        }
-
-        (ptype, std::ptr::null_mut())
-    }
-
-    fn exception_message_for_value(&self, value: &Value) -> Option<String> {
-        match value {
-            Value::Str(text) => Some(text.clone()),
-            Value::Exception(exception_obj) => exception_obj.message.clone(),
-            Value::Tuple(tuple_obj) => {
-                let Object::Tuple(items) = &*tuple_obj.kind() else {
-                    return None;
-                };
-                if items.is_empty() {
-                    return None;
-                }
-                self.exception_message_for_value(&items[0])
-            }
-            _ => None,
         }
     }
 
