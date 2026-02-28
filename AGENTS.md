@@ -36,6 +36,7 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 - Default local Rust test runner is `cargo nextest run` (targeted and full runs).
 - Use `cargo test` only when `nextest` is not suitable (for example, behavior that specifically depends on `cargo test` execution semantics).
 - Default to targeted tests for touched surfaces first.
+- After any high-risk semantic/runtime change, run and pass targeted local tests for the touched behavior before committing.
 - Run full suite only for major checkpoints (multi-subsystem refactors, milestone closure, or explicit user request).
 - Do not set `RUST_TEST_THREADS=1` by default. Use single-threaded test execution only for targeted race/flakiness diagnosis, then return to default parallel execution.
 

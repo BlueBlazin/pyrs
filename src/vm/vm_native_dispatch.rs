@@ -7620,6 +7620,16 @@ impl Vm {
     }
 
     fn generic_alias_type_repr(&mut self, value: Value) -> Result<String, RuntimeError> {
+        if self
+            .builtins
+            .get("Ellipsis")
+            .is_some_and(|ellipsis| match (&value, ellipsis) {
+                (Value::Instance(left), Value::Instance(right)) => left.id() == right.id(),
+                _ => &value == ellipsis,
+            })
+        {
+            return Ok("...".to_string());
+        }
         match value {
             Value::None => Ok("None".to_string()),
             Value::Class(class) => Ok(Self::generic_alias_type_class_display_name(&class)),
