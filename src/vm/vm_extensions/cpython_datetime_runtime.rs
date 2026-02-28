@@ -1,11 +1,11 @@
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void};
 
 use super::{
     CpythonCompatObject, CpythonTypeObject, EMPTY_TYPE_FLAGS, PY_TPFLAGS_BASETYPE,
     PY_TPFLAGS_READY, PyBaseObject_Type, PyType_Type, cpython_set_error,
 };
 
-const fn datetime_empty_type(name: *const i8) -> CpythonTypeObject {
+const fn datetime_empty_type(name: *const c_char) -> CpythonTypeObject {
     CpythonTypeObject {
         ob_refcnt: 1,
         ob_type: std::ptr::null_mut(),
