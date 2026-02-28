@@ -38,7 +38,7 @@ Required green commands:
 2. `./scripts/run_parity_gate.sh`
 3. `PYRS_RUN_STRICT_STDLIB=1 cargo test -q --test cpython_harness runs_cpython_strict_stdlib_suite`
 4. `PYRS_RUN_DEFERRED_PICKLE=1 cargo test -q --test cpython_harness runs_cpython_deferred_pickle_suite`
-5. `PYRS_COVERAGE_ENFORCE=1 PYRS_COVERAGE_MIN_REGIONS=70 PYRS_COVERAGE_MIN_FUNCTIONS=65 PYRS_COVERAGE_MIN_LINES=70 ./scripts/run_coverage_gate.sh`
+5. `PYRS_COVERAGE_ENFORCE=1 PYRS_COVERAGE_POLICY_FILE=docs/COVERAGE_GATE_POLICY.json ./scripts/run_coverage_gate.sh`
 6. `cargo test -q --test repl_interactive` (plus opt-in PTY lane in trusted runners: `PYRS_RUN_PTY_REPL_TEST=1`)
 
 ## 2. Packaging and Legal

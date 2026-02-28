@@ -241,12 +241,10 @@ jobs:
           tar -xzf /tmp/Python-3.14.3.tgz -C /tmp
           echo "PYRS_CPYTHON_LIB=/tmp/Python-3.14.3/Lib" >> "$GITHUB_ENV"
 
-      - name: Run coverage gate (enforced soft floors)
+      - name: Run coverage gate (policy ratchet)
         env:
           PYRS_COVERAGE_ENFORCE: "1"
-          PYRS_COVERAGE_MIN_REGIONS: "70"
-          PYRS_COVERAGE_MIN_FUNCTIONS: "65"
-          PYRS_COVERAGE_MIN_LINES: "70"
+          PYRS_COVERAGE_POLICY_FILE: docs/COVERAGE_GATE_POLICY.json
         run: ./scripts/run_coverage_gate.sh
 
   numpy-probes:

@@ -1,0 +1,24 @@
+{
+  "ratchet_floors": {
+    "regions": 47.0,
+    "functions": 41.0,
+    "lines": 46.0
+  },
+  "long_term_targets": {
+    "regions": 70.0,
+    "functions": 65.0,
+    "lines": 70.0
+  },
+  "ignore_filename_regex": [
+    "src/vm/vm_extensions/cpython_keepalive_exports\\.rs"
+  ],
+  "targeted_test_bins": [
+    "vm",
+    "differential_cpython",
+    "extension_smoke",
+    "parser",
+    "pyc_exec",
+    "pyc_translate",
+    "abi3_surface"
+  ]
+}
