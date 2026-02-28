@@ -17,7 +17,6 @@ use crate::bytecode::CodeObject;
 pub use bigint::BigInt;
 use dict_backend::DictBackend;
 
-#[derive(Debug)]
 pub struct ModuleObject {
     pub name: String,
     pub globals: HashMap<String, Value>,
@@ -41,7 +40,17 @@ impl ModuleObject {
     }
 }
 
-#[derive(Debug, Clone)]
+impl fmt::Debug for ModuleObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ModuleObject")
+            .field("name", &self.name)
+            .field("globals_len", &self.globals.len())
+            .field("globals_version", &self.globals_version)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct FunctionObject {
     pub code: Rc<CodeObject>,
     pub module: ObjRef,
@@ -104,6 +113,27 @@ impl FunctionObject {
     }
 }
 
+impl fmt::Debug for FunctionObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let annotations = self.annotations.as_ref().map(ObjRef::id);
+        let owner_class = self.owner_class.as_ref().map(ObjRef::id);
+        let dict = self.dict.as_ref().map(ObjRef::id);
+        f.debug_struct("FunctionObject")
+            .field("code_ptr", &(Rc::as_ptr(&self.code) as usize))
+            .field("module_id", &self.module.id())
+            .field("defaults_len", &self.defaults.len())
+            .field("kwonly_defaults_len", &self.kwonly_defaults.len())
+            .field("plain_positional_call_arity", &self.plain_positional_call_arity)
+            .field("call_cache_epoch", &self.call_cache_epoch)
+            .field("closure_len", &self.closure.len())
+            .field("annotations_id", &annotations)
+            .field("defined_in_class_body", &self.defined_in_class_body)
+            .field("owner_class_id", &owner_class)
+            .field("dict_id", &dict)
+            .finish()
+    }
+}
+
 pub struct ClassObject {
     pub name: String,
     pub bases: Vec<ObjRef>,
@@ -140,7 +170,6 @@ impl fmt::Debug for ClassObject {
     }
 }
 
-#[derive(Debug)]
 pub struct InstanceObject {
     pub class: ObjRef,
     pub attrs: HashMap<String, Value>,
@@ -155,7 +184,16 @@ impl InstanceObject {
     }
 }
 
-#[derive(Debug, Clone)]
+impl fmt::Debug for InstanceObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InstanceObject")
+            .field("class_id", &self.class.id())
+            .field("attrs_len", &self.attrs.len())
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct SuperObject {
     pub start_class: ObjRef,
     pub object: ObjRef,
@@ -172,7 +210,17 @@ impl SuperObject {
     }
 }
 
-#[derive(Debug, Clone)]
+impl fmt::Debug for SuperObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SuperObject")
+            .field("start_class_id", &self.start_class.id())
+            .field("object_id", &self.object.id())
+            .field("object_type_id", &self.object_type.id())
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct BoundMethod {
     pub function: ObjRef,
     pub receiver: ObjRef,
@@ -181,6 +229,15 @@ pub struct BoundMethod {
 impl BoundMethod {
     pub fn new(function: ObjRef, receiver: ObjRef) -> Self {
         Self { function, receiver }
+    }
+}
+
+impl fmt::Debug for BoundMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BoundMethod")
+            .field("function_id", &self.function.id())
+            .field("receiver_id", &self.receiver.id())
+            .finish()
     }
 }
 
@@ -438,7 +495,6 @@ impl NativeMethodObject {
     }
 }
 
-#[derive(Debug)]
 pub struct Obj {
     id: u64,
     kind: RefCell<Object>,
@@ -480,6 +536,44 @@ impl ObjRef {
 impl fmt::Debug for ObjRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ObjRef({})", self.id())
+    }
+}
+
+fn object_variant_name(object: &Object) -> &'static str {
+    match object {
+        Object::List(_) => "List",
+        Object::Tuple(_) => "Tuple",
+        Object::Dict(_) => "Dict",
+        Object::Set(_) => "Set",
+        Object::FrozenSet(_) => "FrozenSet",
+        Object::Bytes(_) => "Bytes",
+        Object::ByteArray(_) => "ByteArray",
+        Object::MemoryView(_) => "MemoryView",
+        Object::Iterator(_) => "Iterator",
+        Object::Generator(_) => "Generator",
+        Object::Module(_) => "Module",
+        Object::Class(_) => "Class",
+        Object::Instance(_) => "Instance",
+        Object::Super(_) => "Super",
+        Object::BoundMethod(_) => "BoundMethod",
+        Object::NativeMethod(_) => "NativeMethod",
+        Object::Function(_) => "Function",
+        Object::Cell(_) => "Cell",
+        Object::DictKeysView(_) => "DictKeysView",
+    }
+}
+
+impl fmt::Debug for Obj {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = self
+            .kind
+            .try_borrow()
+            .map(|kind| object_variant_name(&kind))
+            .unwrap_or("<borrowed mut>");
+        f.debug_struct("Obj")
+            .field("id", &self.id)
+            .field("kind", &kind)
+            .finish()
     }
 }
 
@@ -1262,7 +1356,6 @@ fn value_hash_key(value: &Value) -> Option<u64> {
     Some(hasher.finish())
 }
 
-#[derive(Debug)]
 pub enum Object {
     List(Vec<Value>),
     Tuple(Vec<Value>),
@@ -1285,7 +1378,38 @@ pub enum Object {
     DictKeysView(DictKeysView),
 }
 
-#[derive(Debug)]
+impl fmt::Debug for Object {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Object::List(values) => f.debug_struct("List").field("len", &values.len()).finish(),
+            Object::Tuple(values) => f.debug_struct("Tuple").field("len", &values.len()).finish(),
+            Object::Dict(values) => f.debug_struct("Dict").field("len", &values.len()).finish(),
+            Object::Set(values) => f.debug_struct("Set").field("len", &values.len()).finish(),
+            Object::FrozenSet(values) => f
+                .debug_struct("FrozenSet")
+                .field("len", &values.len())
+                .finish(),
+            Object::Bytes(values) => f.debug_struct("Bytes").field("len", &values.len()).finish(),
+            Object::ByteArray(values) => f
+                .debug_struct("ByteArray")
+                .field("len", &values.len())
+                .finish(),
+            Object::MemoryView(view) => f.debug_tuple("MemoryView").field(view).finish(),
+            Object::Iterator(iterator) => f.debug_tuple("Iterator").field(iterator).finish(),
+            Object::Generator(generator) => f.debug_tuple("Generator").field(generator).finish(),
+            Object::Module(module) => f.debug_tuple("Module").field(module).finish(),
+            Object::Class(class) => f.debug_tuple("Class").field(class).finish(),
+            Object::Instance(instance) => f.debug_tuple("Instance").field(instance).finish(),
+            Object::Super(super_obj) => f.debug_tuple("Super").field(super_obj).finish(),
+            Object::BoundMethod(method) => f.debug_tuple("BoundMethod").field(method).finish(),
+            Object::NativeMethod(method) => f.debug_tuple("NativeMethod").field(method).finish(),
+            Object::Function(function) => f.debug_tuple("Function").field(function).finish(),
+            Object::Cell(cell) => f.debug_tuple("Cell").field(cell).finish(),
+            Object::DictKeysView(view) => f.debug_tuple("DictKeysView").field(view).finish(),
+        }
+    }
+}
+
 pub struct CellObject {
     pub value: Option<Value>,
 }
@@ -1296,13 +1420,30 @@ impl CellObject {
     }
 }
 
-#[derive(Debug, Clone)]
+impl fmt::Debug for CellObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CellObject")
+            .field("has_value", &self.value.is_some())
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct IteratorObject {
     pub kind: IteratorKind,
     pub index: usize,
 }
 
-#[derive(Debug, Clone)]
+impl fmt::Debug for IteratorObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IteratorObject")
+            .field("kind", &self.kind)
+            .field("index", &self.index)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 pub enum IteratorKind {
     List(ObjRef),
     Tuple(ObjRef),
@@ -1356,7 +1497,90 @@ pub enum IteratorKind {
     },
 }
 
-#[derive(Debug)]
+impl fmt::Debug for IteratorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IteratorKind::List(obj) => f.debug_tuple("List").field(&obj.id()).finish(),
+            IteratorKind::Tuple(obj) => f.debug_tuple("Tuple").field(&obj.id()).finish(),
+            IteratorKind::Str(value) => f.debug_tuple("Str").field(value).finish(),
+            IteratorKind::Dict(obj) => f.debug_tuple("Dict").field(&obj.id()).finish(),
+            IteratorKind::Set(obj) => f.debug_tuple("Set").field(&obj.id()).finish(),
+            IteratorKind::Bytes(obj) => f.debug_tuple("Bytes").field(&obj.id()).finish(),
+            IteratorKind::ByteArray(obj) => f.debug_tuple("ByteArray").field(&obj.id()).finish(),
+            IteratorKind::MemoryView(obj) => f.debug_tuple("MemoryView").field(&obj.id()).finish(),
+            IteratorKind::Cycle {
+                source,
+                values,
+                source_exhausted,
+            } => f
+                .debug_struct("Cycle")
+                .field("source", source)
+                .field("values_len", &values.len())
+                .field("source_exhausted", source_exhausted)
+                .finish(),
+            IteratorKind::Count { current, step } => f
+                .debug_struct("Count")
+                .field("current", current)
+                .field("step", step)
+                .finish(),
+            IteratorKind::RangeObject { start, stop, step } => f
+                .debug_struct("RangeObject")
+                .field("start", start)
+                .field("stop", stop)
+                .field("step", step)
+                .finish(),
+            IteratorKind::Map {
+                values,
+                func,
+                iterators,
+                sources,
+                exhausted,
+            } => f
+                .debug_struct("Map")
+                .field("values_len", &values.len())
+                .field("func", func)
+                .field("iterators_len", &iterators.len())
+                .field("sources_len", &sources.len())
+                .field("exhausted", exhausted)
+                .finish(),
+            IteratorKind::Zip {
+                iterators,
+                strict,
+                exhausted,
+            } => f
+                .debug_struct("Zip")
+                .field("iterators_len", &iterators.len())
+                .field("strict", strict)
+                .field("exhausted", exhausted)
+                .finish(),
+            IteratorKind::Range {
+                current,
+                stop,
+                step,
+            } => f
+                .debug_struct("Range")
+                .field("current", current)
+                .field("stop", stop)
+                .field("step", step)
+                .finish(),
+            IteratorKind::SequenceGetItem { target, getitem } => f
+                .debug_struct("SequenceGetItem")
+                .field("target", target)
+                .field("getitem", getitem)
+                .finish(),
+            IteratorKind::CpythonSequence { target } => f
+                .debug_struct("CpythonSequence")
+                .field("target", target)
+                .finish(),
+            IteratorKind::CallIter { callable, sentinel } => f
+                .debug_struct("CallIter")
+                .field("callable", callable)
+                .field("sentinel", sentinel)
+                .finish(),
+        }
+    }
+}
+
 pub struct MemoryViewObject {
     pub source: ObjRef,
     pub itemsize: usize,
@@ -1368,6 +1592,23 @@ pub struct MemoryViewObject {
     pub released: bool,
     pub start: usize,
     pub length: Option<usize>,
+}
+
+impl fmt::Debug for MemoryViewObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MemoryViewObject")
+            .field("source_id", &self.source.id())
+            .field("itemsize", &self.itemsize)
+            .field("format", &self.format)
+            .field("shape_len", &self.shape.as_ref().map(Vec::len))
+            .field("strides_len", &self.strides.as_ref().map(Vec::len))
+            .field("export_owner_id", &self.export_owner.as_ref().map(ObjRef::id))
+            .field("contiguous", &self.contiguous)
+            .field("released", &self.released)
+            .field("start", &self.start)
+            .field("length", &self.length)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -2236,7 +2477,7 @@ fn clear_object_refs(obj: &ObjRef) {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Value {
     None,
     Bool(bool),
@@ -2268,6 +2509,47 @@ pub enum Value {
     Slice(Box<SliceValue>),
     Code(Rc<CodeObject>),
     Builtin(BuiltinFunction),
+}
+
+impl fmt::Debug for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::None => f.write_str("None"),
+            Value::Bool(value) => f.debug_tuple("Bool").field(value).finish(),
+            Value::Int(value) => f.debug_tuple("Int").field(value).finish(),
+            Value::BigInt(value) => f.debug_tuple("BigInt").field(value).finish(),
+            Value::Float(value) => f.debug_tuple("Float").field(value).finish(),
+            Value::Complex { real, imag } => f
+                .debug_struct("Complex")
+                .field("real", real)
+                .field("imag", imag)
+                .finish(),
+            Value::Str(value) => f.debug_tuple("Str").field(value).finish(),
+            Value::List(value) => f.debug_tuple("List").field(value).finish(),
+            Value::Tuple(value) => f.debug_tuple("Tuple").field(value).finish(),
+            Value::Dict(value) => f.debug_tuple("Dict").field(value).finish(),
+            Value::DictKeys(value) => f.debug_tuple("DictKeys").field(value).finish(),
+            Value::Set(value) => f.debug_tuple("Set").field(value).finish(),
+            Value::FrozenSet(value) => f.debug_tuple("FrozenSet").field(value).finish(),
+            Value::Bytes(value) => f.debug_tuple("Bytes").field(value).finish(),
+            Value::ByteArray(value) => f.debug_tuple("ByteArray").field(value).finish(),
+            Value::MemoryView(value) => f.debug_tuple("MemoryView").field(value).finish(),
+            Value::Iterator(value) => f.debug_tuple("Iterator").field(value).finish(),
+            Value::Generator(value) => f.debug_tuple("Generator").field(value).finish(),
+            Value::Module(value) => f.debug_tuple("Module").field(value).finish(),
+            Value::Class(value) => f.debug_tuple("Class").field(value).finish(),
+            Value::Instance(value) => f.debug_tuple("Instance").field(value).finish(),
+            Value::Super(value) => f.debug_tuple("Super").field(value).finish(),
+            Value::BoundMethod(value) => f.debug_tuple("BoundMethod").field(value).finish(),
+            Value::Function(value) => f.debug_tuple("Function").field(value).finish(),
+            Value::Cell(value) => f.debug_tuple("Cell").field(value).finish(),
+            Value::Exception(value) => f.debug_tuple("Exception").field(value).finish(),
+            Value::ExceptionType(value) => f.debug_tuple("ExceptionType").field(value).finish(),
+            Value::Slice(value) => f.debug_tuple("Slice").field(value).finish(),
+            Value::Code(value) => f.debug_tuple("Code").field(value).finish(),
+            Value::Builtin(value) => f.debug_tuple("Builtin").field(value).finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -2315,7 +2597,7 @@ impl Value {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ExceptionObject {
     pub object_id: u64,
     pub name: String,
@@ -2329,7 +2611,25 @@ pub struct ExceptionObject {
     pub attrs: Rc<RefCell<HashMap<String, Value>>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl fmt::Debug for ExceptionObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let attrs_len = self.attrs.try_borrow().ok().map(|attrs| attrs.len());
+        f.debug_struct("ExceptionObject")
+            .field("object_id", &self.object_id)
+            .field("name", &self.name)
+            .field("message", &self.message)
+            .field("traceback_frames_len", &self.traceback_frames.len())
+            .field("notes_len", &self.notes.len())
+            .field("exceptions_len", &self.exceptions.len())
+            .field("has_cause", &self.cause.is_some())
+            .field("has_context", &self.context.is_some())
+            .field("suppress_context", &self.suppress_context)
+            .field("attrs_len", &attrs_len)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct ExceptionTracebackFrame {
     pub frame_id: usize,
     pub filename: String,
@@ -2343,6 +2643,25 @@ pub struct ExceptionTracebackFrame {
     pub local_values: Vec<(String, Value)>,
     pub globals: Vec<String>,
     pub self_local: Option<Value>,
+}
+
+impl fmt::Debug for ExceptionTracebackFrame {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExceptionTracebackFrame")
+            .field("frame_id", &self.frame_id)
+            .field("filename", &self.filename)
+            .field("line", &self.line)
+            .field("column", &self.column)
+            .field("end_line", &self.end_line)
+            .field("end_column", &self.end_column)
+            .field("lasti", &self.lasti)
+            .field("name", &self.name)
+            .field("locals_len", &self.locals.len())
+            .field("local_values_len", &self.local_values.len())
+            .field("globals_len", &self.globals.len())
+            .field("has_self_local", &self.self_local.is_some())
+            .finish()
+    }
 }
 
 impl ExceptionObject {
