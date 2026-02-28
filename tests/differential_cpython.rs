@@ -35,6 +35,56 @@ fn cpython_bin_or_panic() -> PathBuf {
     panic!("CPython 3.x binary not found. Set PYRS_CPYTHON_BIN or install python3.");
 }
 
+fn configure_traceback_subprocess(cmd: &mut Command) {
+    // Differential traceback tests compare structure/content, not terminal styling.
+    cmd.env("NO_COLOR", "1");
+    cmd.env("PYTHON_COLORS", "0");
+    cmd.env_remove("FORCE_COLOR");
+    cmd.env_remove("CLICOLOR_FORCE");
+}
+
+fn strip_ansi_control_sequences(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+                i += 2;
+                while i < bytes.len() {
+                    let b = bytes[i];
+                    i += 1;
+                    if (0x40..=0x7e).contains(&b) {
+                        break;
+                    }
+                }
+                continue;
+            }
+            if i + 1 < bytes.len() && bytes[i + 1] == b']' {
+                i += 2;
+                while i < bytes.len() {
+                    if bytes[i] == 0x07 {
+                        i += 1;
+                        break;
+                    }
+                    if i + 1 < bytes.len() && bytes[i] == 0x1b && bytes[i + 1] == b'\\' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        let ch = text[i..].chars().next().expect("valid UTF-8");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
 fn run_cpython_json(source: &str) -> Result<String, String> {
     let bin = cpython_bin_or_panic();
     if bin.as_os_str().is_empty() {
@@ -91,7 +141,9 @@ fn run_cpython_traceback(source: &str) -> Result<String, String> {
     if bin.as_os_str().is_empty() {
         return Ok(String::new());
     }
-    let output = Command::new(bin)
+    let mut cmd = Command::new(bin);
+    configure_traceback_subprocess(&mut cmd);
+    let output = cmd
         .arg("-c")
         .arg(source)
         .output()
@@ -106,7 +158,9 @@ fn run_pyrs_traceback(source: &str) -> Result<String, String> {
     let Some(bin) = pyrs_bin_path() else {
         return Err("pyrs binary not found".to_string());
     };
-    let output = Command::new(bin)
+    let mut cmd = Command::new(bin);
+    configure_traceback_subprocess(&mut cmd);
+    let output = cmd
         .arg("-c")
         .arg(source)
         .output()
@@ -133,7 +187,9 @@ fn unique_temp_script_path(prefix: &str) -> PathBuf {
 fn run_traceback_via_file(bin: &PathBuf, source: &str) -> Result<String, String> {
     let path = unique_temp_script_path("traceback");
     std::fs::write(&path, source).map_err(|err| format!("failed to write temp script: {err}"))?;
-    let output = Command::new(bin)
+    let mut cmd = Command::new(bin);
+    configure_traceback_subprocess(&mut cmd);
+    let output = cmd
         .arg(&path)
         .output()
         .map_err(|err| format!("failed to launch interpreter: {err}"));
@@ -194,7 +250,9 @@ fn compile_temp_pyc(source: &str, module_name: &str) -> Result<(PathBuf, PathBuf
 }
 
 fn run_traceback_via_pyc_file(bin: &PathBuf, pyc_path: &PathBuf) -> Result<String, String> {
-    let output = Command::new(bin)
+    let mut cmd = Command::new(bin);
+    configure_traceback_subprocess(&mut cmd);
+    let output = cmd
         .arg(pyc_path)
         .output()
         .map_err(|err| format!("failed to launch interpreter: {err}"))?;
@@ -226,7 +284,8 @@ fn traceback_heading_count(text: &str) -> usize {
 fn traceback_lines_without_source_carets(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(|line| {
-            let trimmed = line.trim_end();
+            let plain = strip_ansi_control_sequences(line);
+            let trimmed = plain.trim_end();
             if trimmed.is_empty() {
                 return Some(String::new());
             }
@@ -234,7 +293,7 @@ fn traceback_lines_without_source_carets(text: &str) -> Vec<String> {
             if !stripped.is_empty() && stripped.chars().all(|ch| ch == '^' || ch == '~') {
                 return None;
             }
-            if line.starts_with("    ") && !line.trim_start().starts_with("File ") {
+            if plain.starts_with("    ") && !plain.trim_start().starts_with("File ") {
                 return None;
             }
             if trimmed.starts_with("  File \"")
@@ -248,7 +307,10 @@ fn traceback_lines_without_source_carets(text: &str) -> Vec<String> {
 }
 
 fn caret_line_after_source(text: &str, source_line: &str) -> Option<String> {
-    let lines = text.lines().collect::<Vec<_>>();
+    let lines = text
+        .lines()
+        .map(strip_ansi_control_sequences)
+        .collect::<Vec<_>>();
     for (idx, line) in lines.iter().enumerate() {
         if line.trim_end() == source_line
             && let Some(next) = lines.get(idx + 1)
