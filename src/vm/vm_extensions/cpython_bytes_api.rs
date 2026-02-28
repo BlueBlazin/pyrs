@@ -7,11 +7,11 @@ use crate::runtime::{BuiltinFunction, Object, Value};
 use crate::vm::Vm;
 
 use super::{
-    _PyErr_BadInternalCall, CpythonBuffer, CpythonObjectHead, CpythonTypeObject,
-    CpythonVarObjectHead, ModuleCapiContext, PYBYTES_ASSTRING_MISMATCH_BT_COUNT, Py_DecRef,
-    Py_XDecRef, Py_XIncRef, PyBuffer_Release, PyByteArray_Type, PyBytes_Type, PyObject_GetBuffer,
-    PyType_IsSubtype, c_name_to_string, cpython_bytes_data_ptr, cpython_call_builtin,
-    cpython_new_bytes_ptr, cpython_new_ptr_for_value, cpython_set_error,
+    _PyErr_BadInternalCall, CpythonBuffer, CpythonByteArrayCompatObject, CpythonObjectHead,
+    CpythonTypeObject, CpythonVarObjectHead, ModuleCapiContext, PYBYTES_ASSTRING_MISMATCH_BT_COUNT,
+    Py_DecRef, Py_XDecRef, Py_XIncRef, PyBuffer_Release, PyByteArray_Type, PyBytes_Type,
+    PyObject_GetBuffer, PyType_IsSubtype, c_name_to_string, cpython_bytes_data_ptr,
+    cpython_call_builtin, cpython_new_bytes_ptr, cpython_new_ptr_for_value, cpython_set_error,
     cpython_type_name_for_object_ptr, cpython_value_from_ptr, with_active_cpython_context_mut,
 };
 
@@ -487,7 +487,7 @@ pub unsafe extern "C" fn PyBytes_AsString(object: *mut c_void) -> *mut c_char {
         })
     };
     match cpython_value_from_ptr(object) {
-        Ok(Value::Bytes(bytes_obj)) | Ok(Value::ByteArray(bytes_obj)) => {
+        Ok(Value::Bytes(bytes_obj)) => {
             if let Ok(true) = with_active_cpython_context_mut(|context| {
                 context.owns_cpython_allocation_ptr(object)
             }) {
@@ -495,11 +495,26 @@ pub unsafe extern "C" fn PyBytes_AsString(object: *mut c_void) -> *mut c_char {
                 return unsafe { cpython_bytes_data_ptr(object) };
             }
             match &*bytes_obj.kind() {
-                Object::Bytes(values) | Object::ByteArray(values) => {
-                    values.as_ptr().cast_mut().cast()
-                }
+                Object::Bytes(values) => values.as_ptr().cast_mut().cast(),
                 _ => {
                     cpython_set_error("PyBytes_AsString encountered invalid bytes storage");
+                    std::ptr::null_mut()
+                }
+            }
+        }
+        Ok(Value::ByteArray(bytearray_obj)) => {
+            if let Ok(true) = with_active_cpython_context_mut(|context| {
+                context.owns_cpython_allocation_ptr(object)
+            }) {
+                // SAFETY: owned bytearray-compatible pointers use bytearray-compatible layout.
+                let raw = object.cast::<CpythonByteArrayCompatObject>();
+                // SAFETY: `raw` points to an owned bytearray compat object in this branch.
+                return unsafe { (*raw).ob_start };
+            }
+            match &*bytearray_obj.kind() {
+                Object::ByteArray(values) => values.as_ptr().cast_mut().cast(),
+                _ => {
+                    cpython_set_error("PyBytes_AsString encountered invalid bytearray storage");
                     std::ptr::null_mut()
                 }
             }
@@ -791,8 +806,16 @@ pub unsafe extern "C" fn PyByteArray_AsString(object: *mut c_void) -> *mut c_cha
             if let Ok(true) = with_active_cpython_context_mut(|context| {
                 context.owns_cpython_allocation_ptr(object)
             }) {
-                // SAFETY: owned bytearray-compatible pointers use bytes-like payload layout.
-                return unsafe { cpython_bytes_data_ptr(object) };
+                // SAFETY: owned bytearray-compatible pointers use bytearray-compatible layout.
+                let raw = object.cast::<CpythonByteArrayCompatObject>();
+                // SAFETY: `raw` points to an owned bytearray compat object in this branch.
+                return unsafe {
+                    if (*raw).ob_start.is_null() {
+                        std::ptr::null_mut()
+                    } else {
+                        (*raw).ob_start
+                    }
+                };
             }
             let mut bytes_kind = bytearray_obj.kind_mut();
             match &mut *bytes_kind {

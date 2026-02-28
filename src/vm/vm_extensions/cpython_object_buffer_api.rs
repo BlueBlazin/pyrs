@@ -3,11 +3,11 @@ use std::ffi::{c_char, c_int, c_void};
 use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
-    CpythonBuffer, CpythonBufferProcs, CpythonObjectHead, CpythonTypeObject, ModuleCapiContext,
-    Py_DecRef, Py_XIncRef, PyBuffer_Release, PyErr_BadInternalCall, PyExc_BufferError,
-    PyExc_TypeError, PyExc_ValueError, PyLong_AsLong, PyObject_Str, PyrsObjectHandle,
-    c_name_to_string, cpython_bytes_data_ptr, cpython_call_builtin, cpython_new_ptr_for_value,
-    cpython_set_error, cpython_set_typed_error, cpython_value_from_ptr,
+    CpythonBuffer, CpythonBufferProcs, CpythonByteArrayCompatObject, CpythonObjectHead,
+    CpythonTypeObject, ModuleCapiContext, Py_DecRef, Py_XIncRef, PyBuffer_Release,
+    PyErr_BadInternalCall, PyExc_BufferError, PyExc_TypeError, PyExc_ValueError, PyLong_AsLong,
+    PyObject_Str, PyrsObjectHandle, c_name_to_string, cpython_bytes_data_ptr, cpython_call_builtin,
+    cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error, cpython_value_from_ptr,
     with_active_cpython_context_mut,
 };
 
@@ -79,18 +79,18 @@ fn cpython_legacy_bytes_buffer_slot(
         .objects
         .get(&handle)
         .ok_or_else(|| "unknown object handle".to_string())?;
-    let len = match &slot.value {
+    let (len, is_bytearray) = match &slot.value {
         Value::Bytes(obj) => {
             if writable {
                 return Err("expected writable bytes-like object".to_string());
             }
             match &*obj.kind() {
-                Object::Bytes(bytes) => bytes.len(),
+                Object::Bytes(bytes) => (bytes.len(), false),
                 _ => return Err("invalid bytes storage".to_string()),
             }
         }
         Value::ByteArray(obj) => match &*obj.kind() {
-            Object::ByteArray(bytes) => bytes.len(),
+            Object::ByteArray(bytes) => (bytes.len(), true),
             _ => return Err("invalid bytearray storage".to_string()),
         },
         _ => return Err("expected bytes-like object".to_string()),
@@ -101,7 +101,23 @@ fn cpython_legacy_bytes_buffer_slot(
         .get(&handle)
         .copied()
         .ok_or_else(|| "missing CPython storage pointer".to_string())?;
-    Ok((handle, raw_ptr, len))
+    let data = if is_bytearray {
+        // SAFETY: `raw_ptr` is bytearray-compatible storage in this branch.
+        unsafe {
+            raw_ptr
+                .cast::<CpythonByteArrayCompatObject>()
+                .as_ref()
+                .map(|raw| raw.ob_start.cast::<c_void>())
+                .unwrap_or(std::ptr::null_mut())
+        }
+    } else {
+        // SAFETY: `raw_ptr` is bytes-compatible storage in this branch.
+        unsafe { cpython_bytes_data_ptr(raw_ptr).cast::<c_void>() }
+    };
+    if data.is_null() && len > 0 {
+        return Err("missing bytes-like payload pointer".to_string());
+    }
+    Ok((handle, data, len))
 }
 
 #[unsafe(no_mangle)]
@@ -120,11 +136,9 @@ pub unsafe extern "C" fn PyObject_AsReadBuffer(
     }
     with_active_cpython_context_mut(|context| {
         match cpython_legacy_bytes_buffer_slot(context, object, false) {
-            Ok((_handle, raw_ptr, len)) => {
-                // SAFETY: raw_ptr is owned CPython-compatible bytes/bytearray storage.
-                let data = unsafe { cpython_bytes_data_ptr(raw_ptr) };
+            Ok((_handle, data, len)) => {
                 unsafe {
-                    *buffer = data.cast();
+                    *buffer = data.cast_const();
                     *buffer_len = len as isize;
                 }
                 0
@@ -157,11 +171,9 @@ pub unsafe extern "C" fn PyObject_AsWriteBuffer(
     }
     with_active_cpython_context_mut(|context| {
         match cpython_legacy_bytes_buffer_slot(context, object, true) {
-            Ok((_handle, raw_ptr, len)) => {
-                // SAFETY: raw_ptr is owned CPython-compatible bytearray storage.
-                let data = unsafe { cpython_bytes_data_ptr(raw_ptr) };
+            Ok((_handle, data, len)) => {
                 unsafe {
-                    *buffer = data.cast();
+                    *buffer = data;
                     *buffer_len = len as isize;
                 }
                 0
@@ -244,15 +256,15 @@ pub unsafe extern "C" fn PyObject_CopyData(dest: *mut c_void, src: *mut c_void) 
         if src_len > 0 {
             // SAFETY: pointers are owned bytes storage with at least src_len bytes each.
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    cpython_bytes_data_ptr(src_ptr).cast::<u8>(),
-                    cpython_bytes_data_ptr(dest_ptr).cast::<u8>(),
-                    src_len,
-                );
+                std::ptr::copy_nonoverlapping(src_ptr.cast::<u8>(), dest_ptr.cast::<u8>(), src_len);
             }
         }
-        context.sync_value_from_cpython_storage(src_handle, src_ptr);
-        context.sync_value_from_cpython_storage(dest_handle, dest_ptr);
+        if let Some(src_raw) = context.cpython_ptr_by_handle.get(&src_handle).copied() {
+            context.sync_value_from_cpython_storage(src_handle, src_raw);
+        }
+        if let Some(dest_raw) = context.cpython_ptr_by_handle.get(&dest_handle).copied() {
+            context.sync_value_from_cpython_storage(dest_handle, dest_raw);
+        }
         0
     })
     .unwrap_or_else(|err| {

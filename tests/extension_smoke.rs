@@ -9811,6 +9811,24 @@ utf8_equals(PyObject *value, const char *expected) {
     return (text && strcmp(text, expected) == 0) ? 1 : 0;
 }
 
+static int
+utf8_startswith(PyObject *value, const char *prefix) {
+    const char *text = value ? PyUnicode_AsUTF8(value) : 0;
+    size_t prefix_len = strlen(prefix);
+    return (text && strncmp(text, prefix, prefix_len) == 0) ? 1 : 0;
+}
+
+static int
+utf8_endswith(PyObject *value, const char *suffix) {
+    const char *text = value ? PyUnicode_AsUTF8(value) : 0;
+    size_t suffix_len = strlen(suffix);
+    size_t text_len = text ? strlen(text) : 0;
+    if (!text || text_len < suffix_len) {
+        return 0;
+    }
+    return strcmp(text + (text_len - suffix_len), suffix) == 0 ? 1 : 0;
+}
+
 static PyObject *
 call_fromformatv(const char *fmt, ...) {
     va_list ap;
@@ -9833,9 +9851,9 @@ run(PyObject *self, PyObject *args) {
     PyObject *with_v_fallback = PyUnicode_FromFormat("%V", (void *)0, "fallback");
     PyObject *with_vf = PyUnicode_FromFormat("prefix %V suffix", name, "ignored");
 
-    int direct_ok = utf8_equals(direct, "n=7 s=ok p=0x0 %");
+    int direct_ok = utf8_startswith(direct, "n=7 s=ok p=0x") && utf8_endswith(direct, " %");
     int via_v_ok = utf8_equals(via_v, "x=-3 y=done");
-    int with_u_ok = utf8_equals(with_u, "<cyfunction integers at 0x0>");
+    int with_u_ok = utf8_startswith(with_u, "<cyfunction integers at 0x") && utf8_endswith(with_u, ">");
     int with_v_obj_ok = utf8_equals(with_v_obj, "integers");
     int with_v_fallback_ok = utf8_equals(with_v_fallback, "fallback");
     int with_vf_ok = utf8_equals(with_vf, "prefix integers suffix");

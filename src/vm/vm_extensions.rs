@@ -727,6 +727,15 @@ struct CpythonBytesCompatObject {
 }
 
 #[repr(C)]
+struct CpythonByteArrayCompatObject {
+    ob_base: CpythonVarObjectHead,
+    ob_alloc: isize,
+    ob_bytes: *mut c_char,
+    ob_start: *mut c_char,
+    ob_exports: isize,
+}
+
+#[repr(C)]
 struct CpythonAsciiUnicodeCompatObject {
     ob_base: CpythonObjectHead,
     length: isize,
@@ -4052,6 +4061,7 @@ struct ModuleCapiContext {
     cpython_builtin_method_defs: HashMap<BuiltinFunction, *mut CpythonMethodDef>,
     cpython_builtin_by_method_def: HashMap<usize, BuiltinFunction>,
     cpython_list_buffers: HashMap<PyrsObjectHandle, (*mut *mut c_void, usize)>,
+    cpython_bytearray_buffers: HashMap<PyrsObjectHandle, (*mut c_char, usize)>,
     cpython_list_items_cache_by_handle: HashMap<PyrsObjectHandle, Vec<usize>>,
     cpython_tuple_items_cache_by_handle: HashMap<PyrsObjectHandle, Vec<usize>>,
     cpython_sync_in_progress: HashSet<PyrsObjectHandle>,
@@ -4351,6 +4361,58 @@ impl Drop for ModuleCapiContext {
                 free(buffer.cast());
             }
             self.capi_owned_ptr_mark_freed(buffer.cast(), "context-free list-buffer");
+        }
+        let drained_bytearray_buffers: Vec<(PyrsObjectHandle, (*mut c_char, usize))> =
+            self.cpython_bytearray_buffers.drain().collect();
+        let mut seen_bytearray_buffers: HashSet<usize> = HashSet::new();
+        for (handle, (buffer, _)) in drained_bytearray_buffers {
+            if buffer.is_null() {
+                continue;
+            }
+            if !seen_bytearray_buffers.insert(buffer as usize) {
+                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    eprintln!(
+                        "[pin-free] context-skip duplicate bytearray-buffer ptr={:p}",
+                        buffer
+                    );
+                }
+                continue;
+            }
+            self.capi_registry_register_owned_ptr(buffer.cast(), None);
+            let keep_pinned =
+                if self.keep_cpython_allocations_on_drop || escaped_handles.contains(&handle) {
+                    true
+                } else if self.vm.is_null() {
+                    false
+                } else {
+                    // SAFETY: VM pointer is valid for context lifetime.
+                    let vm = unsafe { &mut *self.vm };
+                    vm.capi_owned_ptr_is_pinned(buffer as usize)
+                };
+            if keep_pinned {
+                if !self.vm.is_null() {
+                    // SAFETY: VM pointer is valid for context lifetime.
+                    let vm = unsafe { &mut *self.vm };
+                    if vm.capi_pin_owned_ptr(buffer as usize) {
+                        vm.capi_registry_mark_alive(buffer as usize);
+                        if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                            eprintln!(
+                                "[pin-free] pin-insert ptr={:p} reason=bytearray_buffer_keep",
+                                buffer
+                            );
+                        }
+                    }
+                }
+                continue;
+            }
+            if !self.capi_owned_ptr_prepare_for_free(buffer.cast()) {
+                continue;
+            }
+            // SAFETY: bytearray payload buffers were allocated through C allocator.
+            unsafe {
+                free(buffer.cast());
+            }
+            self.capi_owned_ptr_mark_freed(buffer.cast(), "context-free bytearray-buffer");
         }
         let drained_aux_allocations: Vec<*mut c_void> =
             self.cpython_aux_allocations.drain(..).collect();
@@ -4660,6 +4722,11 @@ impl ModuleCapiContext {
                 for index in 0..len {
                     self.pin_owned_child_pointer_for_vm(vm, *items_ptr.add(index));
                 }
+                return;
+            }
+            if head_ref.ob_type == std::ptr::addr_of_mut!(PyByteArray_Type).cast() {
+                let bytearray_ptr = raw.cast::<CpythonByteArrayCompatObject>();
+                self.pin_owned_child_pointer_for_vm(vm, (*bytearray_ptr).ob_bytes.cast());
             }
         }
     }
@@ -4699,6 +4766,7 @@ impl ModuleCapiContext {
             cpython_builtin_method_defs: HashMap::new(),
             cpython_builtin_by_method_def: HashMap::new(),
             cpython_list_buffers: HashMap::new(),
+            cpython_bytearray_buffers: HashMap::new(),
             cpython_list_items_cache_by_handle: HashMap::new(),
             cpython_tuple_items_cache_by_handle: HashMap::new(),
             cpython_sync_in_progress: HashSet::new(),
@@ -5611,6 +5679,7 @@ impl ModuleCapiContext {
             list_items,
             dict_len,
             bytes_payload,
+            bytearray_payload,
             module_state,
             class_state,
             instance_class,
@@ -5653,6 +5722,9 @@ impl ModuleCapiContext {
                         Object::Bytes(values) => Some(values.clone()),
                         _ => None,
                     },
+                    _ => None,
+                },
+                match &slot.value {
                     Value::ByteArray(bytes_obj) => match &*bytes_obj.kind() {
                         Object::ByteArray(values) => Some(values.clone()),
                         _ => None,
@@ -5710,6 +5782,7 @@ impl ModuleCapiContext {
             None if capsule_state.is_some() => (
                 1,
                 std::ptr::null_mut(),
+                None,
                 None,
                 None,
                 None,
@@ -6017,6 +6090,53 @@ impl ModuleCapiContext {
                 self.capi_registry_register_owned_ptr(buffer_ptr.cast(), None);
             }
             raw_list.cast::<CpythonCompatObject>()
+        } else if let Some(bytes) = bytearray_payload.as_ref() {
+            let mut capacity = bytes.len().saturating_add(1);
+            if capacity == 0 {
+                capacity = 1;
+            }
+            // SAFETY: allocate storage for CPython bytearray-compatible header.
+            let raw_bytearray =
+                unsafe { malloc(std::mem::size_of::<CpythonByteArrayCompatObject>()) }
+                    .cast::<CpythonByteArrayCompatObject>();
+            if raw_bytearray.is_null() {
+                self.set_error("out of memory allocating CPython bytearray compat object");
+                return std::ptr::null_mut();
+            }
+            // SAFETY: allocate mutable bytearray payload buffer.
+            let buffer = unsafe { malloc(capacity) }.cast::<c_char>();
+            if buffer.is_null() {
+                // SAFETY: `raw_bytearray` was allocated above and is owned here.
+                unsafe {
+                    free(raw_bytearray.cast());
+                }
+                self.set_error("out of memory allocating CPython bytearray payload");
+                return std::ptr::null_mut();
+            }
+            // SAFETY: initialize bytearray header and payload.
+            unsafe {
+                raw_bytearray.write(CpythonByteArrayCompatObject {
+                    ob_base: CpythonVarObjectHead {
+                        ob_base: CpythonObjectHead {
+                            ob_refcnt: refcount,
+                            ob_type,
+                        },
+                        ob_size: bytes.len() as isize,
+                    },
+                    ob_alloc: capacity as isize,
+                    ob_bytes: buffer,
+                    ob_start: buffer,
+                    ob_exports: 0,
+                });
+                if !bytes.is_empty() {
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer.cast::<u8>(), bytes.len());
+                }
+                *buffer.add(bytes.len()) = 0;
+            }
+            self.cpython_bytearray_buffers
+                .insert(handle, (buffer, capacity));
+            self.capi_registry_register_owned_ptr(buffer.cast(), None);
+            raw_bytearray.cast::<CpythonCompatObject>()
         } else if let Some(bytes) = bytes_payload.as_ref() {
             let storage_bytes = cpython_bytes_storage_bytes(bytes.len());
             // SAFETY: allocate storage for CPython bytes-compatible header + payload.
@@ -10663,10 +10783,14 @@ impl ModuleCapiContext {
                 Value::ByteArray(_) => {
                     // SAFETY: `ptr` is an owned bytearray-compatible allocation for this handle.
                     let bytes = unsafe {
-                        let raw = ptr.cast::<CpythonBytesCompatObject>();
+                        let raw = ptr.cast::<CpythonByteArrayCompatObject>();
                         let len = (*raw).ob_base.ob_size.max(0) as usize;
-                        let data = cpython_bytes_data_ptr(ptr);
-                        std::slice::from_raw_parts(data.cast::<u8>(), len).to_vec()
+                        let data = (*raw).ob_start;
+                        if data.is_null() || len == 0 {
+                            Vec::new()
+                        } else {
+                            std::slice::from_raw_parts(data.cast::<u8>(), len).to_vec()
+                        }
                     };
                     Some(SyncPayload::ByteArray(bytes))
                 }
@@ -11252,6 +11376,9 @@ impl ModuleCapiContext {
                 Object::Bytes(values) => Some(values.clone()),
                 _ => None,
             },
+            _ => None,
+        };
+        let bytearray_payload = match &slot.value {
             Value::ByteArray(bytes_obj) => match &*bytes_obj.kind() {
                 Object::ByteArray(values) => Some(values.clone()),
                 _ => None,
@@ -11287,6 +11414,96 @@ impl ModuleCapiContext {
                     std::ptr::copy_nonoverlapping(bytes.as_ptr(), data.cast::<u8>(), bytes.len());
                 }
                 *data.add(bytes.len()) = 0;
+                return;
+            }
+            if let Some(bytes) = bytearray_payload.as_ref() {
+                let raw_bytearray = raw.cast::<CpythonByteArrayCompatObject>();
+                let (mut buffer_ptr, mut capacity) = self
+                    .cpython_bytearray_buffers
+                    .get(&handle)
+                    .copied()
+                    .unwrap_or((
+                        (*raw_bytearray).ob_bytes,
+                        (*raw_bytearray).ob_alloc.max(0) as usize,
+                    ));
+                if !self.cpython_bytearray_buffers.contains_key(&handle) && !buffer_ptr.is_null() {
+                    self.cpython_bytearray_buffers
+                        .insert(handle, (buffer_ptr, capacity.max(1)));
+                    self.capi_registry_register_owned_ptr(buffer_ptr.cast(), None);
+                }
+                let required = bytes.len().saturating_add(1).max(1);
+                if capacity < required {
+                    let previous_ptr = buffer_ptr;
+                    let previous_was_pinned = if previous_ptr.is_null() || self.vm.is_null() {
+                        false
+                    } else {
+                        // SAFETY: VM pointer is valid for active C-API context lifetime.
+                        let vm = &mut *self.vm;
+                        vm.capi_owned_ptr_is_pinned(previous_ptr as usize)
+                    };
+                    let grown = if previous_ptr.is_null() {
+                        // SAFETY: allocate mutable bytearray payload storage.
+                        malloc(required).cast::<c_char>()
+                    } else {
+                        // SAFETY: grow mutable bytearray payload storage in place when possible.
+                        realloc(previous_ptr.cast(), required).cast::<c_char>()
+                    };
+                    if grown.is_null() {
+                        self.set_error("out of memory resizing CPython bytearray payload");
+                        return;
+                    }
+                    buffer_ptr = grown;
+                    capacity = required;
+                    if !previous_ptr.is_null() && previous_ptr != buffer_ptr {
+                        self.capi_registry_mark_freed_ptr(previous_ptr.cast());
+                        if !self.vm.is_null() {
+                            // SAFETY: VM pointer is valid for active C-API context lifetime.
+                            let vm = &mut *self.vm;
+                            if previous_was_pinned {
+                                vm.capi_unpin_owned_ptr(previous_ptr as usize);
+                            }
+                            vm.extension_pinned_capsule_names
+                                .remove(&(previous_ptr as usize));
+                            vm.capi_registry_mark_freed(previous_ptr as usize);
+                        }
+                    }
+                    if previous_ptr != buffer_ptr {
+                        self.capi_registry_register_owned_ptr(buffer_ptr.cast(), None);
+                        if previous_was_pinned && !self.vm.is_null() {
+                            // SAFETY: VM pointer is valid for active C-API context lifetime.
+                            let vm = &mut *self.vm;
+                            if vm.capi_pin_owned_ptr(buffer_ptr as usize) {
+                                vm.capi_registry_mark_alive(buffer_ptr as usize);
+                            }
+                        }
+                    }
+                    self.cpython_bytearray_buffers
+                        .insert(handle, (buffer_ptr, capacity));
+                } else if buffer_ptr.is_null() {
+                    // SAFETY: allocate mutable bytearray payload storage.
+                    let allocated = malloc(required).cast::<c_char>();
+                    if allocated.is_null() {
+                        self.set_error("out of memory allocating CPython bytearray payload");
+                        return;
+                    }
+                    buffer_ptr = allocated;
+                    capacity = required;
+                    self.capi_registry_register_owned_ptr(buffer_ptr.cast(), None);
+                    self.cpython_bytearray_buffers
+                        .insert(handle, (buffer_ptr, capacity));
+                }
+                if !bytes.is_empty() {
+                    std::ptr::copy_nonoverlapping(
+                        bytes.as_ptr(),
+                        buffer_ptr.cast::<u8>(),
+                        bytes.len(),
+                    );
+                }
+                *buffer_ptr.add(bytes.len()) = 0;
+                (*raw_bytearray).ob_base.ob_size = bytes.len() as isize;
+                (*raw_bytearray).ob_alloc = capacity as isize;
+                (*raw_bytearray).ob_bytes = buffer_ptr;
+                (*raw_bytearray).ob_start = buffer_ptr;
                 return;
             }
             if let Some(text) = unicode_text.as_ref() {
@@ -12884,6 +13101,31 @@ impl ModuleCapiContext {
             Value::ByteArray(obj) => match &*obj.kind() {
                 Object::ByteArray(values) => {
                     let (shape, strides) = Self::default_buffer_shape_and_strides(values.len(), 1);
+                    let owned_raw = self
+                        .cpython_ptr_by_handle
+                        .get(&object_handle)
+                        .copied()
+                        .filter(|ptr| self.owns_cpython_allocation_ptr(*ptr));
+                    if let Some(raw_ptr) = owned_raw {
+                        // SAFETY: `raw_ptr` is an owned bytearray-compatible allocation for this handle.
+                        let (raw_data, raw_len) = unsafe {
+                            let raw = raw_ptr.cast::<CpythonByteArrayCompatObject>();
+                            let len = (*raw).ob_base.ob_size.max(0) as usize;
+                            ((*raw).ob_start.cast::<u8>(), len)
+                        };
+                        if !raw_data.is_null() || raw_len == 0 {
+                            return Ok(BufferInfoSnapshot {
+                                data: raw_data.cast_const(),
+                                len: raw_len,
+                                readonly: false,
+                                itemsize: 1,
+                                shape,
+                                strides,
+                                contiguous: true,
+                                format_text: "B".to_string(),
+                            });
+                        }
+                    }
                     Ok(BufferInfoSnapshot {
                         data: values.as_ptr(),
                         len: values.len(),
@@ -12981,6 +13223,11 @@ impl ModuleCapiContext {
             // SAFETY: the VM pointer is initialized for the extension context lifetime.
             let vm = unsafe { &mut *self.vm };
             vm.heap.unpin_external_buffer_source(&source);
+        }
+        if let Some(ptr) = self.cpython_ptr_by_handle.get(&object_handle).copied()
+            && self.owns_cpython_allocation_ptr(ptr)
+        {
+            self.sync_value_from_cpython_storage(object_handle, ptr);
         }
         self.decref(object_handle)
     }
