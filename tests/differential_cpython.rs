@@ -41,6 +41,12 @@ fn configure_traceback_subprocess(cmd: &mut Command) {
     cmd.env("PYTHON_COLORS", "0");
     cmd.env_remove("FORCE_COLOR");
     cmd.env_remove("CLICOLOR_FORCE");
+    // Keep traceback probes deterministic across host virtualenv activation.
+    cmd.env_remove("VIRTUAL_ENV");
+    cmd.env_remove("PYTHONHOME");
+    cmd.env_remove("PYTHONPATH");
+    cmd.env_remove("PYTHONSTARTUP");
+    cmd.env_remove("PYTHONNODEBUGRANGES");
 }
 
 fn strip_ansi_control_sequences(text: &str) -> String {
@@ -144,6 +150,7 @@ fn run_cpython_traceback(source: &str) -> Result<String, String> {
     let mut cmd = Command::new(bin);
     configure_traceback_subprocess(&mut cmd);
     let output = cmd
+        .arg("-S")
         .arg("-c")
         .arg(source)
         .output()
@@ -161,6 +168,7 @@ fn run_pyrs_traceback(source: &str) -> Result<String, String> {
     let mut cmd = Command::new(bin);
     configure_traceback_subprocess(&mut cmd);
     let output = cmd
+        .arg("-S")
         .arg("-c")
         .arg(source)
         .output()
@@ -190,6 +198,7 @@ fn run_traceback_via_file(bin: &PathBuf, source: &str) -> Result<String, String>
     let mut cmd = Command::new(bin);
     configure_traceback_subprocess(&mut cmd);
     let output = cmd
+        .arg("-S")
         .arg(&path)
         .output()
         .map_err(|err| format!("failed to launch interpreter: {err}"));
@@ -253,6 +262,7 @@ fn run_traceback_via_pyc_file(bin: &PathBuf, pyc_path: &PathBuf) -> Result<Strin
     let mut cmd = Command::new(bin);
     configure_traceback_subprocess(&mut cmd);
     let output = cmd
+        .arg("-S")
         .arg(pyc_path)
         .output()
         .map_err(|err| format!("failed to launch interpreter: {err}"))?;
