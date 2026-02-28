@@ -53,6 +53,11 @@ def resolve_stable_abi_toml(cli_path: pathlib.Path | None) -> pathlib.Path:
     cpython_src = os.environ.get("CPYTHON_SRC")
     if cpython_src:
         candidates.append(pathlib.Path(cpython_src) / "Misc" / "stable_abi.toml")
+    pyrs_cpython_lib = os.environ.get("PYRS_CPYTHON_LIB")
+    if pyrs_cpython_lib:
+        lib_path = pathlib.Path(pyrs_cpython_lib)
+        candidates.append(lib_path / "Misc" / "stable_abi.toml")
+        candidates.append(lib_path.parent / "Misc" / "stable_abi.toml")
 
     # Local machine default used by this project.
     candidates.append(REPO_ROOT / ".local" / "Python-3.14.3" / "Misc" / "stable_abi.toml")
@@ -62,7 +67,7 @@ def resolve_stable_abi_toml(cli_path: pathlib.Path | None) -> pathlib.Path:
             return candidate
 
     raise FileNotFoundError(
-        "unable to locate stable_abi.toml; pass --stable-abi-toml or set CPYTHON_SRC"
+        "unable to locate stable_abi.toml; pass --stable-abi-toml, set CPYTHON_SRC, or set PYRS_CPYTHON_LIB"
     )
 
 
@@ -95,6 +100,7 @@ def read_exported_symbols(binary: pathlib.Path) -> set[str]:
         raise RuntimeError(f"nm failed for {binary}")
 
     exported: set[str] = set()
+    is_macos = sys.platform == "darwin"
     for line in output.splitlines():
         line = line.strip()
         if not line:
@@ -104,10 +110,11 @@ def read_exported_symbols(binary: pathlib.Path) -> set[str]:
         # macOS `nm` prefixes symbols with `_`. For CPython private globals that
         # already start with `_` (for example `_Py_NoneStruct`), this becomes a
         # double underscore (`__Py_NoneStruct`). Normalize both forms.
-        if symbol.startswith("__") and len(symbol) > 2 and symbol[2].isalpha():
-            symbol = symbol[1:]
-        elif symbol.startswith("_") and len(symbol) > 1 and symbol[1].isalpha():
-            symbol = symbol[1:]
+        if is_macos:
+            if symbol.startswith("__") and len(symbol) > 2 and symbol[2].isalpha():
+                symbol = symbol[1:]
+            elif symbol.startswith("_") and len(symbol) > 1 and symbol[1].isalpha():
+                symbol = symbol[1:]
         exported.add(symbol)
     return exported
 

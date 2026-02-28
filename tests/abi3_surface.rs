@@ -5,6 +5,12 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn pyrs_bin() -> PathBuf {
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_pyrs") {
+        let candidate = PathBuf::from(path);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
     let debug = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/pyrs");
     if debug.is_file() {
         return debug;
@@ -38,13 +44,17 @@ fn exported_symbols(bin: &Path) -> HashSet<String> {
             Some(name) => name,
             None => continue,
         };
-        let normalized = if symbol.starts_with("__Py") {
-            format!("_{}", &symbol[2..])
-        } else if symbol.starts_with('_')
-            && symbol.len() > 1
-            && symbol.as_bytes()[1].is_ascii_alphabetic()
-        {
-            symbol[1..].to_string()
+        let normalized = if cfg!(target_os = "macos") {
+            if symbol.starts_with("__Py") {
+                format!("_{}", &symbol[2..])
+            } else if symbol.starts_with('_')
+                && symbol.len() > 1
+                && symbol.as_bytes()[1].is_ascii_alphabetic()
+            {
+                symbol[1..].to_string()
+            } else {
+                symbol.to_string()
+            }
         } else {
             symbol.to_string()
         };
