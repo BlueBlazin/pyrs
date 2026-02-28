@@ -12941,7 +12941,8 @@ ok = caught and args_ok and closed_ok
 
 #[test]
 fn _io_base_destructor_closes_and_flushes_receiver() {
-    let source = r#"import _io, gc
+    run_with_large_stack("vm-io-base-destructor-closes-and-flushes", move || {
+        let source = r#"import _io, gc
 record = []
 class MyIO(_io._BufferedIOBase):
     def __init__(self):
@@ -12967,11 +12968,12 @@ del f
 gc.collect()
 ok = (record == [1, 2, 3])
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
