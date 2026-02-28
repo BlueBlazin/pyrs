@@ -1,2 +1,3 @@
 # strict unittest-backed stdlib harness allowlist
 # format: <suite entry>|<category>|<owner>
+test/test_genericalias.py|typing-genericalias|runtime

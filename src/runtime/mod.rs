@@ -352,6 +352,7 @@ pub enum NativeMethodKind {
     ObjectReduceExBound,
     BoundMethodReduceEx,
     ComplexReduceEx,
+    GenericAliasRepr,
     GenericAliasCall,
     GenericAliasReduceEx,
     GenericAliasMroEntries,
@@ -4272,9 +4273,9 @@ impl BuiltinFunction {
                     _ => Err(RuntimeError::type_error("float() unsupported type")),
                 }
             }
-            BuiltinFunction::FloatGetFormat => {
-                Err(RuntimeError::new("float.__getformat__() requires VM context"))
-            }
+            BuiltinFunction::FloatGetFormat => Err(RuntimeError::new(
+                "float.__getformat__() requires VM context",
+            )),
             BuiltinFunction::Str => {
                 if args.is_empty() {
                     return Ok(Value::Str(String::new()));
@@ -8580,6 +8581,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::ComplexReduceEx => {
                         "<bound method complex.__reduce_ex__>".to_string()
+                    }
+                    NativeMethodKind::GenericAliasRepr => {
+                        "<bound method GenericAlias.__repr__>".to_string()
                     }
                     NativeMethodKind::GenericAliasCall => {
                         "<bound method GenericAlias.__call__>".to_string()

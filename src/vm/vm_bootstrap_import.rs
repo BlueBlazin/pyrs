@@ -644,9 +644,10 @@ impl Vm {
                         _ => unreachable!(),
                     };
                     if let Object::Module(descriptor_data) = &mut *register_descriptor.kind_mut() {
-                        descriptor_data
-                            .globals
-                            .insert("__func__".to_string(), Value::Builtin(BuiltinFunction::AbcRegister));
+                        descriptor_data.globals.insert(
+                            "__func__".to_string(),
+                            Value::Builtin(BuiltinFunction::AbcRegister),
+                        );
                     }
                     iobase_data
                         .attrs
@@ -958,6 +959,58 @@ impl Vm {
                 .attrs
                 .insert("n_unnamed_fields".to_string(), Value::Int(0));
         }
+        let os_direntry_class = self
+            .heap
+            .alloc_class(ClassObject::new("DirEntry".to_string(), Vec::new()));
+        if let Value::Class(class_obj) = &os_direntry_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data.attrs.insert(
+                "is_dir".to_string(),
+                Value::Builtin(BuiltinFunction::OsDirEntryIsDir),
+            );
+            class_data.attrs.insert(
+                "is_file".to_string(),
+                Value::Builtin(BuiltinFunction::OsDirEntryIsFile),
+            );
+            class_data.attrs.insert(
+                "is_symlink".to_string(),
+                Value::Builtin(BuiltinFunction::OsDirEntryIsSymlink),
+            );
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("posix".to_string()));
+        }
+        let os_scandir_iterator_class = self
+            .heap
+            .alloc_class(ClassObject::new("ScandirIterator".to_string(), Vec::new()));
+        if let Value::Class(class_obj) = &os_scandir_iterator_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data.attrs.insert(
+                "__iter__".to_string(),
+                Value::Builtin(BuiltinFunction::OsScandirIter),
+            );
+            class_data.attrs.insert(
+                "__next__".to_string(),
+                Value::Builtin(BuiltinFunction::OsScandirNext),
+            );
+            class_data.attrs.insert(
+                "__enter__".to_string(),
+                Value::Builtin(BuiltinFunction::OsScandirEnter),
+            );
+            class_data.attrs.insert(
+                "__exit__".to_string(),
+                Value::Builtin(BuiltinFunction::OsScandirExit),
+            );
+            class_data.attrs.insert(
+                "close".to_string(),
+                Value::Builtin(BuiltinFunction::OsScandirClose),
+            );
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("posix".to_string()));
+        }
         self.install_builtin_module(
             "os",
             &[
@@ -1058,6 +1111,8 @@ impl Vm {
                     self.heap
                         .alloc_class(ClassObject::new("PathLike".to_string(), Vec::new())),
                 ),
+                ("DirEntry", os_direntry_class.clone()),
+                ("ScandirIterator", os_scandir_iterator_class.clone()),
                 (
                     "environ",
                     self.heap.alloc_dict(
@@ -1118,9 +1173,10 @@ impl Vm {
                 _ => unreachable!(),
             };
             if let Object::Module(descriptor_data) = &mut *register_descriptor.kind_mut() {
-                descriptor_data
-                    .globals
-                    .insert("__func__".to_string(), Value::Builtin(BuiltinFunction::AbcRegister));
+                descriptor_data.globals.insert(
+                    "__func__".to_string(),
+                    Value::Builtin(BuiltinFunction::AbcRegister),
+                );
             }
             pathlike_data
                 .attrs
@@ -1206,6 +1262,8 @@ impl Vm {
                     Value::Builtin(BuiltinFunction::OsWExitStatus),
                 ),
                 ("stat_result", posix_stat_result_class),
+                ("DirEntry", os_direntry_class),
+                ("ScandirIterator", os_scandir_iterator_class),
             ],
         );
         let prefix = self
@@ -3834,6 +3892,22 @@ impl Vm {
                 "__iter__".to_string(),
                 Value::Builtin(BuiltinFunction::CollectionsDequeIter),
             );
+            let generic_alias_class = self.ensure_generic_alias_class();
+            let descriptor = match self
+                .heap
+                .alloc_module(ModuleObject::new("__classmethod__".to_string()))
+            {
+                Value::Module(module) => module,
+                _ => unreachable!(),
+            };
+            if let Object::Module(module_data) = &mut *descriptor.kind_mut() {
+                module_data
+                    .globals
+                    .insert("__func__".to_string(), Value::Class(generic_alias_class));
+            }
+            class_data
+                .attrs
+                .insert("__class_getitem__".to_string(), Value::Module(descriptor));
         }
         let chain_map_class = match self
             .heap
@@ -4264,10 +4338,9 @@ impl Vm {
             class_data
                 .attrs
                 .insert("__name__".to_string(), Value::Str("Union".to_string()));
-            class_data.attrs.insert(
-                "__qualname__".to_string(),
-                Value::Str("Union".to_string()),
-            );
+            class_data
+                .attrs
+                .insert("__qualname__".to_string(), Value::Str("Union".to_string()));
             class_data.attrs.insert(
                 "__pyrs_disallow_instantiation__".to_string(),
                 Value::Bool(true),
@@ -4818,12 +4891,14 @@ impl Vm {
                     .insert("__slots__".to_string(), self.heap.alloc_tuple(Vec::new()));
                 class_data.slots = Some(Vec::new());
                 // Match CPython static-type behavior: class attrs are immutable.
-                class_data.attrs.insert("__flags__".to_string(), Value::Int(0));
+                class_data
+                    .attrs
+                    .insert("__flags__".to_string(), Value::Int(0));
             }
             match nodefault_type {
-                Value::Class(nodefault_type_class) => {
-                    self.heap.alloc_instance(InstanceObject::new(nodefault_type_class))
-                }
+                Value::Class(nodefault_type_class) => self
+                    .heap
+                    .alloc_instance(InstanceObject::new(nodefault_type_class)),
                 other => other,
             }
         };
@@ -6454,9 +6529,10 @@ impl Vm {
                                 _ => unreachable!(),
                             };
                             if let Object::Module(module_data) = &mut *descriptor.kind_mut() {
-                                module_data
-                                    .globals
-                                    .insert("__func__".to_string(), Value::Class(generic_alias_class));
+                                module_data.globals.insert(
+                                    "__func__".to_string(),
+                                    Value::Class(generic_alias_class),
+                                );
                             }
                             Value::Module(descriptor)
                         } else {
@@ -6493,9 +6569,10 @@ impl Vm {
                                 _ => unreachable!(),
                             };
                             if let Object::Module(module_data) = &mut *descriptor.kind_mut() {
-                                module_data
-                                    .globals
-                                    .insert("__func__".to_string(), Value::Class(generic_alias_class));
+                                module_data.globals.insert(
+                                    "__func__".to_string(),
+                                    Value::Class(generic_alias_class),
+                                );
                             }
                             Value::Module(descriptor)
                         } else {
@@ -8439,8 +8516,7 @@ impl Vm {
         if let Some(existing) = self.modules.get(name) {
             let existing_is_initialized_extension = self.extension_initialized_names.contains(name)
                 && Self::module_is_extension_initialized(existing);
-            let incoming_is_initialized_extension =
-                Self::module_is_extension_initialized(&module);
+            let incoming_is_initialized_extension = Self::module_is_extension_initialized(&module);
             if existing_is_initialized_extension
                 && !incoming_is_initialized_extension
                 && existing.id() != module.id()
@@ -10803,7 +10879,7 @@ impl Vm {
                     | "__spec__"
                     | "__file__"
                     | "__path__"
-                )
+            )
         })
     }
 

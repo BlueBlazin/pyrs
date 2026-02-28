@@ -25,6 +25,7 @@ Status values:
 | AQ-101 | Hash-container growth policy | Throughput stability | Load-factor/growth tuning remains open. | Adversarial-size tests + benchmark closure for growth/rehash policy. | IN_PROGRESS |
 | AQ-102 | Clone pressure in hot paths | Throughput + memory churn | Avoidable hot-path full-data clones remain. | Remove avoidable clones and add perf sentinels for clone-sensitive paths. | IN_PROGRESS |
 | AQ-103 | VM monolith reviewability | Defect risk | Further decomposition is needed for maintainability/reviewability. | Continue concern-based extraction with behavior-preserving tests. | IN_PROGRESS |
+| AQ-104 | `types.GenericAlias` strict semantics | Stdlib parity | `test/test_genericalias.py` still has broad CPython 3.14 semantic gaps (subscriptability matrix, repr/constructor edge behavior, ParamSpec specialization) and is temporarily allowlisted in strict harness. | Remove strict allowlist entry for `test/test_genericalias.py` and close the full module against CPython 3.14 with differential coverage for repr/copy/subscriptability semantics. | IN_PROGRESS |
 
 ## Audit Procedure
 1. Add a minimal repro test (and CPython differential test when applicable).

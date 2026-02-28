@@ -1287,7 +1287,10 @@ impl Vm {
         } else {
             self.ensure_generic_alias_class()
         };
-        let origin_module = self.optional_getattr_value(origin.clone(), "__module__").ok().flatten();
+        let origin_module = self
+            .optional_getattr_value(origin.clone(), "__module__")
+            .ok()
+            .flatten();
         let alias = self.heap.alloc_instance(InstanceObject::new(alias_class));
         if let Value::Instance(instance) = &alias
             && let Object::Instance(instance_data) = &mut *instance.kind_mut()
@@ -1322,6 +1325,13 @@ impl Vm {
                 "__parameters__".to_string(),
                 self.heap.alloc_tuple(parameters),
             );
+            if let Some(flags) = self
+                .optional_getattr_value(origin.clone(), "__flags__")
+                .ok()
+                .flatten()
+            {
+                instance_data.attrs.insert("__flags__".to_string(), flags);
+            }
             instance_data
                 .attrs
                 .insert("__unpacked__".to_string(), Value::Bool(false));
@@ -1339,9 +1349,7 @@ impl Vm {
                     Some(Value::Str(name)) => name.is_empty(),
                     _ => false,
                 };
-                if should_set_origin_module
-                    && let Some(module_name) = origin_module.clone()
-                {
+                if should_set_origin_module && let Some(module_name) = origin_module.clone() {
                     instance_data
                         .attrs
                         .insert("__module__".to_string(), module_name);
@@ -1740,6 +1748,13 @@ impl Vm {
                 "__parameters__".to_string(),
                 self.heap.alloc_tuple(parameters),
             );
+            if let Some(flags) = self
+                .optional_getattr_value(origin.clone(), "__flags__")
+                .ok()
+                .flatten()
+            {
+                instance_data.attrs.insert("__flags__".to_string(), flags);
+            }
             instance_data
                 .attrs
                 .insert("__unpacked__".to_string(), Value::Bool(false));
@@ -1755,9 +1770,7 @@ impl Vm {
                     Some(Value::Str(name)) => name.is_empty(),
                     _ => false,
                 };
-                if should_set_origin_module
-                    && let Some(module_name) = origin_module.clone()
-                {
+                if should_set_origin_module && let Some(module_name) = origin_module.clone() {
                     instance_data
                         .attrs
                         .insert("__module__".to_string(), module_name);
@@ -2229,10 +2242,9 @@ impl Vm {
         if let Value::Instance(instance) = &union
             && let Object::Instance(instance_data) = &mut *instance.kind_mut()
         {
-            instance_data.attrs.insert(
-                "__origin__".to_string(),
-                Value::Class(union_class.clone()),
-            );
+            instance_data
+                .attrs
+                .insert("__origin__".to_string(), Value::Class(union_class.clone()));
             instance_data
                 .attrs
                 .insert("__args__".to_string(), self.heap.alloc_tuple(flat_members));
@@ -2262,12 +2274,11 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        if self.union_args_from_value(&left).is_some() || self.union_args_from_value(&right).is_some()
+        if self.union_args_from_value(&left).is_some()
+            || self.union_args_from_value(&right).is_some()
         {
-            return self.build_union_value_from_members_with_forward_lenient(
-                vec![left, right],
-                true,
-            );
+            return self
+                .build_union_value_from_members_with_forward_lenient(vec![left, right], true);
         }
         self.build_union_value_from_members(vec![left, right])
     }
@@ -2399,13 +2410,8 @@ impl Vm {
             for subparam in subparams {
                 let replacement_lookup =
                     self.generic_alias_substitution_lookup(&subparam, substitutions)?;
-                let replacement = replacement_lookup
-                    .clone()
-                    .unwrap_or(subparam.clone());
-                if !changed
-                    && replacement_lookup.is_some()
-                    && replacement != subparam
-                {
+                let replacement = replacement_lookup.clone().unwrap_or(subparam.clone());
+                if !changed && replacement_lookup.is_some() && replacement != subparam {
                     changed = true;
                 }
                 if typing_typevartuple_param_marker(&subparam) {
@@ -4217,7 +4223,11 @@ impl Vm {
 
     pub(super) fn ensure_unique_base_classes(&self, bases: &[ObjRef]) -> Result<(), RuntimeError> {
         for (idx, base) in bases.iter().enumerate() {
-            if bases.iter().skip(idx + 1).any(|other| other.id() == base.id()) {
+            if bases
+                .iter()
+                .skip(idx + 1)
+                .any(|other| other.id() == base.id())
+            {
                 let base_name = match &*base.kind() {
                     Object::Class(class_data) => class_data.name.clone(),
                     _ => "object".to_string(),

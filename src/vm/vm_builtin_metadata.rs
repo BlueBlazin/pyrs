@@ -222,9 +222,10 @@ impl Vm {
             descriptor_data
                 .attrs
                 .insert("__name__".to_string(), Value::Str(slot_name.to_string()));
-            descriptor_data
-                .attrs
-                .insert("__objclass__".to_string(), Value::Class(owner_class.clone()));
+            descriptor_data.attrs.insert(
+                "__objclass__".to_string(),
+                Value::Class(owner_class.clone()),
+            );
         }
         descriptor
     }
@@ -1951,8 +1952,7 @@ impl Vm {
             }
             return Some(self.alloc_native_bound_method(NativeMethodKind::StrCount, receiver));
         }
-        if self.class_has_builtin_str_base(class)
-            && matches!(attr_name, "startswith" | "endswith")
+        if self.class_has_builtin_str_base(class) && matches!(attr_name, "startswith" | "endswith")
         {
             let receiver = match self
                 .heap
@@ -2968,18 +2968,21 @@ impl Vm {
                             "attribute access unsupported type",
                         ));
                     };
-                    let dict_qualname = func_data.dict.as_ref().and_then(|dict| match &*dict.kind()
-                    {
-                        Object::Dict(entries) => entries.iter().find_map(|(key, value)| {
-                            if matches!(key, Value::Str(name) if name == "__qualname__")
-                                && let Value::Str(text) = value
-                            {
-                                return Some(text.clone());
-                            }
-                            None
-                        }),
-                        _ => None,
-                    });
+                    let dict_qualname =
+                        func_data
+                            .dict
+                            .as_ref()
+                            .and_then(|dict| match &*dict.kind() {
+                                Object::Dict(entries) => entries.iter().find_map(|(key, value)| {
+                                    if matches!(key, Value::Str(name) if name == "__qualname__")
+                                        && let Value::Str(text) = value
+                                    {
+                                        return Some(text.clone());
+                                    }
+                                    None
+                                }),
+                                _ => None,
+                            });
                     if let Some(qualname) = dict_qualname {
                         return Ok(Value::Str(qualname));
                     }
@@ -3205,9 +3208,10 @@ impl Vm {
                         return Ok(unwrapped);
                     }
                     if let Value::Function(method_func) = attr.clone() {
-                        return Ok(self
-                            .heap
-                            .alloc_bound_method(BoundMethod::new(method_func, function_type_class)));
+                        return Ok(self.heap.alloc_bound_method(BoundMethod::new(
+                            method_func,
+                            function_type_class,
+                        )));
                     }
                     if let Value::Builtin(builtin) = attr.clone() {
                         return Ok(self.alloc_builtin_bound_method(builtin, function_type_class));
@@ -4447,11 +4451,7 @@ impl Vm {
                 Value::Instance(instance) => match &*instance.kind() {
                     Object::Instance(instance_data) => match &*instance_data.class.kind() {
                         Object::Class(class_data) => {
-                            let mut keys = instance_data
-                                .attrs
-                                .keys()
-                                .cloned()
-                                .collect::<Vec<_>>();
+                            let mut keys = instance_data.attrs.keys().cloned().collect::<Vec<_>>();
                             keys.sort();
                             keys.truncate(6);
                             format!("instance_class={} attrs={keys:?}", class_data.name)
@@ -5556,7 +5556,9 @@ impl Vm {
                 HashMap::new(),
             )? {
                 InternalCallOutcome::Value(value) => Ok(AttrAccessOutcome::Value(value)),
-                InternalCallOutcome::CallerExceptionHandled => Ok(AttrAccessOutcome::ExceptionHandled),
+                InternalCallOutcome::CallerExceptionHandled => {
+                    Ok(AttrAccessOutcome::ExceptionHandled)
+                }
             };
         }
         if is_cpython_proxy_class
@@ -5659,10 +5661,12 @@ impl Vm {
                 .cloned()
                 .unwrap_or(Value::None)
         } else if attr_name == "__annotations__" {
-            return Ok(AttrAccessOutcome::Value(self.builtin_type_annotations_get(
-                vec![Value::Class(class.clone())],
-                HashMap::new(),
-            )?));
+            return Ok(AttrAccessOutcome::Value(
+                self.builtin_type_annotations_get(
+                    vec![Value::Class(class.clone())],
+                    HashMap::new(),
+                )?,
+            ));
         } else if attr_name == "__annotate__" {
             let class_kind = class.kind();
             let Object::Class(class_data) = &*class_kind else {
@@ -5836,10 +5840,7 @@ impl Vm {
                 let default_new = self
                     .load_attr_class_builtin_base_method(class, "__new__")
                     .unwrap_or(Value::Builtin(BuiltinFunction::ObjectNew));
-                entries.push((
-                    Value::Str("__new__".to_string()),
-                    default_new,
-                ));
+                entries.push((Value::Str("__new__".to_string()), default_new));
             }
             let dict_value = self.heap.alloc_readonly_dict(entries);
             if let Some(mappingproxy_class) = self
@@ -7213,6 +7214,12 @@ impl Vm {
                 instance.clone(),
             )));
         }
+        if is_types_generic_alias_instance && (attr_name == "__repr__" || attr_name == "__str__") {
+            return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                NativeMethodKind::GenericAliasRepr,
+                instance.clone(),
+            )));
+        }
         if is_types_generic_alias_instance && attr_name == "__call__" {
             return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
                 NativeMethodKind::GenericAliasCall,
@@ -7312,9 +7319,9 @@ impl Vm {
                         None
                     } else {
                         match &*method_data.function.kind() {
-                            Object::NativeMethod(native) => Some(
-                                self.alloc_native_bound_method(native.kind, instance.clone()),
-                            ),
+                            Object::NativeMethod(native) => {
+                                Some(self.alloc_native_bound_method(native.kind, instance.clone()))
+                            }
                             _ => None,
                         }
                     }
@@ -7858,8 +7865,9 @@ impl Vm {
                             )));
                         }
                         InternalCallOutcome::CallerExceptionHandled => {
-                            return Err(self
-                                .runtime_error_from_active_exception("module.__annotate__ failed"));
+                            return Err(self.runtime_error_from_active_exception(
+                                "module.__annotate__ failed",
+                            ));
                         }
                     }
                 } else {
@@ -8059,7 +8067,9 @@ impl Vm {
                     )
             ),
         };
-        explicit_dynamic || cpython_dictoffset_dynamic || class_inherits_dynamic_instance_dict(class_ref)
+        explicit_dynamic
+            || cpython_dictoffset_dynamic
+            || class_inherits_dynamic_instance_dict(class_ref)
     }
 
     fn class_assignment_layout_compatible(old_class: &ObjRef, new_class: &ObjRef) -> bool {

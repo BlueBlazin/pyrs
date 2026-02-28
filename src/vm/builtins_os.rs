@@ -537,6 +537,29 @@ impl Vm {
             })
     }
 
+    fn os_or_posix_class(&self, class_name: &str) -> Option<ObjRef> {
+        for module_name in ["os", "posix"] {
+            let Some(module) = self.modules.get(module_name) else {
+                continue;
+            };
+            let Object::Module(module_data) = &*module.kind() else {
+                continue;
+            };
+            if let Some(Value::Class(class_ref)) = module_data.globals.get(class_name) {
+                return Some(class_ref.clone());
+            }
+        }
+        None
+    }
+
+    fn os_direntry_class(&self) -> Option<ObjRef> {
+        self.os_or_posix_class("DirEntry")
+    }
+
+    fn os_scandir_iterator_class(&self) -> Option<ObjRef> {
+        self.os_or_posix_class("ScandirIterator")
+    }
+
     pub(super) fn make_os_terminal_size(
         &mut self,
         columns: i64,
@@ -1380,56 +1403,12 @@ impl Vm {
         } else {
             self.path_arg_to_string(args[0].clone())?
         };
-        let direntry_class = match self
-            .heap
-            .alloc_class(ClassObject::new("DirEntry".to_string(), Vec::new()))
-        {
-            Value::Class(class) => class,
-            _ => unreachable!(),
-        };
-        if let Object::Class(class_data) = &mut *direntry_class.kind_mut() {
-            class_data.attrs.insert(
-                "is_dir".to_string(),
-                Value::Builtin(BuiltinFunction::OsDirEntryIsDir),
-            );
-            class_data.attrs.insert(
-                "is_file".to_string(),
-                Value::Builtin(BuiltinFunction::OsDirEntryIsFile),
-            );
-            class_data.attrs.insert(
-                "is_symlink".to_string(),
-                Value::Builtin(BuiltinFunction::OsDirEntryIsSymlink),
-            );
-        }
-        let scandir_class = match self
-            .heap
-            .alloc_class(ClassObject::new("ScandirIterator".to_string(), Vec::new()))
-        {
-            Value::Class(class) => class,
-            _ => unreachable!(),
-        };
-        if let Object::Class(class_data) = &mut *scandir_class.kind_mut() {
-            class_data.attrs.insert(
-                "__iter__".to_string(),
-                Value::Builtin(BuiltinFunction::OsScandirIter),
-            );
-            class_data.attrs.insert(
-                "__next__".to_string(),
-                Value::Builtin(BuiltinFunction::OsScandirNext),
-            );
-            class_data.attrs.insert(
-                "__enter__".to_string(),
-                Value::Builtin(BuiltinFunction::OsScandirEnter),
-            );
-            class_data.attrs.insert(
-                "__exit__".to_string(),
-                Value::Builtin(BuiltinFunction::OsScandirExit),
-            );
-            class_data.attrs.insert(
-                "close".to_string(),
-                Value::Builtin(BuiltinFunction::OsScandirClose),
-            );
-        }
+        let direntry_class = self
+            .os_direntry_class()
+            .ok_or_else(|| RuntimeError::new("os.DirEntry missing"))?;
+        let scandir_class = self
+            .os_scandir_iterator_class()
+            .ok_or_else(|| RuntimeError::new("os.ScandirIterator missing"))?;
 
         let mut rows = Vec::new();
         let entries = fs::read_dir(&path)

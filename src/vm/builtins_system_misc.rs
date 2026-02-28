@@ -4393,9 +4393,9 @@ impl Vm {
                 if !matches!(callable, Value::Builtin(builtin) if builtin == recursive_builtin) {
                     return Some(callable);
                 }
-                // CPython's _warnings and _py_warnings keep different filter tuple shapes.
-                // If warnings.<attr> resolves back to this builtin, stay on builtin path.
-                return None;
+                // CPython's `warnings` module binds `warn`/`warn_explicit` to `_warnings`
+                // when available. If that resolves back to this builtin, continue probing
+                // `_py_warnings` so we still get the full Python warning machinery.
             }
             if let Ok(set_module) = self.load_attr_module(&warnings_module, "_set_module") {
                 let _ = self.call_internal_preserving_caller(

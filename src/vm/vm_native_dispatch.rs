@@ -1451,7 +1451,9 @@ impl Vm {
                 let mut method_args = args;
                 let queue_receiver = match &*receiver.kind() {
                     Object::Instance(_) => receiver.clone(),
-                    Object::Module(module_data) if module_data.name == "__queue_unbound_method__" => {
+                    Object::Module(module_data)
+                        if module_data.name == "__queue_unbound_method__" =>
+                    {
                         if method_args.is_empty() {
                             return Err(RuntimeError::type_error(
                                 "descriptor 'put' for '_queue.SimpleQueue' objects needs an argument",
@@ -1526,7 +1528,9 @@ impl Vm {
                 let mut method_args = args;
                 let queue_receiver = match &*receiver.kind() {
                     Object::Instance(_) => receiver.clone(),
-                    Object::Module(module_data) if module_data.name == "__queue_unbound_method__" => {
+                    Object::Module(module_data)
+                        if module_data.name == "__queue_unbound_method__" =>
+                    {
                         if method_args.is_empty() {
                             return Err(RuntimeError::type_error(
                                 "descriptor 'get' for '_queue.SimpleQueue' objects needs an argument",
@@ -1579,7 +1583,9 @@ impl Vm {
                         "get() got multiple values for argument 'timeout'",
                     ));
                 }
-                let _timeout = kwargs.remove("timeout").or_else(|| method_args.get(1).cloned());
+                let _timeout = kwargs
+                    .remove("timeout")
+                    .or_else(|| method_args.get(1).cloned());
                 let storage = {
                     let mut receiver_kind = queue_receiver.kind_mut();
                     let Object::Instance(instance_data) = &mut *receiver_kind else {
@@ -1611,15 +1617,16 @@ impl Vm {
                 }
                 let _ = block;
                 Err(RuntimeError::from_exception(ExceptionObject::new(
-                    "Empty",
-                    None,
+                    "Empty", None,
                 )))
             }
             NativeMethodKind::QueueSimpleQueueGetNowait => {
                 let mut method_args = args;
                 let queue_receiver = match &*receiver.kind() {
                     Object::Instance(_) => receiver.clone(),
-                    Object::Module(module_data) if module_data.name == "__queue_unbound_method__" => {
+                    Object::Module(module_data)
+                        if module_data.name == "__queue_unbound_method__" =>
+                    {
                         if method_args.is_empty() {
                             return Err(RuntimeError::type_error(
                                 "descriptor 'get_nowait' for '_queue.SimpleQueue' objects needs an argument",
@@ -1641,9 +1648,7 @@ impl Vm {
                     }
                 };
                 if !kwargs.is_empty() || !method_args.is_empty() {
-                    return Err(RuntimeError::type_error(
-                        "get_nowait() takes no arguments",
-                    ));
+                    return Err(RuntimeError::type_error("get_nowait() takes no arguments"));
                 }
                 let storage = {
                     let mut receiver_kind = queue_receiver.kind_mut();
@@ -1673,8 +1678,7 @@ impl Vm {
                 };
                 if values.is_empty() {
                     return Err(RuntimeError::from_exception(ExceptionObject::new(
-                        "Empty",
-                        None,
+                        "Empty", None,
                     )));
                 }
                 Ok(NativeCallResult::Value(values.remove(0)))
@@ -1683,7 +1687,9 @@ impl Vm {
                 let mut method_args = args;
                 let queue_receiver = match &*receiver.kind() {
                     Object::Instance(_) => receiver.clone(),
-                    Object::Module(module_data) if module_data.name == "__queue_unbound_method__" => {
+                    Object::Module(module_data)
+                        if module_data.name == "__queue_unbound_method__" =>
+                    {
                         if method_args.is_empty() {
                             return Err(RuntimeError::type_error(
                                 "descriptor 'empty' for '_queue.SimpleQueue' objects needs an argument",
@@ -6008,7 +6014,8 @@ impl Vm {
                                     if class_annotation_wrapper && future_annotations_import =>
                                 {
                                     if let Some(owner) = call_owner.clone() {
-                                        let module_name = self.annotation_module_name_for_owner(&owner);
+                                        let module_name =
+                                            self.annotation_module_name_for_owner(&owner);
                                         self.function_annotation_forward_ref(
                                             text,
                                             owner,
@@ -6158,6 +6165,13 @@ impl Vm {
                 let reduced = self.builtin_object_reduce_ex(forwarded, HashMap::new())?;
                 Ok(NativeCallResult::Value(reduced))
             }
+            NativeMethodKind::GenericAliasRepr => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("__repr__() takes no arguments"));
+                }
+                let rendered = self.generic_alias_repr(&receiver)?;
+                Ok(NativeCallResult::Value(Value::Str(rendered)))
+            }
             NativeMethodKind::GenericAliasCall => {
                 let receiver_value = Value::Instance(receiver.clone());
                 if !self.is_types_generic_alias_value(&receiver_value) {
@@ -6215,6 +6229,17 @@ impl Vm {
                     .get("__args__")
                     .cloned()
                     .ok_or_else(|| RuntimeError::new("GenericAlias reduce receiver is invalid"))?;
+                let preserve_unpacked_marker = instance_data
+                    .attrs
+                    .get("__unpacked__")
+                    .cloned()
+                    .map(|flag| self.truthy_from_value(&flag))
+                    .transpose()?
+                    .unwrap_or(false);
+                let unpacked_tuple_args = instance_data
+                    .attrs
+                    .get("__typing_unpacked_tuple_args__")
+                    .cloned();
                 let is_typing_annotated_alias = match &*instance_data.class.kind() {
                     Object::Class(class_data) => {
                         if class_data.name != "_AnnotatedAlias" {
@@ -6338,6 +6363,23 @@ impl Vm {
                 };
                 let ctor = Value::Class(instance_data.class.clone());
                 let ctor_args = self.heap.alloc_tuple(vec![origin, args_value]);
+                if preserve_unpacked_marker || unpacked_tuple_args.is_some() {
+                    let mut state_entries = Vec::new();
+                    if preserve_unpacked_marker {
+                        state_entries
+                            .push((Value::Str("__unpacked__".to_string()), Value::Bool(true)));
+                    }
+                    if let Some(unpacked_args) = unpacked_tuple_args {
+                        state_entries.push((
+                            Value::Str("__typing_unpacked_tuple_args__".to_string()),
+                            unpacked_args,
+                        ));
+                    }
+                    let state = self.heap.alloc_dict(state_entries);
+                    return Ok(NativeCallResult::Value(
+                        self.heap.alloc_tuple(vec![ctor, ctor_args, state]),
+                    ));
+                }
                 Ok(NativeCallResult::Value(
                     self.heap.alloc_tuple(vec![ctor, ctor_args]),
                 ))
@@ -7524,6 +7566,143 @@ impl Vm {
         }
     }
 
+    fn generic_alias_type_class_display_name(class: &ObjRef) -> String {
+        let class_kind = class.kind();
+        let Object::Class(class_data) = &*class_kind else {
+            return "<class ?>".to_string();
+        };
+        if class_data.name == "NoneType" {
+            return "None".to_string();
+        }
+        let module = class_data
+            .attrs
+            .get("__module__")
+            .and_then(|value| match value {
+                Value::Str(name) => Some(name.as_str()),
+                _ => None,
+            })
+            .unwrap_or("builtins");
+        let qualname = class_data
+            .attrs
+            .get("__qualname__")
+            .and_then(|value| match value {
+                Value::Str(name) => Some(name.as_str()),
+                _ => None,
+            })
+            .unwrap_or(class_data.name.as_str());
+        if module == "builtins" {
+            qualname.to_string()
+        } else {
+            format!("{module}.{qualname}")
+        }
+    }
+
+    fn generic_alias_builtin_type_name(builtin: BuiltinFunction) -> Option<&'static str> {
+        match builtin {
+            BuiltinFunction::Type => Some("type"),
+            BuiltinFunction::Bool => Some("bool"),
+            BuiltinFunction::Int => Some("int"),
+            BuiltinFunction::Float => Some("float"),
+            BuiltinFunction::Complex => Some("complex"),
+            BuiltinFunction::Str => Some("str"),
+            BuiltinFunction::List => Some("list"),
+            BuiltinFunction::Tuple => Some("tuple"),
+            BuiltinFunction::Dict => Some("dict"),
+            BuiltinFunction::Set => Some("set"),
+            BuiltinFunction::FrozenSet => Some("frozenset"),
+            BuiltinFunction::Bytes => Some("bytes"),
+            BuiltinFunction::ByteArray => Some("bytearray"),
+            BuiltinFunction::MemoryView => Some("memoryview"),
+            BuiltinFunction::Slice => Some("slice"),
+            BuiltinFunction::Range => Some("range"),
+            _ => None,
+        }
+    }
+
+    fn generic_alias_type_repr(&mut self, value: Value) -> Result<String, RuntimeError> {
+        match value {
+            Value::None => Ok("None".to_string()),
+            Value::Class(class) => Ok(Self::generic_alias_type_class_display_name(&class)),
+            Value::Builtin(builtin) => Ok(Self::generic_alias_builtin_type_name(builtin)
+                .map(str::to_string)
+                .unwrap_or_else(|| format_value(&Value::Builtin(builtin)))),
+            other => match self.builtin_repr(vec![other], HashMap::new())? {
+                Value::Str(text) => Ok(text),
+                repr_value => Ok(format_value(&repr_value)),
+            },
+        }
+    }
+
+    fn generic_alias_list_repr(&mut self, list_obj: &ObjRef) -> Result<String, RuntimeError> {
+        let len = {
+            let list_kind = list_obj.kind();
+            let Object::List(values) = &*list_kind else {
+                return Err(RuntimeError::new(
+                    "GenericAlias repr list argument is invalid",
+                ));
+            };
+            values.len()
+        };
+        let mut rendered = String::new();
+        rendered.push('[');
+        for index in 0..len {
+            if index > 0 {
+                rendered.push_str(", ");
+            }
+            let item = {
+                let list_kind = list_obj.kind();
+                let Object::List(values) = &*list_kind else {
+                    return Err(RuntimeError::new(
+                        "GenericAlias repr list argument is invalid",
+                    ));
+                };
+                values
+                    .get(index)
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::index_error("list index out of range"))?
+            };
+            rendered.push_str(&self.generic_alias_type_repr(item)?);
+        }
+        rendered.push(']');
+        Ok(rendered)
+    }
+
+    fn generic_alias_repr(&mut self, alias: &ObjRef) -> Result<String, RuntimeError> {
+        let alias_value = Value::Instance(alias.clone());
+        let Some((origin, args)) = self.generic_alias_parts_from_value(&alias_value) else {
+            return Err(RuntimeError::new("GenericAlias repr receiver is invalid"));
+        };
+        let is_unpacked = self
+            .optional_getattr_value(alias_value, "__unpacked__")?
+            .map(|flag| self.truthy_from_value(&flag))
+            .transpose()?
+            .unwrap_or(false);
+
+        let mut rendered = String::new();
+        if is_unpacked {
+            rendered.push('*');
+        }
+        rendered.push_str(&self.generic_alias_type_repr(origin)?);
+        rendered.push('[');
+        if args.is_empty() {
+            rendered.push_str("()");
+        } else {
+            for (index, arg) in args.iter().enumerate() {
+                if index > 0 {
+                    rendered.push_str(", ");
+                }
+                let arg_text = if let Value::List(list_obj) = arg {
+                    self.generic_alias_list_repr(list_obj)?
+                } else {
+                    self.generic_alias_type_repr(arg.clone())?
+                };
+                rendered.push_str(&arg_text);
+            }
+        }
+        rendered.push(']');
+        Ok(rendered)
+    }
+
     fn typing_alias_unpack_iterator(&mut self, alias: &ObjRef) -> Option<Value> {
         let (origin, args) = {
             let alias_kind = alias.kind();
@@ -7614,7 +7793,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("NoDefaultType.__repr__() takes no arguments"));
+            return Err(RuntimeError::new(
+                "NoDefaultType.__repr__() takes no arguments",
+            ));
         }
         Ok(Value::Str("typing.NoDefault".to_string()))
     }
@@ -7625,7 +7806,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("NoDefaultType.__reduce__() takes no arguments"));
+            return Err(RuntimeError::new(
+                "NoDefaultType.__reduce__() takes no arguments",
+            ));
         }
         Ok(Value::Str("NoDefault".to_string()))
     }
@@ -7913,12 +8096,11 @@ impl Vm {
                     if locals.contains_key(&name) {
                         return Ok(Value::Str(text.to_string()));
                     }
-                    let forward_ref =
-                        self.function_annotation_forward_ref(
-                            &name,
-                            function_owner.clone(),
-                            module_name.clone(),
-                        )?;
+                    let forward_ref = self.function_annotation_forward_ref(
+                        &name,
+                        function_owner.clone(),
+                        module_name.clone(),
+                    )?;
                     locals.insert(name, forward_ref);
                 }
             }
@@ -7993,7 +8175,9 @@ impl Vm {
                 }
             }
         }
-        Err(RuntimeError::new("annotation evaluation exceeded lookup retries"))
+        Err(RuntimeError::new(
+            "annotation evaluation exceeded lookup retries",
+        ))
     }
 
     fn annotation_value_from_call_stack(&self, name: &str) -> Option<Value> {
@@ -8104,13 +8288,15 @@ impl Vm {
         let type_param = args.remove(0);
         let arg = args.remove(0);
         match self.typing_param_kind_name(&type_param) {
-            Some("TypeVar") => match self.call_typing_helper("_typevar_subst", vec![type_param, arg.clone()]) {
-                Ok(value) => Ok(value),
-                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {
-                    self.typing_typevar_subst_fallback(arg)
+            Some("TypeVar") => {
+                match self.call_typing_helper("_typevar_subst", vec![type_param, arg.clone()]) {
+                    Ok(value) => Ok(value),
+                    Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {
+                        self.typing_typevar_subst_fallback(arg)
+                    }
+                    Err(err) => Err(err),
                 }
-                Err(err) => Err(err),
-            },
+            }
             Some("ParamSpec") => self.call_typing_helper("_paramspec_subst", vec![type_param, arg]),
             Some("TypeVarTuple") => Err(RuntimeError::type_error(
                 "Substitution of bare TypeVarTuple is not supported",
@@ -8756,7 +8942,10 @@ impl Vm {
                 ));
             }
             if is_truthy(abstract_methods) {
-                return Some(format!("Can't instantiate abstract class {}", class_data.name));
+                return Some(format!(
+                    "Can't instantiate abstract class {}",
+                    class_data.name
+                ));
             }
         }
         let runtime_disallow = matches!(
@@ -11483,22 +11672,21 @@ impl Vm {
                             );
                         }
                         if let Some(bound) = bound_value {
-                            let checked_bound =
-                                match self.call_typing_helper(
-                                    "_type_check",
-                                    vec![
-                                        bound.clone(),
-                                        Value::Str("Bound must be a type.".to_string()),
-                                    ],
-                                ) {
-                                    Ok(value) => value,
-                                    Err(err)
-                                        if runtime_error_matches_exception(&err, "AttributeError") =>
-                                    {
-                                        bound
-                                    }
-                                    Err(err) => return Err(err),
-                                };
+                            let checked_bound = match self.call_typing_helper(
+                                "_type_check",
+                                vec![
+                                    bound.clone(),
+                                    Value::Str("Bound must be a type.".to_string()),
+                                ],
+                            ) {
+                                Ok(value) => value,
+                                Err(err)
+                                    if runtime_error_matches_exception(&err, "AttributeError") =>
+                                {
+                                    bound
+                                }
+                                Err(err) => return Err(err),
+                            };
                             instance_data
                                 .attrs
                                 .insert("__bound__".to_string(), checked_bound);
