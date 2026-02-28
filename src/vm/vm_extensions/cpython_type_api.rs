@@ -603,8 +603,7 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
             let dict_ptr = unsafe { (*type_ptr).tp_dict };
             if !dict_ptr.is_null() {
                 // SAFETY: `dict_ptr` is a dictionary object for the active type.
-                let module_attr =
-                    unsafe { PyDict_GetItemString(dict_ptr, c"__module__".as_ptr()) };
+                let module_attr = unsafe { PyDict_GetItemString(dict_ptr, c"__module__".as_ptr()) };
                 if !module_attr.is_null() {
                     // SAFETY: returning borrowed dict entry as new reference.
                     unsafe { Py_IncRef(module_attr) };

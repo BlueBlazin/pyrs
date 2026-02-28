@@ -7,20 +7,20 @@ use super::{
     ClassBuildOutcome, ClassObject, CodeObject, ExceptionObject, Frame, FunctionObject,
     GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome, HashMap, HashSet,
     INSTANCE_DICT_STORAGE_ATTR, InstanceObject, Instruction, InternalCallOutcome,
-    LoadAttrSiteCacheEntry, LoadAttrSiteCacheKind, LoadGlobalSiteCacheEntry, ModuleObject,
-    MAPPING_PROXY_STORAGE_ATTR, NativeMethodKind, NativeMethodObject, ObjRef, Object, OneArgCallHotPath,
-    OneArgCallSiteCacheEntry, Opcode, PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE,
-    QuickenedSiteKind, Rc, RuntimeError, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame,
-    Value, Vm, and_values, apply_bindings, bind_arguments, builtin_exception_parent,
-    class_attr_lookup, class_attr_lookup_direct, decode_call_counts, deref_name, dict_get_value,
-    dict_remove_value, dict_set_value, dict_set_value_checked, exception_message_from_call_args,
-    floor_div_values, format_repr, format_value, is_comprehension_code, is_import_error_family,
-    is_os_error_family, is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
-    memoryview_encode_element, memoryview_format_for_view, memoryview_layout_1d_from_parts,
-    mod_values, module_globals_version, pos_value, pow_values, rshift_values,
-    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
-    slot_names_from_value, source_path_from_cache_path, value_from_bigint, value_from_object_ref,
-    value_to_int, value_to_optional_index,
+    LoadAttrSiteCacheEntry, LoadAttrSiteCacheKind, LoadGlobalSiteCacheEntry,
+    MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeMethodKind, NativeMethodObject, ObjRef, Object,
+    OneArgCallHotPath, OneArgCallSiteCacheEntry, Opcode, PY_TPFLAGS_HEAPTYPE,
+    PY_TPFLAGS_IMMUTABLETYPE, QuickenedSiteKind, Rc, RuntimeError, SOURCE_FILE_LOADER,
+    SOURCELESS_FILE_LOADER, TraceFrame, Value, Vm, and_values, apply_bindings, bind_arguments,
+    builtin_exception_parent, class_attr_lookup, class_attr_lookup_direct, decode_call_counts,
+    deref_name, dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked,
+    exception_message_from_call_args, floor_div_values, format_repr, format_value,
+    is_comprehension_code, is_import_error_family, is_os_error_family, is_truthy, lshift_values,
+    memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
+    memoryview_format_for_view, memoryview_layout_1d_from_parts, mod_values,
+    module_globals_version, pos_value, pow_values, rshift_values, runtime_error_matches_exception,
+    slice_bounds_for_step_one, slice_indices, slot_names_from_value, source_path_from_cache_path,
+    value_from_bigint, value_from_object_ref, value_to_int, value_to_optional_index,
 };
 use crate::bytecode::Location;
 use crate::runtime::{ExceptionTracebackFrame, SliceValue};
@@ -690,10 +690,7 @@ impl Vm {
                 let sys_state = self
                     .sys_dict_obj("modules")
                     .and_then(|modules_dict| {
-                        dict_get_value(
-                            &modules_dict,
-                            &Value::Str(requested_module_name.clone()),
-                        )
+                        dict_get_value(&modules_dict, &Value::Str(requested_module_name.clone()))
                     })
                     .and_then(|value| match value {
                         Value::Module(module) => {
@@ -9885,8 +9882,11 @@ impl Vm {
             return Ok(());
         };
         if dict_get_value(&namespace_dict, &Value::Str("__annotate__".to_string())).is_some()
-            || dict_get_value(&namespace_dict, &Value::Str("__annotate_func__".to_string()))
-                .is_some()
+            || dict_get_value(
+                &namespace_dict,
+                &Value::Str("__annotate_func__".to_string()),
+            )
+            .is_some()
         {
             return Ok(());
         }
@@ -9896,7 +9896,9 @@ impl Vm {
             return Ok(());
         };
         let has_deferred_strings = match &*annotations_dict.kind() {
-            Object::Dict(entries) => entries.iter().any(|(_key, value)| matches!(value, Value::Str(_))),
+            Object::Dict(entries) => entries
+                .iter()
+                .any(|(_key, value)| matches!(value, Value::Str(_))),
             _ => false,
         };
         if !has_deferred_strings {
@@ -10000,10 +10002,9 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Module(module_data) = &mut *annotate_receiver.kind_mut() {
-            module_data.globals.insert(
-                "function".to_string(),
-                Value::Function(annotate_function),
-            );
+            module_data
+                .globals
+                .insert("function".to_string(), Value::Function(annotate_function));
         }
         dict_set_value(
             &namespace_dict,
@@ -10042,8 +10043,7 @@ impl Vm {
         let mut seen_type_params = HashSet::new();
         let mut type_params = Vec::new();
         for base in base_values {
-            let Some(parameters_value) =
-                self.optional_getattr_value(base, "__parameters__")?
+            let Some(parameters_value) = self.optional_getattr_value(base, "__parameters__")?
             else {
                 continue;
             };
@@ -10616,7 +10616,12 @@ impl Vm {
         Ok(())
     }
 
-    fn set_name_failure_note(&self, class_ref: &ObjRef, attr_name: &str, descriptor: &Value) -> String {
+    fn set_name_failure_note(
+        &self,
+        class_ref: &ObjRef,
+        attr_name: &str,
+        descriptor: &Value,
+    ) -> String {
         let class_name = match &*class_ref.kind() {
             Object::Class(class_data) => class_data.name.clone(),
             _ => "<class>".to_string(),
@@ -10638,12 +10643,15 @@ impl Vm {
         let note = self.set_name_failure_note(class_ref, attr_name, descriptor);
         let note_value = Value::Str(note.clone());
         let default_notes_list = self.heap.alloc_list(vec![note_value.clone()]);
-        let Some(exception) = self.frames.iter_mut().rev().find_map(|frame| {
-            match frame.active_exception.as_mut() {
-                Some(Value::Exception(exception)) => Some(exception),
-                _ => None,
-            }
-        }) else {
+        let Some(exception) =
+            self.frames
+                .iter_mut()
+                .rev()
+                .find_map(|frame| match frame.active_exception.as_mut() {
+                    Some(Value::Exception(exception)) => Some(exception),
+                    _ => None,
+                })
+        else {
             return;
         };
         let mut note_applied = false;
@@ -14254,16 +14262,21 @@ impl Vm {
     }
 
     pub(super) fn typing_param_caller_module_attr(&self) -> Value {
-        let module_name = self.frames.last().and_then(|frame| match &*frame.module.kind() {
-            Object::Module(module_data) => module_data.globals.get("__name__").and_then(|value| {
-                if let Value::Str(name) = value {
-                    Some(name.clone())
-                } else {
-                    None
+        let module_name = self
+            .frames
+            .last()
+            .and_then(|frame| match &*frame.module.kind() {
+                Object::Module(module_data) => {
+                    module_data.globals.get("__name__").and_then(|value| {
+                        if let Value::Str(name) = value {
+                            Some(name.clone())
+                        } else {
+                            None
+                        }
+                    })
                 }
-            }),
-            _ => None,
-        });
+                _ => None,
+            });
         module_name.map(Value::Str).unwrap_or(Value::None)
     }
 

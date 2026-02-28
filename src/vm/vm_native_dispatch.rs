@@ -1,8 +1,8 @@
 use std::cell::Cell;
 
 use super::{
-    BigInt, Block, BoundMethod, BuiltinFunction, CodeObject, ExceptionObject, FormatterFieldKey,
-    Frame, GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome, HashMap, InstanceObject,
+    BigInt, BoundMethod, BuiltinFunction, CodeObject, ExceptionObject, FormatterFieldKey, Frame,
+    GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome, HashMap, InstanceObject,
     Instruction, InternalCallOutcome, IteratorKind, IteratorObject, MAPPING_PROXY_STORAGE_ATTR,
     ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object, Opcode, Ordering,
     PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc, ReMode, RePatternValue, RuntimeError, Value, Vm,
@@ -9072,35 +9072,8 @@ impl Vm {
                 let method = self
                     .lookup_bound_special_method(&receiver, "__next__")?
                     .ok_or_else(|| RuntimeError::type_error("yield from expects iterable"))?;
-                let caller_depth = self.frames.len();
-                let (caller_ip, caller_stack_len, caller_blocks, caller_active_exception) = self
-                    .frames
-                    .last()
-                    .map(|frame| {
-                        (
-                            frame.ip,
-                            frame.stack.len(),
-                            frame.blocks.clone(),
-                            frame.active_exception.clone(),
-                        )
-                    })
-                    .unwrap_or((0, 0, Vec::new(), None));
-                if let Some(frame) = self.frames.last_mut() {
-                    frame.blocks.push(Block {
-                        handler: caller_ip,
-                        stack_len: caller_stack_len,
-                    });
-                }
                 match self.call_internal(method, Vec::new(), HashMap::new()) {
                     Ok(InternalCallOutcome::Value(value)) => {
-                        if self.frames.len() == caller_depth
-                            && let Some(frame) = self.frames.last_mut()
-                        {
-                            frame.ip = caller_ip;
-                            frame.stack.truncate(caller_stack_len);
-                            frame.blocks = caller_blocks.clone();
-                            frame.active_exception = caller_active_exception.clone();
-                        }
                         if exception_is_named(&value, "StopIteration")
                             || (is_cpython_proxy_iterator
                                 && exception_is_named(&value, "IndexError"))
@@ -9112,40 +9085,22 @@ impl Vm {
                         }
                     }
                     Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                        if self.frames.len() == caller_depth {
-                            let active_exception = self
-                                .frames
-                                .last()
-                                .and_then(|frame| frame.active_exception.clone());
-                            if let Some(frame) = self.frames.last_mut() {
-                                frame.ip = caller_ip;
-                                frame.stack.truncate(caller_stack_len);
-                                frame.blocks = caller_blocks.clone();
-                                frame.active_exception = caller_active_exception.clone();
-                            }
-                            if let Some(exception) = active_exception {
-                                if exception_is_named(&exception, "StopIteration")
-                                    || (is_cpython_proxy_iterator
-                                        && exception_is_named(&exception, "IndexError"))
-                                {
-                                    unsafe { PyErr_Clear() };
-                                    return Ok(GeneratorResumeOutcome::Complete(Value::None));
-                                }
-                                self.raise_exception(exception)?;
-                                return Ok(GeneratorResumeOutcome::PropagatedException);
-                            }
+                        let active_exception = self
+                            .frames
+                            .last()
+                            .and_then(|frame| frame.active_exception.clone());
+                        if let Some(exception) = active_exception
+                            && (exception_is_named(&exception, "StopIteration")
+                                || (is_cpython_proxy_iterator
+                                    && exception_is_named(&exception, "IndexError")))
+                        {
+                            unsafe { PyErr_Clear() };
+                            self.clear_active_exception();
+                            return Ok(GeneratorResumeOutcome::Complete(Value::None));
                         }
                         Ok(GeneratorResumeOutcome::PropagatedException)
                     }
                     Err(err) => {
-                        if self.frames.len() == caller_depth
-                            && let Some(frame) = self.frames.last_mut()
-                        {
-                            frame.ip = caller_ip;
-                            frame.stack.truncate(caller_stack_len);
-                            frame.blocks = caller_blocks.clone();
-                            frame.active_exception = caller_active_exception.clone();
-                        }
                         if runtime_error_matches_exception(&err, "StopIteration")
                             || (is_cpython_proxy_iterator
                                 && runtime_error_matches_exception(&err, "IndexError"))

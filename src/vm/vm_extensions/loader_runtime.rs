@@ -307,7 +307,8 @@ impl Vm {
                 if existing.id() != module.id() {
                     // Keep canonical cache authoritative. The caller resolves through
                     // `canonical_imported_module_for_name`, so preserve the initialized object.
-                    self.modules.insert(module_name.to_string(), existing.clone());
+                    self.modules
+                        .insert(module_name.to_string(), existing.clone());
                     if let Object::Module(existing_data) = &*existing.kind()
                         && let Object::Module(current_data) = &mut *module.kind_mut()
                     {
@@ -677,30 +678,29 @@ impl Vm {
                                             .unwrap_or_else(|| "Py_mod_exec failed".to_string());
                                         let mut propagated_error = module_ctx
                                             .runtime_error_from_current_error_state(&message);
-                                        let detailed_message = if let Some(err) =
-                                            propagated_error.as_ref()
-                                        {
-                                            if err.message.is_empty() {
+                                        let detailed_message =
+                                            if let Some(err) = propagated_error.as_ref() {
+                                                if err.message.is_empty() {
+                                                    message.clone()
+                                                } else {
+                                                    err.message.clone()
+                                                }
+                                            } else if module_ctx.vm.is_null() {
                                                 message.clone()
                                             } else {
-                                                err.message.clone()
-                                            }
-                                        } else if module_ctx.vm.is_null() {
-                                            message.clone()
-                                        } else {
-                                            // SAFETY: module C-API context owns a valid VM pointer
-                                            // for the duration of extension initialization.
-                                            let vm = unsafe { &mut *module_ctx.vm };
-                                            let err =
-                                                vm.runtime_error_from_active_exception(&message);
-                                            let detail = if err.message.is_empty() {
-                                                message.clone()
-                                            } else {
-                                                err.message.clone()
+                                                // SAFETY: module C-API context owns a valid VM pointer
+                                                // for the duration of extension initialization.
+                                                let vm = unsafe { &mut *module_ctx.vm };
+                                                let err = vm
+                                                    .runtime_error_from_active_exception(&message);
+                                                let detail = if err.message.is_empty() {
+                                                    message.clone()
+                                                } else {
+                                                    err.message.clone()
+                                                };
+                                                propagated_error = Some(err);
+                                                detail
                                             };
-                                            propagated_error = Some(err);
-                                            detail
-                                        };
                                         let full_error = format!(
                                             "extension '{}' initializer '{}' Py_mod_exec failed: {}",
                                             module_name, resolved_symbol, detailed_message

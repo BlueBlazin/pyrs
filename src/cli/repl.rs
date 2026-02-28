@@ -208,7 +208,10 @@ fn repl_module_completion_plan(module: &Module) -> CompletionRefreshPlan {
     }
 }
 
-fn import_stmt_completion_symbols(names: &[ImportAlias], from_import: bool) -> CompletionRefreshPlan {
+fn import_stmt_completion_symbols(
+    names: &[ImportAlias],
+    from_import: bool,
+) -> CompletionRefreshPlan {
     let mut symbols = Vec::new();
     for alias in names {
         if from_import && alias.name == "*" {

@@ -5269,10 +5269,7 @@ impl ModuleCapiContext {
         self.first_error = None;
     }
 
-    fn runtime_error_from_current_error_state(
-        &mut self,
-        fallback: &str,
-    ) -> Option<RuntimeError> {
+    fn runtime_error_from_current_error_state(&mut self, fallback: &str) -> Option<RuntimeError> {
         let state = self.current_error?;
         let mut ptype = state.ptype;
         let pvalue = state.pvalue;
@@ -11014,7 +11011,8 @@ impl ModuleCapiContext {
             return;
         }
         // SAFETY: caller guarantees `ptr` references owned unicode-compatible storage.
-        let Some(ascii) = (unsafe { ptr.cast::<CpythonAsciiUnicodeCompatObject>().as_mut() }) else {
+        let Some(ascii) = (unsafe { ptr.cast::<CpythonAsciiUnicodeCompatObject>().as_mut() })
+        else {
             return;
         };
         let length = ascii.length.max(0) as usize;
@@ -11514,7 +11512,9 @@ impl ModuleCapiContext {
                 "__itemsize__".to_string(),
                 Value::Int(type_ref.tp_itemsize as i64),
             );
-            class_data.attrs.insert("__flags__".to_string(), flags_value);
+            class_data
+                .attrs
+                .insert("__flags__".to_string(), flags_value);
         }
     }
 

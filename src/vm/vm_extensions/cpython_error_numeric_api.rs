@@ -2854,8 +2854,7 @@ pub unsafe extern "C" fn PyErr_SetObject(_exception: *mut c_void, value: *mut c_
         // Exception instance normalization belongs to `PyErr_NormalizeException`
         // and related retrieval APIs, not `PyErr_SetObject` itself.
         let message = context.error_message_from_ptr(value);
-        if message.contains("__exit__") && std::env::var_os("PYRS_TRACE_CPY_ATTR_EXIT").is_some()
-        {
+        if message.contains("__exit__") && std::env::var_os("PYRS_TRACE_CPY_ATTR_EXIT").is_some() {
             let exception_name = cpython_exception_class_name_from_ptr(ptype)
                 .unwrap_or_else(|| cpython_type_name_for_object_ptr(ptype));
             eprintln!(

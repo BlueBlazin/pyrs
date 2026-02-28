@@ -692,9 +692,9 @@ fn record_scope_activity_stmt(
             }
             for base in bases {
                 let expr = match base {
-                    CallArg::Positional(expr)
-                    | CallArg::Star(expr)
-                    | CallArg::DoubleStar(expr) => expr,
+                    CallArg::Positional(expr) | CallArg::Star(expr) | CallArg::DoubleStar(expr) => {
+                        expr
+                    }
                     CallArg::Keyword { value, .. } => value,
                 };
                 record_scope_activity_expr(
@@ -1683,9 +1683,9 @@ fn collect_locals_namedexpr_stmt(stmt: &Stmt, locals: &mut HashSet<String>) {
         } => {
             for base in bases {
                 let expr = match base {
-                    CallArg::Positional(expr)
-                    | CallArg::Star(expr)
-                    | CallArg::DoubleStar(expr) => expr,
+                    CallArg::Positional(expr) | CallArg::Star(expr) | CallArg::DoubleStar(expr) => {
+                        expr
+                    }
                     CallArg::Keyword { value, .. } => value,
                 };
                 collect_locals_namedexpr_expr(expr, locals);
@@ -2073,9 +2073,9 @@ fn collect_uses_stmt(
         } => {
             for base in bases {
                 let expr = match base {
-                    CallArg::Positional(expr)
-                    | CallArg::Star(expr)
-                    | CallArg::DoubleStar(expr) => expr,
+                    CallArg::Positional(expr) | CallArg::Star(expr) | CallArg::DoubleStar(expr) => {
+                        expr
+                    }
                     CallArg::Keyword { value, .. } => value,
                 };
                 collect_uses_expr(expr, uses, child_free, enclosing)?;

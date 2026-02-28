@@ -1984,9 +1984,18 @@ fn executes_function_annotations() {
     assert_eq!(
         dict_entries(vm.get_global("ann")),
         Some(vec![
-            (Value::Str("x".to_string()), Value::Builtin(BuiltinFunction::Int)),
-            (Value::Str("y".to_string()), Value::Builtin(BuiltinFunction::Str)),
-            (Value::Str("return".to_string()), Value::Builtin(BuiltinFunction::Int)),
+            (
+                Value::Str("x".to_string()),
+                Value::Builtin(BuiltinFunction::Int)
+            ),
+            (
+                Value::Str("y".to_string()),
+                Value::Builtin(BuiltinFunction::Str)
+            ),
+            (
+                Value::Str("return".to_string()),
+                Value::Builtin(BuiltinFunction::Int)
+            ),
         ])
     );
     assert_eq!(vm.get_global("out"), Some(Value::Int(1)));
@@ -3733,9 +3742,7 @@ print(ok)
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains("has overflowed its stack") || stderr.contains("stack overflow") {
-            eprintln!(
-                "skipping sqlite3 check_same_thread=False test (known stack overflow path)"
-            );
+            eprintln!("skipping sqlite3 check_same_thread=False test (known stack overflow path)");
             return;
         }
         panic!(
@@ -18915,6 +18922,65 @@ def template():
 
 fn = type(template)(template.__code__, Globals({"__builtins__": __builtins__}))
 ok = (fn() == 99)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_writelines_keyboardinterrupt_remains_catchable() {
+    let source = r#"import io
+
+def text_gen():
+    yield "spam"
+    raise KeyboardInterrupt
+
+def bytes_gen():
+    yield b"spam"
+    raise KeyboardInterrupt
+
+text_ok = False
+bytes_ok = False
+try:
+    io.StringIO().writelines(text_gen())
+except KeyboardInterrupt:
+    text_ok = True
+try:
+    io.BytesIO().writelines(bytes_gen())
+except KeyboardInterrupt:
+    bytes_ok = True
+ok = text_ok and bytes_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn os_path_exists_handles_undecodable_bytes_paths_when_supported() {
+    let source = r#"import os
+path = (
+    b"/tmp/pyrs_exists_undecodable_"
+    + str(os.getpid()).encode()
+    + b"_\xff"
+)
+try:
+    open(path, "wb").close()
+except OSError:
+    ok = True
+else:
+    try:
+        ok = os.path.exists(path)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

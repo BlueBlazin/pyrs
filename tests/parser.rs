@@ -1590,7 +1590,9 @@ fn parses_vararg_starred_annotation_as_unpack_subscript() {
                                 func: iter_func,
                                 args: iter_args,
                             } => {
-                                assert!(matches!(&iter_func.node, ExprKind::Name(name) if name == "iter"));
+                                assert!(
+                                    matches!(&iter_func.node, ExprKind::Name(name) if name == "iter")
+                                );
                                 assert_eq!(iter_args.len(), 1);
                                 assert!(matches!(
                                     &iter_args[0],

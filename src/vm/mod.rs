@@ -4968,48 +4968,40 @@ impl Vm {
                     self.heap
                         .alloc_class(ClassObject::new("ModuleSpec".to_string(), Vec::new())),
                 ),
-                (
-                    "BuiltinImporter",
+                ("BuiltinImporter", {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("BuiltinImporter".to_string(), Vec::new()));
+                    if let Value::Class(class_obj) = &class
+                        && let Object::Class(class_data) = &mut *class_obj.kind_mut()
                     {
-                        let class = self.heap.alloc_class(ClassObject::new(
-                            "BuiltinImporter".to_string(),
-                            Vec::new(),
-                        ));
-                        if let Value::Class(class_obj) = &class
-                            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
-                        {
-                            class_data.attrs.insert(
-                                "__module__".to_string(),
-                                Value::Str("_frozen_importlib".to_string()),
-                            );
-                            class_data
-                                .attrs
-                                .insert("_ORIGIN".to_string(), Value::Str("built-in".to_string()));
-                        }
-                        class
-                    },
-                ),
-                (
-                    "FrozenImporter",
+                        class_data.attrs.insert(
+                            "__module__".to_string(),
+                            Value::Str("_frozen_importlib".to_string()),
+                        );
+                        class_data
+                            .attrs
+                            .insert("_ORIGIN".to_string(), Value::Str("built-in".to_string()));
+                    }
+                    class
+                }),
+                ("FrozenImporter", {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("FrozenImporter".to_string(), Vec::new()));
+                    if let Value::Class(class_obj) = &class
+                        && let Object::Class(class_data) = &mut *class_obj.kind_mut()
                     {
-                        let class = self.heap.alloc_class(ClassObject::new(
-                            "FrozenImporter".to_string(),
-                            Vec::new(),
-                        ));
-                        if let Value::Class(class_obj) = &class
-                            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
-                        {
-                            class_data.attrs.insert(
-                                "__module__".to_string(),
-                                Value::Str("_frozen_importlib".to_string()),
-                            );
-                            class_data
-                                .attrs
-                                .insert("_ORIGIN".to_string(), Value::Str("frozen".to_string()));
-                        }
-                        class
-                    },
-                ),
+                        class_data.attrs.insert(
+                            "__module__".to_string(),
+                            Value::Str("_frozen_importlib".to_string()),
+                        );
+                        class_data
+                            .attrs
+                            .insert("_ORIGIN".to_string(), Value::Str("frozen".to_string()));
+                    }
+                    class
+                }),
             ],
         );
         self.install_builtin_module(

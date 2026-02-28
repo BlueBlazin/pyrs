@@ -2874,10 +2874,8 @@ impl Vm {
                 return Err(RuntimeError::from_exception(os_error));
             }
             if let Some(message) = err.message.strip_prefix("ValueError: ") {
-                let os_error = ExceptionObject::new(
-                    "OSError".to_string(),
-                    Some(message.trim().to_string()),
-                );
+                let os_error =
+                    ExceptionObject::new("OSError".to_string(), Some(message.trim().to_string()));
                 return Err(RuntimeError::from_exception(os_error));
             }
             return Err(err);
@@ -5874,12 +5872,19 @@ impl Vm {
         if Self::iobase_is_closed(&receiver) {
             return Err(RuntimeError::value_error("I/O operation on closed file."));
         }
-        let lines = self.collect_iterable_values(args.remove(0))?;
+        let iterator = self.to_iterator_value(args.remove(0))?;
         let write = self.builtin_getattr(
             vec![receiver_value.clone(), Value::Str("write".to_string())],
             HashMap::new(),
         )?;
-        for line in lines {
+        loop {
+            let line = match self.next_from_iterator_value(&iterator)? {
+                GeneratorResumeOutcome::Yield(value) => value,
+                GeneratorResumeOutcome::Complete(_) => break,
+                GeneratorResumeOutcome::PropagatedException => {
+                    return Err(self.iteration_error_from_state("writelines() iteration failed")?);
+                }
+            };
             match self.call_internal(write.clone(), vec![line], HashMap::new())? {
                 InternalCallOutcome::Value(_) => {}
                 InternalCallOutcome::CallerExceptionHandled => {
@@ -6861,8 +6866,17 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         Self::stringio_ensure_open(&receiver)?;
-        let values = self.collect_iterable_values(args.remove(0))?;
-        for item in values {
+        let iterator = self.to_iterator_value(args.remove(0))?;
+        loop {
+            let item = match self.next_from_iterator_value(&iterator)? {
+                GeneratorResumeOutcome::Yield(value) => value,
+                GeneratorResumeOutcome::Complete(_) => break,
+                GeneratorResumeOutcome::PropagatedException => {
+                    return Err(
+                        self.iteration_error_from_state("StringIO.writelines iteration failed")?
+                    );
+                }
+            };
             let _ = self.builtin_stringio_write(
                 vec![Value::Instance(receiver.clone()), item],
                 HashMap::new(),
@@ -7330,8 +7344,17 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
-        let values = self.collect_iterable_values(args.remove(0))?;
-        for value in values {
+        let iterator = self.to_iterator_value(args.remove(0))?;
+        loop {
+            let value = match self.next_from_iterator_value(&iterator)? {
+                GeneratorResumeOutcome::Yield(value) => value,
+                GeneratorResumeOutcome::Complete(_) => break,
+                GeneratorResumeOutcome::PropagatedException => {
+                    return Err(
+                        self.iteration_error_from_state("BytesIO.writelines iteration failed")?
+                    );
+                }
+            };
             let _ = self.builtin_bytesio_write(
                 vec![Value::Instance(receiver.clone()), value],
                 HashMap::new(),

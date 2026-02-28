@@ -710,10 +710,8 @@ impl Vm {
                     Value::Class(class) => {
                         let class_kind = class.kind();
                         let Object::Class(class_data) = &*class_kind else {
-                            let Value::Str(text) = vm.builtin_repr(
-                                vec![Value::Class(class.clone())],
-                                HashMap::new(),
-                            )?
+                            let Value::Str(text) =
+                                vm.builtin_repr(vec![Value::Class(class.clone())], HashMap::new())?
                             else {
                                 return Err(RuntimeError::type_error(
                                     "__repr__ returned non-string",
@@ -739,17 +737,18 @@ impl Vm {
                         }
                     }
                     other => {
-                        let has_origin =
-                            vm.optional_getattr_value(other.clone(), "__origin__")?.is_some();
-                        let has_args =
-                            vm.optional_getattr_value(other.clone(), "__args__")?.is_some();
+                        let has_origin = vm
+                            .optional_getattr_value(other.clone(), "__origin__")?
+                            .is_some();
+                        let has_args = vm
+                            .optional_getattr_value(other.clone(), "__args__")?
+                            .is_some();
                         if !(has_origin && has_args) {
-                            let qualname = match vm
-                                .optional_getattr_value(other.clone(), "__qualname__")?
-                            {
-                                Some(Value::Str(text)) => Some(text),
-                                _ => None,
-                            };
+                            let qualname =
+                                match vm.optional_getattr_value(other.clone(), "__qualname__")? {
+                                    Some(Value::Str(text)) => Some(text),
+                                    _ => None,
+                                };
                             let module_name =
                                 match vm.optional_getattr_value(other.clone(), "__module__")? {
                                     Some(Value::Str(text)) => Some(text),
@@ -3327,8 +3326,7 @@ impl Vm {
                     }
                 }
                 let _guard = DirLookupGuard::enter();
-                let dir_result = match self.call_internal(dir_method, Vec::new(), HashMap::new())?
-                {
+                let dir_result = match self.call_internal(dir_method, Vec::new(), HashMap::new())? {
                     InternalCallOutcome::Value(value) => value,
                     InternalCallOutcome::CallerExceptionHandled => {
                         return Err(
@@ -6455,8 +6453,11 @@ impl Vm {
                         CallArg::Star(expr) => {
                             let value = self.convert_expr_to_ast_node(expr)?;
                             let ctx = self.build_ast_context_node("Load")?;
-                            base_nodes
-                                .push(self.build_ast_node("Starred", None, vec![("value", value), ("ctx", ctx)])?);
+                            base_nodes.push(self.build_ast_node(
+                                "Starred",
+                                None,
+                                vec![("value", value), ("ctx", ctx)],
+                            )?);
                         }
                         CallArg::Keyword { .. } | CallArg::DoubleStar(_) => {
                             return Err(RuntimeError::new("invalid class base argument"));
@@ -7404,12 +7405,14 @@ impl Vm {
             class_data
                 .attrs
                 .insert("__name__".to_string(), Value::Str(class_name.to_string()));
-            class_data
-                .attrs
-                .insert("__qualname__".to_string(), Value::Str(class_name.to_string()));
-            class_data
-                .attrs
-                .insert("__pyrs_disallow_subclassing__".to_string(), Value::Bool(true));
+            class_data.attrs.insert(
+                "__qualname__".to_string(),
+                Value::Str(class_name.to_string()),
+            );
+            class_data.attrs.insert(
+                "__pyrs_disallow_subclassing__".to_string(),
+                Value::Bool(true),
+            );
         }
     }
 
@@ -13233,16 +13236,19 @@ impl Vm {
                 Value::Instance(instance) => {
                     let (instance_is_enum, instance_has_int_base) = match &*instance.kind() {
                         Object::Instance(instance_data) => {
-                            let is_enum = self
-                                .class_mro_entries(&instance_data.class)
-                                .iter()
-                                .any(|entry| {
-                                    matches!(
-                                        &*entry.kind(),
-                                        Object::Class(class_data) if class_data.name == "Enum"
-                                    )
-                                });
-                            (is_enum, self.class_has_builtin_int_base(&instance_data.class))
+                            let is_enum =
+                                self.class_mro_entries(&instance_data.class)
+                                    .iter()
+                                    .any(|entry| {
+                                        matches!(
+                                            &*entry.kind(),
+                                            Object::Class(class_data) if class_data.name == "Enum"
+                                        )
+                                    });
+                            (
+                                is_enum,
+                                self.class_has_builtin_int_base(&instance_data.class),
+                            )
                         }
                         _ => (false, false),
                     };
@@ -13562,9 +13568,7 @@ impl Vm {
             {
                 Ok(ordering) => Ok(Value::Bool(ordering != Ordering::Greater)),
                 Err(fallback_err) if Self::is_unsupported_comparison_type_error(&fallback_err) => {
-                    Err(self.unsupported_comparison_between_instances_error(
-                        "<=", &left, &right,
-                    ))
+                    Err(self.unsupported_comparison_between_instances_error("<=", &left, &right))
                 }
                 Err(fallback_err) => Err(fallback_err),
             },
@@ -13614,9 +13618,7 @@ impl Vm {
             {
                 Ok(ordering) => Ok(Value::Bool(ordering != Ordering::Less)),
                 Err(fallback_err) if Self::is_unsupported_comparison_type_error(&fallback_err) => {
-                    Err(self.unsupported_comparison_between_instances_error(
-                        ">=", &left, &right,
-                    ))
+                    Err(self.unsupported_comparison_between_instances_error(">=", &left, &right))
                 }
                 Err(fallback_err) => Err(fallback_err),
             },

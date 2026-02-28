@@ -217,29 +217,25 @@ impl Vm {
             return Err(RuntimeError::new("object.__ne__ expects two arguments"));
         }
         let eq_value = match self.lookup_bound_special_method(&args[0], "__eq__")? {
-            Some(eq_callable) => match self.call_internal(
-                eq_callable,
-                vec![args[1].clone()],
-                HashMap::new(),
-            )? {
-                InternalCallOutcome::Value(value) => value,
-                InternalCallOutcome::CallerExceptionHandled => {
-                    return Err(self.runtime_error_from_active_exception(
-                        "object.__ne__ comparison failed",
-                    ));
+            Some(eq_callable) => {
+                match self.call_internal(eq_callable, vec![args[1].clone()], HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self.runtime_error_from_active_exception(
+                            "object.__ne__ comparison failed",
+                        ));
+                    }
                 }
-            },
-            None => {
-                self.compare_eq_runtime(args[0].clone(), args[1].clone())?
             }
+            None => self.compare_eq_runtime(args[0].clone(), args[1].clone())?,
         };
-        let is_not_implemented = self
-            .builtins
-            .get("NotImplemented")
-            .is_some_and(|marker| match (&eq_value, marker) {
-                (Value::Instance(left), Value::Instance(right)) => left.id() == right.id(),
-                _ => &eq_value == marker,
-            });
+        let is_not_implemented =
+            self.builtins
+                .get("NotImplemented")
+                .is_some_and(|marker| match (&eq_value, marker) {
+                    (Value::Instance(left), Value::Instance(right)) => left.id() == right.id(),
+                    _ => &eq_value == marker,
+                });
         if is_not_implemented {
             return Ok(self
                 .builtins
@@ -4287,7 +4283,9 @@ impl Vm {
                 )
                 .map_err(|err| {
                     if runtime_error_matches_exception(&err, "AttributeError") {
-                        RuntimeError::new("_get_dunder_dict_of_class() expects a class-like argument")
+                        RuntimeError::new(
+                            "_get_dunder_dict_of_class() expects a class-like argument",
+                        )
                     } else {
                         err
                     }
@@ -4299,7 +4297,9 @@ impl Vm {
                 )
                 .map_err(|err| {
                     if runtime_error_matches_exception(&err, "AttributeError") {
-                        RuntimeError::new("_get_dunder_dict_of_class() expects a class-like argument")
+                        RuntimeError::new(
+                            "_get_dunder_dict_of_class() expects a class-like argument",
+                        )
                     } else {
                         err
                     }

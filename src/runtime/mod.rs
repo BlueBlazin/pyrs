@@ -123,7 +123,10 @@ impl fmt::Debug for FunctionObject {
             .field("module_id", &self.module.id())
             .field("defaults_len", &self.defaults.len())
             .field("kwonly_defaults_len", &self.kwonly_defaults.len())
-            .field("plain_positional_call_arity", &self.plain_positional_call_arity)
+            .field(
+                "plain_positional_call_arity",
+                &self.plain_positional_call_arity,
+            )
             .field("call_cache_epoch", &self.call_cache_epoch)
             .field("closure_len", &self.closure.len())
             .field("annotations_id", &annotations)
@@ -1602,7 +1605,10 @@ impl fmt::Debug for MemoryViewObject {
             .field("format", &self.format)
             .field("shape_len", &self.shape.as_ref().map(Vec::len))
             .field("strides_len", &self.strides.as_ref().map(Vec::len))
-            .field("export_owner_id", &self.export_owner.as_ref().map(ObjRef::id))
+            .field(
+                "export_owner_id",
+                &self.export_owner.as_ref().map(ObjRef::id),
+            )
             .field("contiguous", &self.contiguous)
             .field("released", &self.released)
             .field("start", &self.start)

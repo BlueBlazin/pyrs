@@ -1210,7 +1210,7 @@ impl Vm {
                 }
             }
             _ => {
-                let path = self.path_arg_to_string(args[0].clone())?;
+                let (path, _) = self.path_arg_to_pathbuf_and_type(args[0].clone())?;
                 fs::metadata(path).map_err(|err| Self::os_error_from_io("stat failed", err))?
             }
         };
@@ -1225,7 +1225,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("lstat() expects one argument"));
         }
-        let path = self.path_arg_to_string(args[0].clone())?;
+        let (path, _) = self.path_arg_to_pathbuf_and_type(args[0].clone())?;
         let metadata = fs::symlink_metadata(path)
             .map_err(|err| Self::os_error_from_io("lstat failed", err))?;
         self.build_stat_result(metadata, true)
@@ -1966,8 +1966,8 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("remove() expects one argument"));
         }
-        let path = self.path_arg_to_string(args[0].clone())?;
-        fs::remove_file(&path).map_err(|err| Self::os_error_from_io("remove failed", err))?;
+        let (path, _) = self.path_arg_to_pathbuf_and_type(args[0].clone())?;
+        fs::remove_file(path).map_err(|err| Self::os_error_from_io("remove failed", err))?;
         Ok(Value::None)
     }
 
@@ -3898,9 +3898,53 @@ impl Vm {
                 ))
             }
             _ => {
-                let (path, _) = self.path_arg_to_string_and_type(args[0].clone())?;
-                Ok(Value::Bool(PathBuf::from(path).exists()))
+                let (path, _) = self.path_arg_to_pathbuf_and_type(args[0].clone())?;
+                Ok(Value::Bool(path.exists()))
             }
+        }
+    }
+
+    pub(super) fn path_arg_to_pathbuf_and_type(
+        &mut self,
+        value: Value,
+    ) -> Result<(PathBuf, bool), RuntimeError> {
+        let normalized = match value {
+            Value::Str(_) | Value::Bytes(_) => value,
+            other => self.builtin_os_fspath(vec![other], HashMap::new())?,
+        };
+        match normalized {
+            Value::Str(path) => {
+                if path.contains('\0') {
+                    return Err(RuntimeError::new(
+                        "ValueError: embedded null character in path",
+                    ));
+                }
+                Ok((PathBuf::from(path), false))
+            }
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(bytes) => {
+                    if bytes.contains(&0) {
+                        return Err(RuntimeError::new(
+                            "ValueError: embedded null character in path",
+                        ));
+                    }
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::ffi::OsStringExt;
+                        let path = PathBuf::from(std::ffi::OsString::from_vec(bytes.clone()));
+                        Ok((path, true))
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        Ok((
+                            PathBuf::from(String::from_utf8_lossy(bytes).into_owned()),
+                            true,
+                        ))
+                    }
+                }
+                _ => Err(RuntimeError::type_error("path must be string or bytes")),
+            },
+            _ => Err(RuntimeError::type_error("path must be string or bytes")),
         }
     }
 
@@ -4334,8 +4378,8 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("isdir() expects one argument"));
         }
-        let (path, _) = self.path_arg_to_string_and_type(args[0].clone())?;
-        Ok(Value::Bool(PathBuf::from(path).is_dir()))
+        let (path, _) = self.path_arg_to_pathbuf_and_type(args[0].clone())?;
+        Ok(Value::Bool(path.is_dir()))
     }
 
     pub(super) fn builtin_os_path_isfile(
@@ -4346,8 +4390,8 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("isfile() expects one argument"));
         }
-        let (path, _) = self.path_arg_to_string_and_type(args[0].clone())?;
-        Ok(Value::Bool(PathBuf::from(path).is_file()))
+        let (path, _) = self.path_arg_to_pathbuf_and_type(args[0].clone())?;
+        Ok(Value::Bool(path.is_file()))
     }
 
     pub(super) fn builtin_os_path_islink(
@@ -4358,7 +4402,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("islink() expects one argument"));
         }
-        let (path, _) = self.path_arg_to_string_and_type(args[0].clone())?;
+        let (path, _) = self.path_arg_to_pathbuf_and_type(args[0].clone())?;
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(_) => return Ok(Value::Bool(false)),

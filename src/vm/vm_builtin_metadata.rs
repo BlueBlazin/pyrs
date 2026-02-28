@@ -4301,7 +4301,13 @@ impl Vm {
                 }
                 Ok(())
             }
-            Err(err) => Err(err),
+            Err(err) => {
+                if self.caller_exception_handled(caller_depth, caller_ip) {
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            }
         }
     }
 
@@ -4323,7 +4329,13 @@ impl Vm {
                 self.propagate_pending_generator_exception()?;
                 Ok(())
             }
-            Err(err) => Err(err),
+            Err(err) => {
+                if self.caller_exception_handled(caller_depth, caller_ip) {
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            }
         }
     }
 
