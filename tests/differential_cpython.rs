@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::SystemTime;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pyrs::{compiler, parser, runtime::Value, vm::Vm};
@@ -74,36 +73,17 @@ fn run_pyrs_json(source: &str) -> Result<String, String> {
 }
 
 fn pyrs_bin_path() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_pyrs") {
         let candidate = PathBuf::from(path);
         if candidate.is_file() {
-            candidates.push(candidate);
+            return Some(candidate);
         }
     }
     let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/pyrs");
     if candidate.is_file() {
-        candidates.push(candidate);
+        return Some(candidate);
     }
-    if candidates.is_empty() {
-        return None;
-    }
-    let mut newest = candidates[0].clone();
-    let mut newest_mtime = newest
-        .metadata()
-        .and_then(|meta| meta.modified())
-        .unwrap_or(SystemTime::UNIX_EPOCH);
-    for candidate in candidates.into_iter().skip(1) {
-        let candidate_mtime = candidate
-            .metadata()
-            .and_then(|meta| meta.modified())
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        if candidate_mtime > newest_mtime {
-            newest_mtime = candidate_mtime;
-            newest = candidate;
-        }
-    }
-    Some(newest)
+    None
 }
 
 fn run_cpython_traceback(source: &str) -> Result<String, String> {
