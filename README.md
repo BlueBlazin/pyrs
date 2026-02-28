@@ -170,6 +170,12 @@ cargo run -- --bytecode path/to/script.py
 Run tests:
 
 ```bash
+cargo nextest run
+```
+
+Fallback (when you explicitly need `cargo test` semantics):
+
+```bash
 cargo test
 ```
 

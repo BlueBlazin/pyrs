@@ -33,7 +33,9 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 - Keep `/.local/` untracked (git-ignored); never commit the copied CPython tree.
 
 ## Test Execution Cadence
-- Do not run full `cargo test -q` for every change; full suite takes ~20 minutes with local incremental churn.
+- Default local Rust test runner is `cargo nextest run` (targeted and full runs).
+- Use `cargo test` only when `nextest` is not suitable (for example, behavior that specifically depends on `cargo test` execution semantics).
+- Do not run full `cargo nextest run` (or full `cargo test -q`) for every change; full-suite checkpoints are still expensive.
 - Default to targeted tests for touched surfaces first.
 - Run full suite only for major checkpoints (multi-subsystem refactors, milestone closure, or explicit user request).
 - Do not set `RUST_TEST_THREADS=1` by default. Use single-threaded test execution only for targeted race/flakiness diagnosis, then return to default parallel execution.

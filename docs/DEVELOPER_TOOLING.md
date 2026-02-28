@@ -15,6 +15,25 @@ This installs:
 - `cargo-llvm-cov` (`cargo llvm-cov`)
 - `cargo-flamegraph` (`cargo flamegraph`)
 
+## Local Test Runner Policy
+
+Use `cargo nextest run` as the default local Rust test runner.
+
+Examples:
+
+```bash
+# full suite
+cargo nextest run
+
+# targeted integration test
+cargo nextest run --test vm
+
+# single test by name
+cargo nextest run --test differential_cpython differential_traceback_identifier_caret_span_matches_cpython
+```
+
+Use `cargo test` only when you specifically need `cargo test` semantics.
+
 ## AddressSanitizer
 
 Status on this machine:
