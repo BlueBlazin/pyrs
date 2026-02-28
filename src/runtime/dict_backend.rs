@@ -1,3 +1,8 @@
+//! Internal dict storage backend.
+//!
+//! Implements CPython-style open addressing with perturb probing while preserving
+//! insertion order in the `entries` vector.
+
 use super::{Value, value_key_equal, value_lookup_hash};
 
 const PERTURB_SHIFT: usize = 5;
@@ -15,6 +20,9 @@ enum DictSlot {
 }
 
 #[derive(Debug, Clone)]
+/// Dense entry storage plus hash-probe slot table.
+///
+/// `entries` preserves logical insertion order; `slots` accelerates hash lookups.
 pub(super) struct DictBackend {
     entries: Vec<(Value, Value)>,
     entry_hashes: Vec<Option<u64>>,
@@ -143,6 +151,7 @@ impl DictBackend {
         self.find_index_with_hash(key, hash).is_some()
     }
 
+    /// Insert/update a key using runtime hash semantics when hashable.
     pub(super) fn insert(&mut self, key: Value, value: Value) {
         let Some(hash) = value_lookup_hash(&key) else {
             if let Some(index) = self.find_index(&key) {
@@ -158,6 +167,7 @@ impl DictBackend {
         self.insert_with_hash(key, value, hash);
     }
 
+    /// Insert/update using a caller-provided hash (C-API compatibility path).
     pub(super) fn insert_with_hash(&mut self, key: Value, value: Value, hash: u64) {
         if self.slots.is_empty() {
             self.resize_slots(MIN_TABLE_SIZE);
@@ -303,6 +313,7 @@ impl DictBackend {
         self.resize_slots(self.entries.len().max(MIN_TABLE_SIZE));
     }
 
+    /// Find a writable slot index for the given hash (empty or first dummy).
     fn lookup_vacant_slot(&self, hash: u64) -> usize {
         debug_assert!(!self.slots.is_empty());
         let mask = self.slots.len() - 1;
@@ -326,6 +337,7 @@ impl DictBackend {
         first_dummy.unwrap_or(slot)
     }
 
+    /// Probe for an existing key slot or first acceptable insertion slot.
     fn lookup_slot(&self, key: &Value, hash: u64) -> SlotLookup {
         debug_assert!(!self.slots.is_empty());
         let mask = self.slots.len() - 1;

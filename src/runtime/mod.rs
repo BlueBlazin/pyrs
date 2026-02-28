@@ -1,4 +1,7 @@
-//! Runtime object model.
+//! Runtime object model and value semantics.
+//!
+//! This module defines the heap-backed object graph (`Object`/`ObjRef`) and the
+//! immediate-or-reference value representation (`Value`) used by the VM.
 
 pub mod bigint;
 mod dict_backend;
@@ -498,12 +501,17 @@ impl NativeMethodObject {
     }
 }
 
+/// Heap object header with stable identity and interior-mutability payload.
 pub struct Obj {
     id: u64,
     kind: RefCell<Object>,
 }
 
 #[derive(Clone)]
+/// Reference-counted handle to a heap object.
+///
+/// `ObjRef::id()` is stable for the lifetime of the object and is used heavily
+/// for identity-based caches and C-API pointer maps.
 pub struct ObjRef(Rc<Obj>);
 
 impl ObjRef {
@@ -665,6 +673,10 @@ fn instance_hashable_backing_value(instance: &ObjRef) -> Option<Value> {
     None
 }
 
+/// Runtime equality relation used for dict/set key comparisons.
+///
+/// This relation mirrors CPython key behavior, including structural tuple/frozenset
+/// comparison and backing-storage aware instance normalization.
 pub(super) fn value_key_equal(left: &Value, right: &Value) -> bool {
     if left == right {
         return true;
@@ -713,6 +725,9 @@ pub(super) fn value_key_equal(left: &Value, right: &Value) -> bool {
     }
 }
 
+/// Best-effort hash for values eligible to participate in key lookups.
+///
+/// Returns `None` for unhashable/mutable container types.
 pub(crate) fn value_lookup_hash(value: &Value) -> Option<u64> {
     value_hash_key(value)
 }
@@ -810,6 +825,7 @@ impl IndexBucket {
 }
 
 #[derive(Debug, Clone)]
+/// Python dict runtime object with insertion-order and hash-lookup semantics.
 pub struct DictObject {
     backend: DictBackend,
     readonly: bool,
@@ -1359,6 +1375,7 @@ fn value_hash_key(value: &Value) -> Option<u64> {
     Some(hasher.finish())
 }
 
+/// Heap-allocated runtime object variants.
 pub enum Object {
     List(Vec<Value>),
     Tuple(Vec<Value>),
@@ -1618,6 +1635,10 @@ impl fmt::Debug for MemoryViewObject {
 }
 
 #[derive(Debug)]
+/// Per-VM heap allocator and object registry.
+///
+/// Also tracks immediate-object identity caches and external buffer pin counts
+/// required by memoryview/C-API lifetimes.
 pub struct Heap {
     instance_id: u64,
     next_id: Cell<u64>,
@@ -2484,6 +2505,10 @@ fn clear_object_refs(obj: &ObjRef) {
 }
 
 #[derive(Clone)]
+/// Runtime value representation passed through VM stack/locals/globals.
+///
+/// Small primitives are stored inline; container and user-defined values are
+/// represented via `ObjRef` handles.
 pub enum Value {
     None,
     Bool(bool),
@@ -2604,6 +2629,7 @@ impl Value {
 }
 
 #[derive(Clone)]
+/// Python exception instance payload used by runtime and traceback formatting.
 pub struct ExceptionObject {
     pub object_id: u64,
     pub name: String,
@@ -9487,6 +9513,10 @@ fn is_truthy_value(value: &Value) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Internal error carrier used by VM/runtime helpers.
+///
+/// `exception` preserves typed exception payload when available; `message` is
+/// always populated for fallback reporting.
 pub struct RuntimeError {
     pub message: String,
     pub exception: Option<Box<ExceptionObject>>,
