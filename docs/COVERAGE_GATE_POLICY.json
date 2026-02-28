@@ -1,8 +1,18 @@
 {
   "ratchet_floors": {
-    "regions": 47.0,
-    "functions": 41.0,
-    "lines": 46.0
+    "regions": 43.5,
+    "functions": 36.5,
+    "lines": 42.0
+  },
+  "ratchet_source": {
+    "platform": "ubuntu-latest (x86_64)",
+    "baseline_date": "2026-03-01",
+    "baseline_totals": {
+      "regions": 44.26,
+      "functions": 37.13,
+      "lines": 42.65
+    },
+    "stability_margin": 0.5
   },
   "long_term_targets": {
     "regions": 70.0,
