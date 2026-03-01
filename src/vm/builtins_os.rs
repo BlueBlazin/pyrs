@@ -148,9 +148,11 @@ impl Vm {
         } else {
             std::env::consts::OS.to_string()
         };
-        let nodename = std::env::var("HOSTNAME")
-            .or_else(|_| std::env::var("COMPUTERNAME"))
-            .unwrap_or_else(|_| "localhost".to_string());
+        let nodename = self
+            .host
+            .env_var("HOSTNAME")
+            .or_else(|| self.host.env_var("COMPUTERNAME"))
+            .unwrap_or_else(|| "localhost".to_string());
         let release = Command::new("uname")
             .arg("-r")
             .output()
@@ -4517,12 +4519,13 @@ impl Vm {
             };
         }
 
-        let home = std::env::var("HOME")
-            .ok()
-            .or_else(|| std::env::var("USERPROFILE").ok())
+        let home = self
+            .host
+            .env_var("HOME")
+            .or_else(|| self.host.env_var("USERPROFILE"))
             .or_else(|| {
-                let drive = std::env::var("HOMEDRIVE").ok()?;
-                let home = std::env::var("HOMEPATH").ok()?;
+                let drive = self.host.env_var("HOMEDRIVE")?;
+                let home = self.host.env_var("HOMEPATH")?;
                 Some(format!("{drive}{home}"))
             })
             .unwrap_or_else(|| "~".to_string());

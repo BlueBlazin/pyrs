@@ -252,10 +252,11 @@ Completed on this branch:
 - `b6d8e16`: `cpython_object_call_api` probes switched to cached env helper.
 - `abea877`: `cpython_slot_runtime` probes switched to cached env helper.
 - `a8f4e44`: `cpython_import_api` probes switched to cached env helper.
-- latest: `loader_runtime` probes switched to cached env helper.
+- `db0a43b`: `loader_runtime` probes switched to cached env helper.
+- latest: `builtins_os` env reads routed through host seam.
 
 Latest host seam audit (local branch run):
-- `python3 scripts/audit_wasm_host_seam.py` => `total_hits=132`.
+- `python3 scripts/audit_wasm_host_seam.py` => `total_hits=126`.
 
 Remaining near-term focus:
 1. W3: expand `WasmHost` capability stubs and error contracts for unsupported features.
