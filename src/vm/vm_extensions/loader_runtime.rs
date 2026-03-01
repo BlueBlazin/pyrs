@@ -98,7 +98,7 @@ impl Vm {
                 .unwrap_or_else(|| std::ptr::addr_of_mut!(PYRS_DATETIME_TZINFO_TYPE).cast());
             PYRS_DATETIME_CAPI.timezone_utc = runtime_timezone_utc_ptr
                 .unwrap_or_else(|| std::ptr::addr_of_mut!(_Py_NoneStruct).cast());
-            if std::env::var_os("PYRS_TRACE_DATETIME_CAPSULE").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_DATETIME_CAPSULE") {
                 let capi_date = PYRS_DATETIME_CAPI.date_type;
                 let capi_datetime = PYRS_DATETIME_CAPI.datetime_type;
                 let capi_time = PYRS_DATETIME_CAPI.time_type;
@@ -182,7 +182,7 @@ impl Vm {
         }
         // SAFETY: module_def points to extension-provided module definition.
         let methods_ptr = unsafe { (*module_def).m_methods };
-        if std::env::var_os("PYRS_TRACE_CPY_MODULE_METHODS").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_MODULE_METHODS") {
             let module_name = match &*module.kind() {
                 Object::Module(module_data) => module_data.name.clone(),
                 _ => "<non-module>".to_string(),
@@ -205,7 +205,7 @@ impl Vm {
             // SAFETY: `ml_name` is NUL-terminated by PyMethodDef contract.
             let method_name =
                 unsafe { c_name_to_string(method_name_ptr) }.map_err(RuntimeError::new)?;
-            if std::env::var_os("PYRS_TRACE_CPY_MODULE_METHODS").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_MODULE_METHODS") {
                 // SAFETY: method points to valid PyMethodDef entry.
                 let flags = unsafe { (*method).ml_flags };
                 eprintln!(
@@ -273,7 +273,7 @@ impl Vm {
     ) -> Result<(), RuntimeError> {
         let import_error =
             |message: String| RuntimeError::with_exception("ImportError", Some(message));
-        let trace_slots = std::env::var_os("PYRS_TRACE_EXT_SLOTS").is_some();
+        let trace_slots = super::super::env_var_present_cached("PYRS_TRACE_EXT_SLOTS");
         if trace_slots {
             eprintln!(
                 "[ext-load] module={} begin initialized={} in_progress={}",
@@ -629,8 +629,9 @@ impl Vm {
                                     let status = unsafe { exec(module_ptr) };
                                     if status != 0 {
                                         if module_ctx.last_error.is_none()
-                                            && std::env::var_os("PYRS_IGNORE_SLOT_STATUS_NOERROR")
-                                                .is_some()
+                                            && super::super::env_var_present_cached(
+                                                "PYRS_IGNORE_SLOT_STATUS_NOERROR",
+                                            )
                                         {
                                             if trace_slots {
                                                 eprintln!(
@@ -644,7 +645,7 @@ impl Vm {
                                             continue;
                                         }
                                         if module_ctx.last_error.is_none()
-                                            && std::env::var_os("PYRS_TRACE_EXT_SLOT_BT").is_some()
+                                            && super::super::env_var_present_cached("PYRS_TRACE_EXT_SLOT_BT")
                                         {
                                             eprintln!(
                                                 "[ext-slot] module={} status={} without last_error",
@@ -652,7 +653,7 @@ impl Vm {
                                             );
                                             eprintln!("{}", Backtrace::force_capture());
                                         }
-                                        if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+                                        if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") {
                                             eprintln!(
                                                 "[ext-slot] module={} slot_exec_status={} first_error={:?} last_error={:?} current_error_ptype={:p} current_error_pvalue={:p}",
                                                 module_name,
@@ -705,8 +706,9 @@ impl Vm {
                                             "extension '{}' initializer '{}' Py_mod_exec failed: {}",
                                             module_name, resolved_symbol, detailed_message
                                         );
-                                        if std::env::var_os("PYRS_TRACE_EXT_SLOT_MODULE_KEYS")
-                                            .is_some()
+                                        if super::super::env_var_present_cached(
+                                            "PYRS_TRACE_EXT_SLOT_MODULE_KEYS",
+                                        )
                                             && let Object::Module(module_data) =
                                                 &*active_module.kind()
                                         {
