@@ -512,6 +512,9 @@ Completed on this branch:
   fixture invariants for top-level and worker baseline flows (default unwired
   vs vm-probe `ok/runtime_error` overrides), and is enforced by both
   `check_wasm_branch.sh` and `run_wasm_contract_smoke.sh`.
+- latest: `generate_wasm_docs_execution_matrix_summary.py` now validates the
+  `WASM_API_CONTRACT.md` execution-mode matrix against source phase/blocker
+  contracts, and is enforced in both local wasm gate scripts.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

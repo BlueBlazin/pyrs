@@ -25,6 +25,10 @@ echo "[wasm-contract] wasm session contract summary snapshot"
 python3 scripts/generate_wasm_session_contract_summary.py \
   --out perf/wasm_session_contract_summary_latest.json
 
+echo "[wasm-contract] wasm docs execution matrix summary snapshot"
+python3 scripts/generate_wasm_docs_execution_matrix_summary.py \
+  --out perf/wasm_docs_execution_matrix_summary_latest.json
+
 echo "[wasm-contract] wasm module policy summary snapshot"
 python3 scripts/generate_wasm_module_policy_summary.py \
   --out perf/wasm_module_policy_summary_latest.json
