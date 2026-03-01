@@ -1,12 +1,12 @@
 #![cfg(target_arch = "wasm32")]
 
+use js_sys::Reflect;
 use pyrs::wasm::{
     WasmSession, check_compile_result, check_syntax_result, execute, wasm_api_version,
-    wasm_capabilities, wasm_execution_blockers, wasm_module_policy_entries, wasm_module_support,
-    wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
-    wasm_execution_blocker_keys, wasm_runtime_info,
+    wasm_capabilities, wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
+    wasm_execution_blocker_keys, wasm_execution_blockers, wasm_module_policy_entries,
+    wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_support,
 };
-use js_sys::Reflect;
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
 
@@ -192,6 +192,66 @@ fn wasm_module_policy_entries_are_stable() {
     assert!(mappings.contains(&("numpy".to_string(), "dynamic_library_load".to_string())));
     assert!(mappings.contains(&("socket".to_string(), "network_sockets".to_string())));
     assert!(mappings.contains(&("subprocess".to_string(), "process_spawn".to_string())));
+}
+
+#[wasm_bindgen_test]
+fn wasm_snippet_support_preflight_contract_is_stable() {
+    let supported = wasm_snippet_support("import math\nx = 1\n");
+    assert!(supported.supported());
+    assert_eq!(supported.phase(), "supported");
+    assert!(supported.error().is_none());
+    assert_eq!(supported.blocker_count(), 0);
+    assert!(supported.imported_module_count() >= 1);
+
+    let blocked = wasm_snippet_support("import socket\nimport math\n");
+    assert!(!blocked.supported());
+    assert_eq!(blocked.phase(), "blocked_capability");
+    assert_eq!(blocked.blocker_count(), 1);
+    assert_eq!(
+        blocked
+            .first_blocker_module()
+            .expect("socket blocker module"),
+        "socket".to_string()
+    );
+    assert_eq!(
+        blocked.first_blocker_key().expect("socket blocker key"),
+        "network_sockets".to_string()
+    );
+    assert!(blocked.first_blocker_message().is_some());
+
+    let compile_error = wasm_snippet_support("return 1\n");
+    assert!(!compile_error.supported());
+    assert_eq!(compile_error.phase(), "compile_error");
+    assert!(compile_error.error().is_some());
+    assert!(compile_error.line() > 0);
+    assert!(compile_error.column() > 0);
+
+    let syntax_error = wasm_snippet_support("def broken(:\n");
+    assert!(!syntax_error.supported());
+    assert_eq!(syntax_error.phase(), "syntax_error");
+    assert!(syntax_error.error().is_some());
+    assert!(syntax_error.line() > 0);
+    assert!(syntax_error.column() > 0);
+}
+
+#[wasm_bindgen_test]
+fn wasm_snippet_blockers_contract_is_stable() {
+    let blockers = wasm_snippet_blockers("import socket\nimport ctypes\n");
+    assert_eq!(blockers.length(), 2);
+    let first = blockers.get(0);
+    let first_module = Reflect::get(&first, &"module".into())
+        .expect("first.module")
+        .as_string()
+        .expect("first.module string");
+    let first_key = Reflect::get(&first, &"blocker_key".into())
+        .expect("first.blocker_key")
+        .as_string()
+        .expect("first.blocker_key string");
+    assert_eq!(first_module, "socket");
+    assert_eq!(first_key, "network_sockets");
+
+    let none = wasm_snippet_blockers("def broken(:\n");
+    assert_eq!(none.length(), 0);
 }
 
 #[wasm_bindgen_test]

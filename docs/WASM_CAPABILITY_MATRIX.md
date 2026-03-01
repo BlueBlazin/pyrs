@@ -49,6 +49,10 @@ Current wasm bridge exports for capability handling:
   returns structured module preflight status for known capability-gated modules.
 - `wasm_module_policy_entries()`:
   returns the canonical module->blocker mapping consumed by `wasm_module_support`.
+- `wasm_snippet_support(source)`:
+  returns parse+compile + capability preflight summary for snippet viability.
+- `wasm_snippet_blockers(source)`:
+  returns module-level blocker entries for parse+compile-valid snippets.
 
 Accepted capability keys:
 

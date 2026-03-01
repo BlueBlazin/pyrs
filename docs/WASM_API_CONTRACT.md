@@ -43,6 +43,10 @@ This document defines the JS-facing contract currently exported by
   - Returns module-level support/preflight status (`supported`, blocker key/message).
 - `wasm_module_policy_entries() -> Array`
   - Returns module->blocker policy rows used for browser preflight UX.
+- `wasm_snippet_support(source: &str) -> WasmSnippetSupport`
+  - Parse+compile + import-capability preflight summary for snippet viability.
+- `wasm_snippet_blockers(source: &str) -> Array`
+  - Structured module blocker rows for parse+compile-valid snippets.
 
 ## Exported Types
 
@@ -107,6 +111,25 @@ This document defines the JS-facing contract currently exported by
 
 - `module: String`
 - `blocker_key: String`
+
+## `WasmSnippetSupport`
+
+- `supported: bool`
+- `phase: String` (`"supported"`, `"blocked_capability"`, `"syntax_error"`, `"compile_error"`)
+- `error: Option<String>`
+- `line: usize`
+- `column: usize`
+- `imported_module_count: usize`
+- `blocker_count: usize`
+- `first_blocker_module: Option<String>`
+- `first_blocker_key: Option<String>`
+- `first_blocker_message: Option<String>`
+
+## `WasmSnippetBlocker`
+
+- `module: String`
+- `blocker_key: String`
+- `message: String`
 
 ## `WasmSession`
 

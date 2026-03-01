@@ -276,7 +276,9 @@ Completed on this branch:
 - `9161b33`: module preflight rationale is documented in
   `docs/WASM_MODULE_SUPPORT_POLICY.md` and linked from capability docs.
 - `eaacf67`: `WasmRuntimeInfo` now exposes parse+compile support and blocker-count metadata.
-- latest: `WasmExecutionResult` now carries structured `line`/`column` diagnostics.
+- `f412608`: `WasmExecutionResult` now carries structured `line`/`column` diagnostics.
+- latest: snippet preflight APIs landed (`wasm_snippet_support`/`wasm_snippet_blockers`) with
+  structured import-capability blocker reporting.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

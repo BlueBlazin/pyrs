@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Once;
 
 use crate::host::{HostCapability, VmHost, WasmHost};
@@ -122,6 +123,20 @@ pub struct WasmRuntimeInfo {
     execution_blocker_count: usize,
 }
 
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmSnippetSupport {
+    supported: bool,
+    phase: String,
+    error: Option<String>,
+    line: usize,
+    column: usize,
+    imported_module_count: usize,
+    blocker_count: usize,
+    first_blocker_module: Option<String>,
+    first_blocker_key: Option<String>,
+    first_blocker_message: Option<String>,
+}
+
 #[wasm_bindgen]
 impl WasmExecutionResult {
     #[wasm_bindgen(getter)]
@@ -222,6 +237,59 @@ impl WasmRuntimeInfo {
 }
 
 #[wasm_bindgen]
+impl WasmSnippetSupport {
+    #[wasm_bindgen(getter)]
+    pub fn supported(&self) -> bool {
+        self.supported
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn phase(&self) -> String {
+        self.phase.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn error(&self) -> Option<String> {
+        self.error.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn column(&self) -> usize {
+        self.column
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn imported_module_count(&self) -> usize {
+        self.imported_module_count
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn blocker_count(&self) -> usize {
+        self.blocker_count
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn first_blocker_module(&self) -> Option<String> {
+        self.first_blocker_module.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn first_blocker_key(&self) -> Option<String> {
+        self.first_blocker_key.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn first_blocker_message(&self) -> Option<String> {
+        self.first_blocker_message.clone()
+    }
+}
+
+#[wasm_bindgen]
 impl WasmSession {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
@@ -299,6 +367,13 @@ pub struct WasmModuleSupport {
 pub struct WasmModulePolicyEntry {
     module: String,
     blocker_key: String,
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmSnippetBlocker {
+    module: String,
+    blocker_key: String,
+    message: String,
 }
 
 #[wasm_bindgen]
@@ -393,6 +468,24 @@ impl WasmModulePolicyEntry {
     }
 }
 
+#[wasm_bindgen]
+impl WasmSnippetBlocker {
+    #[wasm_bindgen(getter)]
+    pub fn module(&self) -> String {
+        self.module.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn blocker_key(&self) -> String {
+        self.blocker_key.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn message(&self) -> String {
+        self.message.clone()
+    }
+}
+
 /// Exposes explicit capability support for browser mode.
 #[wasm_bindgen]
 pub fn wasm_capabilities() -> WasmCapabilityReport {
@@ -474,12 +567,11 @@ pub fn wasm_execution_blockers() -> Array {
 pub fn wasm_module_support(module_name: &str) -> WasmModuleSupport {
     let host = WasmHost;
     let normalized = module_name.trim();
-    let blocker_key = module_blocker_key(normalized).and_then(|key| {
-        match HostCapability::from_key(key) {
+    let blocker_key =
+        module_blocker_key(normalized).and_then(|key| match HostCapability::from_key(key) {
             Some(capability) if host.supports(capability) => None,
             _ => Some(key),
-        }
-    });
+        });
     let message = blocker_key.and_then(wasm_execution_blocker_error);
     WasmModuleSupport {
         module: normalized.to_string(),
@@ -500,6 +592,215 @@ pub fn wasm_module_policy_entries() -> Array {
         }));
     }
     entries
+}
+
+fn root_module_name(raw: &str) -> Option<&str> {
+    let root = raw.split('.').next()?.trim();
+    if root.is_empty() { None } else { Some(root) }
+}
+
+fn push_import_root(raw: &str, seen: &mut HashSet<String>, roots: &mut Vec<String>) {
+    let Some(root) = root_module_name(raw) else {
+        return;
+    };
+    if seen.insert(root.to_string()) {
+        roots.push(root.to_string());
+    }
+}
+
+fn collect_import_roots_from_stmts(
+    stmts: &[crate::ast::Stmt],
+    seen: &mut HashSet<String>,
+    roots: &mut Vec<String>,
+) {
+    for stmt in stmts {
+        use crate::ast::StmtKind;
+        match &stmt.node {
+            StmtKind::Import { names } => {
+                for alias in names {
+                    push_import_root(&alias.name, seen, roots);
+                }
+            }
+            StmtKind::ImportFrom { module, .. } => {
+                if let Some(module) = module {
+                    push_import_root(module, seen, roots);
+                }
+            }
+            StmtKind::If { body, orelse, .. }
+            | StmtKind::While { body, orelse, .. }
+            | StmtKind::For { body, orelse, .. } => {
+                collect_import_roots_from_stmts(body, seen, roots);
+                collect_import_roots_from_stmts(orelse, seen, roots);
+            }
+            StmtKind::Try {
+                body,
+                handlers,
+                orelse,
+                finalbody,
+            } => {
+                collect_import_roots_from_stmts(body, seen, roots);
+                for handler in handlers {
+                    collect_import_roots_from_stmts(&handler.body, seen, roots);
+                }
+                collect_import_roots_from_stmts(orelse, seen, roots);
+                collect_import_roots_from_stmts(finalbody, seen, roots);
+            }
+            StmtKind::With { body, .. }
+            | StmtKind::FunctionDef { body, .. }
+            | StmtKind::ClassDef { body, .. } => {
+                collect_import_roots_from_stmts(body, seen, roots);
+            }
+            StmtKind::Match { cases, .. } => {
+                for case in cases {
+                    collect_import_roots_from_stmts(&case.body, seen, roots);
+                }
+            }
+            StmtKind::Decorated { stmt, .. } => {
+                collect_import_roots_from_stmts(std::slice::from_ref(stmt.as_ref()), seen, roots);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_import_roots(module: &crate::ast::Module) -> Vec<String> {
+    let mut roots = Vec::new();
+    let mut seen = HashSet::new();
+    collect_import_roots_from_stmts(&module.body, &mut seen, &mut roots);
+    roots
+}
+
+fn parse_and_compile_module(source: &str) -> Result<crate::ast::Module, WasmCompileResult> {
+    let module = match crate::parser::parse_module(source) {
+        Ok(module) => module,
+        Err(err) => {
+            return Err(WasmCompileResult {
+                ok: false,
+                phase: "syntax_error".to_string(),
+                error: Some(format_parse_error(&err)),
+                line: err.line,
+                column: err.column,
+            });
+        }
+    };
+
+    match crate::compiler::compile_module_with_filename(&module, "<wasm>") {
+        Ok(_) => Ok(module),
+        Err(err) => {
+            let (message, line, column) = format_compile_error(&err);
+            Err(WasmCompileResult {
+                ok: false,
+                phase: "compile_error".to_string(),
+                error: Some(message),
+                line,
+                column,
+            })
+        }
+    }
+}
+
+fn snippet_blockers_from_import_roots(
+    import_roots: &[String],
+    host: &dyn VmHost,
+) -> Vec<WasmSnippetBlocker> {
+    let mut blockers = Vec::new();
+    for module in import_roots {
+        let Some(blocker_key) = module_blocker_key(module) else {
+            continue;
+        };
+        let blocked = match HostCapability::from_key(blocker_key) {
+            Some(capability) => !host.supports(capability),
+            None => true,
+        };
+        if !blocked {
+            continue;
+        }
+        let message = wasm_execution_blocker_error(blocker_key).unwrap_or_else(|| {
+            format!(
+                "unsupported blocker '{}' for module '{}'",
+                blocker_key, module
+            )
+        });
+        blockers.push(WasmSnippetBlocker {
+            module: module.clone(),
+            blocker_key: blocker_key.to_string(),
+            message,
+        });
+    }
+    blockers
+}
+
+/// Preflight analysis for snippet viability in wasm mode.
+#[wasm_bindgen]
+pub fn wasm_snippet_support(source: &str) -> WasmSnippetSupport {
+    init_wasm_runtime();
+    let host = WasmHost;
+    let module = match parse_and_compile_module(source) {
+        Ok(module) => module,
+        Err(result) => {
+            return WasmSnippetSupport {
+                supported: false,
+                phase: result.phase,
+                error: result.error,
+                line: result.line,
+                column: result.column,
+                imported_module_count: 0,
+                blocker_count: 0,
+                first_blocker_module: None,
+                first_blocker_key: None,
+                first_blocker_message: None,
+            };
+        }
+    };
+    let import_roots = collect_import_roots(&module);
+    let blockers = snippet_blockers_from_import_roots(&import_roots, &host);
+    let first = blockers.first();
+    if let Some(first) = first {
+        return WasmSnippetSupport {
+            supported: false,
+            phase: "blocked_capability".to_string(),
+            error: Some(format!(
+                "snippet requires unsupported capability '{}' via module '{}'",
+                first.blocker_key, first.module
+            )),
+            line: 0,
+            column: 0,
+            imported_module_count: import_roots.len(),
+            blocker_count: blockers.len(),
+            first_blocker_module: Some(first.module.clone()),
+            first_blocker_key: Some(first.blocker_key.clone()),
+            first_blocker_message: Some(first.message.clone()),
+        };
+    }
+    WasmSnippetSupport {
+        supported: true,
+        phase: "supported".to_string(),
+        error: None,
+        line: 0,
+        column: 0,
+        imported_module_count: import_roots.len(),
+        blocker_count: 0,
+        first_blocker_module: None,
+        first_blocker_key: None,
+        first_blocker_message: None,
+    }
+}
+
+/// Returns snippet blockers detected from import preflight analysis.
+#[wasm_bindgen]
+pub fn wasm_snippet_blockers(source: &str) -> Array {
+    init_wasm_runtime();
+    let host = WasmHost;
+    let Ok(module) = parse_and_compile_module(source) else {
+        return Array::new();
+    };
+    let import_roots = collect_import_roots(&module);
+    let blockers = snippet_blockers_from_import_roots(&import_roots, &host);
+    let result = Array::new();
+    for blocker in blockers {
+        result.push(&JsValue::from(blocker));
+    }
+    result
 }
 
 /// Returns a stable blocker message for wasm execution blockers.
@@ -557,7 +858,10 @@ fn format_parse_error(err: &crate::parser::ParseError) -> String {
 fn format_compile_error(err: &crate::compiler::CompileError) -> (String, usize, usize) {
     match err.span {
         Some(span) => (
-            format!("{} (line {}, column {})", err.message, span.line, span.column),
+            format!(
+                "{} (line {}, column {})",
+                err.message, span.line, span.column
+            ),
             span.line,
             span.column,
         ),
@@ -604,19 +908,7 @@ pub fn check_syntax(source: &str) -> Result<(), JsValue> {
 #[wasm_bindgen]
 pub fn check_compile_result(source: &str) -> WasmCompileResult {
     init_wasm_runtime();
-    let module = match crate::parser::parse_module(source) {
-        Ok(module) => module,
-        Err(err) => {
-            return WasmCompileResult {
-                ok: false,
-                phase: "syntax_error".to_string(),
-                error: Some(format_parse_error(&err)),
-                line: err.line,
-                column: err.column,
-            };
-        }
-    };
-    match crate::compiler::compile_module_with_filename(&module, "<wasm>") {
+    match parse_and_compile_module(source) {
         Ok(_) => WasmCompileResult {
             ok: true,
             phase: "ok".to_string(),
@@ -624,16 +916,7 @@ pub fn check_compile_result(source: &str) -> WasmCompileResult {
             line: 0,
             column: 0,
         },
-        Err(err) => {
-            let (message, line, column) = format_compile_error(&err);
-            WasmCompileResult {
-                ok: false,
-                phase: "compile_error".to_string(),
-                error: Some(message),
-                line,
-                column,
-            }
-        }
+        Err(result) => result,
     }
 }
 
