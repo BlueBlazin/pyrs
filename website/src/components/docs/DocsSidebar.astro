@@ -16,7 +16,7 @@ const isActive = (href: string) => {
 ---
 
 <aside class="docs-sidebar">
-	<details class="sidebar-details" open>
+	<details class="sidebar-details">
 		<summary class="sidebar-summary">Documentation</summary>
 		<div class="sidebar-inner">
 			<div class="sidebar-title">Documentation</div>
@@ -72,6 +72,7 @@ const isActive = (href: string) => {
 
 	.sidebar-inner {
 		padding: 0.86rem 0.78rem 0.88rem;
+		display: block !important;
 	}
 
 	.sidebar-title {
@@ -133,16 +134,34 @@ const isActive = (href: string) => {
 		}
 
 		.sidebar-summary {
-			display: block;
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+		}
+
+		.sidebar-summary::after {
+			content: "";
+			display: inline-block;
+			width: 0.4rem;
+			height: 0.4rem;
+			border-right: 2px solid #a5aec0;
+			border-bottom: 2px solid #a5aec0;
+			transform: rotate(45deg);
+			transition: transform 150ms ease;
+			margin-right: 0.2rem;
+		}
+
+		.sidebar-details[open] .sidebar-summary::after {
+			transform: rotate(-135deg);
 		}
 
 		.sidebar-inner {
-			display: none;
+			display: none !important;
 			padding-top: 0.32rem;
 		}
 
 		.sidebar-details[open] .sidebar-inner {
-			display: block;
+			display: block !important;
 		}
 	}
 </style>
