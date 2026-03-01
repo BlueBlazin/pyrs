@@ -5,6 +5,7 @@ import Footer from "../components/Footer.astro";
 import DocsSidebar from "../components/docs/DocsSidebar.astro";
 import DocsPageHeader from "../components/docs/DocsPageHeader.astro";
 import DocsPager from "../components/docs/DocsPager.astro";
+import DocsToc from "../components/docs/DocsToc.astro";
 import "../styles/global.css";
 
 interface Props {
@@ -16,12 +17,18 @@ interface Props {
 		description?: string;
 		pageTitle?: string;
 	};
+	headings?: Array<{
+		depth: number;
+		slug?: string;
+		text: string;
+	}>;
 }
 
 const frontmatter = Astro.props.frontmatter ?? {};
 const title = Astro.props.title ?? frontmatter.title ?? "PYRS Docs";
 const description = Astro.props.description ?? frontmatter.description ?? "PYRS documentation.";
 const pageTitle = Astro.props.pageTitle ?? frontmatter.pageTitle ?? "Docs";
+const headings = Astro.props.headings ?? [];
 const rawPath = Astro.url.pathname;
 const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 ---
@@ -41,6 +48,7 @@ const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 					<slot />
 					<DocsPager path={path} />
 				</section>
+				<DocsToc headings={headings} />
 			</main>
 			<Footer variant="docs" />
 		</div>
@@ -77,7 +85,7 @@ const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 
 	.docs-shell {
 		display: grid;
-		grid-template-columns: 248px minmax(0, 1fr);
+		grid-template-columns: 248px minmax(0, 1fr) 220px;
 		gap: 1.45rem;
 		align-items: start;
 	}
@@ -113,6 +121,12 @@ const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 		font-size: 0.86em;
 		color: #d8def0;
+	}
+
+	@media (max-width: 1080px) {
+		.docs-shell {
+			grid-template-columns: 248px minmax(0, 1fr);
+		}
 	}
 
 	@media (max-width: 760px) {

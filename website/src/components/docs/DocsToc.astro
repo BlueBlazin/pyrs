@@ -1,0 +1,92 @@
+---
+interface Heading {
+	depth: number;
+	slug?: string;
+	text: string;
+}
+
+interface Props {
+	headings?: Heading[];
+}
+
+const { headings = [] } = Astro.props;
+const tocItems = headings.filter((heading) => heading.depth >= 2 && heading.depth <= 3 && heading.slug);
+---
+
+{
+	tocItems.length > 0 && (
+		<aside class="docs-toc" aria-label="On this page">
+			<div class="toc-inner">
+				<p class="toc-title">On this page</p>
+				<nav class="toc-nav">
+					{tocItems.map((item) => (
+						<a href={`#${item.slug}`} class={item.depth === 3 ? "is-sub" : undefined}>
+							{item.text}
+						</a>
+					))}
+				</nav>
+			</div>
+		</aside>
+	)
+}
+
+<style>
+	.docs-toc {
+		position: sticky;
+		top: 1rem;
+	}
+
+	.toc-inner {
+		border: 1px solid #232833;
+		border-radius: 0.82rem;
+		background: #0b0d14;
+		padding: 0.78rem 0.72rem 0.82rem;
+	}
+
+	.toc-title {
+		margin: 0 0 0.6rem;
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #8f9ab1;
+	}
+
+	.toc-nav {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+	}
+
+	.toc-nav a {
+		color: #a5aec0;
+		text-decoration: none;
+		font-size: 0.83rem;
+		line-height: 1.45;
+		padding: 0.3rem 0.4rem;
+		border-radius: 0.45rem;
+		transition: color 120ms ease, background-color 120ms ease;
+	}
+
+	.toc-nav a.is-sub {
+		padding-left: 1rem;
+		font-size: 0.8rem;
+		color: #96a0b7;
+	}
+
+	.toc-nav a:hover {
+		color: #edf2ff;
+		background: rgba(255, 255, 255, 0.05);
+	}
+
+	.toc-nav a:focus-visible {
+		outline: 2px solid rgba(255, 186, 137, 0.92);
+		outline-offset: 2px;
+	}
+
+	@media (max-width: 1080px) {
+		.docs-toc {
+			display: none;
+		}
+	}
+</style>
