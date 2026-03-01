@@ -187,6 +187,9 @@ Branch helper:
 - wasm harness note: use targeted wasm contract compile lane
   (`cargo check --target wasm32-unknown-unknown --test wasm_contract`)
   instead of all-tests wasm compile.
+- host seam audit helper:
+  `python3 scripts/audit_wasm_host_seam.py --out perf/wasm_host_seam_audit_latest.json`
+  for tracking remaining direct `std::env` usage under `src/vm`.
 
 ## Merge Decision Rubric
 
