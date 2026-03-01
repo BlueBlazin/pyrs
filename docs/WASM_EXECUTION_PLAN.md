@@ -540,6 +540,9 @@ Completed on this branch:
 - latest: `WasmWorkerSession` now tracks `last_state` telemetry alongside
   operation/phase/error metadata, and wasm contract tests/docs were updated to
   keep session-state reporting explicit for UI integration.
+- latest: `WasmWorkerExecutionResult` now includes a structured `state` field
+  (currently `"unwired"`), and worker execute-with-operation/session contract
+  tests/docs now assert state parity directly.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

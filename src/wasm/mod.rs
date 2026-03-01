@@ -367,6 +367,7 @@ pub struct WasmWorkerExecutionResult {
     operation_id: String,
     success: bool,
     phase: String,
+    state: String,
     stdout: String,
     stderr: String,
     error: Option<String>,
@@ -499,6 +500,11 @@ impl WasmWorkerExecutionResult {
     #[wasm_bindgen(getter)]
     pub fn phase(&self) -> String {
         self.phase.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn state(&self) -> String {
+        self.state.clone()
     }
 
     #[wasm_bindgen(getter)]
@@ -908,7 +914,7 @@ impl WasmWorkerSession {
         self.executes_requested += 1;
         self.last_operation_id = Some(result.operation_id.clone());
         self.last_phase = Some(result.phase.clone());
-        self.last_state = Some(wasm_worker_info().state);
+        self.last_state = Some(result.state.clone());
         self.last_error = result.error.clone();
         result
     }
@@ -1461,6 +1467,7 @@ pub fn wasm_worker_execute_with_operation(source: &str) -> WasmWorkerExecutionRe
         operation_id: next_worker_operation_id("execute"),
         success: result.success,
         phase: result.phase,
+        state: WasmWorkerState::Unwired.key().to_string(),
         stdout: result.stdout,
         stderr: result.stderr,
         error: result.error,

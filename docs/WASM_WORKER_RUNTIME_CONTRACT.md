@@ -146,6 +146,7 @@ enforcement remains unwired.
 `wasm_worker_execute(source)` and also returns:
 
 - `operation_id = worker_execute_<n>`
+- `state = "unwired"` (current stub/runtime state)
 
 `WasmWorkerSession` currently wraps lifecycle calls and tracks:
 

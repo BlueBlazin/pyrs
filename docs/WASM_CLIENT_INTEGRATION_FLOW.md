@@ -56,7 +56,8 @@ current worker recycle model and unsupported timeout-enforcement phase.
 Use `wasm_worker_timeout_phase_keys()` to branch timeout UI on canonical phase
 enums instead of string literals.
 Use `operation_id` fields from lifecycle/timeout results (and from
-`wasm_worker_execute_with_operation`) for request correlation in UI logs and diagnostics.
+`wasm_worker_execute_with_operation`) plus execute-result `state` for request
+correlation and worker-status breadcrumbs in UI logs/diagnostics.
 
 You can call lifecycle methods directly or via `WasmWorkerSession` for stateful
 UI telemetry (`starts_requested`, `terminates_requested`, `recycles_requested`,

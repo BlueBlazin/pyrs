@@ -164,6 +164,7 @@ This document defines the JS-facing contract currently exported by
 - `operation_id: String` (shape: `worker_execute_<n>`)
 - `success: bool`
 - `phase: String`
+- `state: String` (currently `"unwired"`)
 - `stdout: String`
 - `stderr: String`
 - `error: Option<String>`

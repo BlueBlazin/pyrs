@@ -580,6 +580,12 @@ fn wasm_worker_execute_with_operation_contract_is_stable() {
             "worker execute operation id prefix mismatch: {}",
             fixture.name
         );
+        assert_eq!(
+            result.state(),
+            "unwired".to_string(),
+            "worker execute-with-operation state mismatch: {}",
+            fixture.name
+        );
         assert!(
             operation_ids.insert(operation_id),
             "worker execute operation ids should be unique: {}",
@@ -755,6 +761,7 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
     }
     let first_id = first.operation_id();
     assert!(first_id.starts_with("worker_execute_"));
+    assert_eq!(first.state(), "unwired".to_string());
     assert_eq!(session.executes_requested(), 1);
     assert_eq!(session.last_operation_id(), Some(first_id.clone()));
     assert_eq!(session.last_state(), Some("unwired".to_string()));
@@ -780,6 +787,7 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
     );
     let second_id = second.operation_id();
     assert!(second_id.starts_with("worker_execute_"));
+    assert_eq!(second.state(), "unwired".to_string());
     assert_ne!(first_id, second_id);
     assert_eq!(session.executes_requested(), 2);
     assert_eq!(session.last_operation_id(), Some(second_id));
