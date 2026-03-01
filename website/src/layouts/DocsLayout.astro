@@ -81,31 +81,40 @@ const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 	}
 
 	.site-shell {
-		width: min(1280px, calc(100% - 2.8rem));
+		width: min(1360px, calc(100% - 2.8rem));
 		margin: 0 auto;
 		padding-bottom: 4rem;
 	}
 
 	.docs-shell {
 		display: grid;
-		grid-template-columns: 248px minmax(0, 1fr) 220px;
-		gap: 1.45rem;
+		grid-template-columns: 258px minmax(0, 1fr) 236px;
+		gap: 1.6rem;
 		align-items: start;
 	}
 
 	.docs-content {
-		padding: 0.1rem 0 0.2rem;
+		padding: 0.25rem 0 0.2rem;
 		min-height: 72vh;
+		max-width: 860px;
 	}
 
 	.docs-content h2 {
-		margin: 1.3rem 0 0;
-		font-size: 1.15rem;
+		margin: 1.38rem 0 0;
+		font-size: 1.17rem;
+		letter-spacing: -0.01em;
 	}
 
 	.docs-content h2,
 	.docs-content h3 {
 		scroll-margin-top: 4.2rem;
+	}
+
+	.docs-content h3 {
+		margin: 1.1rem 0 0;
+		font-size: 1.02rem;
+		color: #e4ebfb;
+		letter-spacing: -0.01em;
 	}
 
 	.docs-content h2:first-of-type {
@@ -131,6 +140,10 @@ const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 		color: #d8def0;
 	}
 
+	.docs-content pre {
+		margin: 0.85rem 0 0;
+	}
+
 	.docs-content a {
 		color: #b7c8eb;
 		text-decoration: none;
@@ -150,7 +163,12 @@ const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 
 	@media (max-width: 1080px) {
 		.docs-shell {
-			grid-template-columns: 248px minmax(0, 1fr);
+			grid-template-columns: 250px minmax(0, 1fr);
+			gap: 1.2rem;
+		}
+
+		.docs-content {
+			max-width: none;
 		}
 	}
 
