@@ -95,7 +95,7 @@ const tocEnabled = mergedConfig.enabled !== false;
 	)
 }
 
-<style>
+<style is:global>
 	.docs-toc {
 		position: sticky;
 		top: 5.1rem;
@@ -118,12 +118,12 @@ const tocEnabled = mergedConfig.enabled !== false;
 
 	.toc-title {
 		margin: 0 0 0.52rem;
-		font-size: 0.61rem;
-		font-weight: 620;
+		font-size: 0.56rem;
+		font-weight: 610;
 		line-height: 1.1;
-		letter-spacing: 0.11em;
+		letter-spacing: 0.12em;
 		text-transform: uppercase;
-		color: #7e8aa1;
+		color: #68758b;
 	}
 
 	.toc-nav {
@@ -153,9 +153,9 @@ const tocEnabled = mergedConfig.enabled !== false;
 		display: block;
 		margin-left: -0.72rem;
 		padding: 0.22rem 0.2rem 0.22rem 0.72rem;
-		color: #7d89a0;
-		font-size: 0.73rem;
-		font-weight: 470;
+		color: #68778f;
+		font-size: 0.66rem;
+		font-weight: 460;
 		line-height: 1.3;
 		text-decoration: none;
 		text-wrap: pretty;
@@ -164,12 +164,12 @@ const tocEnabled = mergedConfig.enabled !== false;
 
 	.toc-nav a.is-sub {
 		padding-left: 0.96rem;
-		font-size: 0.68rem;
-		color: #6f7f9a;
+		font-size: 0.62rem;
+		color: #5f6f88;
 	}
 
 	.toc-nav a:hover {
-		color: #b7c6de;
+		color: #9fb0cc;
 	}
 
 	.toc-nav a::before {
@@ -190,21 +190,23 @@ const tocEnabled = mergedConfig.enabled !== false;
 	}
 
 	.toc-nav a.active {
-		color: #e7f0ff;
-		font-weight: 590;
+		color: #d2e0f6;
+		font-weight: 560;
 	}
 
 	.toc-nav a.active::before {
-		background: #91afdf;
+		background: #82a7de;
+		box-shadow: 0 0 0 1px rgba(130, 167, 222, 0.16);
 	}
 
 	.toc-nav a[aria-current="location"] {
-		color: #e7f0ff;
-		font-weight: 590;
+		color: #d2e0f6;
+		font-weight: 560;
 	}
 
 	.toc-nav a[aria-current="location"]::before {
-		background: #91afdf;
+		background: #82a7de;
+		box-shadow: 0 0 0 1px rgba(130, 167, 222, 0.16);
 	}
 
 	.toc-nav a.is-collapsed,
