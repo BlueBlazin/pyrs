@@ -9,6 +9,12 @@
     "astro": "astro"
   },
   "dependencies": {
-    "astro": "^5.17.1"
+    "@astrojs/mdx": "^4.3.13",
+    "@astrojs/tailwind": "^6.0.2",
+    "@tailwindcss/typography": "^0.5.19",
+    "astro": "^5.17.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^4.2.1"
   }
 }
