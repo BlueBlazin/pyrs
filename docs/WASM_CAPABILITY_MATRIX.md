@@ -53,6 +53,8 @@ Current wasm bridge exports for capability handling:
   returns parse+compile + capability preflight summary for snippet viability.
 - `wasm_snippet_blockers(source)`:
   returns module-level blocker entries for parse+compile-valid snippets.
+- `wasm_worker_info()` / `wasm_worker_blocker_keys()` / `wasm_worker_blocker_error()`:
+  expose worker-runtime contract blockers while worker execution remains unwired.
 
 Accepted capability keys:
 

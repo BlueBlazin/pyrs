@@ -279,8 +279,10 @@ Completed on this branch:
 - `f412608`: `WasmExecutionResult` now carries structured `line`/`column` diagnostics.
 - `f1abaed`: snippet preflight APIs landed (`wasm_snippet_support`/`wasm_snippet_blockers`) with
   structured import-capability blocker reporting.
-- latest: fixture-driven wasm contract snippet snapshots are tracked under
+- `438d249`: fixture-driven wasm contract snippet snapshots are tracked under
   `tests/fixtures/wasm_contract_snippets.rs`.
+- latest: initial worker runtime contract introspection landed
+  (`wasm_worker_info`, `wasm_worker_blocker_keys`, `wasm_worker_blocker_error`).
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

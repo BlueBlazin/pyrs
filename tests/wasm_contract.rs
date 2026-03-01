@@ -10,7 +10,7 @@ use pyrs::wasm::{
     wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
     wasm_execution_blocker_keys, wasm_execution_blockers, wasm_module_policy_entries,
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_support,
-    WasmSession,
+    wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_info, WasmSession,
 };
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
@@ -30,6 +30,25 @@ fn wasm_runtime_contract_basics() {
         blocker_keys.length() as usize
     );
     assert!(!runtime.pyrs_version().is_empty());
+}
+
+#[wasm_bindgen_test]
+fn wasm_worker_contract_basics() {
+    let info = wasm_worker_info();
+    assert!(!info.supported());
+    assert_eq!(info.state(), "unwired");
+    assert_eq!(info.interruption_model(), "worker_recycle");
+
+    let keys = wasm_worker_blocker_keys();
+    assert_eq!(keys.length(), info.blocker_count() as u32);
+    assert_eq!(
+        keys.get(0).as_string().expect("worker blocker key"),
+        "worker_runtime_unwired".to_string()
+    );
+
+    let message = wasm_worker_blocker_error("worker_runtime_unwired")
+        .expect("worker runtime blocker message should exist");
+    assert!(message.contains("not wired"));
 }
 
 #[wasm_bindgen_test]

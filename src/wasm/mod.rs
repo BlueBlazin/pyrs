@@ -7,6 +7,7 @@ use wasm_bindgen::prelude::*;
 
 pub const WASM_API_VERSION: u32 = 1;
 const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired";
+const WASM_WORKER_BLOCKER_RUNTIME_UNWIRED: &str = "worker_runtime_unwired";
 const WASM_MODULE_BLOCKER_POLICY: [(&str, &str); 10] = [
     ("_ctypes", "dynamic_library_load"),
     ("ctypes", "dynamic_library_load"),
@@ -135,6 +136,14 @@ pub struct WasmSnippetSupport {
     first_blocker_module: Option<String>,
     first_blocker_key: Option<String>,
     first_blocker_message: Option<String>,
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmWorkerInfo {
+    supported: bool,
+    state: String,
+    interruption_model: String,
+    blocker_count: usize,
 }
 
 #[wasm_bindgen]
@@ -286,6 +295,29 @@ impl WasmSnippetSupport {
     #[wasm_bindgen(getter)]
     pub fn first_blocker_message(&self) -> Option<String> {
         self.first_blocker_message.clone()
+    }
+}
+
+#[wasm_bindgen]
+impl WasmWorkerInfo {
+    #[wasm_bindgen(getter)]
+    pub fn supported(&self) -> bool {
+        self.supported
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn state(&self) -> String {
+        self.state.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn interruption_model(&self) -> String {
+        self.interruption_model.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn blocker_count(&self) -> usize {
+        self.blocker_count
     }
 }
 
@@ -532,6 +564,35 @@ pub fn wasm_runtime_info() -> WasmRuntimeInfo {
         supports_execution: false,
         execution_status: "syntax_compile_only".to_string(),
         execution_blocker_count: blocker_count,
+    }
+}
+
+/// Returns canonical blocker keys for worker-mode execution.
+#[wasm_bindgen]
+pub fn wasm_worker_blocker_keys() -> Array {
+    let keys = Array::new();
+    keys.push(&JsValue::from_str(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED));
+    keys
+}
+
+/// Returns a stable blocker message for wasm worker blockers.
+#[wasm_bindgen]
+pub fn wasm_worker_blocker_error(blocker_key: &str) -> Option<String> {
+    if blocker_key == WASM_WORKER_BLOCKER_RUNTIME_UNWIRED {
+        return Some("wasm worker runtime is not wired yet".to_string());
+    }
+    None
+}
+
+/// Reports worker-runtime contract state for browser clients.
+#[wasm_bindgen]
+pub fn wasm_worker_info() -> WasmWorkerInfo {
+    let blockers = wasm_worker_blocker_keys();
+    WasmWorkerInfo {
+        supported: false,
+        state: "unwired".to_string(),
+        interruption_model: "worker_recycle".to_string(),
+        blocker_count: blockers.length() as usize,
     }
 }
 

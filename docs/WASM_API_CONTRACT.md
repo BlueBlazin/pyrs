@@ -15,6 +15,8 @@ This document defines the JS-facing contract currently exported by
   - Installs panic hook once for browser-console diagnostics.
 - `wasm_runtime_info() -> WasmRuntimeInfo`
   - Returns bridge/runtime status summary.
+- `wasm_worker_info() -> WasmWorkerInfo`
+  - Returns worker-runtime contract status summary.
 - `check_syntax(source: &str) -> Result<(), JsValue>`
   - Syntax validation entrypoint; `Err` includes parser message/line/column.
 - `check_syntax_result(source: &str) -> WasmSyntaxResult`
@@ -39,6 +41,10 @@ This document defines the JS-facing contract currently exported by
   - Returns stable blocker message for known execution blockers.
 - `wasm_execution_blockers() -> Array`
   - Returns structured blocker entries (`key` + `message`).
+- `wasm_worker_blocker_keys() -> Array`
+  - Returns canonical worker blocker keys.
+- `wasm_worker_blocker_error(blocker_key: &str) -> Option<String>`
+  - Returns stable worker blocker message for known keys.
 - `wasm_module_support(module_name: &str) -> WasmModuleSupport`
   - Returns module-level support/preflight status (`supported`, blocker key/message).
 - `wasm_module_policy_entries() -> Array`
@@ -58,6 +64,13 @@ This document defines the JS-facing contract currently exported by
 - `supports_execution: bool`
 - `execution_status: String` (currently `"syntax_compile_only"`)
 - `execution_blocker_count: usize`
+
+## `WasmWorkerInfo`
+
+- `supported: bool`
+- `state: String` (currently `"unwired"`)
+- `interruption_model: String` (currently `"worker_recycle"`)
+- `blocker_count: usize`
 
 ## `WasmSyntaxResult`
 
