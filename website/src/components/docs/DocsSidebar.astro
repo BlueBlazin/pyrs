@@ -16,25 +16,28 @@ const isActive = (href: string) => {
 ---
 
 <aside class="docs-sidebar">
-	<div class="sidebar-inner">
-		<div class="sidebar-title">Documentation</div>
-		{docsNavGroups.map((group) => (
-			<section class="nav-group">
-				<p class="group-label">{group.label}</p>
-				<nav class="group-links">
-					{group.items.map((item) => (
-						<a
-							href={item.href}
-							class={isActive(item.href) ? "active" : ""}
-							aria-current={isActive(item.href) ? "page" : undefined}
-						>
-							{item.label}
-						</a>
-					))}
-				</nav>
-			</section>
-		))}
-	</div>
+	<details class="sidebar-details">
+		<summary class="sidebar-summary">Documentation</summary>
+		<div class="sidebar-inner">
+			<div class="sidebar-title">Documentation</div>
+			{docsNavGroups.map((group) => (
+				<section class="nav-group">
+					<p class="group-label">{group.label}</p>
+					<nav class="group-links">
+						{group.items.map((item) => (
+							<a
+								href={item.href}
+								class={isActive(item.href) ? "active" : ""}
+								aria-current={isActive(item.href) ? "page" : undefined}
+							>
+								{item.label}
+							</a>
+						))}
+					</nav>
+				</section>
+			))}
+		</div>
+	</details>
 </aside>
 
 <style>
@@ -43,10 +46,31 @@ const isActive = (href: string) => {
 		top: 0.8rem;
 	}
 
-	.sidebar-inner {
+	.sidebar-details {
 		border: 1px solid #242936;
 		border-radius: 0.82rem;
 		background: #0f131c;
+		overflow: clip;
+	}
+
+	.sidebar-summary {
+		display: none;
+		cursor: pointer;
+		list-style: none;
+		margin: 0;
+		padding: 0.76rem 0.74rem;
+		font-size: 0.76rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #f3f6fb;
+	}
+
+	.sidebar-summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.sidebar-inner {
 		padding: 0.8rem 0.72rem 0.82rem;
 	}
 
@@ -106,6 +130,19 @@ const isActive = (href: string) => {
 	@media (max-width: 760px) {
 		.docs-sidebar {
 			position: static;
+		}
+
+		.sidebar-summary {
+			display: block;
+		}
+
+		.sidebar-inner {
+			display: none;
+			padding-top: 0.32rem;
+		}
+
+		.sidebar-details[open] .sidebar-inner {
+			display: block;
 		}
 	}
 </style>
