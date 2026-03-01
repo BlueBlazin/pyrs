@@ -71,6 +71,14 @@ pub struct WasmExecutionResult {
     error: Option<String>,
 }
 
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmRuntimeInfo {
+    api_version: u32,
+    pyrs_version: String,
+    supports_execution: bool,
+    execution_status: String,
+}
+
 #[wasm_bindgen]
 impl WasmExecutionResult {
     #[wasm_bindgen(getter)]
@@ -100,6 +108,29 @@ impl WasmExecutionResult {
 }
 
 #[wasm_bindgen]
+impl WasmRuntimeInfo {
+    #[wasm_bindgen(getter)]
+    pub fn api_version(&self) -> u32 {
+        self.api_version
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn pyrs_version(&self) -> String {
+        self.pyrs_version.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn supports_execution(&self) -> bool {
+        self.supports_execution
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn execution_status(&self) -> String {
+        self.execution_status.clone()
+    }
+}
+
+#[wasm_bindgen]
 impl WasmSession {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
@@ -122,6 +153,11 @@ impl WasmSession {
         self.snippets_checked += 1;
         self.last_error = result.error.clone();
         result
+    }
+
+    pub fn reset(&mut self) {
+        self.snippets_checked = 0;
+        self.last_error = None;
     }
 
     #[wasm_bindgen(getter)]
@@ -212,6 +248,17 @@ pub fn wasm_capability_error(capability_key: &str) -> Option<String> {
     let host = WasmHost;
     let capability = HostCapability::from_key(capability_key)?;
     host.unsupported_message(capability)
+}
+
+/// Reports runtime contract status for browser clients.
+#[wasm_bindgen]
+pub fn wasm_runtime_info() -> WasmRuntimeInfo {
+    WasmRuntimeInfo {
+        api_version: wasm_api_version(),
+        pyrs_version: pyrs_version(),
+        supports_execution: false,
+        execution_status: "syntax_only".to_string(),
+    }
 }
 
 /// Executes a snippet using the current wasm bridge contract.
