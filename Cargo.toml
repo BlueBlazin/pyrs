@@ -7,13 +7,22 @@ edition = "2024"
 blake2 = "0.10.6"
 hmac = "0.12.1"
 md-5 = "0.10.6"
-nu-ansi-term = "0.50.3"
 pbkdf2 = "0.12.2"
-reedline = "0.45.0"
 scrypt = "0.11.0"
 sha1 = "0.10.6"
 sha2 = "0.10.9"
 sha3 = "0.10.8"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+nu-ansi-term = "0.50.3"
+reedline = "0.45.0"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1.7"
+getrandom = { version = "0.2.17", features = ["js"] }
+js-sys = "0.3.91"
+wasm-bindgen = "0.2.114"
+web-sys = "0.3.91"
 
 [build-dependencies]
 cc = "1.2.43"
