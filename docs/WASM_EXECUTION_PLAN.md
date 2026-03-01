@@ -508,6 +508,10 @@ Completed on this branch:
 - latest: host seam now exposes `host::WebHost` as an explicit compatibility
   alias over `WasmHost`, aligning code terminology with the W3 “web host”
   milestone without changing runtime behavior.
+- latest: `generate_wasm_session_contract_summary.py` now validates session-level
+  fixture invariants for top-level and worker baseline flows (default unwired
+  vs vm-probe `ok/runtime_error` overrides), and is enforced by both
+  `check_wasm_branch.sh` and `run_wasm_contract_smoke.sh`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
