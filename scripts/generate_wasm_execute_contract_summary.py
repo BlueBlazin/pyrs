@@ -77,15 +77,44 @@ def unique(values: list[str]) -> list[str]:
     return sorted(set(values))
 
 
-def validate(fixtures: list[SnippetFixture]) -> list[str]:
+def parse_source_execution_phase_keys(wasm_source: str) -> list[str]:
+    keys = re.findall(r'WasmExecutionPhase::[A-Za-z]+\s*=>\s*"([^"]+)"', wasm_source)
+    return unique(keys)
+
+
+def parse_source_backend_blocker_key(wasm_source: str) -> str:
+    match = re.search(
+        r'const\s+WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED:\s*&str\s*=\s*"([^"]+)";',
+        wasm_source,
+    )
+    if not match:
+        raise ValueError("unable to parse WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED from wasm source")
+    return match.group(1)
+
+
+def validate(
+    fixtures: list[SnippetFixture],
+    source_phase_keys: list[str],
+    source_backend_blocker_key: str,
+) -> list[str]:
     errors: list[str] = []
     if not fixtures:
         errors.append("no snippet fixtures parsed")
         return errors
+    if not source_phase_keys:
+        errors.append("no execute phase keys parsed from wasm source")
+    if not source_backend_blocker_key:
+        errors.append("empty backend blocker key parsed from wasm source")
 
     allowed_compile_phases = {"ok", "syntax_error", "compile_error"}
     allowed_execute_phases = {"syntax_error", "compile_error", "unsupported_execution"}
     allowed_support_phases = {"supported", "blocked_capability", "syntax_error", "compile_error"}
+
+    if set(source_phase_keys) != allowed_execute_phases:
+        errors.append(
+            "source execute phase keys must equal canonical set "
+            f"{sorted(allowed_execute_phases)}; got {source_phase_keys}"
+        )
 
     seen_names: set[str] = set()
     for fixture in fixtures:
@@ -107,9 +136,10 @@ def validate(fixtures: list[SnippetFixture]) -> list[str]:
             )
 
         if fixture.expected_execute_phase == "unsupported_execution":
-            if fixture.expected_execute_blocker_key != "execution_backend_unwired":
+            if fixture.expected_execute_blocker_key != source_backend_blocker_key:
                 errors.append(
-                    f"{fixture.name}: unsupported_execution must use expected_execute_blocker_key='execution_backend_unwired'"
+                    f"{fixture.name}: unsupported_execution must use expected_execute_blocker_key="
+                    f"'{source_backend_blocker_key}'"
                 )
         elif fixture.expected_execute_blocker_key is not None:
             errors.append(
@@ -126,6 +156,13 @@ def validate(fixtures: list[SnippetFixture]) -> list[str]:
                 f"{fixture.name}: non-blocked support phase must set expected_first_blocker_key=None"
             )
 
+    fixture_execute_phases = unique([fixture.expected_execute_phase for fixture in fixtures])
+    if set(fixture_execute_phases) != set(source_phase_keys):
+        errors.append(
+            "fixture execute phase set must match source execute phase keys; "
+            f"fixtures={fixture_execute_phases}, source={source_phase_keys}"
+        )
+
     return errors
 
 
@@ -141,13 +178,22 @@ def main() -> int:
         default="perf/wasm_execute_contract_summary_latest.json",
         help="Output summary JSON path",
     )
+    parser.add_argument(
+        "--wasm-src",
+        default="src/wasm/mod.rs",
+        help="Path to wasm source file for execute-phase/blocker parity checks",
+    )
     args = parser.parse_args()
 
     fixture_path = Path(args.fixture)
-    source = fixture_path.read_text(encoding="utf-8")
-    fixtures = parse_fixtures(source)
+    fixture_source = fixture_path.read_text(encoding="utf-8")
+    fixtures = parse_fixtures(fixture_source)
+    wasm_source_path = Path(args.wasm_src)
+    wasm_source = wasm_source_path.read_text(encoding="utf-8")
+    source_phase_keys = parse_source_execution_phase_keys(wasm_source)
+    source_backend_blocker_key = parse_source_backend_blocker_key(wasm_source)
 
-    errors = validate(fixtures)
+    errors = validate(fixtures, source_phase_keys, source_backend_blocker_key)
     if errors:
         print("wasm execute contract summary validation failed:")
         for error in errors:
@@ -162,6 +208,7 @@ def main() -> int:
 
     summary = {
         "fixture": str(fixture_path),
+        "wasm_source": str(wasm_source_path),
         "counts": {
             "fixtures": len(fixtures),
             "execute_blocker_rows": len(execute_blocker_keys),
@@ -170,7 +217,9 @@ def main() -> int:
             "compile": unique([fixture.expected_compile_phase for fixture in fixtures]),
             "execute": unique([fixture.expected_execute_phase for fixture in fixtures]),
             "support": unique([fixture.expected_support_phase for fixture in fixtures]),
+            "source_execute": source_phase_keys,
         },
+        "source_backend_blocker_key": source_backend_blocker_key,
         "execute_blocker_keys": unique(execute_blocker_keys),
         "rows": [
             {
