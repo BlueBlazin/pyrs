@@ -1,4 +1,5 @@
 ---
+import TopNav from "../components/TopNav.astro";
 ---
 
 <html lang="en">
@@ -21,16 +22,7 @@
 	</head>
 	<body>
 		<div class="site-shell">
-			<header class="topbar">
-				<a class="brand" href="/">
-					<img src="/images/logo/logo-64.png" alt="PYRS logo" width="36" height="36" />
-					<span>PYRS</span>
-				</a>
-				<nav class="topnav">
-					<a href="https://github.com/BlueBlazin/pyrs">GitHub</a>
-					<a href="/docs/">Docs</a>
-				</nav>
-			</header>
+			<TopNav context="home" />
 
 			<main>
 				<section class="hero">
@@ -374,51 +366,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 2.25rem;
-	}
-
-	.topbar {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		padding: 1.4rem 0;
-	}
-
-	.brand {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.68rem;
-		text-decoration: none;
-		color: var(--text);
-		font-size: 1.15rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-	}
-
-	.brand img {
-		border-radius: 0.52rem;
-		border: 1px solid rgba(255, 255, 255, 0.14);
-	}
-
-	.topnav {
-		display: inline-flex;
-		gap: 0.95rem;
-	}
-
-	.topnav a {
-		display: inline-flex;
-		align-items: center;
-		padding: 0.25rem 0.46rem;
-		border-radius: 0.46rem;
-		text-decoration: none;
-		font-size: 0.92rem;
-		color: var(--text-muted);
-		transition: color 130ms ease, background-color 130ms ease;
-	}
-
-	.topnav a:hover {
-		color: var(--text);
-		background: rgba(255, 255, 255, 0.05);
 	}
 
 	.hero {
@@ -870,12 +817,6 @@
 	@media (max-width: 760px) {
 		.site-shell {
 			width: min(1160px, calc(100% - 1.2rem));
-		}
-
-		.topbar {
-			flex-direction: column;
-			align-items: flex-start;
-			gap: 0.6rem;
 		}
 
 		.metrics,

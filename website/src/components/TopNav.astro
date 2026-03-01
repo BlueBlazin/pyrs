@@ -1,0 +1,68 @@
+---
+interface Props {
+	context?: "home" | "docs";
+}
+
+const { context = "home" } = Astro.props;
+---
+
+<header class="global-topbar">
+	<a class="global-brand" href="/">
+		<img src="/images/logo/logo-64.png" alt="PYRS logo" width="36" height="36" />
+		<span>PYRS</span>
+	</a>
+	<nav class="global-topnav">
+		<a href="https://github.com/BlueBlazin/pyrs">GitHub</a>
+		{context === "home" ? <a href="/docs/">Docs</a> : <a href="/">Home</a>}
+	</nav>
+</header>
+
+<style>
+	.global-topbar {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 1.4rem 0;
+	}
+
+	.global-brand {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.68rem;
+		text-decoration: none;
+		color: #f7eee8;
+		font-size: 1.15rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	.global-brand img {
+		border-radius: 0.52rem;
+		border: 1px solid rgba(255, 255, 255, 0.14);
+	}
+
+	.global-topnav {
+		display: inline-flex;
+		gap: 0.95rem;
+	}
+
+	.global-topnav a {
+		text-decoration: none;
+		font-size: 0.92rem;
+		color: #beaa9f;
+		transition: color 130ms ease;
+	}
+
+	.global-topnav a:hover {
+		color: #f7eee8;
+	}
+
+	@media (max-width: 760px) {
+		.global-topbar {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.6rem;
+		}
+	}
+</style>

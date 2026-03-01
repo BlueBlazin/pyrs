@@ -1,4 +1,6 @@
 ---
+import TopNav from "../components/TopNav.astro";
+
 interface Props {
 	title: string;
 	description: string;
@@ -46,16 +48,7 @@ const isActive = (href: string) => {
 	</head>
 	<body>
 		<div class="site-shell">
-			<header class="topbar">
-				<a class="brand" href="/">
-					<img src="/images/logo/logo-64.png" alt="PYRS logo" width="36" height="36" />
-					<span>PYRS</span>
-				</a>
-				<nav class="topnav">
-					<a href="https://github.com/BlueBlazin/pyrs">GitHub</a>
-					<a href="/docs/">Docs</a>
-				</nav>
-			</header>
+			<TopNav context="docs" />
 			<main class="docs-shell">
 				<aside class="docs-sidebar">
 					<div class="sidebar-inner">
@@ -85,13 +78,11 @@ const isActive = (href: string) => {
 
 <style>
 	:root {
-		--bg: #0f0907;
-		--bg-card: #17100e;
-		--line: #432d22;
-		--text: #f7eee8;
-		--text-muted: #beaa9f;
-		--accent: #e97d46;
-		--accent-2: #d89563;
+		--bg: #090b11;
+		--line: #242936;
+		--text: #f3f6fb;
+		--text-muted: #a5aec0;
+		--accent-2: #8d99b3;
 	}
 
 	* {
@@ -104,9 +95,9 @@ const isActive = (href: string) => {
 		font-family: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 		color: var(--text);
 		background:
-			radial-gradient(62rem 34rem at 84% -10%, rgba(233, 125, 70, 0.12), transparent),
-			radial-gradient(54rem 30rem at -4% 8%, rgba(216, 149, 99, 0.08), transparent),
-			linear-gradient(180deg, #090504 0%, var(--bg) 38%, #060404 100%);
+			radial-gradient(74rem 36rem at 90% -8%, rgba(137, 149, 181, 0.08), transparent),
+			radial-gradient(56rem 30rem at -6% 8%, rgba(81, 90, 110, 0.08), transparent),
+			linear-gradient(180deg, #06070b 0%, var(--bg) 40%, #05060a 100%);
 	}
 
 	.site-shell {
@@ -115,72 +106,32 @@ const isActive = (href: string) => {
 		padding-bottom: 4rem;
 	}
 
-	.topbar {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		padding: 1.4rem 0;
-	}
-
-	.brand {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.68rem;
-		text-decoration: none;
-		color: var(--text);
-		font-size: 1.15rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-	}
-
-	.brand img {
-		border-radius: 0.52rem;
-		border: 1px solid rgba(255, 255, 255, 0.14);
-	}
-
-	.topnav {
-		display: inline-flex;
-		gap: 0.95rem;
-	}
-
-	.topnav a {
-		text-decoration: none;
-		font-size: 0.92rem;
-		color: var(--text-muted);
-		transition: color 130ms ease;
-	}
-
-	.topnav a:hover {
-		color: var(--text);
-	}
-
 	.docs-shell {
 		display: grid;
-		grid-template-columns: 262px minmax(0, 1fr);
-		gap: 1.2rem;
+		grid-template-columns: 248px minmax(0, 1fr);
+		gap: 1.45rem;
 		align-items: start;
 	}
 
 	.docs-sidebar {
 		position: sticky;
-		top: 1rem;
+		top: 0.8rem;
 	}
 
 	.sidebar-inner {
 		border: 1px solid var(--line);
-		border-radius: 0.95rem;
-		background: rgba(16, 10, 8, 0.86);
-		padding: 0.86rem 0.78rem 0.9rem;
+		border-radius: 0.82rem;
+		background: #0f131c;
+		padding: 0.8rem 0.72rem 0.82rem;
 	}
 
 	.sidebar-title {
-		font-size: 0.86rem;
+		font-size: 0.83rem;
 		font-weight: 700;
 		letter-spacing: 0.07em;
 		text-transform: uppercase;
 		color: var(--text);
-		margin-bottom: 0.85rem;
+		margin-bottom: 0.78rem;
 	}
 
 	.nav-group + .nav-group {
@@ -193,7 +144,7 @@ const isActive = (href: string) => {
 		letter-spacing: 0.09em;
 		text-transform: uppercase;
 		color: var(--accent-2);
-		font-weight: 600;
+		font-weight: 700;
 	}
 
 	.group-links {
@@ -204,48 +155,45 @@ const isActive = (href: string) => {
 
 	.group-links a {
 		text-decoration: none;
-		font-size: 0.88rem;
+		font-size: 0.86rem;
 		color: var(--text-muted);
-		padding: 0.35rem 0.5rem;
-		border-radius: 0.55rem;
+		padding: 0.33rem 0.48rem;
+		border-radius: 0.48rem;
 		transition: color 120ms ease, background-color 120ms ease;
 	}
 
 	.group-links a:hover {
 		color: var(--text);
-		background: rgba(255, 255, 255, 0.05);
+		background: rgba(255, 255, 255, 0.06);
 	}
 
 	.group-links a.active {
-		color: #241108;
-		background: linear-gradient(135deg, #d99667 0%, #c66e43 100%);
-		border: 1px solid rgba(198, 110, 67, 0.48);
+		color: #f3f6fb;
+		background: #1a2232;
+		border: 1px solid #34425e;
 	}
 
 	.docs-content {
-		border: 1px solid var(--line);
-		border-radius: 0.95rem;
-		background: rgba(15, 10, 8, 0.82);
-		padding: 1.06rem 1.12rem 1.2rem;
+		padding: 0.1rem 0 0.2rem;
 		min-height: 72vh;
 	}
 
 	.content-head {
-		padding-bottom: 0.74rem;
-		border-bottom: 1px solid rgba(67, 45, 34, 0.7);
-		margin-bottom: 1rem;
+		padding-bottom: 0.68rem;
+		border-bottom: 1px solid rgba(36, 41, 54, 0.9);
+		margin-bottom: 1.15rem;
 	}
 
 	.content-head h1 {
 		margin: 0;
-		font-size: clamp(1.4rem, 3vw, 2.05rem);
+		font-size: clamp(1.45rem, 3vw, 2.1rem);
 		line-height: 1.15;
 		letter-spacing: -0.01em;
 	}
 
 	.docs-content h2 {
 		margin: 1.3rem 0 0;
-		font-size: 1.2rem;
+		font-size: 1.15rem;
 	}
 
 	.docs-content h2:first-of-type {
@@ -268,17 +216,17 @@ const isActive = (href: string) => {
 	.docs-content code {
 		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 		font-size: 0.86em;
-		color: #f0ddcf;
+		color: #d8def0;
 	}
 
 	.docs-content pre {
 		margin: 0.78rem 0 0;
 		overflow-x: auto;
 		padding: 0.82rem 0.9rem;
-		border-radius: 0.75rem;
-		border: 1px solid #3d281d;
-		background: #080605;
-		color: #ecd9cd;
+		border-radius: 0.7rem;
+		border: 1px solid #2a3345;
+		background: #0b1019;
+		color: #e4e9f6;
 		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 		font-size: 0.8rem;
 		line-height: 1.56;
@@ -299,15 +247,15 @@ const isActive = (href: string) => {
 	}
 
 	th {
-		color: #f4e6dc;
+		color: #eef2fb;
 		font-weight: 600;
-		border-bottom: 1px solid #483125;
-		background: rgba(8, 6, 5, 0.52);
+		border-bottom: 1px solid #2d374c;
+		background: rgba(11, 16, 25, 0.75);
 	}
 
 	td {
 		color: var(--text-muted);
-		border-bottom: 1px solid rgba(72, 49, 37, 0.45);
+		border-bottom: 1px solid rgba(45, 55, 76, 0.45);
 	}
 
 	tr:last-child td {
@@ -324,12 +272,6 @@ const isActive = (href: string) => {
 			width: min(1280px, calc(100% - 1.2rem));
 		}
 
-		.topbar {
-			flex-direction: column;
-			align-items: flex-start;
-			gap: 0.6rem;
-		}
-
 		.docs-shell {
 			grid-template-columns: 1fr;
 		}
@@ -339,7 +281,7 @@ const isActive = (href: string) => {
 		}
 
 		.docs-content {
-			padding: 0.95rem 0.88rem 1rem;
+			padding: 0.1rem 0 0.2rem;
 		}
 	}
 </style>
