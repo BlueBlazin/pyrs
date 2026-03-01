@@ -323,6 +323,8 @@ Completed on this branch:
   and `WasmWorkerSession` tracks `last_operation_id` for telemetry correlation.
 - latest: worker execute path now has operation-aware API
   (`wasm_worker_execute_with_operation`) while preserving `wasm_worker_execute`.
+- latest: session contract tests now cover `execute_with_operation` telemetry
+  (`executes_requested`, `last_operation_id`, `last_phase`) end-to-end.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

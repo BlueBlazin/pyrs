@@ -472,6 +472,38 @@ fn wasm_worker_session_contract_is_stable() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_worker_session_execute_with_operation_contract_is_stable() {
+    let mut session = WasmWorkerSession::new();
+    let first = session.execute_with_operation("x = 1\n");
+    assert_eq!(
+        first.phase(),
+        "unsupported_worker_execution",
+        "first worker execute-with-operation phase mismatch"
+    );
+    let first_id = first.operation_id();
+    assert!(first_id.starts_with("worker_execute_"));
+    assert_eq!(session.executes_requested(), 1);
+    assert_eq!(session.last_operation_id(), Some(first_id.clone()));
+    assert_eq!(
+        session.last_phase(),
+        Some("unsupported_worker_execution".to_string())
+    );
+
+    let second = session.execute_with_operation("def broken(:\n");
+    assert_eq!(
+        second.phase(),
+        "syntax_error",
+        "second worker execute-with-operation phase mismatch"
+    );
+    let second_id = second.operation_id();
+    assert!(second_id.starts_with("worker_execute_"));
+    assert_ne!(first_id, second_id);
+    assert_eq!(session.executes_requested(), 2);
+    assert_eq!(session.last_operation_id(), Some(second_id));
+    assert_eq!(session.last_phase(), Some("syntax_error".to_string()));
+}
+
+#[wasm_bindgen_test]
 fn wasm_capability_contract_is_stable() {
     let keys = wasm_capability_keys();
     let mut listed_keys = Vec::new();
