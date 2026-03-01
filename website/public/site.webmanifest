@@ -8,14 +8,14 @@
 	"theme_color": "#090b11",
 	"icons": [
 		{
-			"src": "/images/logo/logo-180.png",
-			"sizes": "180x180",
+			"src": "/images/pyrs-logo.png",
+			"sizes": "670x670",
 			"type": "image/png",
 			"purpose": "any"
 		},
 		{
-			"src": "/images/logo/logo-512.png",
-			"sizes": "512x512",
+			"src": "/images/pyrs-logo.png",
+			"sizes": "670x670",
 			"type": "image/png",
 			"purpose": "any"
 		}

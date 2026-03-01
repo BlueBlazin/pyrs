@@ -7,7 +7,7 @@ interface Props {
 	noindex?: boolean;
 }
 
-const { title, description, image = "/images/logo/logo-512.png", url, noindex = false } = Astro.props;
+const { title, description, image = "/images/pyrs-logo.png", url, noindex = false } = Astro.props;
 const absoluteImage = (() => {
 	if (!url) {
 		return image;
@@ -21,7 +21,7 @@ const absoluteImage = (() => {
 ---
 
 <meta charset="utf-8" />
-<link rel="icon" type="image/png" sizes="64x64" href="/images/logo/logo-64.png" />
+<link rel="icon" type="image/png" href="/images/pyrs-logo.png" />
 <link rel="manifest" href="/site.webmanifest" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="generator" content={Astro.generator} />
