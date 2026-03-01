@@ -1,5 +1,7 @@
 ---
 import TopNav from "../components/TopNav.astro";
+import DocsSidebar from "../components/docs/DocsSidebar.astro";
+import DocsPageHeader from "../components/docs/DocsPageHeader.astro";
 import "../styles/global.css";
 
 interface Props {
@@ -11,25 +13,6 @@ interface Props {
 const { title, description, pageTitle } = Astro.props;
 const rawPath = Astro.url.pathname;
 const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
-const navGroups = [
-	{
-		label: "Start",
-		items: [
-			{ href: "/docs/", label: "Getting Started" },
-			{ href: "/docs/install/", label: "Installation" },
-		],
-	},
-	{
-		label: "Reference",
-		items: [{ href: "/docs/reference/", label: "CLI and Environment" }],
-	},
-];
-const isActive = (href: string) => {
-	if (href === "/docs/") {
-		return path === "/docs/";
-	}
-	return path.startsWith(href);
-};
 ---
 
 <html lang="en">
@@ -51,25 +34,9 @@ const isActive = (href: string) => {
 		<div class="site-shell">
 			<TopNav context="docs" />
 			<main class="docs-shell">
-				<aside class="docs-sidebar">
-					<div class="sidebar-inner">
-						<div class="sidebar-title">Documentation</div>
-						{navGroups.map((group) => (
-							<section class="nav-group">
-								<p class="group-label">{group.label}</p>
-								<nav class="group-links">
-									{group.items.map((item) => (
-										<a href={item.href} class={isActive(item.href) ? "active" : ""}>{item.label}</a>
-									))}
-								</nav>
-							</section>
-						))}
-					</div>
-				</aside>
+				<DocsSidebar path={path} />
 				<section class="docs-content">
-					<header class="content-head">
-						<h1>{pageTitle}</h1>
-					</header>
+					<DocsPageHeader title={pageTitle} description={description} />
 					<slot />
 				</section>
 			</main>
@@ -80,10 +47,8 @@ const isActive = (href: string) => {
 <style>
 	:root {
 		--bg: #090b11;
-		--line: #242936;
 		--text: #f3f6fb;
 		--text-muted: #a5aec0;
-		--accent-2: #8d99b3;
 	}
 
 	* {
@@ -114,82 +79,9 @@ const isActive = (href: string) => {
 		align-items: start;
 	}
 
-	.docs-sidebar {
-		position: sticky;
-		top: 0.8rem;
-	}
-
-	.sidebar-inner {
-		border: 1px solid var(--line);
-		border-radius: 0.82rem;
-		background: #0f131c;
-		padding: 0.8rem 0.72rem 0.82rem;
-	}
-
-	.sidebar-title {
-		font-size: 0.83rem;
-		font-weight: 700;
-		letter-spacing: 0.07em;
-		text-transform: uppercase;
-		color: var(--text);
-		margin-bottom: 0.78rem;
-	}
-
-	.nav-group + .nav-group {
-		margin-top: 0.8rem;
-	}
-
-	.group-label {
-		margin: 0 0 0.42rem;
-		font-size: 0.69rem;
-		letter-spacing: 0.09em;
-		text-transform: uppercase;
-		color: var(--accent-2);
-		font-weight: 700;
-	}
-
-	.group-links {
-		display: flex;
-		flex-direction: column;
-		gap: 0.22rem;
-	}
-
-	.group-links a {
-		text-decoration: none;
-		font-size: 0.86rem;
-		color: var(--text-muted);
-		padding: 0.33rem 0.48rem;
-		border-radius: 0.48rem;
-		transition: color 120ms ease, background-color 120ms ease;
-	}
-
-	.group-links a:hover {
-		color: var(--text);
-		background: rgba(255, 255, 255, 0.06);
-	}
-
-	.group-links a.active {
-		color: #f3f6fb;
-		background: #1a2232;
-		border: 1px solid #34425e;
-	}
-
 	.docs-content {
 		padding: 0.1rem 0 0.2rem;
 		min-height: 72vh;
-	}
-
-	.content-head {
-		padding-bottom: 0.68rem;
-		border-bottom: 1px solid rgba(36, 41, 54, 0.9);
-		margin-bottom: 1.15rem;
-	}
-
-	.content-head h1 {
-		margin: 0;
-		font-size: clamp(1.45rem, 3vw, 2.1rem);
-		line-height: 1.15;
-		letter-spacing: -0.01em;
 	}
 
 	.docs-content h2 {
@@ -220,54 +112,6 @@ const isActive = (href: string) => {
 		color: #d8def0;
 	}
 
-	.docs-content pre {
-		margin: 0.78rem 0 0;
-		overflow-x: auto;
-		padding: 0.82rem 0.9rem;
-		border-radius: 0.7rem;
-		border: 1px solid #2a3345;
-		background: #0b1019;
-		color: #e4e9f6;
-		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.8rem;
-		line-height: 1.56;
-	}
-
-	table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	th,
-	td {
-		padding: 0.62rem 0.62rem;
-		text-align: left;
-		vertical-align: top;
-		font-size: 0.87rem;
-		line-height: 1.5;
-	}
-
-	th {
-		color: #eef2fb;
-		font-weight: 600;
-		border-bottom: 1px solid #2d374c;
-		background: rgba(11, 16, 25, 0.75);
-	}
-
-	td {
-		color: var(--text-muted);
-		border-bottom: 1px solid rgba(45, 55, 76, 0.45);
-	}
-
-	tr:last-child td {
-		border-bottom: none;
-	}
-
-	.table-wrap {
-		margin-top: 0.8rem;
-		overflow-x: auto;
-	}
-
 	@media (max-width: 760px) {
 		.site-shell {
 			width: min(1280px, calc(100% - 1.2rem));
@@ -275,10 +119,6 @@ const isActive = (href: string) => {
 
 		.docs-shell {
 			grid-template-columns: 1fr;
-		}
-
-		.docs-sidebar {
-			position: static;
 		}
 
 		.docs-content {

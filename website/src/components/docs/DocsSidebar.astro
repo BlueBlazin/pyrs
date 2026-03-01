@@ -1,0 +1,111 @@
+---
+interface Props {
+	path: string;
+}
+
+const { path } = Astro.props;
+const navGroups = [
+	{
+		label: "Start",
+		items: [
+			{ href: "/docs/", label: "Getting Started" },
+			{ href: "/docs/install/", label: "Installation" },
+		],
+	},
+	{
+		label: "Reference",
+		items: [{ href: "/docs/reference/", label: "CLI and Environment" }],
+	},
+];
+
+const isActive = (href: string) => {
+	if (href === "/docs/") {
+		return path === "/docs/";
+	}
+	return path.startsWith(href);
+};
+---
+
+<aside class="docs-sidebar">
+	<div class="sidebar-inner">
+		<div class="sidebar-title">Documentation</div>
+		{navGroups.map((group) => (
+			<section class="nav-group">
+				<p class="group-label">{group.label}</p>
+				<nav class="group-links">
+					{group.items.map((item) => (
+						<a href={item.href} class={isActive(item.href) ? "active" : ""}>{item.label}</a>
+					))}
+				</nav>
+			</section>
+		))}
+	</div>
+</aside>
+
+<style>
+	.docs-sidebar {
+		position: sticky;
+		top: 0.8rem;
+	}
+
+	.sidebar-inner {
+		border: 1px solid #242936;
+		border-radius: 0.82rem;
+		background: #0f131c;
+		padding: 0.8rem 0.72rem 0.82rem;
+	}
+
+	.sidebar-title {
+		font-size: 0.83rem;
+		font-weight: 700;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: #f3f6fb;
+		margin-bottom: 0.78rem;
+	}
+
+	.nav-group + .nav-group {
+		margin-top: 0.8rem;
+	}
+
+	.group-label {
+		margin: 0 0 0.42rem;
+		font-size: 0.69rem;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: #8d99b3;
+		font-weight: 700;
+	}
+
+	.group-links {
+		display: flex;
+		flex-direction: column;
+		gap: 0.22rem;
+	}
+
+	.group-links a {
+		text-decoration: none;
+		font-size: 0.86rem;
+		color: #a5aec0;
+		padding: 0.33rem 0.48rem;
+		border-radius: 0.48rem;
+		transition: color 120ms ease, background-color 120ms ease;
+	}
+
+	.group-links a:hover {
+		color: #f3f6fb;
+		background: rgba(255, 255, 255, 0.06);
+	}
+
+	.group-links a.active {
+		color: #f3f6fb;
+		background: #1a2232;
+		border: 1px solid #34425e;
+	}
+
+	@media (max-width: 760px) {
+		.docs-sidebar {
+			position: static;
+		}
+	}
+</style>
