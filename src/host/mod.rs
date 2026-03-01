@@ -1,6 +1,18 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostCapability {
+    FilesystemRead,
+    FilesystemWrite,
+    EnvironmentRead,
+    ProcessArgs,
+    ProcessSpawn,
+    DynamicLibraryLoad,
+    InteractiveTerminal,
+    NetworkSockets,
+}
+
 /// Host boundary for runtime setup and environment probes.
 ///
 /// This is introduced as a non-invasive seam: default native behavior remains
@@ -13,6 +25,7 @@ pub trait VmHost: Send + Sync {
     fn process_args(&self) -> Vec<String>;
     fn current_exe(&self) -> Option<PathBuf>;
     fn os_name(&self) -> &'static str;
+    fn supports(&self, capability: HostCapability) -> bool;
 
     fn env_flag_enabled(&self, name: &str) -> bool {
         let Some(raw) = self.env_var(name) else {
@@ -62,6 +75,10 @@ impl VmHost for NativeHost {
     fn os_name(&self) -> &'static str {
         std::env::consts::OS
     }
+
+    fn supports(&self, _capability: HostCapability) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Default)]
@@ -91,11 +108,15 @@ impl VmHost for WasmHost {
     fn os_name(&self) -> &'static str {
         "emscripten"
     }
+
+    fn supports(&self, capability: HostCapability) -> bool {
+        matches!(capability, HostCapability::ProcessArgs)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{NativeHost, VmHost, WasmHost};
+    use super::{HostCapability, NativeHost, VmHost, WasmHost};
 
     #[test]
     fn native_host_can_read_current_dir() {
@@ -117,5 +138,18 @@ mod tests {
         assert_eq!(host.process_args(), vec!["pyrs".to_string()]);
         assert!(host.current_exe().is_none());
         assert_eq!(host.os_name(), "emscripten");
+    }
+
+    #[test]
+    fn wasm_host_capability_matrix_is_explicit() {
+        let host = WasmHost;
+        assert!(host.supports(HostCapability::ProcessArgs));
+        assert!(!host.supports(HostCapability::FilesystemRead));
+        assert!(!host.supports(HostCapability::FilesystemWrite));
+        assert!(!host.supports(HostCapability::EnvironmentRead));
+        assert!(!host.supports(HostCapability::ProcessSpawn));
+        assert!(!host.supports(HostCapability::DynamicLibraryLoad));
+        assert!(!host.supports(HostCapability::InteractiveTerminal));
+        assert!(!host.supports(HostCapability::NetworkSockets));
     }
 }
