@@ -569,7 +569,10 @@ Completed on this branch:
   summary validation enforce mode-aware parity for this field.
 - latest: `generate_wasm_worker_docs_contract_summary.py` now also enforces
   worker-info docs parity for backend mode keys (`"unwired"`/`"vm_probe"`) and
-  `execution_probe_enabled` default/vm-probe shape coverage.
+  `execution_probe_enabled`/`execute_supported` default-vs-vm-probe shape coverage.
+- latest: `generate_wasm_client_flow_summary.py` now requires explicit
+  `WasmWorkerInfo` integration tokens (`supported`, `backend`, `state`,
+  `execution_probe_enabled`, `execute_supported`) in client-flow docs.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
