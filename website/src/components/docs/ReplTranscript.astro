@@ -78,6 +78,7 @@ const toneClass = (tone?: Tone) => {
 	.repl-line {
 		display: flex;
 		gap: 0.64rem;
+		align-items: flex-start;
 	}
 
 	.repl-prompt {
@@ -124,6 +125,34 @@ const toneClass = (tone?: Tone) => {
 
 	.repl-lines::-webkit-scrollbar-corner {
 		background: transparent;
+	}
+
+	@media (max-width: 760px) {
+		.repl-lines {
+			overflow-x: hidden;
+			padding-inline: 0.9rem;
+		}
+
+		.repl-lines code {
+			font-size: 0.76rem;
+			line-height: 1.52;
+		}
+
+		.repl-line {
+			min-width: 0;
+			gap: 0.44rem;
+		}
+
+		.repl-prompt {
+			width: 1.2rem;
+			flex: 0 0 1.2rem;
+		}
+
+		.repl-code {
+			white-space: pre-wrap;
+			overflow-wrap: anywhere;
+			word-break: break-word;
+		}
 	}
 
 	.seg-plain {

@@ -53,6 +53,7 @@ const copyPayload = commands.join("\n");
 	.command-line {
 		display: flex;
 		gap: 0.28rem;
+		align-items: flex-start;
 	}
 
 	.command-text {
@@ -87,6 +88,29 @@ const copyPayload = commands.join("\n");
 
 	.command-lines::-webkit-scrollbar-corner {
 		background: transparent;
+	}
+
+	@media (max-width: 760px) {
+		.command-lines {
+			overflow-x: hidden;
+			padding-inline: 0.9rem;
+		}
+
+		.command-lines code {
+			font-size: 0.76rem;
+			line-height: 1.52;
+		}
+
+		.command-line {
+			min-width: 0;
+			gap: 0.34rem;
+		}
+
+		.command-text {
+			white-space: pre-wrap;
+			overflow-wrap: anywhere;
+			word-break: break-word;
+		}
 	}
 
 </style>
