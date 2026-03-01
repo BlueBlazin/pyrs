@@ -15804,14 +15804,7 @@ impl Vm {
             Value::Int(value) => self.load_attr_int_method(Value::Int(value), &name),
             Value::BigInt(value) => self.load_attr_int_method(Value::BigInt(value), &name),
             Value::Bool(value) => self.load_attr_int_method(Value::Bool(value), &name),
-            Value::Float(value) => match name.as_str() {
-                "real" => Ok(Value::Float(value)),
-                "imag" => Ok(Value::Float(0.0)),
-                _ => Err(RuntimeError::attribute_error(format!(
-                    "'float' object has no attribute '{}'",
-                    name
-                ))),
-            },
+            Value::Float(value) => self.load_attr_float_method(value, &name),
             Value::Str(text) => self.load_attr_str_method(text, &name),
             Value::Bytes(bytes) => {
                 let is_bytes = matches!(&*bytes.kind(), Object::Bytes(_));

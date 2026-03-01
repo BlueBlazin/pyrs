@@ -1094,6 +1094,24 @@ impl Vm {
             "__getformat__" if builtin == BuiltinFunction::Float => {
                 Ok(Value::Builtin(BuiltinFunction::FloatGetFormat))
             }
+            "as_integer_ratio" if builtin == BuiltinFunction::Float => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__float_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Float));
+                }
+                Ok(self.alloc_native_bound_method(
+                    NativeMethodKind::FloatAsIntegerRatioMethod,
+                    receiver,
+                ))
+            }
             "from_iterable" if builtin == BuiltinFunction::ItertoolsChain => {
                 Ok(Value::Builtin(BuiltinFunction::ItertoolsChainFromIterable))
             }
@@ -2151,6 +2169,52 @@ impl Vm {
             module_data.globals.insert("value".to_string(), value);
         }
         Ok(self.alloc_native_bound_method(kind, receiver))
+    }
+
+    pub(super) fn load_attr_float_method(
+        &self,
+        value: f64,
+        attr_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        match attr_name {
+            "real" => return Ok(Value::Float(value)),
+            "imag" => return Ok(Value::Float(0.0)),
+            "__format__" => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__float_format_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data.globals.insert("value".to_string(), Value::Float(value));
+                }
+                return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Format, receiver));
+            }
+            "as_integer_ratio" => {}
+            _ => {
+                return Err(RuntimeError::attribute_error(format!(
+                    "'float' object has no attribute '{}'",
+                    attr_name
+                )));
+            }
+        }
+
+        let receiver = match self
+            .heap
+            .alloc_module(ModuleObject::new("__float_method__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+            module_data.globals.insert("value".to_string(), Value::Float(value));
+        }
+        Ok(self.alloc_native_bound_method(
+            NativeMethodKind::FloatAsIntegerRatioMethod,
+            receiver,
+        ))
     }
 
     pub(super) fn load_attr_str_method(

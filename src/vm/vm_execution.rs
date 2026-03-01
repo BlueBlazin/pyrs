@@ -1997,30 +1997,7 @@ impl Vm {
                         Value::Bool(value) => {
                             self.load_attr_int_method(Value::Bool(value), &attr_name)?
                         }
-                        Value::Float(value) => match attr_name.as_str() {
-                            "real" => Value::Float(value),
-                            "imag" => Value::Float(0.0),
-                            "__format__" => {
-                                let receiver = match self.heap.alloc_module(ModuleObject::new(
-                                    "__float_format_method__".to_string(),
-                                )) {
-                                    Value::Module(obj) => obj,
-                                    _ => unreachable!(),
-                                };
-                                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
-                                    module_data
-                                        .globals
-                                        .insert("value".to_string(), Value::Float(value));
-                                }
-                                self.alloc_builtin_bound_method(BuiltinFunction::Format, receiver)
-                            }
-                            _ => {
-                                return Err(RuntimeError::attribute_error(format!(
-                                    "'float' object has no attribute '{}'",
-                                    attr_name
-                                )));
-                            }
-                        },
+                        Value::Float(value) => self.load_attr_float_method(value, &attr_name)?,
                         Value::Complex { real, imag } => match attr_name.as_str() {
                             "__reduce_ex__" | "__reduce__" => {
                                 let wrapper = match self.heap.alloc_module(ModuleObject::new(

@@ -334,6 +334,7 @@ pub enum NativeMethodKind {
     IntToBytes,
     IntBitLengthMethod,
     IntIndexMethod,
+    FloatAsIntegerRatioMethod,
     StrStartsWith,
     StrEndsWith,
     StrReplace,
@@ -8776,6 +8777,9 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method int.bit_length>".to_string()
                     }
                     NativeMethodKind::IntIndexMethod => "<bound method int.__index__>".to_string(),
+                    NativeMethodKind::FloatAsIntegerRatioMethod => {
+                        "<bound method float.as_integer_ratio>".to_string()
+                    }
                     NativeMethodKind::StrStartsWith => "<bound method str.startswith>".to_string(),
                     NativeMethodKind::StrEndsWith => "<bound method str.endswith>".to_string(),
                     NativeMethodKind::StrReplace => "<bound method str.replace>".to_string(),

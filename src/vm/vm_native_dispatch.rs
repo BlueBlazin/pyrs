@@ -2290,6 +2290,92 @@ impl Vm {
                 };
                 Ok(NativeCallResult::Value(value))
             }
+            NativeMethodKind::FloatAsIntegerRatioMethod => {
+                let value = match &*receiver.kind() {
+                    Object::Module(module_data) if module_data.name == "__float_method__" => {
+                        if !args.is_empty() {
+                            return Err(RuntimeError::new("as_integer_ratio() expects no arguments"));
+                        }
+                        match module_data.globals.get("value") {
+                            Some(Value::Float(value)) => *value,
+                            _ => return Err(RuntimeError::type_error("float receiver is invalid")),
+                        }
+                    }
+                    Object::Module(module_data) if module_data.name == "__float_unbound_method__" => {
+                        if args.is_empty() {
+                            return Err(RuntimeError::type_error(
+                                "descriptor for 'float' objects doesn't apply to a 'NoneType' object",
+                            ));
+                        }
+                        let receiver_value = args.remove(0);
+                        let Value::Float(value) = receiver_value else {
+                            return Err(RuntimeError::type_error(format!(
+                                "descriptor for 'float' objects doesn't apply to a '{}' object",
+                                self.value_type_name_for_error(&receiver_value)
+                            )));
+                        };
+                        if !args.is_empty() {
+                            return Err(RuntimeError::new("as_integer_ratio() expects no arguments"));
+                        }
+                        value
+                    }
+                    _ => return Err(RuntimeError::type_error("float receiver is invalid")),
+                };
+
+                if value.is_nan() {
+                    return Err(RuntimeError::value_error(
+                        "cannot convert NaN to integer ratio",
+                    ));
+                }
+                if value.is_infinite() {
+                    return Err(RuntimeError::overflow_error(
+                        "cannot convert Infinity to integer ratio",
+                    ));
+                }
+                if value == 0.0 {
+                    return Ok(NativeCallResult::Value(
+                        self.heap.alloc_tuple(vec![Value::Int(0), Value::Int(1)]),
+                    ));
+                }
+
+                let bits = value.to_bits();
+                let negative = (bits >> 63) != 0;
+                let exponent_bits = ((bits >> 52) & 0x7ff) as i32;
+                let fraction = bits & ((1u64 << 52) - 1);
+
+                let mut mantissa = if exponent_bits == 0 {
+                    fraction
+                } else {
+                    (1u64 << 52) | fraction
+                };
+                let mut exponent = if exponent_bits == 0 {
+                    1 - 1023 - 52
+                } else {
+                    exponent_bits - 1023 - 52
+                };
+
+                if exponent < 0 {
+                    let reduce = mantissa.trailing_zeros().min((-exponent) as u32);
+                    mantissa >>= reduce;
+                    exponent += reduce as i32;
+                }
+
+                let mut numerator = BigInt::from_u64(mantissa);
+                if negative {
+                    numerator = numerator.negated();
+                }
+                let denominator = if exponent >= 0 {
+                    numerator = numerator.shl_bits(exponent as usize);
+                    BigInt::one()
+                } else {
+                    BigInt::one().shl_bits((-exponent) as usize)
+                };
+
+                Ok(NativeCallResult::Value(self.heap.alloc_tuple(vec![
+                    value_from_bigint(numerator),
+                    value_from_bigint(denominator),
+                ])))
+            }
             NativeMethodKind::StrStartsWith | NativeMethodKind::StrEndsWith => {
                 let method_name = if matches!(kind, NativeMethodKind::StrStartsWith) {
                     "startswith"

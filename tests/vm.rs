@@ -18103,6 +18103,56 @@ ok = (value == 2.5)
 }
 
 #[test]
+fn statistics_mean_and_median_support_float_dataset() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("statistics-mean-floats".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import statistics
+data = [3.2, 5.1, 7.8, 9.0]
+mean = statistics.mean(data)
+median = statistics.median(data)
+ok = (abs(mean - 6.275) < 1e-12 and abs(median - 6.45) < 1e-12)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn statistics float mean thread");
+    handle
+        .join()
+        .expect("statistics float mean thread should complete");
+}
+
+#[test]
+fn float_as_integer_ratio_matches_cpython_shape() {
+    let source = r#"ratio = (3.5).as_integer_ratio()
+class_ratio = float.as_integer_ratio(3.5)
+class_has_method = hasattr(float, 'as_integer_ratio')
+zero_ratio = (0.0).as_integer_ratio()
+neg_ratio = (-0.25).as_integer_ratio()
+ok = (
+    ratio == (7, 2)
+    and class_ratio == (7, 2)
+    and class_has_method
+    and zero_ratio == (0, 1)
+    and neg_ratio == (-1, 4)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn subprocess_completedprocess_constructor_is_available() {
     let source = r#"import subprocess
 cp = subprocess.CompletedProcess(["echo", "ok"], 0)
