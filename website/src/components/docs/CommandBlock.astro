@@ -13,21 +13,21 @@ const copyPayload = commands.join("\n");
 
 <div class={cn("docs-block command-block overflow-hidden rounded-xl border border-[#2a3345] bg-[#0b1019]", className)}>
 	<div
-		class="flex items-center justify-between gap-3 border-b border-[#1f293a] bg-[linear-gradient(180deg,#111b2e_0%,#0b1423_100%)] px-4 py-2.5"
+		class="flex items-center justify-between gap-2.5 border-b border-[#1f293a] bg-[linear-gradient(180deg,#111b2e_0%,#0b1423_100%)] px-3.5 py-1.5"
 	>
-		<div class="flex items-center gap-4">
+		<div class="flex items-center gap-3">
 			<div class="inline-flex gap-1.5" aria-hidden="true">
-				<span class="size-3 rounded-full bg-[#ff6b57]"></span>
-				<span class="size-3 rounded-full bg-[#fcbf4e]"></span>
-				<span class="size-3 rounded-full bg-[#35cd67]"></span>
+				<span class="size-2.5 rounded-full bg-[#ff6b57]"></span>
+				<span class="size-2.5 rounded-full bg-[#fcbf4e]"></span>
+				<span class="size-2.5 rounded-full bg-[#35cd67]"></span>
 			</div>
-			<span class="text-[0.67rem] font-semibold uppercase tracking-[0.16em] text-[#b6c5e2]">{label}</span>
+			<span class="text-[0.63rem] font-semibold uppercase tracking-[0.16em] text-[#b6c5e2]">{label}</span>
 		</div>
 		<button
 			type="button"
 			data-copy={copyPayload}
 			data-copy-button="1"
-			class="copy-btn rounded-md border border-[#394f73] bg-[#17233a] px-2.5 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-[#e3eafa] transition-colors duration-150 hover:bg-[#223452] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f92ca] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b1019]"
+			class="copy-btn rounded-md border border-[#394f73] bg-[#17233a] px-2 py-[0.27rem] text-[0.61rem] font-semibold uppercase tracking-[0.14em] text-[#e3eafa] transition-colors duration-150 hover:bg-[#223452] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f92ca] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b1019]"
 		>
 			Copy
 		</button>
