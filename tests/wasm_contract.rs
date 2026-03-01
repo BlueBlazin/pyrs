@@ -172,6 +172,17 @@ fn expected_worker_info_execution_probe_enabled_for_fixture(
     fixture.expected_execution_probe_enabled
 }
 
+fn expected_worker_info_execute_supported_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerInfoFixture,
+) -> bool {
+    if vm_probe_enabled() {
+        if let Some(enabled) = fixture.expected_vm_probe_execute_supported {
+            return enabled;
+        }
+    }
+    fixture.expected_execute_supported
+}
+
 #[wasm_bindgen_test]
 fn wasm_runtime_contract_basics() {
     let runtime = wasm_runtime_info();
@@ -248,6 +259,12 @@ fn wasm_worker_contract_basics() {
         info.execution_probe_enabled(),
         expected_worker_info_execution_probe_enabled_for_fixture(fixture),
         "worker info execution_probe_enabled mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.execute_supported(),
+        expected_worker_info_execute_supported_for_fixture(fixture),
+        "worker info execute_supported mismatch: {}",
         fixture.name
     );
 
@@ -697,6 +714,12 @@ fn wasm_worker_session_contract_is_stable() {
         info.execution_probe_enabled(),
         expected_worker_info_execution_probe_enabled_for_fixture(fixture),
         "worker session info execution_probe_enabled mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.execute_supported(),
+        expected_worker_info_execute_supported_for_fixture(fixture),
+        "worker session info execute_supported mismatch: {}",
         fixture.name
     );
 

@@ -43,6 +43,8 @@ pub struct WasmWorkerInfoFixture {
     pub expected_interruption_model: &'static str,
     pub expected_execution_probe_enabled: bool,
     pub expected_vm_probe_execution_probe_enabled: Option<bool>,
+    pub expected_execute_supported: bool,
+    pub expected_vm_probe_execute_supported: Option<bool>,
 }
 
 pub const WASM_WORKER_INFO_FIXTURES: &[WasmWorkerInfoFixture] = &[WasmWorkerInfoFixture {
@@ -54,6 +56,8 @@ pub const WASM_WORKER_INFO_FIXTURES: &[WasmWorkerInfoFixture] = &[WasmWorkerInfo
     expected_interruption_model: "worker_recycle",
     expected_execution_probe_enabled: false,
     expected_vm_probe_execution_probe_enabled: Some(true),
+    expected_execute_supported: false,
+    expected_vm_probe_execute_supported: Some(true),
 },];
 
 pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[

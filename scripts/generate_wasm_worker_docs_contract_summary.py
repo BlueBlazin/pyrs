@@ -206,6 +206,14 @@ def main() -> int:
         errors.append(
             "docs missing vm-probe worker info execution_probe_enabled=true shape"
         )
+    if not re.search(r"execute_supported\s*=\s*false", docs_source):
+        errors.append(
+            "docs missing default worker info execute_supported=false shape"
+        )
+    if not re.search(r"execute_supported[^\n]*true", docs_source):
+        errors.append(
+            "docs missing vm-probe worker info execute_supported=true shape"
+        )
     if f'state = "{worker_default_state}"' not in docs_source:
         errors.append(
             "docs missing worker execute-with-operation/default state shape "

@@ -138,6 +138,7 @@ This document defines the JS-facing contract currently exported by
 - `state: String` (currently `"unwired"`)
 - `interruption_model: String` (currently `"worker_recycle"`)
 - `execution_probe_enabled: bool` (`true` only in `wasm-vm-probe` builds)
+- `execute_supported: bool` (`true` only in `wasm-vm-probe` builds)
 - `blocker_count: usize`
 
 ## `WasmWorkerTimeoutPolicy`

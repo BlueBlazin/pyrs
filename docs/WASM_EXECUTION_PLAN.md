@@ -564,6 +564,9 @@ Completed on this branch:
   wasm contract tests consume those fixtures for `wasm_worker_info()`/session
   info assertions, and `generate_wasm_worker_contract_summary.py` enforces
   fixture-vs-source parity for worker-info mode semantics.
+- latest: `WasmWorkerInfo` now also exports `execute_supported`
+  (default `false`, `true` in `wasm-vm-probe`), and worker-info fixtures +
+  summary validation enforce mode-aware parity for this field.
 - latest: `generate_wasm_worker_docs_contract_summary.py` now also enforces
   worker-info docs parity for backend mode keys (`"unwired"`/`"vm_probe"`) and
   `execution_probe_enabled` default/vm-probe shape coverage.

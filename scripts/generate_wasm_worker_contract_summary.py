@@ -49,6 +49,8 @@ class WorkerInfoFixtureRow:
     expected_interruption_model: str
     expected_execution_probe_enabled: bool
     expected_vm_probe_execution_probe_enabled: bool | None
+    expected_execute_supported: bool
+    expected_vm_probe_execute_supported: bool | None
 
 
 @dataclass
@@ -59,6 +61,7 @@ class WorkerInfoExpectation:
     expected_state: str
     expected_interruption_model: str
     execution_probe_enabled: bool
+    execute_supported: bool
 
 
 def parse_const_body(source: str, const_name: str) -> str:
@@ -226,6 +229,12 @@ def parse_worker_info_fixture_rows(source: str) -> list[WorkerInfoFixtureRow]:
                 expected_vm_probe_execution_probe_enabled=parse_optional_bool_field(
                     row_body, "expected_vm_probe_execution_probe_enabled"
                 ),
+                expected_execute_supported=parse_required_bool_field(
+                    row_body, "expected_execute_supported"
+                ),
+                expected_vm_probe_execute_supported=parse_optional_bool_field(
+                    row_body, "expected_vm_probe_execute_supported"
+                ),
             )
         )
     return rows
@@ -265,11 +274,14 @@ def effective_worker_info_expectation(
 ) -> WorkerInfoExpectation:
     backend = row.expected_backend
     execution_probe_enabled = row.expected_execution_probe_enabled
+    execute_supported = row.expected_execute_supported
     if vm_probe_enabled:
         if row.expected_vm_probe_backend is not None:
             backend = row.expected_vm_probe_backend
         if row.expected_vm_probe_execution_probe_enabled is not None:
             execution_probe_enabled = row.expected_vm_probe_execution_probe_enabled
+        if row.expected_vm_probe_execute_supported is not None:
+            execute_supported = row.expected_vm_probe_execute_supported
     return WorkerInfoExpectation(
         name=row.name,
         expected_supported=row.expected_supported,
@@ -277,6 +289,7 @@ def effective_worker_info_expectation(
         expected_state=row.expected_state,
         expected_interruption_model=row.expected_interruption_model,
         execution_probe_enabled=execution_probe_enabled,
+        execute_supported=execute_supported,
     )
 
 
@@ -409,6 +422,10 @@ def parse_source_worker_info_uses_runtime_probe_flag(worker_info_body: str) -> b
     return "execution_probe_enabled: wasm_vm_runtime_enabled()" in worker_info_body
 
 
+def parse_source_worker_info_uses_execute_supported_flag(worker_info_body: str) -> bool:
+    return "execute_supported: wasm_vm_runtime_enabled()" in worker_info_body
+
+
 def validate_non_empty(name: str, values: list[str], errors: list[str]) -> None:
     if not values:
         errors.append(f"{name} must not be empty")
@@ -518,6 +535,9 @@ def main() -> int:
     source_worker_info_uses_runtime_probe_flag = (
         parse_source_worker_info_uses_runtime_probe_flag(source_worker_info_body)
     )
+    source_worker_info_uses_execute_supported_flag = (
+        parse_source_worker_info_uses_execute_supported_flag(source_worker_info_body)
+    )
     source_expected_worker_blocker_keys = [
         source_worker_blocker_key,
         *source_module_policy_blocker_keys,
@@ -534,6 +554,7 @@ def main() -> int:
         source_worker_backend_vm_probe if args.vm_probe else source_worker_backend_default
     )
     source_expected_worker_execution_probe_enabled = args.vm_probe
+    source_expected_worker_execute_supported = args.vm_probe
     source_expected_worker_state = source_state_keys[0]
     source_expected_worker_interruption_model = source_const_map[
         "WASM_WORKER_INTERRUPT_MODEL_RECYCLE"
@@ -663,6 +684,10 @@ def main() -> int:
         errors.append(
             "wasm_worker_info should set execution_probe_enabled from wasm_vm_runtime_enabled()"
         )
+    if not source_worker_info_uses_execute_supported_flag:
+        errors.append(
+            "wasm_worker_info should set execute_supported from wasm_vm_runtime_enabled()"
+        )
 
     for row in worker_info_effective_expectations:
         if row.expected_supported != source_worker_info_supported:
@@ -691,6 +716,12 @@ def main() -> int:
                 f"{row.name}: worker info execution_probe_enabled mismatch "
                 f"fixture={row.execution_probe_enabled} "
                 f"source={source_expected_worker_execution_probe_enabled}"
+            )
+        if row.execute_supported != source_expected_worker_execute_supported:
+            errors.append(
+                f"{row.name}: worker info execute_supported mismatch "
+                f"fixture={row.execute_supported} "
+                f"source={source_expected_worker_execute_supported}"
             )
 
     if unique(lifecycle_operation_prefixes) != expected_lifecycle_prefixes:
@@ -828,7 +859,9 @@ def main() -> int:
             "state": source_expected_worker_state,
             "interruption_model": source_expected_worker_interruption_model,
             "execution_probe_enabled": source_expected_worker_execution_probe_enabled,
+            "execute_supported": source_expected_worker_execute_supported,
             "uses_runtime_probe_flag": source_worker_info_uses_runtime_probe_flag,
+            "uses_execute_supported_flag": source_worker_info_uses_execute_supported_flag,
         },
         "worker_info_effective_rows": [
             {
@@ -838,6 +871,7 @@ def main() -> int:
                 "expected_state": row.expected_state,
                 "expected_interruption_model": row.expected_interruption_model,
                 "execution_probe_enabled": row.execution_probe_enabled,
+                "execute_supported": row.execute_supported,
             }
             for row in worker_info_effective_expectations
         ],
