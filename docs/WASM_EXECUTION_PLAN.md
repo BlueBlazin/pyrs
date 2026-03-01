@@ -212,6 +212,10 @@ Branch helper:
 - vm-compile probe helper (non-gating):
   `scripts/probe_wasm_vm_compile.sh`
   to surface current wasm-vm compile blockers under opt-in `wasm-vm-probe`.
+- vm native-link blocker helper:
+  `python3 scripts/generate_wasm_vm_link_blockers_summary.py --out perf/wasm_vm_link_blockers_latest.json`
+  to inventory `#[link(name = ...)]` libraries under `src/vm` that block full
+  wasm target link/test lanes.
 
 ## Merge Decision Rubric
 
@@ -455,6 +459,10 @@ Current `wasm-vm-probe` snapshot (non-gating, latest local run):
   compile errors.
 - current probe status is clean in the scripted probe lane (no active compile
   blockers and no warning debt from the most recent local probe run).
+- link blocker status: `perf/wasm_vm_link_blockers_latest.json` tracks
+  native-link attributes currently present under `src/vm` (including known
+  stdlib-linked blockers such as `bz2`, `lzma`, `sqlite3`, and `z`) for
+  explicit closure planning before full wasm link/test promotion.
 
 ## Risk Register
 
