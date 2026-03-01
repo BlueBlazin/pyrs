@@ -200,6 +200,9 @@ Branch helper:
 - execute-contract summary helper:
   `python3 scripts/generate_wasm_execute_contract_summary.py --out perf/wasm_execute_contract_summary_latest.json`
   for fixture-driven execute phase/blocker consistency.
+- worker-docs summary helper:
+  `python3 scripts/generate_wasm_worker_docs_contract_summary.py --out perf/wasm_worker_docs_contract_summary_latest.json`
+  for source/doc parity on worker state/lifecycle/execute/timeout keys, interruption model, timeout bounds, and blocker keys.
 - worker-contract summary helper:
   `python3 scripts/generate_wasm_worker_contract_summary.py --out perf/wasm_worker_contract_summary_latest.json`
   for fixture + source parity on worker key sets/prefixes/blockers.
