@@ -33,6 +33,8 @@ const noindex = Astro.props.noindex ?? frontmatter.noindex ?? false;
 const headings = Astro.props.headings ?? [];
 const rawPath = Astro.url.pathname;
 const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
+const sourceFile = path === "/docs/" ? "docs/index.mdx" : `docs${path.slice("/docs".length, -1)}.mdx`;
+const editUrl = `https://github.com/BlueBlazin/pyrs/edit/master/website/src/pages/${sourceFile}`;
 ---
 
 <html lang="en">
@@ -46,7 +48,7 @@ const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 			<main class="docs-shell">
 				<DocsSidebar path={path} />
 				<section class="docs-content" id="main-content">
-					<DocsPageHeader title={pageTitle} description={description} />
+					<DocsPageHeader title={pageTitle} description={description} editUrl={editUrl} />
 					<slot />
 					<DocsPager path={path} />
 				</section>

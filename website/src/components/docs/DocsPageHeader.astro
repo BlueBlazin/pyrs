@@ -2,13 +2,23 @@
 interface Props {
 	title: string;
 	description?: string;
+	editUrl?: string;
 }
 
-const { title, description } = Astro.props;
+const { title, description, editUrl } = Astro.props;
 ---
 
 <header class="content-head">
-	<h1>{title}</h1>
+	<div class="head-row">
+		<h1>{title}</h1>
+		{
+			editUrl && (
+				<a class="edit-link" href={editUrl} target="_blank" rel="noreferrer">
+					Edit this page
+				</a>
+			)
+		}
+	</div>
 	{description && <p>{description}</p>}
 </header>
 
@@ -26,11 +36,50 @@ const { title, description } = Astro.props;
 		letter-spacing: -0.01em;
 	}
 
+	.head-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.84rem;
+	}
+
+	.edit-link {
+		flex: 0 0 auto;
+		color: #9eabc7;
+		text-decoration: none;
+		font-size: 0.77rem;
+		font-weight: 600;
+		letter-spacing: 0.03em;
+		border: 1px solid #2f3a50;
+		border-radius: 0.5rem;
+		padding: 0.35rem 0.54rem;
+		transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+	}
+
+	.edit-link:hover {
+		color: #dbe5fa;
+		border-color: #4f648c;
+		background: #131d2e;
+	}
+
+	.edit-link:focus-visible {
+		outline: 2px solid rgba(255, 186, 137, 0.92);
+		outline-offset: 2px;
+	}
+
 	.content-head p {
 		margin: 0.56rem 0 0;
 		color: #a5aec0;
 		font-size: 0.96rem;
 		line-height: 1.62;
 		max-width: 66ch;
+	}
+
+	@media (max-width: 760px) {
+		.head-row {
+			align-items: flex-start;
+			flex-direction: column;
+			gap: 0.5rem;
+		}
 	}
 </style>
