@@ -100,6 +100,11 @@ const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 		font-size: 1.15rem;
 	}
 
+	.docs-content h2,
+	.docs-content h3 {
+		scroll-margin-top: 4.2rem;
+	}
+
 	.docs-content h2:first-of-type {
 		margin-top: 0;
 	}
@@ -121,6 +126,23 @@ const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 		font-size: 0.86em;
 		color: #d8def0;
+	}
+
+	.docs-content a {
+		color: #b7c8eb;
+		text-decoration: none;
+		font-weight: 500;
+		transition: color 120ms ease;
+	}
+
+	.docs-content a:hover {
+		color: #d8e1f6;
+	}
+
+	.docs-content a:focus-visible {
+		outline: 2px solid rgba(255, 186, 137, 0.92);
+		outline-offset: 2px;
+		border-radius: 0.35rem;
 	}
 
 	@media (max-width: 1080px) {
