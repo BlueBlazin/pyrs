@@ -4,9 +4,12 @@
 mod wasm_contract_snippets;
 #[path = "fixtures/wasm_module_policy.rs"]
 mod wasm_module_policy;
+#[path = "fixtures/wasm_capability_matrix.rs"]
+mod wasm_capability_matrix;
 #[path = "fixtures/wasm_worker_contract.rs"]
 mod wasm_worker_contract;
 
+use crate::wasm_capability_matrix::WASM_CAPABILITY_FIXTURES;
 use crate::wasm_contract_snippets::WASM_CONTRACT_SNIPPET_FIXTURES;
 use crate::wasm_module_policy::WASM_MODULE_POLICY_FIXTURES;
 use crate::wasm_worker_contract::{
@@ -16,7 +19,7 @@ use crate::wasm_worker_contract::{
 };
 use js_sys::Reflect;
 use pyrs::wasm::{
-    WasmSession, WasmWorkerSession, check_compile_result, check_syntax_result, execute,
+    WasmCapabilityReport, WasmSession, WasmWorkerSession, check_compile_result, check_syntax_result, execute,
     wasm_api_version, wasm_capabilities, wasm_capability_error, wasm_capability_keys,
     wasm_execution_blocker_error, wasm_execution_blocker_keys, wasm_execution_blockers,
     wasm_execution_phase_keys, wasm_module_policy_entries, wasm_module_support, wasm_runtime_info,
@@ -31,6 +34,22 @@ use std::collections::HashSet;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
+
+fn capability_supported(report: &WasmCapabilityReport, key: &str) -> bool {
+    match key {
+        "filesystem_read" => report.filesystem_read(),
+        "filesystem_write" => report.filesystem_write(),
+        "environment_read" => report.environment_read(),
+        "process_args" => report.process_args(),
+        "clock_time" => report.clock_time(),
+        "thread_sleep" => report.thread_sleep(),
+        "process_spawn" => report.process_spawn(),
+        "dynamic_library_load" => report.dynamic_library_load(),
+        "interactive_terminal" => report.interactive_terminal(),
+        "network_sockets" => report.network_sockets(),
+        other => panic!("unknown capability key fixture: {other}"),
+    }
+}
 
 #[wasm_bindgen_test]
 fn wasm_runtime_contract_basics() {
@@ -602,32 +621,50 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
 #[wasm_bindgen_test]
 fn wasm_capability_contract_is_stable() {
     let keys = wasm_capability_keys();
-    let mut listed_keys = Vec::new();
+    let mut listed_keys = HashSet::new();
     for index in 0..keys.length() {
         let key = keys
             .get(index)
             .as_string()
             .expect("capability key should be string");
-        listed_keys.push(key);
+        listed_keys.insert(key);
     }
-    assert!(listed_keys.contains(&"process_args".to_string()));
-    assert!(listed_keys.contains(&"filesystem_read".to_string()));
-    assert!(listed_keys.contains(&"clock_time".to_string()));
-    assert!(listed_keys.contains(&"thread_sleep".to_string()));
+    let expected_keys: HashSet<String> = WASM_CAPABILITY_FIXTURES
+        .iter()
+        .map(|fixture| fixture.key.to_string())
+        .collect();
+    assert_eq!(listed_keys, expected_keys);
 
     let capabilities = wasm_capabilities();
-    assert!(capabilities.process_args());
-    assert!(capabilities.clock_time());
-    assert!(!capabilities.thread_sleep());
-    assert!(!capabilities.filesystem_read());
-    assert!(!capabilities.dynamic_library_load());
-
-    assert!(wasm_capability_error("process_args").is_none());
-    assert!(wasm_capability_error("clock_time").is_none());
-    let fs_error = wasm_capability_error("filesystem_read").expect("filesystem_read unsupported");
-    assert!(fs_error.contains("filesystem_read"));
-    let sleep_error = wasm_capability_error("thread_sleep").expect("thread_sleep unsupported");
-    assert!(sleep_error.contains("thread_sleep"));
+    for fixture in WASM_CAPABILITY_FIXTURES {
+        assert!(
+            fixture.native_supported,
+            "native fixture baseline should remain supported: {}",
+            fixture.key
+        );
+        let supported = capability_supported(&capabilities, fixture.key);
+        assert_eq!(
+            supported, fixture.wasm_supported,
+            "wasm capability mismatch for {}",
+            fixture.key
+        );
+        let capability_error = wasm_capability_error(fixture.key);
+        if fixture.wasm_supported {
+            assert!(
+                capability_error.is_none(),
+                "supported capability should not have error: {}",
+                fixture.key
+            );
+        } else {
+            let message = capability_error
+                .unwrap_or_else(|| panic!("unsupported capability missing error: {}", fixture.key));
+            assert!(
+                message.contains(fixture.key),
+                "unsupported capability error should include key: {}",
+                fixture.key
+            );
+        }
+    }
 }
 
 #[wasm_bindgen_test]
@@ -643,7 +680,15 @@ fn wasm_execution_blocker_contract_is_stable() {
     }
     assert!(listed_keys.contains(&"execution_backend_unwired".to_string()));
     assert!(listed_keys.contains(&"vm_runtime_unavailable".to_string()));
-    assert!(listed_keys.contains(&"filesystem_read".to_string()));
+    for fixture in WASM_CAPABILITY_FIXTURES {
+        if !fixture.wasm_supported {
+            assert!(
+                listed_keys.contains(&fixture.key.to_string()),
+                "execution blockers should include unsupported capability key: {}",
+                fixture.key
+            );
+        }
+    }
     let err = wasm_execution_blocker_error("execution_backend_unwired")
         .expect("backend blocker should have error");
     assert!(err.contains("not wired"));
@@ -686,35 +731,16 @@ fn wasm_execution_blockers_match_capability_matrix() {
     let mut expected = HashSet::new();
     expected.insert("execution_backend_unwired".to_string());
     expected.insert("vm_runtime_unavailable".to_string());
-    if !capabilities.filesystem_read() {
-        expected.insert("filesystem_read".to_string());
-    }
-    if !capabilities.filesystem_write() {
-        expected.insert("filesystem_write".to_string());
-    }
-    if !capabilities.environment_read() {
-        expected.insert("environment_read".to_string());
-    }
-    if !capabilities.process_args() {
-        expected.insert("process_args".to_string());
-    }
-    if !capabilities.clock_time() {
-        expected.insert("clock_time".to_string());
-    }
-    if !capabilities.thread_sleep() {
-        expected.insert("thread_sleep".to_string());
-    }
-    if !capabilities.process_spawn() {
-        expected.insert("process_spawn".to_string());
-    }
-    if !capabilities.dynamic_library_load() {
-        expected.insert("dynamic_library_load".to_string());
-    }
-    if !capabilities.interactive_terminal() {
-        expected.insert("interactive_terminal".to_string());
-    }
-    if !capabilities.network_sockets() {
-        expected.insert("network_sockets".to_string());
+    for fixture in WASM_CAPABILITY_FIXTURES {
+        let supported = capability_supported(&capabilities, fixture.key);
+        assert_eq!(
+            supported, fixture.wasm_supported,
+            "capability fixture/report mismatch for {}",
+            fixture.key
+        );
+        if !supported {
+            expected.insert(fixture.key.to_string());
+        }
     }
 
     let keys = wasm_execution_blocker_keys();

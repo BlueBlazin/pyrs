@@ -206,6 +206,9 @@ Branch helper:
 - module-policy summary helper:
   `python3 scripts/generate_wasm_module_policy_summary.py --out perf/wasm_module_policy_summary_latest.json`
   for fixture + source + docs parity on module blocker mappings.
+- capability summary helper:
+  `python3 scripts/generate_wasm_capability_summary.py --out perf/wasm_capability_summary_latest.json`
+  for fixture + source + docs parity on capability keys/support matrix.
 - vm-compile probe helper (non-gating):
   `scripts/probe_wasm_vm_compile.sh`
   to surface current wasm-vm compile blockers under opt-in `wasm-vm-probe`.
