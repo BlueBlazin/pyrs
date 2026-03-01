@@ -11,6 +11,7 @@ pnpm --dir website install
 pnpm --dir website dev
 pnpm --dir website build
 pnpm --dir website check:links
+pnpm --dir website report:size
 pnpm --dir website build:check
 pnpm --dir website preview
 ```
@@ -20,6 +21,9 @@ pnpm --dir website preview
 - internal links/assets resolve,
 - per-page metadata (`title`, description) exists,
 - docs shell invariants (sidebar container present, default-open sidebar state, and sidebar links exist).
+
+`report:size` writes a deterministic dist artifact-size summary to:
+- `website/perf/build_size_latest.json`
 
 ## Directory Map
 
