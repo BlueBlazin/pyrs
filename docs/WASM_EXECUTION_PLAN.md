@@ -145,6 +145,7 @@ Deliverables:
 
 Exit criteria:
 - Long-running snippets do not freeze site UI.
+- Worker contract doc exists and is kept in sync (`docs/WASM_WORKER_RUNTIME_CONTRACT.md`).
 
 ## Milestone W6: Website Integration
 
@@ -286,8 +287,10 @@ Completed on this branch:
   `tests/fixtures/wasm_contract_snippets.rs`.
 - `9db8e10`: initial worker runtime contract introspection landed
   (`wasm_worker_info`, `wasm_worker_blocker_keys`, `wasm_worker_blocker_error`).
-- latest: local wasm contract smoke script added at
+- `0affb9c`: local wasm contract smoke script added at
   `scripts/run_wasm_contract_smoke.sh`.
+- latest: worker runtime contract details are documented in
+  `docs/WASM_WORKER_RUNTIME_CONTRACT.md`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
