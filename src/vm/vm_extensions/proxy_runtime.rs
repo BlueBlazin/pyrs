@@ -307,7 +307,8 @@ impl Vm {
             return Err(RuntimeError::new(detail));
         }
         let converted = call_ctx.cpython_value_from_owned_ptr(result_ptr);
-        if converted.is_none() && super::super::env_var_present_cached("PYRS_TRACE_CPY_UNKNOWN_PTR") {
+        if converted.is_none() && super::super::env_var_present_cached("PYRS_TRACE_CPY_UNKNOWN_PTR")
+        {
             let mut type_ptr: *mut CpythonTypeObject = std::ptr::null_mut();
             let mut type_name = "<invalid-ptr>".to_string();
             const MIN_VALID_PTR: usize = 0x1_0000_0000;
@@ -1190,8 +1191,8 @@ impl Vm {
             );
         let trace_proxy_max =
             attr_name == "max" && super::super::env_var_present_cached("PYRS_TRACE_PROXY_MAX");
-        let trace_type_attr =
-            attr_name == "type" && super::super::env_var_present_cached("PYRS_TRACE_PROXY_TYPE_ATTR");
+        let trace_type_attr = attr_name == "type"
+            && super::super::env_var_present_cached("PYRS_TRACE_PROXY_TYPE_ATTR");
         if trace_type_attr {
             let (raw_type, raw_type_name) = unsafe {
                 let raw_type = raw_ptr
@@ -1302,7 +1303,9 @@ impl Vm {
                 );
             }
             let mapped = call_ctx.cpython_value_from_borrowed_ptr(attr_ptr);
-            if mapped.is_none() && super::super::env_var_present_cached("PYRS_TRACE_PROXY_ATTR_CALL") {
+            if mapped.is_none()
+                && super::super::env_var_present_cached("PYRS_TRACE_PROXY_ATTR_CALL")
+            {
                 let probable = ModuleCapiContext::is_probable_external_cpython_object_ptr(attr_ptr);
                 let owned = call_ctx.owns_cpython_allocation_ptr(attr_ptr);
                 let local_handle = call_ctx.cpython_handle_from_ptr(attr_ptr);

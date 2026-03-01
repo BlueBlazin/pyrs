@@ -40,8 +40,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
-use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use self::capi_registry::{CapiObjectRegistry, CapiPtrProvenance, CapiRefKind};
@@ -611,7 +611,9 @@ impl VmTraceFlags {
             for_iter_fail: host.env_var_os("PYRS_TRACE_FOR_ITER_FAIL").is_some(),
             import_pending: host.env_var_os("PYRS_TRACE_IMPORT_PENDING").is_some(),
             init_subclass: host.env_var_os("PYRS_TRACE_INIT_SUBCLASS").is_some(),
-            numpy_core_importfrom: host.env_var_os("PYRS_TRACE_NUMPY_CORE_IMPORTFROM").is_some(),
+            numpy_core_importfrom: host
+                .env_var_os("PYRS_TRACE_NUMPY_CORE_IMPORTFROM")
+                .is_some(),
             startswith_attr: host.env_var_os("PYRS_TRACE_STARTSWITH_ATTR").is_some(),
             store_attr: host.env_var_os("PYRS_TRACE_STORE_ATTR").is_some(),
             store_subscript: host.env_var_os("PYRS_TRACE_STORE_SUBSCRIPT").is_some(),
@@ -1392,10 +1394,8 @@ impl Vm {
             prefer_pure_re_when_available: true,
             // CPython-default behavior: prefer validated source-bound pyc when available.
             // `PYRS_IMPORT_PREFER_PYC` can still explicitly override this.
-            prefer_pyc_when_source_available: host.env_flag_enabled_or_default(
-                "PYRS_IMPORT_PREFER_PYC",
-                true,
-            ),
+            prefer_pyc_when_source_available: host
+                .env_flag_enabled_or_default("PYRS_IMPORT_PREFER_PYC", true),
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
             hash_cache: HashMap::new(),

@@ -896,7 +896,8 @@ pub unsafe extern "C" fn pyrs_capi_tuple_pack_from_array(
 pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *const c_char) {
     match unsafe { c_name_to_string(message) } {
         Ok(message) => {
-            if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_DTYPE") && message.contains("data type")
+            if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_DTYPE")
+                && message.contains("data type")
             {
                 eprintln!(
                     "[cpy-dtype] PyErr_SetString exc={:p} msg={} bt={:?}",
@@ -966,7 +967,9 @@ pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *cons
                     );
                 });
             }
-            if message == "__exit__" && super::super::env_var_present_cached("PYRS_TRACE_CPY_ATTR_EXIT") {
+            if message == "__exit__"
+                && super::super::env_var_present_cached("PYRS_TRACE_CPY_ATTR_EXIT")
+            {
                 let incoming_type = cpython_exception_class_name_from_ptr(_exception)
                     .unwrap_or_else(|| cpython_type_name_for_object_ptr(_exception));
                 eprintln!(
@@ -1249,7 +1252,9 @@ pub unsafe extern "C" fn PyErr_Clear() {
                 context.last_error.as_deref().unwrap_or("")
             );
         }
-        if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") && context.last_error.is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS")
+            && context.last_error.is_some()
+        {
             if let Some(previous) = context.last_error.as_ref() {
                 eprintln!("[cpy-err-clear] clearing: {previous}");
             }
@@ -1492,7 +1497,8 @@ pub unsafe extern "C" fn PyErr_GivenExceptionMatches(
     }
     let given_type = cpython_exception_type_ptr(given);
     let expected_type = cpython_exception_type_ptr(expected);
-    let trace_import_match = super::super::env_var_present_cached("PYRS_TRACE_IMPORT_EXCEPTION_MATCH");
+    let trace_import_match =
+        super::super::env_var_present_cached("PYRS_TRACE_IMPORT_EXCEPTION_MATCH");
     if trace_import_match {
         let given_name = cpython_exception_expected_name_from_ptr(given)
             .unwrap_or_else(|| cpython_type_name_for_object_ptr(given));
@@ -2110,7 +2116,9 @@ pub unsafe extern "C" fn pyrs_capi_pyerr_format_fallback(
             .unwrap_or("error")
             .to_string()
     };
-    if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_DTYPE") && message.contains("data type") {
+    if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_DTYPE")
+        && message.contains("data type")
+    {
         eprintln!(
             "[cpy-dtype] PyErr_Format exception={:p} msg={} bt={:?}",
             exception,
@@ -2854,7 +2862,9 @@ pub unsafe extern "C" fn PyErr_SetObject(_exception: *mut c_void, value: *mut c_
         // Exception instance normalization belongs to `PyErr_NormalizeException`
         // and related retrieval APIs, not `PyErr_SetObject` itself.
         let message = context.error_message_from_ptr(value);
-        if message.contains("__exit__") && super::super::env_var_present_cached("PYRS_TRACE_CPY_ATTR_EXIT") {
+        if message.contains("__exit__")
+            && super::super::env_var_present_cached("PYRS_TRACE_CPY_ATTR_EXIT")
+        {
             let exception_name = cpython_exception_class_name_from_ptr(ptype)
                 .unwrap_or_else(|| cpython_type_name_for_object_ptr(ptype));
             eprintln!(

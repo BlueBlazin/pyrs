@@ -561,8 +561,8 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
     };
     let type_ptr = object.cast::<CpythonTypeObject>();
     let trace_type_getattr = super::super::env_var_present_cached("PYRS_TRACE_TYPE_GETATTR");
-    let trace_prepare =
-        super::super::env_var_present_cached("PYRS_TRACE_TYPE_PREPARE") && attr_name == "__prepare__";
+    let trace_prepare = super::super::env_var_present_cached("PYRS_TRACE_TYPE_PREPARE")
+        && attr_name == "__prepare__";
     if trace_prepare {
         let object_tag = cpython_value_from_ptr(object)
             .map(|value| cpython_value_debug_tag(&value))

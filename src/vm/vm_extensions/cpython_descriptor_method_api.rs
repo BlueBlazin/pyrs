@@ -110,10 +110,12 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
     }
     let trace_calls = super::super::env_var_present_cached("PYRS_TRACE_CPY_METHOD_CALLS");
     let trace_numpy_empty = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_EMPTY_CALL");
-    let trace_numpy_result_type = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_RESULT_TYPE");
+    let trace_numpy_result_type =
+        super::super::env_var_present_cached("PYRS_TRACE_NUMPY_RESULT_TYPE");
     let trace_set_typedict = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_TYPEDICT");
     let trace_numpy_subtract = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_SUBTRACT");
-    let trace_method_precall = super::super::env_var_present_cached("PYRS_TRACE_CPY_METHOD_PRECALL");
+    let trace_method_precall =
+        super::super::env_var_present_cached("PYRS_TRACE_CPY_METHOD_PRECALL");
     let trace_array_function_dispatcher =
         super::super::env_var_present_cached("PYRS_TRACE_ARRAY_FUNCTION_DISPATCHER");
     // SAFETY: method definition pointer is valid for metadata reads.

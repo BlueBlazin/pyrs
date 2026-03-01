@@ -490,7 +490,9 @@ fn run_interactive_session(
                         eprintln!(
                             "{}",
                             error_style::format_error_for_stderr(&format_parse_error(
-                                parse_source, "<stdin>", &parse_err,
+                                parse_source,
+                                "<stdin>",
+                                &parse_err,
                             ))
                         );
                         pending.clear();
@@ -2274,8 +2276,8 @@ mod tests {
         ReplMagicCommand, ReplThemeMode, ResolvedReplTheme, TimeItRequest, completion_fragment,
         format_parse_error, is_path_like, parse_colorfgbg_background_code, parse_magic_command,
         parse_meta_command, parse_repl_theme_mode, repl_input_is_incomplete,
-        repl_parse_candidate_source, repl_parse_success_requires_more_input,
-        repl_module_completion_plan, repl_palette, resolve_repl_theme,
+        repl_module_completion_plan, repl_palette, repl_parse_candidate_source,
+        repl_parse_success_requires_more_input, resolve_repl_theme,
     };
     use crate::parser;
 

@@ -139,7 +139,9 @@ impl Vm {
                         kwargs.len()
                     );
                 }
-                if super::super::env_var_present_cached("PYRS_TRACE_COPYTO_CALL") && entry.name == "copyto" {
+                if super::super::env_var_present_cached("PYRS_TRACE_COPYTO_CALL")
+                    && entry.name == "copyto"
+                {
                     let module_name = match &*entry.module.kind() {
                         Object::Module(module_data) => module_data.name.clone(),
                         _ => "<extension>".to_string(),

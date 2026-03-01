@@ -446,7 +446,9 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             cpython_value_debug_tag(&object_value)
         );
     }
-    if name == "__array_finalize__" && super::super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_PTRS") {
+    if name == "__array_finalize__"
+        && super::super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_PTRS")
+    {
         match &object_value {
             Value::Class(class_obj) => {
                 if let Object::Class(class_data) = &*class_obj.kind() {
@@ -644,7 +646,8 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
     if trace_exit_lookup {
         eprintln!("[cpy-attr-exit-lookup] get-attr enter object={:p}", object);
     }
-    let trace_seed_getattr = if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_SEED_ATTRS") {
+    let trace_seed_getattr = if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_SEED_ATTRS")
+    {
         with_active_cpython_context_mut(|context| {
             context
                 .cpython_value_from_borrowed_ptr(name)
@@ -674,17 +677,18 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
             object, name, attr_name
         );
     }
-    let trace_generate_state = super::super::env_var_present_cached("PYRS_TRACE_GETATTR_GENERATE_STATE")
-        && with_active_cpython_context_mut(|context| {
-            context
-                .cpython_value_from_borrowed_ptr(name)
-                .and_then(|value| match value {
-                    Value::Str(text) => Some(text == "generate_state"),
-                    _ => None,
-                })
-                .unwrap_or(false)
-        })
-        .unwrap_or(false);
+    let trace_generate_state =
+        super::super::env_var_present_cached("PYRS_TRACE_GETATTR_GENERATE_STATE")
+            && with_active_cpython_context_mut(|context| {
+                context
+                    .cpython_value_from_borrowed_ptr(name)
+                    .and_then(|value| match value {
+                        Value::Str(text) => Some(text == "generate_state"),
+                        _ => None,
+                    })
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
     if trace_generate_state {
         let none_ptr = (&raw mut _Py_NoneStruct).cast::<c_void>();
         let target_kind = with_active_cpython_context_mut(|context| {
@@ -987,7 +991,9 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                     object, object_debug_for_err, name_debug_for_err
                 );
             }
-            if err.contains("__exit__") && super::super::env_var_present_cached("PYRS_TRACE_ATTR_MISS") {
+            if err.contains("__exit__")
+                && super::super::env_var_present_cached("PYRS_TRACE_ATTR_MISS")
+            {
                 eprintln!(
                     "[cpy-attr-miss] object={:p} object_value={} name={} err={} bt={:?}",
                     object,
@@ -1207,10 +1213,10 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
     };
     let trace_pyx_capi_attr =
         super::super::env_var_present_cached("PYRS_TRACE_PYX_CAPI") && name_text == "__pyx_capi__";
-    let trace_pybind11_attr =
-        super::super::env_var_present_cached("PYRS_TRACE_PYBIND11_ATTRS") && name_text.contains("__pybind11");
-    let trace_seed_setattr =
-        super::super::env_var_present_cached("PYRS_TRACE_NUMPY_SEED_ATTRS") && name_text == "_seed_seq";
+    let trace_pybind11_attr = super::super::env_var_present_cached("PYRS_TRACE_PYBIND11_ATTRS")
+        && name_text.contains("__pybind11");
+    let trace_seed_setattr = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_SEED_ATTRS")
+        && name_text == "_seed_seq";
     if trace_seed_setattr {
         let _ = with_active_cpython_context_mut(|context| {
             let object_tag = context
@@ -1228,7 +1234,8 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
         });
     }
     if !object.is_null() {
-        let trace_native_setattr = super::super::env_var_present_cached("PYRS_TRACE_SETATTR_NATIVE");
+        let trace_native_setattr =
+            super::super::env_var_present_cached("PYRS_TRACE_SETATTR_NATIVE");
         let attr_name = name_text.clone();
         let native_status = with_active_cpython_context_mut(|context| {
             const MIN_VALID_PTR: usize = 0x1_0000_0000;

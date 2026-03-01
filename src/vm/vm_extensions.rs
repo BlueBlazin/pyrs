@@ -1280,7 +1280,8 @@ unsafe fn cpython_resolve_vectorcall(callable: *mut c_void) -> Option<CpythonVec
     {
         return None;
     }
-    let trace_vectorcall_resolve = super::env_var_present_cached("PYRS_TRACE_CPY_VECTORCALL_RESOLVE");
+    let trace_vectorcall_resolve =
+        super::env_var_present_cached("PYRS_TRACE_CPY_VECTORCALL_RESOLVE");
     // SAFETY: `type_ptr` is non-null and points to a type object header.
     let mut raw = unsafe { (*type_ptr).tp_vectorcall };
     // SAFETY: `type_ptr` is valid for metadata reads.
@@ -5167,7 +5168,9 @@ impl ModuleCapiContext {
         {
             self.stamp_exception_type_hint_on_value(&value, ptype);
         }
-        if super::env_var_present_cached("PYRS_TRACE_CPY_UFUNC_ERRORS") && message.contains("_UFunc") {
+        if super::env_var_present_cached("PYRS_TRACE_CPY_UFUNC_ERRORS")
+            && message.contains("_UFunc")
+        {
             let caller = std::panic::Location::caller();
             let ptype_name = cpython_exception_class_name_from_ptr(ptype)
                 .unwrap_or_else(|| "<none>".to_string());
@@ -5314,7 +5317,8 @@ impl ModuleCapiContext {
                 caller.line()
             );
         }
-        if super::env_var_present_cached("PYRS_TRACE_PYARROW_ERROR") && message.contains("pyarrow") {
+        if super::env_var_present_cached("PYRS_TRACE_PYARROW_ERROR") && message.contains("pyarrow")
+        {
             let stack = if self.vm.is_null() {
                 "<no-vm>".to_string()
             } else {

@@ -42,6 +42,8 @@ This document defines the JS-facing contract currently exported by
     - `syntax_error`
     - `compile_error`
     - `unsupported_worker_execution`
+  - `blocker_key` is `None` for parse/compile failures and
+    `Some("worker_runtime_unwired")` for unsupported worker execution.
 - `wasm_worker_execute_with_operation(source: &str) -> WasmWorkerExecutionResult`
   - Worker execute contract with deterministic phases plus `operation_id`.
 - `check_syntax(source: &str) -> Result<(), JsValue>`
@@ -57,6 +59,7 @@ This document defines the JS-facing contract currently exported by
     - `phase = "syntax_error"` when parse fails.
     - `phase = "compile_error"` when parse passes but compilation fails.
     - `phase = "unsupported_execution"` for parse+compile-valid input.
+    - `blocker_key = "execution_backend_unwired"` for unsupported execution.
   - `stderr` is populated for both current failure phases.
 - `wasm_capabilities() -> WasmCapabilityReport`
   - Returns explicit browser capability matrix.
@@ -132,6 +135,7 @@ This document defines the JS-facing contract currently exported by
 - `stdout: String`
 - `stderr: String`
 - `error: Option<String>`
+- `blocker_key: Option<String>`
 - `line: usize`
 - `column: usize`
 
@@ -158,6 +162,7 @@ This document defines the JS-facing contract currently exported by
 - `stdout: String`
 - `stderr: String`
 - `error: Option<String>`
+- `blocker_key: Option<String>`
 - `line: usize`
 - `column: usize`
 

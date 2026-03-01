@@ -8310,7 +8310,10 @@ impl Vm {
     }
 
     pub(super) fn unregister_module(&mut self, name: &str) {
-        if self.host.env_var_os("PYRS_TRACE_NUMPY_MODULE_REG").is_some()
+        if self
+            .host
+            .env_var_os("PYRS_TRACE_NUMPY_MODULE_REG")
+            .is_some()
             && (name == "numpy._core" || name == "numpy._core._multiarray_umath")
         {
             eprintln!(
@@ -8528,7 +8531,10 @@ impl Vm {
                 return;
             }
         }
-        if self.host.env_var_os("PYRS_TRACE_NUMPY_MODULE_REG").is_some()
+        if self
+            .host
+            .env_var_os("PYRS_TRACE_NUMPY_MODULE_REG")
+            .is_some()
             && (name == "numpy._core" || name == "numpy._core._multiarray_umath")
         {
             let previous = self.modules.get(name).map(|existing| existing.id());
@@ -9388,7 +9394,10 @@ impl Vm {
     }
 
     fn try_make_cpython_file_finder_importer(&mut self, root: &std::path::Path) -> Option<Value> {
-        let trace = self.host.env_var_os("PYRS_TRACE_FILE_FINDER_HOOK").is_some();
+        let trace = self
+            .host
+            .env_var_os("PYRS_TRACE_FILE_FINDER_HOOK")
+            .is_some();
         let machinery = if let Some(module) = self.modules.get("importlib.machinery").cloned() {
             module
         } else if let Some(modules_dict) = self.sys_dict_obj("modules") {
@@ -9551,7 +9560,10 @@ impl Vm {
     }
 
     pub(super) fn make_file_finder_importer(&mut self, root: &std::path::Path) -> Value {
-        let trace = self.host.env_var_os("PYRS_TRACE_FILE_FINDER_HOOK").is_some();
+        let trace = self
+            .host
+            .env_var_os("PYRS_TRACE_FILE_FINDER_HOOK")
+            .is_some();
         if let Some(importer) = self.try_make_cpython_file_finder_importer(root) {
             if trace {
                 eprintln!(

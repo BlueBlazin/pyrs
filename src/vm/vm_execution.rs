@@ -55,7 +55,11 @@ impl DebugDepthGuard {
         key: &'static std::thread::LocalKey<Cell<usize>>,
         label: &'static str,
     ) -> Option<Self> {
-        if vm.host.env_var_os("PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH").is_none() {
+        if vm
+            .host
+            .env_var_os("PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH")
+            .is_none()
+        {
             return None;
         }
         let limit = vm
@@ -8645,8 +8649,11 @@ impl Vm {
     /// If the runtime error already contains a concrete exception object it is
     /// reused; otherwise a `RuntimeError` instance is synthesized.
     pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
-        let _debug_depth_guard =
-            DebugDepthGuard::enter_for_vm(self, &DEBUG_HANDLE_RUNTIME_DEPTH, "handle_runtime_error");
+        let _debug_depth_guard = DebugDepthGuard::enter_for_vm(
+            self,
+            &DEBUG_HANDLE_RUNTIME_DEPTH,
+            "handle_runtime_error",
+        );
         if self.frames.is_empty() {
             return Err(err);
         }
@@ -10895,12 +10902,9 @@ impl Vm {
             }
             let mut entries = vec![class.clone()];
             for base in &class_data.bases {
-                for candidate in collect_mro_entries(
-                    base,
-                    seen,
-                    depth.saturating_add(1),
-                    trace_debug_mro_depth,
-                ) {
+                for candidate in
+                    collect_mro_entries(base, seen, depth.saturating_add(1), trace_debug_mro_depth)
+                {
                     let duplicate = entries.iter().any(|entry| {
                         entry.id() == candidate.id()
                             || (Vm::cpython_proxy_raw_ptr_from_value(&Value::Class(entry.clone()))
@@ -12627,7 +12631,11 @@ impl Vm {
                 callable_type_name.as_str(),
                 "builtin_function_or_method" | "method"
             ) || callable_has_bound_self);
-        if self.host.env_var_os("PYRS_TRACE_PROXY_BOUND_CALL").is_some() {
+        if self
+            .host
+            .env_var_os("PYRS_TRACE_PROXY_BOUND_CALL")
+            .is_some()
+        {
             eprintln!(
                 "[proxy-bound-call] helper callable_type={} callable_is_proxy={} receiver_is_proxy={} has_bound_self={} already_bound={} args={} kwargs={}",
                 callable_type_name,

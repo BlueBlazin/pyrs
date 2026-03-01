@@ -339,6 +339,10 @@ Completed on this branch:
   `scripts/generate_wasm_worker_contract_summary.py` to
   `perf/wasm_worker_contract_summary_latest.json` and enforced in branch/smoke
   gate scripts.
+- latest: `WasmExecutionResult`/`WasmWorkerExecutionResult` now expose
+  `blocker_key` for deterministic unsupported-execution branching
+  (`execution_backend_unwired` / `worker_runtime_unwired`) without
+  message parsing.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

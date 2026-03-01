@@ -648,8 +648,10 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                     context.first_error = saved_first_error.clone();
                     return std::ptr::null_mut();
                 };
-                let trace_typedict_lookup = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_TYPEDICT")
-                    && TRACE_NUMPY_TYPEDICT_PTR.load(Ordering::Relaxed) == dict as usize
+                let trace_typedict_lookup = super::super::env_var_present_cached(
+                    "PYRS_TRACE_NUMPY_TYPEDICT",
+                ) && TRACE_NUMPY_TYPEDICT_PTR.load(Ordering::Relaxed)
+                    == dict as usize
                     && matches!(
                         &key_value,
                         Value::Str(name) if name == "int8" || name == "bool" || name == "float64"
@@ -924,7 +926,9 @@ pub unsafe extern "C" fn PyDict_SetItemString(
     }
     let key_name = unsafe { c_name_to_string(key) }.unwrap_or_else(|_| "<invalid>".to_string());
     let result = unsafe { PyDict_SetItem(dict, key_obj, value) };
-    if super::super::env_var_present_cached("PYRS_TRACE_PYBIND11_ATTRS") && key_name.contains("__pybind11") {
+    if super::super::env_var_present_cached("PYRS_TRACE_PYBIND11_ATTRS")
+        && key_name.contains("__pybind11")
+    {
         eprintln!(
             "[pybind11-dict] set key={} dict={:p} value={:p} result={}",
             key_name, dict, value, result
@@ -967,7 +971,9 @@ pub unsafe extern "C" fn PyDict_GetItemString(
     let result = unsafe { PyDict_GetItem(dict, key_obj) };
     // SAFETY: `key_obj` is a temporary strong reference created above.
     unsafe { Py_DecRef(key_obj) };
-    if super::super::env_var_present_cached("PYRS_TRACE_PYBIND11_ATTRS") && key_name.contains("__pybind11") {
+    if super::super::env_var_present_cached("PYRS_TRACE_PYBIND11_ATTRS")
+        && key_name.contains("__pybind11")
+    {
         eprintln!(
             "[pybind11-dict] get key={} dict={:p} result={:p}",
             key_name, dict, result

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Once;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::host::{HostCapability, VmHost, WasmHost};
 use js_sys::Array;
@@ -270,6 +270,7 @@ pub struct WasmExecutionResult {
     stdout: String,
     stderr: String,
     error: Option<String>,
+    blocker_key: Option<String>,
     line: usize,
     column: usize,
 }
@@ -282,6 +283,7 @@ pub struct WasmWorkerExecutionResult {
     stdout: String,
     stderr: String,
     error: Option<String>,
+    blocker_key: Option<String>,
     line: usize,
     column: usize,
 }
@@ -378,6 +380,11 @@ impl WasmExecutionResult {
     }
 
     #[wasm_bindgen(getter)]
+    pub fn blocker_key(&self) -> Option<String> {
+        self.blocker_key.clone()
+    }
+
+    #[wasm_bindgen(getter)]
     pub fn line(&self) -> usize {
         self.line
     }
@@ -418,6 +425,11 @@ impl WasmWorkerExecutionResult {
     #[wasm_bindgen(getter)]
     pub fn error(&self) -> Option<String> {
         self.error.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn blocker_key(&self) -> Option<String> {
+        self.blocker_key.clone()
     }
 
     #[wasm_bindgen(getter)]
@@ -782,6 +794,7 @@ impl WasmWorkerSession {
             stdout: result.stdout,
             stderr: result.stderr,
             error: result.error,
+            blocker_key: result.blocker_key,
             line: result.line,
             column: result.column,
         }
@@ -1295,6 +1308,7 @@ pub fn wasm_worker_execute(source: &str) -> WasmExecutionResult {
             stdout: String::new(),
             stderr,
             error,
+            blocker_key: None,
             line: compile.line,
             column: compile.column,
         };
@@ -1310,6 +1324,7 @@ pub fn wasm_worker_execute(source: &str) -> WasmExecutionResult {
         stdout: String::new(),
         stderr: message.clone(),
         error: Some(message),
+        blocker_key: Some(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED.to_string()),
         line: 0,
         column: 0,
     }
@@ -1326,6 +1341,7 @@ pub fn wasm_worker_execute_with_operation(source: &str) -> WasmWorkerExecutionRe
         stdout: result.stdout,
         stderr: result.stderr,
         error: result.error,
+        blocker_key: result.blocker_key,
         line: result.line,
         column: result.column,
     }
@@ -1392,11 +1408,7 @@ pub fn wasm_module_policy_entries() -> Array {
 
 fn root_module_name(raw: &str) -> Option<&str> {
     let root = raw.split('.').next()?.trim();
-    if root.is_empty() {
-        None
-    } else {
-        Some(root)
-    }
+    if root.is_empty() { None } else { Some(root) }
 }
 
 fn push_import_root(raw: &str, seen: &mut HashSet<String>, roots: &mut Vec<String>) {
@@ -1651,6 +1663,7 @@ pub fn execute(source: &str) -> WasmExecutionResult {
             stdout: String::new(),
             stderr,
             error,
+            blocker_key: None,
             line: compile.line,
             column: compile.column,
         };
@@ -1664,6 +1677,7 @@ pub fn execute(source: &str) -> WasmExecutionResult {
         stdout: String::new(),
         stderr: message.clone(),
         error: Some(message),
+        blocker_key: Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
         line: 0,
         column: 0,
     }

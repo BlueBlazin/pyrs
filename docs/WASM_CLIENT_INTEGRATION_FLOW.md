@@ -16,6 +16,7 @@ This guide defines the recommended browser call order for current wasm APIs.
 8. If `phase == "supported"`:
    - call `check_compile_result(source)` (optional if you already used snippet preflight),
    - call `execute(source)` (currently returns `unsupported_execution` by contract).
+   - when phase is unsupported, use `result.blocker_key` for deterministic UI branching.
 9. If `phase == "blocked_capability"`:
    - call `wasm_snippet_blockers(source)` for full blocker rows,
    - render module/capability-specific guidance.
@@ -35,6 +36,7 @@ are currently explicit stubs.
   - `syntax_error`
   - `compile_error`
   - `unsupported_worker_execution`
+  - unsupported phase sets `blocker_key = "worker_runtime_unwired"`
 - `wasm_worker_execute_with_operation(source)` -> same phases plus
   `operation_id = worker_execute_<n>`
 
@@ -92,7 +94,11 @@ showImports(importRoots);
 
 const result = pyrs.wasm_worker_execute_with_operation(code);
 if (result.phase === "unsupported_worker_execution") {
-  showInfo(`${result.operation_id}: ${result.error ?? "Execution backend not wired yet"}`);
+  showInfo(
+    `${result.operation_id}: ${result.blocker_key ?? "worker_runtime_unwired"}: ${
+      result.error ?? "Execution backend not wired yet"
+    }`
+  );
 }
 ```
 

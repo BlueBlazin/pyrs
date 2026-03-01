@@ -284,9 +284,10 @@ mod tests {
                 "unsupported message should identify wasm/browser context"
             );
         }
-        assert!(host
-            .unsupported_message(HostCapability::ProcessArgs)
-            .is_none());
+        assert!(
+            host.unsupported_message(HostCapability::ProcessArgs)
+                .is_none()
+        );
     }
 
     #[test]

@@ -1050,7 +1050,8 @@ pub unsafe extern "C" fn PyVectorcall_Call(
     tuple: *mut c_void,
     dict: *mut c_void,
 ) -> *mut c_void {
-    let trace_vectorcall_decode = super::super::env_var_present_cached("PYRS_TRACE_VECTORCALL_DECODE");
+    let trace_vectorcall_decode =
+        super::super::env_var_present_cached("PYRS_TRACE_VECTORCALL_DECODE");
     with_active_cpython_context_mut(|context| {
         let Some(vectorcall) = (unsafe { cpython_resolve_vectorcall(callable) }) else {
             context.set_error("PyVectorcall_Call target has no vectorcall function");
@@ -1213,7 +1214,8 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
     nargsf: usize,
     kwnames: *mut c_void,
 ) -> *mut c_void {
-    let trace_vectorcall_decode = super::super::env_var_present_cached("PYRS_TRACE_VECTORCALL_DECODE");
+    let trace_vectorcall_decode =
+        super::super::env_var_present_cached("PYRS_TRACE_VECTORCALL_DECODE");
     if trace_vectorcall_decode {
         let positional_count = nargsf & (usize::MAX >> 1);
         let kw_count = if kwnames.is_null() {
@@ -1727,7 +1729,8 @@ pub unsafe extern "C" fn PyObject_VectorcallMethod(
     if method.is_null() {
         return std::ptr::null_mut();
     }
-    let trace_vectorcall_method = super::super::env_var_present_cached("PYRS_TRACE_VECTORCALL_METHOD");
+    let trace_vectorcall_method =
+        super::super::env_var_present_cached("PYRS_TRACE_VECTORCALL_METHOD");
     let method_type = unsafe {
         method
             .cast::<CpythonObjectHead>()

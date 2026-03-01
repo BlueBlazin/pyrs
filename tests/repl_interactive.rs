@@ -34,7 +34,10 @@ fn pyrs_bin() -> PathBuf {
     panic!("unable to locate pyrs binary for REPL tests");
 }
 
-fn run_repl_under_pty(input: &[u8], history_prefix: &str) -> (std::process::Output, String, String) {
+fn run_repl_under_pty(
+    input: &[u8],
+    history_prefix: &str,
+) -> (std::process::Output, String, String) {
     let history_path = temp_path(history_prefix);
     if let Some(parent) = history_path.parent() {
         fs::create_dir_all(parent).expect("create history dir");

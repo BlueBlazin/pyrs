@@ -9896,7 +9896,10 @@ impl Vm {
             .extension_cpython_ptr_by_object_id
             .contains_key(&class.id())
         {
-            if self.host.env_var_os("PYRS_TRACE_OBJECT_INIT_CLASS").is_some()
+            if self
+                .host
+                .env_var_os("PYRS_TRACE_OBJECT_INIT_CLASS")
+                .is_some()
                 && let Object::Class(class_data) = &*class.kind()
             {
                 eprintln!(
@@ -9907,7 +9910,10 @@ impl Vm {
             }
             return true;
         }
-        if self.host.env_var_os("PYRS_TRACE_OBJECT_INIT_CLASS").is_some()
+        if self
+            .host
+            .env_var_os("PYRS_TRACE_OBJECT_INIT_CLASS")
+            .is_some()
             && let Object::Class(class_data) = &*class.kind()
         {
             eprintln!(
@@ -12426,7 +12432,10 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = self.host.env_var_os("PYRS_TRACE_BINARY_DIV_RUNTIME").is_some();
+        let trace = self
+            .host
+            .env_var_os("PYRS_TRACE_BINARY_DIV_RUNTIME")
+            .is_some();
         match div_values(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err)
@@ -12537,7 +12546,10 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = self.host.env_var_os("PYRS_TRACE_BINARY_MUL_RUNTIME").is_some();
+        let trace = self
+            .host
+            .env_var_os("PYRS_TRACE_BINARY_MUL_RUNTIME")
+            .is_some();
         match mul_values(left.clone(), right.clone(), &self.heap) {
             Ok(value) => Ok(value),
             Err(err)
@@ -12634,7 +12646,10 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = self.host.env_var_os("PYRS_TRACE_BINARY_SUB_RUNTIME").is_some();
+        let trace = self
+            .host
+            .env_var_os("PYRS_TRACE_BINARY_SUB_RUNTIME")
+            .is_some();
         match sub_values(left.clone(), right.clone(), &self.heap) {
             Ok(value) => Ok(value),
             Err(err)
@@ -12697,7 +12712,10 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = self.host.env_var_os("PYRS_TRACE_BINARY_OR_RUNTIME").is_some();
+        let trace = self
+            .host
+            .env_var_os("PYRS_TRACE_BINARY_OR_RUNTIME")
+            .is_some();
         match or_values(left.clone(), right.clone(), &self.heap) {
             Ok(value) => {
                 if matches!(value, Value::Tuple(_))
@@ -12772,7 +12790,10 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = self.host.env_var_os("PYRS_TRACE_BINARY_XOR_RUNTIME").is_some();
+        let trace = self
+            .host
+            .env_var_os("PYRS_TRACE_BINARY_XOR_RUNTIME")
+            .is_some();
         match xor_values(left.clone(), right.clone(), &self.heap) {
             Ok(value) => Ok(value),
             Err(err)

@@ -81,8 +81,9 @@ fn cpython_compiler_cstring() -> &'static CString {
 }
 
 fn cpython_platform_cstring() -> &'static CString {
-    CPYTHON_PLATFORM_TEXT
-        .get_or_init(|| CString::new(cpython_target_os()).expect("platform should not contain interior NUL"))
+    CPYTHON_PLATFORM_TEXT.get_or_init(|| {
+        CString::new(cpython_target_os()).expect("platform should not contain interior NUL")
+    })
 }
 
 fn cpython_version_cstring() -> &'static CString {

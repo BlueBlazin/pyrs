@@ -13,16 +13,16 @@ use crate::wasm_worker_contract::{
 };
 use js_sys::Reflect;
 use pyrs::wasm::{
-    check_compile_result, check_syntax_result, execute, wasm_api_version, wasm_capabilities,
-    wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
-    wasm_execution_blocker_keys, wasm_execution_blockers, wasm_module_policy_entries,
-    wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_import_roots,
-    wasm_snippet_support, wasm_worker_blocker_error, wasm_worker_blocker_keys,
-    wasm_worker_blockers, wasm_worker_execute, wasm_worker_execute_phase_keys,
-    wasm_worker_execute_with_operation, wasm_worker_info, wasm_worker_lifecycle_phase_keys,
-    wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start, wasm_worker_state_keys,
-    wasm_worker_terminate, wasm_worker_timeout_phase_keys, wasm_worker_timeout_policy, WasmSession,
-    WasmWorkerSession,
+    WasmSession, WasmWorkerSession, check_compile_result, check_syntax_result, execute,
+    wasm_api_version, wasm_capabilities, wasm_capability_error, wasm_capability_keys,
+    wasm_execution_blocker_error, wasm_execution_blocker_keys, wasm_execution_blockers,
+    wasm_module_policy_entries, wasm_module_support, wasm_runtime_info, wasm_snippet_blockers,
+    wasm_snippet_import_roots, wasm_snippet_support, wasm_worker_blocker_error,
+    wasm_worker_blocker_keys, wasm_worker_blockers, wasm_worker_execute,
+    wasm_worker_execute_phase_keys, wasm_worker_execute_with_operation, wasm_worker_info,
+    wasm_worker_lifecycle_phase_keys, wasm_worker_recycle, wasm_worker_set_timeout,
+    wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate,
+    wasm_worker_timeout_phase_keys, wasm_worker_timeout_policy,
 };
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
@@ -337,6 +337,13 @@ fn wasm_worker_execute_stub_contract_is_stable() {
             "worker execute error mismatch: {}",
             fixture.name
         );
+        let expected_blocker_key = fixture.expected_blocker_key.map(str::to_string);
+        assert_eq!(
+            result.blocker_key(),
+            expected_blocker_key,
+            "worker execute blocker key mismatch: {}",
+            fixture.name
+        );
         if fixture.expect_line_column {
             assert!(
                 result.line() > 0 && result.column() > 0,
@@ -380,6 +387,13 @@ fn wasm_worker_execute_with_operation_contract_is_stable() {
         assert!(
             operation_ids.insert(operation_id),
             "worker execute operation ids should be unique: {}",
+            fixture.name
+        );
+        let expected_blocker_key = fixture.expected_blocker_key.map(str::to_string);
+        assert_eq!(
+            result.blocker_key(),
+            expected_blocker_key,
+            "worker execute-with-operation blocker key mismatch: {}",
             fixture.name
         );
     }
@@ -439,6 +453,10 @@ fn wasm_worker_session_contract_is_stable() {
 
     let execute = session.execute("x = 1\n");
     assert_eq!(execute.phase(), "unsupported_worker_execution");
+    assert_eq!(
+        execute.blocker_key(),
+        Some("worker_runtime_unwired".to_string())
+    );
     assert_eq!(session.executes_requested(), 1);
     let execute_operation_id = session
         .last_operation_id()
@@ -516,6 +534,10 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
         session.last_phase(),
         Some("unsupported_worker_execution".to_string())
     );
+    assert_eq!(
+        first.blocker_key(),
+        Some("worker_runtime_unwired".to_string())
+    );
 
     let second = session.execute_with_operation("def broken(:\n");
     assert_eq!(
@@ -529,6 +551,7 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
     assert_eq!(session.executes_requested(), 2);
     assert_eq!(session.last_operation_id(), Some(second_id));
     assert_eq!(session.last_phase(), Some("syntax_error".to_string()));
+    assert!(second.blocker_key().is_none());
 }
 
 #[wasm_bindgen_test]
@@ -816,6 +839,10 @@ fn wasm_syntax_and_execute_contract() {
     assert!(!unsupported.success());
     assert_eq!(unsupported.phase(), "unsupported_execution");
     assert!(unsupported.error().is_some());
+    assert_eq!(
+        unsupported.blocker_key(),
+        Some("execution_backend_unwired".to_string())
+    );
     assert!(unsupported.stderr().contains("not wired"));
     assert_eq!(unsupported.line(), 0);
     assert_eq!(unsupported.column(), 0);
@@ -823,6 +850,7 @@ fn wasm_syntax_and_execute_contract() {
     let compile_error = execute("return 1\n");
     assert!(!compile_error.success());
     assert_eq!(compile_error.phase(), "compile_error");
+    assert!(compile_error.blocker_key().is_none());
     assert!(compile_error.stderr().contains("outside function"));
     assert!(compile_error.line() > 0);
     assert!(compile_error.column() > 0);
@@ -830,6 +858,7 @@ fn wasm_syntax_and_execute_contract() {
     let syntax_error = execute("def broken(:\n");
     assert!(!syntax_error.success());
     assert_eq!(syntax_error.phase(), "syntax_error");
+    assert!(syntax_error.blocker_key().is_none());
     assert!(syntax_error.line() > 0);
     assert!(syntax_error.column() > 0);
 }
@@ -851,6 +880,10 @@ fn wasm_session_tracks_and_resets_state() {
 
     let third = session.execute("x = 1\n");
     assert_eq!(third.phase(), "unsupported_execution");
+    assert_eq!(
+        third.blocker_key(),
+        Some("execution_backend_unwired".to_string())
+    );
     assert_eq!(session.snippets_checked(), 3);
     assert!(session.last_error().is_some());
 
@@ -861,6 +894,10 @@ fn wasm_session_tracks_and_resets_state() {
 
     let fifth = session.execute("x = 1\n");
     assert_eq!(fifth.phase(), "unsupported_execution");
+    assert_eq!(
+        fifth.blocker_key(),
+        Some("execution_backend_unwired".to_string())
+    );
     assert_eq!(session.snippets_checked(), 5);
     assert!(session.last_error().is_some());
 
@@ -874,6 +911,10 @@ fn wasm_session_execute_contract_is_stable() {
     let mut session = WasmSession::new();
     let second = session.execute("x = 1\n");
     assert_eq!(second.phase(), "unsupported_execution");
+    assert_eq!(
+        second.blocker_key(),
+        Some("execution_backend_unwired".to_string())
+    );
     assert_eq!(session.snippets_checked(), 1);
     assert!(session.last_error().is_some());
 }
@@ -894,6 +935,13 @@ fn wasm_contract_snippet_fixtures_are_current() {
             execution.phase(),
             fixture.expected_execute_phase,
             "fixture execute phase mismatch: {}",
+            fixture.name
+        );
+        let expected_execute_blocker_key = fixture.expected_execute_blocker_key.map(str::to_string);
+        assert_eq!(
+            execution.blocker_key(),
+            expected_execute_blocker_key,
+            "fixture execute blocker key mismatch: {}",
             fixture.name
         );
 

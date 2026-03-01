@@ -47,8 +47,9 @@ pub unsafe extern "C" fn PyImport_GetMagicTag() -> *const c_char {
 pub unsafe extern "C" fn PyImport_ImportModule(name: *const c_char) -> *mut c_void {
     match unsafe { c_name_to_string(name) } {
         Ok(module_name) => {
-            let trace_pyarrow_import = super::super::env_var_present_cached("PYRS_TRACE_PYARROW_IMPORT")
-                && module_name.contains("pyarrow");
+            let trace_pyarrow_import =
+                super::super::env_var_present_cached("PYRS_TRACE_PYARROW_IMPORT")
+                    && module_name.contains("pyarrow");
             if trace_pyarrow_import {
                 eprintln!("[pyarrow-import] PyImport_ImportModule name={module_name}");
             }
@@ -185,7 +186,8 @@ pub unsafe extern "C" fn PyImport_AddModuleRef(name: *const c_char) -> *mut c_vo
             return std::ptr::null_mut();
         }
     };
-    if super::super::env_var_present_cached("PYRS_TRACE_CPY_CTYPES_IMPORT") && module_name.contains("ctypes")
+    if super::super::env_var_present_cached("PYRS_TRACE_CPY_CTYPES_IMPORT")
+        && module_name.contains("ctypes")
     {
         eprintln!("[cpy-ctypes-import] PyImport_AddModuleRef name={module_name}");
     }
@@ -657,8 +659,9 @@ pub unsafe extern "C" fn PyImport_ImportModuleLevelObject(
             fromlist_value,
             Value::Int(level as i64),
         ];
-        let trace_pyarrow_import = super::super::env_var_present_cached("PYRS_TRACE_PYARROW_IMPORT")
-            && matches!(args.first(), Some(Value::Str(name)) if name.contains("pyarrow"));
+        let trace_pyarrow_import =
+            super::super::env_var_present_cached("PYRS_TRACE_PYARROW_IMPORT")
+                && matches!(args.first(), Some(Value::Str(name)) if name.contains("pyarrow"));
         if trace_pyarrow_import {
             let fromlist_desc = match args.get(3) {
                 Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {

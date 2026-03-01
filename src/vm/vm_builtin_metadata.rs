@@ -1095,7 +1095,9 @@ impl Vm {
             "__getformat__" if builtin == BuiltinFunction::Float => {
                 Ok(Value::Builtin(BuiltinFunction::FloatGetFormat))
             }
-            "as_integer_ratio" | "is_integer" | "conjugate" if builtin == BuiltinFunction::Float => {
+            "as_integer_ratio" | "is_integer" | "conjugate"
+                if builtin == BuiltinFunction::Float =>
+            {
                 let kind = match attr_name {
                     "as_integer_ratio" => NativeMethodKind::FloatAsIntegerRatioMethod,
                     "is_integer" => NativeMethodKind::FloatIsIntegerMethod,
@@ -2192,7 +2194,9 @@ impl Vm {
                     _ => unreachable!(),
                 };
                 if let Object::Module(module_data) = &mut *receiver.kind_mut() {
-                    module_data.globals.insert("value".to_string(), Value::Float(value));
+                    module_data
+                        .globals
+                        .insert("value".to_string(), Value::Float(value));
                 }
                 return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Format, receiver));
             }
@@ -2215,7 +2219,9 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Module(module_data) = &mut *receiver.kind_mut() {
-            module_data.globals.insert("value".to_string(), Value::Float(value));
+            module_data
+                .globals
+                .insert("value".to_string(), Value::Float(value));
         }
         Ok(self.alloc_native_bound_method(kind, receiver))
     }
@@ -4458,8 +4464,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
         kwargs_order: Option<Vec<String>>,
     ) -> Result<InternalCallOutcome, RuntimeError> {
-        if env_var_present_cached("PYRS_TRACE_CALLABLE_NONE_BT")
-            && matches!(callable, Value::None)
+        if env_var_present_cached("PYRS_TRACE_CALLABLE_NONE_BT") && matches!(callable, Value::None)
         {
             let args_summary = args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
             let mut kw_entries = kwargs.iter().collect::<Vec<_>>();

@@ -645,7 +645,9 @@ impl Vm {
                                             continue;
                                         }
                                         if module_ctx.last_error.is_none()
-                                            && super::super::env_var_present_cached("PYRS_TRACE_EXT_SLOT_BT")
+                                            && super::super::env_var_present_cached(
+                                                "PYRS_TRACE_EXT_SLOT_BT",
+                                            )
                                         {
                                             eprintln!(
                                                 "[ext-slot] module={} status={} without last_error",
@@ -653,7 +655,9 @@ impl Vm {
                                             );
                                             eprintln!("{}", Backtrace::force_capture());
                                         }
-                                        if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") {
+                                        if super::super::env_var_present_cached(
+                                            "PYRS_TRACE_CPY_ERRORS",
+                                        ) {
                                             eprintln!(
                                                 "[ext-slot] module={} slot_exec_status={} first_error={:?} last_error={:?} current_error_ptype={:p} current_error_pvalue={:p}",
                                                 module_name,
@@ -708,9 +712,8 @@ impl Vm {
                                         );
                                         if super::super::env_var_present_cached(
                                             "PYRS_TRACE_EXT_SLOT_MODULE_KEYS",
-                                        )
-                                            && let Object::Module(module_data) =
-                                                &*active_module.kind()
+                                        ) && let Object::Module(module_data) =
+                                            &*active_module.kind()
                                         {
                                             let mut names: Vec<String> =
                                                 module_data.globals.keys().cloned().collect();
