@@ -18,6 +18,9 @@ export const docsNavGroups: DocsNavGroup[] = [
 	},
 	{
 		label: "Reference",
-		items: [{ href: "/docs/reference/", label: "CLI and Environment" }],
+		items: [
+			{ href: "/docs/reference/", label: "CLI and Environment" },
+			{ href: "/docs/style-guide/", label: "Authoring Style Guide" },
+		],
 	},
 ];

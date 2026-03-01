@@ -1,0 +1,88 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Authoring Style Guide
+description: Shared docs component usage guide for writing consistent PYRS documentation.
+pageTitle: Authoring Style Guide
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import CodeBlock from "../../components/docs/CodeBlock.astro";
+import CommandBlock from "../../components/docs/CommandBlock.astro";
+import Callout from "../../components/docs/Callout.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+
+<DocSection>
+	This page documents the reusable docs primitives used throughout `/docs/*`.
+</DocSection>
+
+<DocSection title="DocSection">
+	Use `DocSection` to keep spacing and heading rhythm consistent:
+	<CodeBlock
+		label="Astro"
+		code={`<DocSection title="Section Title">
+  Content...
+</DocSection>`}
+	/>
+</DocSection>
+
+<DocSection title="CodeBlock">
+	Use `CodeBlock` for non-shell snippets:
+	<CodeBlock
+		label="Python"
+		code={`def greet(name: str) -> str:
+    return f"hello, {name}"`}
+	/>
+</DocSection>
+
+<DocSection title="CommandBlock">
+	Use `CommandBlock` for executable shell sequences:
+	<CommandBlock
+		commands={[
+			"cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs",
+			"pyrs --version",
+		]}
+	/>
+	<CodeBlock
+		label="Astro"
+		code={`<CommandBlock
+  commands={[
+    "cmd one",
+    "cmd two",
+  ]}
+/>`}
+	/>
+</DocSection>
+
+<DocSection title="Callout">
+	Use `Callout` for important context that should stand out:
+	<Callout title="Note">
+		Keep command examples runnable exactly as shown.
+	</Callout>
+	<Callout title="Warning" variant="warning">
+		Avoid placeholder paths unless necessary. If needed, explicitly mark placeholders.
+	</Callout>
+</DocSection>
+
+<DocSection title="DataTable">
+	Use `DataTable` for contract/reference-style data:
+	<DataTable headers={["Field", "Meaning"]}>
+		<tr>
+			<td><code>title</code></td>
+			<td>Human-readable page title.</td>
+		</tr>
+		<tr>
+			<td><code>description</code></td>
+			<td>Concise summary used for page metadata and header context.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Authoring Rules">
+	<ul class="m-0 list-disc space-y-1.5 pl-5">
+		<li>One concept per page.</li>
+		<li>Prefer task-first ordering over API dump ordering.</li>
+		<li>Use `CommandBlock` for shell snippets and `CodeBlock` for code examples.</li>
+		<li>Use `DataTable` for reference contracts (flags, env vars, parameters).</li>
+		<li>Keep prose concise and technical.</li>
+	</ul>
+</DocSection>
