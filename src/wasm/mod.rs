@@ -59,6 +59,15 @@ impl WasmSyntaxResult {
 }
 
 #[wasm_bindgen(getter_with_clone)]
+pub struct WasmCompileResult {
+    ok: bool,
+    phase: String,
+    error: Option<String>,
+    line: usize,
+    column: usize,
+}
+
+#[wasm_bindgen(getter_with_clone)]
 pub struct WasmSession {
     snippets_checked: usize,
     last_error: Option<String>,
@@ -106,6 +115,34 @@ impl WasmExecutionResult {
     #[wasm_bindgen(getter)]
     pub fn error(&self) -> Option<String> {
         self.error.clone()
+    }
+}
+
+#[wasm_bindgen]
+impl WasmCompileResult {
+    #[wasm_bindgen(getter)]
+    pub fn ok(&self) -> bool {
+        self.ok
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn phase(&self) -> String {
+        self.phase.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn error(&self) -> Option<String> {
+        self.error.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn column(&self) -> usize {
+        self.column
     }
 }
 
@@ -269,7 +306,7 @@ pub fn wasm_runtime_info() -> WasmRuntimeInfo {
         api_version: wasm_api_version(),
         pyrs_version: pyrs_version(),
         supports_execution: false,
-        execution_status: "syntax_only".to_string(),
+        execution_status: "syntax_compile_only".to_string(),
     }
 }
 
@@ -293,18 +330,21 @@ pub fn wasm_execution_blocker_error(blocker_key: &str) -> Option<String> {
 /// Executes a snippet using the current wasm bridge contract.
 ///
 /// Current milestone behavior:
-/// - syntax-invalid input returns `phase = "syntax_error"`
-/// - syntax-valid input returns `phase = "unsupported_execution"`
-///   until VM execution is wired for wasm.
+/// - parse-invalid input returns `phase = "syntax_error"`
+/// - parse-valid but compile-invalid input returns `phase = "compile_error"`
+/// - parse+compile-valid input returns `phase = "unsupported_execution"`
+///   until runtime execution is wired for wasm.
 #[wasm_bindgen]
 pub fn execute(source: &str) -> WasmExecutionResult {
-    let syntax = check_syntax_result(source);
-    if !syntax.ok {
-        let error = syntax.error;
-        let stderr = error.clone().unwrap_or_else(|| "syntax check failed".to_string());
+    let compile = check_compile_result(source);
+    if !compile.ok {
+        let error = compile.error;
+        let stderr = error
+            .clone()
+            .unwrap_or_else(|| "parse/compile check failed".to_string());
         return WasmExecutionResult {
             success: false,
-            phase: "syntax_error".to_string(),
+            phase: compile.phase,
             stdout: String::new(),
             stderr,
             error,
@@ -324,6 +364,17 @@ pub fn execute(source: &str) -> WasmExecutionResult {
 
 fn format_parse_error(err: &crate::parser::ParseError) -> String {
     format!("{} (line {}, column {})", err.message, err.line, err.column)
+}
+
+fn format_compile_error(err: &crate::compiler::CompileError) -> (String, usize, usize) {
+    match err.span {
+        Some(span) => (
+            format!("{} (line {}, column {})", err.message, span.line, span.column),
+            span.line,
+            span.column,
+        ),
+        None => (err.message.clone(), 0, 0),
+    }
 }
 
 /// Parser-backed syntax check with structured diagnostics for web clients.
@@ -357,6 +408,58 @@ pub fn check_syntax(source: &str) -> Result<(), JsValue> {
             &result
                 .error
                 .unwrap_or_else(|| "syntax check failed".to_string()),
+        ))
+    }
+}
+
+/// Parse+compile validation with structured diagnostics for web clients.
+#[wasm_bindgen]
+pub fn check_compile_result(source: &str) -> WasmCompileResult {
+    init_wasm_runtime();
+    let module = match crate::parser::parse_module(source) {
+        Ok(module) => module,
+        Err(err) => {
+            return WasmCompileResult {
+                ok: false,
+                phase: "syntax_error".to_string(),
+                error: Some(format_parse_error(&err)),
+                line: err.line,
+                column: err.column,
+            };
+        }
+    };
+    match crate::compiler::compile_module_with_filename(&module, "<wasm>") {
+        Ok(_) => WasmCompileResult {
+            ok: true,
+            phase: "ok".to_string(),
+            error: None,
+            line: 0,
+            column: 0,
+        },
+        Err(err) => {
+            let (message, line, column) = format_compile_error(&err);
+            WasmCompileResult {
+                ok: false,
+                phase: "compile_error".to_string(),
+                error: Some(message),
+                line,
+                column,
+            }
+        }
+    }
+}
+
+/// Parse+compile gate with JS error for web clients.
+#[wasm_bindgen]
+pub fn check_compile(source: &str) -> Result<(), JsValue> {
+    let result = check_compile_result(source);
+    if result.ok {
+        Ok(())
+    } else {
+        Err(JsValue::from_str(
+            &result
+                .error
+                .unwrap_or_else(|| "compile check failed".to_string()),
         ))
     }
 }

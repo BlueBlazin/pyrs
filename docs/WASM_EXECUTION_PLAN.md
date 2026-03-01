@@ -262,7 +262,9 @@ Completed on this branch:
 - `cf08545`: multi-file host-seam cleanup across stdlib/import/C-API runtime helpers.
 - `5811498`: host-routed depth-limit config in `vm_builtin_metadata` and host-adapter profile env reads in `pickle`.
 - `8ecb0f5`: audit script now reports actionable-vs-allowlisted hits for central seam internals.
-- latest: wasm execution blocker contract exports (`keys + error`) and execute-path error wiring.
+- `c86b20c`: wasm execution blocker contract exports (`keys + error`) and execute-path error wiring.
+- latest: wasm parse+compile contract for `execute()`/`check_compile(_result)` with explicit
+  `compile_error` phase while runtime execution remains unwired.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

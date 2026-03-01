@@ -19,10 +19,15 @@ This document defines the JS-facing contract currently exported by
   - Syntax validation entrypoint; `Err` includes parser message/line/column.
 - `check_syntax_result(source: &str) -> WasmSyntaxResult`
   - Structured syntax validation result.
+- `check_compile(source: &str) -> Result<(), JsValue>`
+  - Parse+compile validation entrypoint.
+- `check_compile_result(source: &str) -> WasmCompileResult`
+  - Structured parse+compile validation result.
 - `execute(source: &str) -> WasmExecutionResult`
   - Current behavior:
     - `phase = "syntax_error"` when parse fails.
-    - `phase = "unsupported_execution"` for syntax-valid input.
+    - `phase = "compile_error"` when parse passes but compilation fails.
+    - `phase = "unsupported_execution"` for parse+compile-valid input.
   - `stderr` is populated for both current failure phases.
 - `wasm_capabilities() -> WasmCapabilityReport`
   - Returns explicit browser capability matrix.
@@ -36,7 +41,7 @@ This document defines the JS-facing contract currently exported by
 - `api_version: u32`
 - `pyrs_version: String`
 - `supports_execution: bool`
-- `execution_status: String` (currently `"syntax_only"`)
+- `execution_status: String` (currently `"syntax_compile_only"`)
 
 ## `WasmSyntaxResult`
 
@@ -52,6 +57,14 @@ This document defines the JS-facing contract currently exported by
 - `stdout: String`
 - `stderr: String`
 - `error: Option<String>`
+
+## `WasmCompileResult`
+
+- `ok: bool`
+- `phase: String` (`"ok"`, `"syntax_error"`, `"compile_error"`)
+- `error: Option<String>`
+- `line: usize`
+- `column: usize`
 
 ## `WasmCapabilityReport`
 

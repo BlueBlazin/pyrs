@@ -1,7 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
 use pyrs::wasm::{
-    WasmSession, check_syntax_result, execute, wasm_api_version, wasm_capabilities,
+    WasmSession, check_compile_result, check_syntax_result, execute, wasm_api_version,
+    wasm_capabilities,
     wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
     wasm_execution_blocker_keys, wasm_runtime_info,
 };
@@ -13,7 +14,7 @@ wasm_bindgen_test_configure!(run_in_browser);
 fn wasm_runtime_contract_basics() {
     let runtime = wasm_runtime_info();
     assert_eq!(runtime.api_version(), wasm_api_version());
-    assert_eq!(runtime.execution_status(), "syntax_only");
+    assert_eq!(runtime.execution_status(), "syntax_compile_only");
     assert!(!runtime.supports_execution());
     assert!(!runtime.pyrs_version().is_empty());
 }
@@ -71,11 +72,22 @@ fn wasm_syntax_and_execute_contract() {
     assert!(invalid.line() > 0);
     assert!(invalid.column() > 0);
 
+    let semantic = check_compile_result("return 1\n");
+    assert!(!semantic.ok());
+    assert_eq!(semantic.phase(), "compile_error");
+    let semantic_error = semantic.error().expect("compile error should be populated");
+    assert!(semantic_error.contains("outside function"));
+
     let unsupported = execute("value = 1\n");
     assert!(!unsupported.success());
     assert_eq!(unsupported.phase(), "unsupported_execution");
     assert!(unsupported.error().is_some());
     assert!(unsupported.stderr().contains("not wired"));
+
+    let compile_error = execute("return 1\n");
+    assert!(!compile_error.success());
+    assert_eq!(compile_error.phase(), "compile_error");
+    assert!(compile_error.stderr().contains("outside function"));
 }
 
 #[wasm_bindgen_test]
