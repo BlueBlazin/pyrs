@@ -22,7 +22,7 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 			<span class="term-light term-light-green"></span>
 		</div>
 		<span class="terminal-title">shell</span>
-		<button class="cmd-copy" type="button" data-copy={copyPayload}>Copy</button>
+		<button class="cmd-copy" type="button" data-copy={copyPayload} data-copy-button="1">Copy</button>
 	</div>
 	<pre class="cmd-box"><code>{
 		normalized.map((line) => (
@@ -33,38 +33,6 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 		))
 	}</code></pre>
 </div>
-
-<script>
-	const buttons = document.querySelectorAll(".terminal .cmd-copy[data-copy]");
-	for (const button of buttons) {
-		if (!(button instanceof HTMLButtonElement)) {
-			continue;
-		}
-		if (button.dataset.copyBound === "1") {
-			continue;
-		}
-		button.dataset.copyBound = "1";
-		let resetTimer;
-		button.addEventListener("click", async () => {
-			const payload = button.getAttribute("data-copy") || "";
-			const reset = () => {
-				button.textContent = "Copy";
-				button.classList.remove("copied");
-				button.classList.remove("copy-failed");
-			};
-			try {
-				await navigator.clipboard.writeText(payload);
-				button.textContent = "Copied";
-				button.classList.add("copied");
-			} catch {
-				button.textContent = "Failed";
-				button.classList.add("copy-failed");
-			}
-			clearTimeout(resetTimer);
-			resetTimer = window.setTimeout(reset, 1300);
-		});
-	}
-</script>
 
 <style>
 	.terminal {
@@ -141,13 +109,13 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 		outline-offset: 2px;
 	}
 
-	.cmd-copy.copied {
+	.cmd-copy.is-copied {
 		background: #1d3a2d;
 		border-color: #2b6e51;
 		color: #e9fff3;
 	}
 
-	.cmd-copy.copy-failed {
+	.cmd-copy.is-copy-failed {
 		background: #47201a;
 		border-color: #8a3d2e;
 		color: #ffe6df;

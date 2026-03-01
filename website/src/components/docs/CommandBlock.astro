@@ -26,6 +26,7 @@ const copyPayload = commands.join("\n");
 		<button
 			type="button"
 			data-copy={copyPayload}
+			data-copy-button="1"
 			class="copy-btn rounded-md border border-[#33415a] bg-[#182234] px-2.5 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-[#dbe4f8] transition-colors duration-150 hover:bg-[#20304b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5a84c8] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b1019]"
 		>
 			Copy
@@ -41,30 +42,14 @@ const copyPayload = commands.join("\n");
 	</code></pre>
 </div>
 
-<script>
-	const buttons = document.querySelectorAll(".command-block .copy-btn[data-copy]");
-	for (const button of buttons) {
-		if (!(button instanceof HTMLButtonElement)) {
-			continue;
-		}
-		if (button.dataset.copyBound === "1") {
-			continue;
-		}
-		button.dataset.copyBound = "1";
-		let resetTimer;
-		const originalLabel = button.textContent || "Copy";
-		button.addEventListener("click", async () => {
-			const payload = button.getAttribute("data-copy") || "";
-			try {
-				await navigator.clipboard.writeText(payload);
-				button.textContent = "Copied";
-			} catch {
-				button.textContent = "Failed";
-			}
-			clearTimeout(resetTimer);
-			resetTimer = window.setTimeout(() => {
-				button.textContent = originalLabel;
-			}, 1400);
-		});
+<style>
+	.copy-btn.is-copied {
+		background: #1d304d;
+		border-color: #4b6694;
 	}
-</script>
+
+	.copy-btn.is-copy-failed {
+		background: #4f1f2c;
+		border-color: #9c4056;
+	}
+</style>
