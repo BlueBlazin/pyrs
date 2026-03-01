@@ -51,7 +51,7 @@
 		border: 1px solid var(--copy-border, #5f3d2d);
 		background: var(--copy-bg, #21140f);
 		color: var(--copy-text, #e9d0c2);
-		font-family: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+		font-family: "Manrope", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 		font-size: 0.72rem;
 		font-weight: 600;
 		line-height: 1;
