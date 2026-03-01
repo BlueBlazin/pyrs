@@ -10,38 +10,9 @@ interface Props {
 const { title, id, class: className } = Astro.props;
 ---
 
-<section id={id} class={cn("mt-9 first:mt-0", className)}>
+<section id={id} class={cn("doc-section mt-10 first:mt-0", className)}>
 	{title && <h2 class="m-0 text-[1.15rem] font-semibold tracking-[-0.01em] text-docs-text">{title}</h2>}
-	<div
-		class={cn(
-			title ? "mt-3" : "",
-			"doc-section-body text-docs-muted leading-7 text-[0.97rem]",
-			"[&>p]:m-0 [&>ul]:m-0 [&>ol]:m-0 [&>h3]:m-0 [&>h4]:m-0 [&>pre]:m-0",
-		)}
-	>
+	<div class={cn(title ? "mt-4" : "", "doc-section-body text-[0.97rem] leading-7 text-docs-muted")}>
 		<slot />
 	</div>
 </section>
-
-<style>
-	.doc-section-body > * + * {
-		margin-top: 1rem;
-	}
-
-	.doc-section-body > .docs-block {
-		margin-top: 1.5rem;
-	}
-
-	.doc-section-body > .docs-block + .docs-block {
-		margin-top: 1.5rem;
-	}
-
-	.doc-section-body > :is(h3, h4) + * {
-		margin-top: 0.72rem;
-	}
-
-	.doc-section-body > p + .docs-list,
-	.doc-section-body > .docs-list + p {
-		margin-top: 0.9rem;
-	}
-</style>

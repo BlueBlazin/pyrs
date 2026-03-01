@@ -39,3 +39,107 @@
 		outline-offset: 2px;
 	}
 }
+
+@layer components {
+	.docs-content :where(h2, h3) {
+		scroll-margin-top: 4.2rem;
+	}
+
+	.docs-content :where(h2) {
+		margin: 0;
+		font-size: 1.17rem;
+		letter-spacing: -0.01em;
+		color: var(--color-docs-text);
+	}
+
+	.docs-content :where(h3) {
+		margin: 0;
+		font-size: 1.02rem;
+		letter-spacing: -0.01em;
+		color: #e4ebfb;
+	}
+
+	.docs-content :where(p) {
+		margin: 0;
+		max-width: 74ch;
+		color: var(--color-docs-muted);
+		line-height: 1.62;
+	}
+
+	.docs-content :where(ul.docs-list, ol.docs-list) {
+		margin: 0;
+		max-width: 74ch;
+		padding-left: 1.28rem;
+		color: var(--color-docs-muted);
+		line-height: 1.58;
+	}
+
+	.docs-content :where(ul.docs-list) {
+		list-style: disc;
+	}
+
+	.docs-content :where(ol.docs-list) {
+		list-style: decimal;
+	}
+
+	.docs-content :where(.docs-list li + li) {
+		margin-top: 0.52rem;
+	}
+
+	.docs-content :where(.docs-list li)::marker {
+		color: #98abcf;
+	}
+
+	.docs-content :where(code) {
+		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.86em;
+		color: #d8def0;
+	}
+
+	.docs-content :where(strong) {
+		color: #edf3ff;
+		font-weight: 600;
+	}
+
+	.docs-content :where(pre) {
+		margin: 0;
+	}
+
+	.docs-content :where(a) {
+		color: #b7c8eb;
+		text-decoration: none;
+		font-weight: 500;
+		transition: color 120ms ease;
+	}
+
+	.docs-content :where(a:hover) {
+		color: #d8e1f6;
+	}
+
+	.docs-content :where(a:focus-visible) {
+		outline: 2px solid rgba(255, 186, 137, 0.92);
+		outline-offset: 2px;
+		border-radius: 0.35rem;
+	}
+
+	.docs-content .doc-section-body > * {
+		margin: 0;
+	}
+
+	.docs-content .doc-section-body > * + * {
+		margin-top: 1.35rem;
+	}
+
+	.docs-content .doc-section-body > :is(p, ul, ol) + .docs-block,
+	.docs-content .doc-section-body > .docs-block + :is(p, ul, ol) {
+		margin-top: 1.85rem;
+	}
+
+	.docs-content .doc-section-body > .docs-block + .docs-block {
+		margin-top: 1.6rem;
+	}
+
+	.docs-content .doc-section-body > :is(h3, h4) + * {
+		margin-top: 0.86rem;
+	}
+}
