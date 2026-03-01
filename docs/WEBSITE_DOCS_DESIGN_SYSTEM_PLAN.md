@@ -26,6 +26,22 @@ Current pain points this plan addresses:
 4. Docs content and structure not aligned to modern documentation UX.
 5. Uneven visual language between landing pages and docs pages.
 
+## Milestone Status Snapshot (2026-03-01)
+- Milestone 0 (Foundation Alignment): COMPLETE
+- Milestone 1 (Global UI Infrastructure): COMPLETE
+- Milestone 2 (Docs Shell and Navigation): COMPLETE
+- Milestone 3 (Component Library v1): COMPLETE
+- Milestone 4 (Content Refactor v1): COMPLETE
+- Milestone 5 (QA and Accessibility Hardening): IN PROGRESS
+  - Completed: skip links, focus-visible states, sidebar `aria-current`, mobile sidebar collapse, docs pager, link/meta validation checks.
+  - Remaining: broader manual contrast/device pass and optional keyboard-only walkthrough checklist.
+- Milestone 6 (Performance and Build Hygiene): IN PROGRESS
+  - Completed: copy-button script deduplication into one shared static script and scoped interaction scripts only where needed.
+  - Remaining: optional Lighthouse baseline capture and script-byte budget note.
+- Milestone 7 (Deployment and Operations): COMPLETE
+  - `website-pages` deploy workflow publishes `website/dist` to `gh-pages`, computes `ASTRO_SITE`/`ASTRO_BASE` deterministically, and gates deploys on `build:check`.
+- Milestone 8 (Expansion Track): PENDING
+
 ## Goals
 1. Build a coherent, reusable design system with component-level consistency.
 2. Make `/docs/` the canonical user entry point with clear “Getting Started” flow.
