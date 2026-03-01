@@ -41,6 +41,46 @@
 }
 
 @layer components {
+	button.copy-control {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		margin-left: auto;
+		padding: 0.2rem 0.52rem;
+		border-radius: 0.42rem;
+		border: 1px solid var(--copy-border, #5f3d2d);
+		background: var(--copy-bg, #21140f);
+		color: var(--copy-text, #e9d0c2);
+		font-family: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+		font-size: 0.72rem;
+		font-weight: 600;
+		line-height: 1;
+		cursor: pointer;
+		transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+	}
+
+	button.copy-control:hover {
+		background: var(--copy-hover-bg, #2d1b14);
+		border-color: var(--copy-hover-border, #714735);
+	}
+
+	button.copy-control:focus-visible {
+		outline: 2px solid var(--copy-focus, rgba(223, 150, 100, 0.88));
+		outline-offset: 2px;
+	}
+
+	button.copy-control.is-copied {
+		background: var(--copy-success-bg, #1d3a2d);
+		border-color: var(--copy-success-border, #2b6e51);
+		color: var(--copy-success-text, #e9fff3);
+	}
+
+	button.copy-control.is-copy-failed {
+		background: var(--copy-fail-bg, #47201a);
+		border-color: var(--copy-fail-border, #8a3d2e);
+		color: var(--copy-fail-text, #ffe6df);
+	}
+
 	.docs-content :where(h2, h3) {
 		scroll-margin-top: 4.2rem;
 	}

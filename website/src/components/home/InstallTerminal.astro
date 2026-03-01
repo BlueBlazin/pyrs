@@ -22,7 +22,7 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 			<span class="term-light term-light-green"></span>
 		</div>
 		<span class="terminal-title">shell</span>
-		<button class="cmd-copy" type="button" data-copy={copyPayload} data-copy-button="1">Copy</button>
+		<button class="copy-control" type="button" data-copy={copyPayload} data-copy-button="1">Copy</button>
 	</div>
 	<pre class="cmd-box"><code>{
 		normalized.map((line) => (
@@ -83,42 +83,6 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 		color: #b69f91;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-	}
-
-	.cmd-copy {
-		margin-left: auto;
-		padding: 0.2rem 0.52rem;
-		border-radius: 0.42rem;
-		border: 1px solid #5f3d2d;
-		background: #21140f;
-		color: #e9d0c2;
-		font-family: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-		font-size: 0.72rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
-	}
-
-	.cmd-copy:hover {
-		background: #2d1b14;
-		border-color: #714735;
-	}
-
-	.cmd-copy:focus-visible {
-		outline: 2px solid rgba(223, 150, 100, 0.88);
-		outline-offset: 2px;
-	}
-
-	.cmd-copy.is-copied {
-		background: #1d3a2d;
-		border-color: #2b6e51;
-		color: #e9fff3;
-	}
-
-	.cmd-copy.is-copy-failed {
-		background: #47201a;
-		border-color: #8a3d2e;
-		color: #ffe6df;
 	}
 
 	.cmd-box {

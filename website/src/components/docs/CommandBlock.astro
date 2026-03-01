@@ -27,7 +27,8 @@ const copyPayload = commands.join("\n");
 			type="button"
 			data-copy={copyPayload}
 			data-copy-button="1"
-			class="copy-btn rounded-md border border-[#394f73] bg-[#17233a] px-2 py-[0.27rem] text-[0.61rem] font-semibold uppercase tracking-[0.14em] text-[#e3eafa] transition-colors duration-150 hover:bg-[#223452] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f92ca] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b1019]"
+			class="copy-control"
+			style="--copy-border:#394f73;--copy-bg:#17233a;--copy-text:#e3eafa;--copy-hover-bg:#223452;--copy-hover-border:#5372a7;--copy-focus:rgba(111,146,202,0.88);--copy-success-bg:#1c334f;--copy-success-border:#5673a7;--copy-success-text:#f0f5ff;--copy-fail-bg:#522333;--copy-fail-border:#a64f68;--copy-fail-text:#ffe6ed;"
 		>
 			Copy
 		</button>
@@ -58,13 +59,4 @@ const copyPayload = commands.join("\n");
 		white-space: pre;
 	}
 
-	.copy-btn.is-copied {
-		background: #1c334f;
-		border-color: #5673a7;
-	}
-
-	.copy-btn.is-copy-failed {
-		background: #522333;
-		border-color: #a64f68;
-	}
 </style>
