@@ -6241,6 +6241,7 @@ fn value_to_sequence_items(value: &Value) -> Result<Vec<Value>, RuntimeError> {
     }
 }
 
+#[cfg(unix)]
 fn collect_process_argv(value: &Value) -> Result<Vec<String>, RuntimeError> {
     let items = value_to_sequence_items(value)?;
     let mut argv = Vec::with_capacity(items.len());
@@ -6250,6 +6251,7 @@ fn collect_process_argv(value: &Value) -> Result<Vec<String>, RuntimeError> {
     Ok(argv)
 }
 
+#[cfg(unix)]
 fn collect_env_entries(value: &Value) -> Result<Vec<(String, String)>, RuntimeError> {
     let items = value_to_sequence_items(value)?;
     let mut out = Vec::with_capacity(items.len());

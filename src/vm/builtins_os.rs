@@ -3,14 +3,15 @@ use super::{
     FormatterFieldKey, HashMap, InstanceObject, InternalCallOutcome, IsTerminal, ModuleObject,
     NativeMethodKind, ObjRef, Object, Path, PathBuf, Read, RuntimeError, Seek, SeekFrom, Stdio,
     SystemTime, TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH, Value, Vm, Write, bytes_like_from_value,
-    collect_env_entries, collect_process_argv, decode_escape_bytes, decode_text_bytes,
-    dict_get_value, encode_text_bytes, format_value, fs, is_missing_attribute_error,
-    is_pyrs_executable, is_truthy, mul_values, normalize_codec_encoding, normalize_codec_errors,
-    parse_decimal_bigint_literal, parse_modules_to_block_literal, parse_string_formatter,
-    pow_values, seconds_to_system_time, split_formatter_field_name, system_time_to_secs_f64,
-    value_from_bigint, value_to_bigint, value_to_f64, value_to_int, value_to_process_text,
-    value_to_sequence_items,
+    decode_escape_bytes, decode_text_bytes, dict_get_value, encode_text_bytes, format_value, fs,
+    is_pyrs_executable, is_truthy, mul_values, normalize_codec_encoding,
+    normalize_codec_errors, parse_decimal_bigint_literal, parse_modules_to_block_literal,
+    parse_string_formatter, pow_values, seconds_to_system_time, split_formatter_field_name,
+    system_time_to_secs_f64, value_from_bigint, value_to_bigint, value_to_f64, value_to_int,
+    value_to_process_text, value_to_sequence_items,
 };
+#[cfg(unix)]
+use super::{collect_env_entries, collect_process_argv, is_missing_attribute_error};
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 #[cfg(unix)]
@@ -830,6 +831,8 @@ impl Vm {
         } else {
             0o777
         };
+        #[cfg(not(unix))]
+        let _ = mode;
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "open() got an unexpected keyword argument",
@@ -1253,6 +1256,8 @@ impl Vm {
         } else {
             0o777
         };
+        #[cfg(not(unix))]
+        let _ = mode;
         if let Some(dir_fd) = kwargs.remove("dir_fd")
             && !matches!(dir_fd, Value::None)
         {
@@ -2044,6 +2049,8 @@ impl Vm {
                         .try_wait()
                         .map_err(|err| RuntimeError::new(format!("waitpid failed: {err}")))?;
                     if let Some(status) = try_wait {
+                        #[cfg(not(unix))]
+                        let _ = status;
                         #[cfg(unix)]
                         let wait_status = Self::status_to_wait_status(status);
                         #[cfg(not(unix))]
@@ -2067,6 +2074,8 @@ impl Vm {
                     .map_err(|err| RuntimeError::new(format!("waitpid failed: {err}")))?
                 {
                     Some(status) => {
+                        #[cfg(not(unix))]
+                        let _ = status;
                         #[cfg(unix)]
                         let wait_status = Self::status_to_wait_status(status);
                         #[cfg(not(unix))]
@@ -2097,6 +2106,8 @@ impl Vm {
             let status = child
                 .wait()
                 .map_err(|err| RuntimeError::new(format!("waitpid failed: {err}")))?;
+            #[cfg(not(unix))]
+            let _ = status;
             #[cfg(unix)]
             let wait_status = Self::status_to_wait_status(status);
             #[cfg(not(unix))]
@@ -2382,6 +2393,7 @@ impl Vm {
         Ok((pid, kind, text_mode, encoding))
     }
 
+    #[cfg(unix)]
     fn subprocess_fd_from_stdio_spec(
         &mut self,
         spec: &Value,
@@ -3738,7 +3750,16 @@ impl Vm {
         };
 
         let file_type = metadata.file_type();
+        #[cfg(unix)]
         let mut st_mode = if file_type.is_dir() {
+            0o040000
+        } else if file_type.is_symlink() || use_symlink_mode {
+            0o120000
+        } else {
+            0o100000
+        };
+        #[cfg(not(unix))]
+        let st_mode = if file_type.is_dir() {
             0o040000
         } else if file_type.is_symlink() || use_symlink_mode {
             0o120000
