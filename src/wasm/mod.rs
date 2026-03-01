@@ -1814,7 +1814,10 @@ pub fn check_compile(source: &str) -> Result<(), JsValue> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_syntax, pyrs_version};
+    use super::{
+        WasmExecutionPhase, check_syntax, execute, execution_phase_keys, pyrs_version,
+        wasm_worker_execute,
+    };
 
     #[test]
     fn wasm_exports_version() {
@@ -1829,5 +1832,59 @@ mod tests {
     #[test]
     fn wasm_syntax_check_rejects_invalid_module() {
         assert!(check_syntax("def broken(:\n").is_err());
+    }
+
+    #[test]
+    fn wasm_execution_phase_keys_are_stable_native() {
+        assert_eq!(
+            execution_phase_keys(),
+            vec![
+                WasmExecutionPhase::SyntaxError.key(),
+                WasmExecutionPhase::CompileError.key(),
+                WasmExecutionPhase::UnsupportedExecution.key(),
+            ]
+        );
+    }
+
+    #[test]
+    fn wasm_execute_unwired_sets_backend_blocker_key() {
+        let result = execute("x = 1\n");
+        assert_eq!(result.phase(), "unsupported_execution".to_string());
+        assert_eq!(
+            result.blocker_key(),
+            Some("execution_backend_unwired".to_string())
+        );
+    }
+
+    #[test]
+    fn wasm_execute_parse_compile_failures_have_no_blocker_key() {
+        let compile_error = execute("return 1\n");
+        assert_eq!(compile_error.phase(), "compile_error".to_string());
+        assert!(compile_error.blocker_key().is_none());
+        assert!(compile_error.line() > 0);
+        assert!(compile_error.column() > 0);
+
+        let syntax_error = execute("def broken(:\n");
+        assert_eq!(syntax_error.phase(), "syntax_error".to_string());
+        assert!(syntax_error.blocker_key().is_none());
+        assert!(syntax_error.line() > 0);
+        assert!(syntax_error.column() > 0);
+    }
+
+    #[test]
+    fn wasm_worker_execute_unwired_sets_worker_blocker_key() {
+        let unsupported = wasm_worker_execute("x = 1\n");
+        assert_eq!(
+            unsupported.phase(),
+            "unsupported_worker_execution".to_string()
+        );
+        assert_eq!(
+            unsupported.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+
+        let compile_error = wasm_worker_execute("return 1\n");
+        assert_eq!(compile_error.phase(), "compile_error".to_string());
+        assert!(compile_error.blocker_key().is_none());
     }
 }
