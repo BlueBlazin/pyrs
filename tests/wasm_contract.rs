@@ -614,6 +614,17 @@ fn wasm_worker_session_contract_is_stable() {
     assert!(session.last_phase().is_none());
     assert!(session.last_state().is_none());
     assert!(session.last_error().is_none());
+    let initial_snapshot = session.snapshot();
+    assert_eq!(initial_snapshot.starts_requested(), 0);
+    assert_eq!(initial_snapshot.terminates_requested(), 0);
+    assert_eq!(initial_snapshot.recycles_requested(), 0);
+    assert_eq!(initial_snapshot.executes_requested(), 0);
+    assert_eq!(initial_snapshot.timeout_updates_requested(), 0);
+    assert!(initial_snapshot.last_timeout_ms_requested().is_none());
+    assert!(initial_snapshot.last_operation_id().is_none());
+    assert!(initial_snapshot.last_phase().is_none());
+    assert!(initial_snapshot.last_state().is_none());
+    assert!(initial_snapshot.last_error().is_none());
 
     let info = session.info();
     assert!(!info.supported());
@@ -728,6 +739,19 @@ fn wasm_worker_session_contract_is_stable() {
     );
     assert_eq!(session.last_state(), Some("unwired".to_string()));
     assert!(session.last_error().is_some());
+    let pre_reset_snapshot = session.snapshot();
+    assert_eq!(pre_reset_snapshot.starts_requested(), 1);
+    assert_eq!(pre_reset_snapshot.terminates_requested(), 1);
+    assert_eq!(pre_reset_snapshot.recycles_requested(), 1);
+    assert_eq!(pre_reset_snapshot.executes_requested(), 1);
+    assert_eq!(pre_reset_snapshot.timeout_updates_requested(), 2);
+    assert_eq!(pre_reset_snapshot.last_timeout_ms_requested(), Some(5_000));
+    assert_eq!(
+        pre_reset_snapshot.last_phase(),
+        Some("unsupported_worker_timeout_enforcement".to_string())
+    );
+    assert_eq!(pre_reset_snapshot.last_state(), Some("unwired".to_string()));
+    assert!(pre_reset_snapshot.last_error().is_some());
 
     session.reset();
     assert_eq!(session.starts_requested(), 0);
@@ -740,6 +764,17 @@ fn wasm_worker_session_contract_is_stable() {
     assert!(session.last_phase().is_none());
     assert!(session.last_state().is_none());
     assert!(session.last_error().is_none());
+    let reset_snapshot = session.snapshot();
+    assert_eq!(reset_snapshot.starts_requested(), 0);
+    assert_eq!(reset_snapshot.terminates_requested(), 0);
+    assert_eq!(reset_snapshot.recycles_requested(), 0);
+    assert_eq!(reset_snapshot.executes_requested(), 0);
+    assert_eq!(reset_snapshot.timeout_updates_requested(), 0);
+    assert!(reset_snapshot.last_timeout_ms_requested().is_none());
+    assert!(reset_snapshot.last_operation_id().is_none());
+    assert!(reset_snapshot.last_phase().is_none());
+    assert!(reset_snapshot.last_state().is_none());
+    assert!(reset_snapshot.last_error().is_none());
 }
 
 #[wasm_bindgen_test]
@@ -765,6 +800,10 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
     assert_eq!(session.executes_requested(), 1);
     assert_eq!(session.last_operation_id(), Some(first_id.clone()));
     assert_eq!(session.last_state(), Some("unwired".to_string()));
+    let first_snapshot = session.snapshot();
+    assert_eq!(first_snapshot.executes_requested(), 1);
+    assert_eq!(first_snapshot.last_operation_id(), Some(first_id.clone()));
+    assert_eq!(first_snapshot.last_state(), Some("unwired".to_string()));
     if vm_probe_enabled() {
         assert_eq!(session.last_phase(), Some("ok".to_string()));
         assert!(first.blocker_key().is_none());
@@ -794,6 +833,10 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
     assert_eq!(session.last_phase(), Some("syntax_error".to_string()));
     assert_eq!(session.last_state(), Some("unwired".to_string()));
     assert!(second.blocker_key().is_none());
+    let second_snapshot = session.snapshot();
+    assert_eq!(second_snapshot.executes_requested(), 2);
+    assert_eq!(second_snapshot.last_phase(), Some("syntax_error".to_string()));
+    assert_eq!(second_snapshot.last_state(), Some("unwired".to_string()));
 }
 
 #[wasm_bindgen_test]

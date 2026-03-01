@@ -286,7 +286,21 @@ This document defines the JS-facing contract currently exported by
 - `set_timeout_ms(timeout_ms: u32) -> WasmWorkerTimeoutResult`
 - `execute(source: &str) -> WasmExecutionResult`
 - `execute_with_operation(source: &str) -> WasmWorkerExecutionResult`
+- `snapshot() -> WasmWorkerSessionSnapshot`
 - `reset()`
+- `starts_requested: usize`
+- `terminates_requested: usize`
+- `recycles_requested: usize`
+- `executes_requested: usize`
+- `timeout_updates_requested: usize`
+- `last_timeout_ms_requested: Option<u32>`
+- `last_operation_id: Option<String>`
+- `last_phase: Option<String>`
+- `last_state: Option<String>`
+- `last_error: Option<String>`
+
+## `WasmWorkerSessionSnapshot`
+
 - `starts_requested: usize`
 - `terminates_requested: usize`
 - `recycles_requested: usize`

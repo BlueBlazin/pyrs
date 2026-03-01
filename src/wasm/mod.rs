@@ -351,6 +351,20 @@ pub struct WasmWorkerSession {
 }
 
 #[wasm_bindgen(getter_with_clone)]
+pub struct WasmWorkerSessionSnapshot {
+    starts_requested: usize,
+    terminates_requested: usize,
+    recycles_requested: usize,
+    executes_requested: usize,
+    timeout_updates_requested: usize,
+    last_timeout_ms_requested: Option<u32>,
+    last_operation_id: Option<String>,
+    last_phase: Option<String>,
+    last_state: Option<String>,
+    last_error: Option<String>,
+}
+
+#[wasm_bindgen(getter_with_clone)]
 pub struct WasmExecutionResult {
     success: bool,
     phase: String,
@@ -930,6 +944,21 @@ impl WasmWorkerSession {
         result
     }
 
+    pub fn snapshot(&self) -> WasmWorkerSessionSnapshot {
+        WasmWorkerSessionSnapshot {
+            starts_requested: self.starts_requested,
+            terminates_requested: self.terminates_requested,
+            recycles_requested: self.recycles_requested,
+            executes_requested: self.executes_requested,
+            timeout_updates_requested: self.timeout_updates_requested,
+            last_timeout_ms_requested: self.last_timeout_ms_requested,
+            last_operation_id: self.last_operation_id.clone(),
+            last_phase: self.last_phase.clone(),
+            last_state: self.last_state.clone(),
+            last_error: self.last_error.clone(),
+        }
+    }
+
     pub fn reset(&mut self) {
         self.starts_requested = 0;
         self.terminates_requested = 0;
@@ -943,6 +972,59 @@ impl WasmWorkerSession {
         self.last_error = None;
     }
 
+    #[wasm_bindgen(getter)]
+    pub fn starts_requested(&self) -> usize {
+        self.starts_requested
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn terminates_requested(&self) -> usize {
+        self.terminates_requested
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn recycles_requested(&self) -> usize {
+        self.recycles_requested
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn executes_requested(&self) -> usize {
+        self.executes_requested
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn timeout_updates_requested(&self) -> usize {
+        self.timeout_updates_requested
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_timeout_ms_requested(&self) -> Option<u32> {
+        self.last_timeout_ms_requested
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_operation_id(&self) -> Option<String> {
+        self.last_operation_id.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_phase(&self) -> Option<String> {
+        self.last_phase.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_state(&self) -> Option<String> {
+        self.last_state.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_error(&self) -> Option<String> {
+        self.last_error.clone()
+    }
+}
+
+#[wasm_bindgen]
+impl WasmWorkerSessionSnapshot {
     #[wasm_bindgen(getter)]
     pub fn starts_requested(&self) -> usize {
         self.starts_requested

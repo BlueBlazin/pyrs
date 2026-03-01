@@ -63,6 +63,7 @@ You can call lifecycle methods directly or via `WasmWorkerSession` for stateful
 UI telemetry (`starts_requested`, `terminates_requested`, `recycles_requested`,
 `executes_requested`, `timeout_updates_requested`, `last_timeout_ms_requested`,
 `last_operation_id`, `last_phase`, `last_state`, `last_error`).
+For atomic telemetry reads, use `WasmWorkerSession.snapshot()`.
 
 Prefer `wasm_worker_state_keys()`, `wasm_worker_lifecycle_phase_keys()`, and
 `wasm_worker_execute_phase_keys()`, and `wasm_worker_timeout_phase_keys()` for

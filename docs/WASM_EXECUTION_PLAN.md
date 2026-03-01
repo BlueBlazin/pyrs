@@ -543,6 +543,10 @@ Completed on this branch:
 - latest: `WasmWorkerExecutionResult` now includes a structured `state` field
   (currently `"unwired"`), and worker execute-with-operation/session contract
   tests/docs now assert state parity directly.
+- latest: `WasmWorkerSession.snapshot()` and
+  `WasmWorkerSessionSnapshot` were added for atomic worker telemetry reads;
+  snapshot fields are parity-tested against live session getters and documented
+  in the wasm API contract.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
