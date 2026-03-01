@@ -1,0 +1,41 @@
+name: website-check
+
+on:
+  pull_request:
+    paths:
+      - "website/**"
+      - ".github/workflows/website-check.yml"
+  push:
+    branches:
+      - master
+    paths:
+      - "website/**"
+      - ".github/workflows/website-check.yml"
+
+jobs:
+  build-and-validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+          cache-dependency-path: website/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and validate internal links
+        run: pnpm build:check
