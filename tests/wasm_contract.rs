@@ -16,9 +16,10 @@ use crate::wasm_contract_snippets::{
 };
 use crate::wasm_module_policy::WASM_MODULE_POLICY_FIXTURES;
 use crate::wasm_worker_contract::{
-    WASM_WORKER_EXECUTE_FIXTURES, WASM_WORKER_EXECUTE_PHASE_KEYS, WASM_WORKER_LIFECYCLE_FIXTURES,
+    WasmWorkerExecuteFixture, WASM_WORKER_BLOCKER_KEYS, WASM_WORKER_EXECUTE_FIXTURES,
+    WASM_WORKER_EXECUTE_PHASE_KEYS, WASM_WORKER_LIFECYCLE_FIXTURES,
     WASM_WORKER_LIFECYCLE_PHASE_KEYS, WASM_WORKER_STATE_KEYS, WASM_WORKER_TIMEOUT_FIXTURES,
-    WASM_WORKER_TIMEOUT_PHASE_KEYS, WASM_WORKER_BLOCKER_KEYS,
+    WASM_WORKER_TIMEOUT_PHASE_KEYS,
 };
 use js_sys::Reflect;
 use pyrs::wasm::{
@@ -102,6 +103,53 @@ fn expected_execute_blocker_key_for_fixture(
         }
     }
     fixture.expected_execute_blocker_key.map(str::to_string)
+}
+
+fn expected_worker_execute_phase_for_fixture(fixture: &WasmWorkerExecuteFixture) -> String {
+    if vm_probe_enabled() {
+        if let Some(phase) = fixture.expected_vm_probe_phase {
+            return phase.to_string();
+        }
+    }
+    fixture.expected_phase.to_string()
+}
+
+fn expected_worker_execute_blocker_key_for_fixture(
+    fixture: &WasmWorkerExecuteFixture,
+) -> Option<String> {
+    if vm_probe_enabled() {
+        if let Some(override_blocker) = fixture.expected_vm_probe_blocker_key {
+            return override_blocker.map(str::to_string);
+        }
+    }
+    fixture.expected_blocker_key.map(str::to_string)
+}
+
+fn expected_worker_execute_expect_error_for_fixture(fixture: &WasmWorkerExecuteFixture) -> bool {
+    if vm_probe_enabled() {
+        if let Some(expect_error) = fixture.expected_vm_probe_expect_error {
+            return expect_error;
+        }
+    }
+    fixture.expect_error
+}
+
+fn expected_worker_execute_success_for_fixture(fixture: &WasmWorkerExecuteFixture) -> bool {
+    if vm_probe_enabled() {
+        if let Some(expected_success) = fixture.expected_vm_probe_success {
+            return expected_success;
+        }
+    }
+    fixture.expected_success
+}
+
+fn expected_worker_execute_line_column_for_fixture(fixture: &WasmWorkerExecuteFixture) -> bool {
+    if vm_probe_enabled() {
+        if let Some(expect_line_column) = fixture.expected_vm_probe_expect_line_column {
+            return expect_line_column;
+        }
+    }
+    fixture.expect_line_column
 }
 
 #[wasm_bindgen_test]
@@ -463,31 +511,35 @@ fn wasm_worker_operation_id_shape_is_stable() {
 fn wasm_worker_execute_stub_contract_is_stable() {
     for fixture in WASM_WORKER_EXECUTE_FIXTURES {
         let result = wasm_worker_execute(fixture.source);
+        let expected_phase = expected_worker_execute_phase_for_fixture(fixture);
         assert_eq!(
             result.phase(),
-            fixture.expected_phase,
+            expected_phase,
             "worker execute phase mismatch: {}",
             fixture.name
         );
-        assert!(
-            !result.success(),
+        let expected_success = expected_worker_execute_success_for_fixture(fixture);
+        assert_eq!(
+            result.success(),
+            expected_success,
             "worker execute success mismatch: {}",
             fixture.name
         );
+        let expected_error = expected_worker_execute_expect_error_for_fixture(fixture);
         assert_eq!(
             result.error().is_some(),
-            fixture.expect_error,
+            expected_error,
             "worker execute error mismatch: {}",
             fixture.name
         );
-        let expected_blocker_key = fixture.expected_blocker_key.map(str::to_string);
+        let expected_blocker_key = expected_worker_execute_blocker_key_for_fixture(fixture);
         assert_eq!(
             result.blocker_key(),
             expected_blocker_key,
             "worker execute blocker key mismatch: {}",
             fixture.name
         );
-        if fixture.expect_line_column {
+        if expected_worker_execute_line_column_for_fixture(fixture) {
             assert!(
                 result.line() > 0 && result.column() > 0,
                 "worker execute line/column mismatch: {}",
@@ -515,9 +567,10 @@ fn wasm_worker_execute_with_operation_contract_is_stable() {
     let mut operation_ids = HashSet::new();
     for fixture in WASM_WORKER_EXECUTE_FIXTURES {
         let result = wasm_worker_execute_with_operation(fixture.source);
+        let expected_phase = expected_worker_execute_phase_for_fixture(fixture);
         assert_eq!(
             result.phase(),
-            fixture.expected_phase,
+            expected_phase,
             "worker execute-with-operation phase mismatch: {}",
             fixture.name
         );
@@ -532,7 +585,7 @@ fn wasm_worker_execute_with_operation_contract_is_stable() {
             "worker execute operation ids should be unique: {}",
             fixture.name
         );
-        let expected_blocker_key = fixture.expected_blocker_key.map(str::to_string);
+        let expected_blocker_key = expected_worker_execute_blocker_key_for_fixture(fixture);
         assert_eq!(
             result.blocker_key(),
             expected_blocker_key,

@@ -473,6 +473,12 @@ Completed on this branch:
   run in `--vm-probe` mode, and both wasm gate scripts now emit
   `perf/wasm_execute_contract_summary_vm_probe_latest.json` in addition to the
   default summary.
+- latest: worker execute fixtures/scripts now mirror the same dual-mode
+  contract guardrail: fixture rows support vm-probe-specific execute
+  expectations (`ok`/`runtime_error`), worker runtime-error coverage is tracked
+  in fixture rows, worker-summary validation can run in `--vm-probe` mode, and
+  both wasm gate scripts now emit
+  `perf/wasm_worker_contract_summary_vm_probe_latest.json`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
