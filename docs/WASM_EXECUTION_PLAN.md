@@ -331,6 +331,8 @@ Completed on this branch:
   lifecycle and timeout APIs in wasm contract tests.
 - latest: host contract checks now include a capability-matrix consistency gate
   (`wasm_host_unsupported_message_matrix_matches_supports`) in branch/smoke scripts.
+- latest: worker operation-id prefix expectations are now fixture-driven across
+  lifecycle/timeout/execute wasm contract tests.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

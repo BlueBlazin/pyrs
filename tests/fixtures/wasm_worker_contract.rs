@@ -1,6 +1,7 @@
 pub struct WasmWorkerLifecycleFixture {
     pub name: &'static str,
     pub action: &'static str,
+    pub expected_operation_prefix: &'static str,
     pub expected_phase: &'static str,
     pub expected_state: &'static str,
     pub expected_success: bool,
@@ -9,6 +10,7 @@ pub struct WasmWorkerLifecycleFixture {
 
 pub struct WasmWorkerExecuteFixture {
     pub name: &'static str,
+    pub expected_operation_prefix: &'static str,
     pub source: &'static str,
     pub expected_phase: &'static str,
     pub expect_error: bool,
@@ -17,6 +19,7 @@ pub struct WasmWorkerExecuteFixture {
 
 pub struct WasmWorkerTimeoutFixture {
     pub name: &'static str,
+    pub expected_operation_prefix: &'static str,
     pub timeout_ms: u32,
     pub expected_phase: &'static str,
     pub expected_state: &'static str,
@@ -28,6 +31,7 @@ pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[
     WasmWorkerLifecycleFixture {
         name: "worker_start_unwired",
         action: "start",
+        expected_operation_prefix: "worker_start_",
         expected_phase: "unsupported_worker_start",
         expected_state: "unwired",
         expected_success: false,
@@ -36,6 +40,7 @@ pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[
     WasmWorkerLifecycleFixture {
         name: "worker_terminate_unwired",
         action: "terminate",
+        expected_operation_prefix: "worker_terminate_",
         expected_phase: "unsupported_worker_terminate",
         expected_state: "unwired",
         expected_success: false,
@@ -44,6 +49,7 @@ pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[
     WasmWorkerLifecycleFixture {
         name: "worker_recycle_unwired",
         action: "recycle",
+        expected_operation_prefix: "worker_recycle_",
         expected_phase: "unsupported_worker_recycle",
         expected_state: "unwired",
         expected_success: false,
@@ -54,6 +60,7 @@ pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[
 pub const WASM_WORKER_EXECUTE_FIXTURES: &[WasmWorkerExecuteFixture] = &[
     WasmWorkerExecuteFixture {
         name: "worker_execute_syntax_error",
+        expected_operation_prefix: "worker_execute_",
         source: "def broken(:\n",
         expected_phase: "syntax_error",
         expect_error: true,
@@ -61,6 +68,7 @@ pub const WASM_WORKER_EXECUTE_FIXTURES: &[WasmWorkerExecuteFixture] = &[
     },
     WasmWorkerExecuteFixture {
         name: "worker_execute_compile_error",
+        expected_operation_prefix: "worker_execute_",
         source: "return 1\n",
         expected_phase: "compile_error",
         expect_error: true,
@@ -68,6 +76,7 @@ pub const WASM_WORKER_EXECUTE_FIXTURES: &[WasmWorkerExecuteFixture] = &[
     },
     WasmWorkerExecuteFixture {
         name: "worker_execute_unwired",
+        expected_operation_prefix: "worker_execute_",
         source: "x = 1\n",
         expected_phase: "unsupported_worker_execution",
         expect_error: true,
@@ -78,6 +87,7 @@ pub const WASM_WORKER_EXECUTE_FIXTURES: &[WasmWorkerExecuteFixture] = &[
 pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[
     WasmWorkerTimeoutFixture {
         name: "worker_timeout_invalid_low",
+        expected_operation_prefix: "worker_set_timeout_",
         timeout_ms: 0,
         expected_phase: "invalid_worker_timeout",
         expected_state: "unwired",
@@ -86,6 +96,7 @@ pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[
     },
     WasmWorkerTimeoutFixture {
         name: "worker_timeout_unwired_min",
+        expected_operation_prefix: "worker_set_timeout_",
         timeout_ms: 50,
         expected_phase: "unsupported_worker_timeout_enforcement",
         expected_state: "unwired",
@@ -94,6 +105,7 @@ pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[
     },
     WasmWorkerTimeoutFixture {
         name: "worker_timeout_unwired_default",
+        expected_operation_prefix: "worker_set_timeout_",
         timeout_ms: 5_000,
         expected_phase: "unsupported_worker_timeout_enforcement",
         expected_state: "unwired",
@@ -102,6 +114,7 @@ pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[
     },
     WasmWorkerTimeoutFixture {
         name: "worker_timeout_unwired_max",
+        expected_operation_prefix: "worker_set_timeout_",
         timeout_ms: 120_000,
         expected_phase: "unsupported_worker_timeout_enforcement",
         expected_state: "unwired",
@@ -110,6 +123,7 @@ pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[
     },
     WasmWorkerTimeoutFixture {
         name: "worker_timeout_invalid_high",
+        expected_operation_prefix: "worker_set_timeout_",
         timeout_ms: 120_001,
         expected_phase: "invalid_worker_timeout",
         expected_state: "unwired",

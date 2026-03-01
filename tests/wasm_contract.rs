@@ -154,7 +154,7 @@ fn wasm_worker_timeout_set_contract_is_stable() {
         }
         let operation_id = result.operation_id();
         assert!(
-            operation_id.starts_with("worker_set_timeout_"),
+            operation_id.starts_with(fixture.expected_operation_prefix),
             "worker timeout operation id prefix mismatch: {}",
             fixture.name
         );
@@ -276,7 +276,7 @@ fn wasm_worker_lifecycle_stub_contract_is_stable() {
         );
         let operation_id = result.operation_id();
         assert!(
-            operation_id.starts_with(&format!("worker_{}_", fixture.action)),
+            operation_id.starts_with(fixture.expected_operation_prefix),
             "worker lifecycle operation id prefix mismatch: {}",
             fixture.name
         );
@@ -290,24 +290,30 @@ fn wasm_worker_lifecycle_stub_contract_is_stable() {
 
 #[wasm_bindgen_test]
 fn wasm_worker_operation_id_shape_is_stable() {
-    let start_id = wasm_worker_start().operation_id();
-    let terminate_id = wasm_worker_terminate().operation_id();
-    let recycle_id = wasm_worker_recycle().operation_id();
-    let timeout_id = wasm_worker_set_timeout(5_000).operation_id();
-    let timeout_invalid_id = wasm_worker_set_timeout(0).operation_id();
-
-    assert!(start_id.starts_with("worker_start_"));
-    assert!(terminate_id.starts_with("worker_terminate_"));
-    assert!(recycle_id.starts_with("worker_recycle_"));
-    assert!(timeout_id.starts_with("worker_set_timeout_"));
-    assert!(timeout_invalid_id.starts_with("worker_set_timeout_"));
-
     let mut ids = HashSet::new();
-    assert!(ids.insert(start_id));
-    assert!(ids.insert(terminate_id));
-    assert!(ids.insert(recycle_id));
-    assert!(ids.insert(timeout_id));
-    assert!(ids.insert(timeout_invalid_id));
+    for fixture in WASM_WORKER_LIFECYCLE_FIXTURES {
+        let result = match fixture.action {
+            "start" => wasm_worker_start(),
+            "terminate" => wasm_worker_terminate(),
+            "recycle" => wasm_worker_recycle(),
+            other => panic!("unknown worker fixture action: {other}"),
+        };
+        let operation_id = result.operation_id();
+        assert!(operation_id.starts_with(fixture.expected_operation_prefix));
+        assert!(ids.insert(operation_id));
+    }
+
+    for fixture in WASM_WORKER_TIMEOUT_FIXTURES {
+        let result = wasm_worker_set_timeout(fixture.timeout_ms);
+        let operation_id = result.operation_id();
+        assert!(operation_id.starts_with(fixture.expected_operation_prefix));
+        assert!(ids.insert(operation_id));
+    }
+
+    let execute = wasm_worker_execute_with_operation("x = 1\n");
+    let execute_id = execute.operation_id();
+    assert!(execute_id.starts_with(WASM_WORKER_EXECUTE_FIXTURES[0].expected_operation_prefix));
+    assert!(ids.insert(execute_id));
 }
 
 #[wasm_bindgen_test]
@@ -367,7 +373,7 @@ fn wasm_worker_execute_with_operation_contract_is_stable() {
         );
         let operation_id = result.operation_id();
         assert!(
-            operation_id.starts_with("worker_execute_"),
+            operation_id.starts_with(fixture.expected_operation_prefix),
             "worker execute operation id prefix mismatch: {}",
             fixture.name
         );
