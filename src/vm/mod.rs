@@ -5638,7 +5638,7 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
             value_to_int(backing.clone())
         }
         other => {
-            if std::env::var_os("PYRS_TRACE_VALUE_TO_INT").is_some() {
+            if env_var_present_cached("PYRS_TRACE_VALUE_TO_INT") {
                 eprintln!("[value_to_int] unsupported value={}", format_repr(&other));
                 eprintln!(
                     "[value_to_int] backtrace:\n{:?}",
@@ -10100,7 +10100,7 @@ fn bind_arguments(
         && func.code.kwarg.is_none()
     {
         if positional.len() != total_positional {
-            if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+            if env_var_present_cached("PYRS_TRACE_BIND_ARGS") {
                 eprintln!(
                     "[bind-args] fn={} file={} count-mismatch positional={} expected={} posonly={:?} params={:?}",
                     func.code.name,
@@ -10160,7 +10160,7 @@ fn bind_arguments(
     let mut extra_positional = Vec::new();
     if positional.len() > total_positional {
         if func.code.vararg.is_none() {
-            if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+            if env_var_present_cached("PYRS_TRACE_BIND_ARGS") {
                 eprintln!(
                     "[bind-args] fn={} file={} extra-positional={} max={} (no vararg)",
                     func.code.name,
@@ -10216,7 +10216,7 @@ fn bind_arguments(
                 extra_kwargs.push((name, value));
                 continue;
             }
-            if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+            if env_var_present_cached("PYRS_TRACE_BIND_ARGS") {
                 eprintln!(
                     "[bind-args] fn={} unexpected-posonly-keyword={}",
                     func.code.name, name
@@ -10261,7 +10261,7 @@ fn bind_arguments(
             }
             extra_kwargs.push((name, value));
         } else {
-            if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+            if env_var_present_cached("PYRS_TRACE_BIND_ARGS") {
                 eprintln!(
                     "[bind-args] fn={} unexpected-keyword={}",
                     func.code.name, name
@@ -10295,7 +10295,7 @@ fn bind_arguments(
         }
     }
     if !missing_required.is_empty() {
-        if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+        if env_var_present_cached("PYRS_TRACE_BIND_ARGS") {
             eprintln!(
                 "[bind-args] fn={} file={} missing-required positional={:?} signature posonly={:?} params={:?}",
                 func.code.name,
@@ -10932,7 +10932,7 @@ fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {
         seen: &mut HashSet<u64>,
         depth: usize,
     ) {
-        if std::env::var_os("PYRS_DEBUG_CLASS_ATTR_WALK_DEPTH").is_some() && depth > 256 {
+        if env_var_present_cached("PYRS_DEBUG_CLASS_ATTR_WALK_DEPTH") && depth > 256 {
             let class_name = match &*class.kind() {
                 Object::Class(class_data) => class_data.name.clone(),
                 _ => "<non-class>".to_string(),
