@@ -1,0 +1,64 @@
+name: website-pages
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - "website/**"
+      - ".github/workflows/website-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: website-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      ASTRO_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: website/pnpm-lock.yaml
+
+      - name: Install website dependencies
+        run: pnpm --dir website install --frozen-lockfile
+
+      - name: Configure Astro base path
+        run: |
+          repo_name="${GITHUB_REPOSITORY#*/}"
+          if [[ "$repo_name" == *.github.io ]]; then
+            echo "ASTRO_BASE=/" >> "$GITHUB_ENV"
+          else
+            echo "ASTRO_BASE=/${repo_name}/" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build website
+        run: pnpm --dir website build
+
+      - name: Publish dist to gh-pages branch root
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: website/dist
+          force_orphan: true
+          enable_jekyll: false

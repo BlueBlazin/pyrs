@@ -1,0 +1,310 @@
+---
+
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="icon" href="/favicon.ico" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="generator" content={Astro.generator} />
+		<title>pyrs | Python Interpreter in Rust</title>
+		<meta
+			name="description"
+			content="pyrs is a Python interpreter in Rust targeting CPython 3.14 compatibility."
+		/>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+			rel="stylesheet"
+		/>
+	</head>
+	<body>
+		<div class="site-shell">
+			<header class="topbar">
+				<div class="brand">pyrs</div>
+				<nav class="topnav">
+					<a href="https://github.com/BlueBlazin/pyrs">GitHub</a>
+					<a href="#">Docs</a>
+					<a href="#">Roadmap</a>
+				</nav>
+			</header>
+
+			<main>
+				<section class="hero">
+					<div class="hero-copy">
+						<p class="eyebrow">Python in Rust</p>
+						<h1>CPython 3.14 compatibility,<br /> engineered for real workloads.</h1>
+						<p class="lede">
+							<pyrs is a production-focused Python interpreter in Rust with an active parity
+							closure effort, C-API bring-up, and scientific-stack execution roadmap.
+						</p>
+						<div class="cta-row">
+							<a class="btn btn-primary" href="https://github.com/BlueBlazin/pyrs">Explore Repo</a>
+							<a class="btn btn-secondary" href="#">Read the Docs</a>
+						</div>
+					</div>
+					<div class="hero-surface">
+						<div class="surface-caption">REPL Preview (placeholder)</div>
+						<div class="terminal-frame">
+							<div class="terminal-top">
+								<span></span><span></span><span></span>
+							</div>
+							<pre><code>pyrs 0.1.0-beta
+>>> import sys
+>>> sys.version
+'3.14 (pyrs)'
+>>> print(40 + 2)
+42</code></pre>
+						</div>
+						<p class="surface-note">Replace with real REPL screenshots later.</p>
+					</div>
+				</section>
+
+				<section class="pillars">
+					<article class="card">
+						<h2>CPython Target</h2>
+						<p>Focused compatibility target on CPython 3.14 semantics across parser, VM, and stdlib.</p>
+					</article>
+					<article class="card">
+						<h2>Native Extensions</h2>
+						<p>Progressive C-API closure with direct extension import paths and ABI conformance gates.</p>
+					</article>
+					<article class="card">
+						<h2>Launch Discipline</h2>
+						<p>Parity gates, differential suites, and strict harness checkpoints drive release quality.</p>
+					</article>
+				</section>
+			</main>
+		</div>
+	</body>
+</html>
+
+<style>
+	:root {
+		--bg: #070c14;
+		--bg-elev: #0d1625;
+		--bg-card: #101b2d;
+		--text: #e8f1ff;
+		--text-muted: #94a6c7;
+		--accent: #22d3a6;
+		--accent-2: #4db4ff;
+		--line: #20324f;
+	}
+
+	* {
+		box-sizing: border-box;
+	}
+
+	body {
+		margin: 0;
+		min-height: 100vh;
+		font-family: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+		color: var(--text);
+		background:
+			radial-gradient(70rem 40rem at 85% -10%, rgba(77, 180, 255, 0.2), transparent),
+			radial-gradient(70rem 38rem at -5% 10%, rgba(34, 211, 166, 0.14), transparent),
+			linear-gradient(180deg, #060a12 0%, var(--bg) 35%, #050910 100%);
+	}
+
+	.site-shell {
+		width: min(1160px, calc(100% - 3rem));
+		margin: 0 auto;
+		padding-bottom: 4rem;
+	}
+
+	.topbar {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 1.5rem 0;
+	}
+
+	.brand {
+		font-size: 1.2rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	.topnav {
+		display: flex;
+		gap: 1rem;
+	}
+
+	.topnav a {
+		color: var(--text-muted);
+		text-decoration: none;
+		font-size: 0.92rem;
+	}
+
+	.topnav a:hover {
+		color: var(--text);
+	}
+
+	.hero {
+		display: grid;
+		grid-template-columns: 1.1fr 0.9fr;
+		gap: 2rem;
+		align-items: stretch;
+		padding: 2rem 0 1rem;
+	}
+
+	.eyebrow {
+		color: var(--accent);
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		font-size: 0.78rem;
+		font-weight: 600;
+		margin: 0 0 1rem;
+	}
+
+	h1 {
+		margin: 0;
+		font-size: clamp(2rem, 6vw, 3.45rem);
+		line-height: 1.04;
+		letter-spacing: -0.02em;
+	}
+
+	.lede {
+		margin: 1.2rem 0 0;
+		max-width: 58ch;
+		color: var(--text-muted);
+		font-size: 1.04rem;
+		line-height: 1.62;
+	}
+
+	.cta-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		margin-top: 1.5rem;
+	}
+
+	.btn {
+		padding: 0.72rem 1rem;
+		border-radius: 0.75rem;
+		text-decoration: none;
+		font-weight: 600;
+		font-size: 0.92rem;
+		transition: transform 150ms ease, border-color 150ms ease;
+	}
+
+	.btn:hover {
+		transform: translateY(-1px);
+	}
+
+	.btn-primary {
+		background: linear-gradient(135deg, #22d3a6 0%, #19a782 100%);
+		color: #03251e;
+	}
+
+	.btn-secondary {
+		color: var(--text);
+		background: rgba(255, 255, 255, 0.02);
+		border: 1px solid var(--line);
+	}
+
+	.hero-surface {
+		background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+		border: 1px solid var(--line);
+		border-radius: 1rem;
+		padding: 1rem;
+		box-shadow: 0 30px 70px rgba(0, 0, 0, 0.38);
+	}
+
+	.surface-caption {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		margin-bottom: 0.7rem;
+	}
+
+	.terminal-frame {
+		border: 1px solid #2b3f60;
+		border-radius: 0.75rem;
+		background: #070e1a;
+		overflow: hidden;
+	}
+
+	.terminal-top {
+		padding: 0.5rem 0.6rem;
+		background: #0e1a2b;
+		display: flex;
+		gap: 0.4rem;
+		border-bottom: 1px solid #1e3352;
+	}
+
+	.terminal-top span {
+		width: 0.55rem;
+		height: 0.55rem;
+		border-radius: 50%;
+		display: inline-block;
+		background: #30445f;
+	}
+
+	pre {
+		margin: 0;
+		padding: 1rem;
+		color: #b6f8e7;
+		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.84rem;
+		line-height: 1.5;
+		overflow-x: auto;
+	}
+
+	.surface-note {
+		margin: 0.7rem 0 0;
+		font-size: 0.76rem;
+		color: #7f90ae;
+	}
+
+	.pillars {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 1rem;
+		margin-top: 2rem;
+	}
+
+	.card {
+		background: var(--bg-card);
+		border: 1px solid var(--line);
+		border-radius: 0.9rem;
+		padding: 1rem;
+	}
+
+	.card h2 {
+		margin: 0 0 0.55rem;
+		font-size: 1.05rem;
+	}
+
+	.card p {
+		margin: 0;
+		font-size: 0.92rem;
+		color: var(--text-muted);
+		line-height: 1.52;
+	}
+
+	@media (max-width: 960px) {
+		.hero {
+			grid-template-columns: 1fr;
+		}
+
+		.pillars {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	@media (max-width: 700px) {
+		.site-shell {
+			width: min(1160px, calc(100% - 1.2rem));
+		}
+
+		.topbar {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.55rem;
+		}
+	}
+</style>
