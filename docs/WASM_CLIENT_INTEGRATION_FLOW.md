@@ -9,14 +9,15 @@ This guide defines the recommended browser call order for current wasm APIs.
 1. `init_wasm_runtime()`
 2. `wasm_runtime_info()`
 3. `wasm_worker_info()`
-4. `wasm_snippet_support(source)`
-5. If `phase == "supported"`:
+4. `wasm_worker_timeout_policy()`
+5. `wasm_snippet_support(source)`
+6. If `phase == "supported"`:
    - call `check_compile_result(source)` (optional if you already used snippet preflight),
    - call `execute(source)` (currently returns `unsupported_execution` by contract).
-6. If `phase == "blocked_capability"`:
+7. If `phase == "blocked_capability"`:
    - call `wasm_snippet_blockers(source)` for full blocker rows,
    - render module/capability-specific guidance.
-7. If `phase == "syntax_error"` or `phase == "compile_error"`:
+8. If `phase == "syntax_error"` or `phase == "compile_error"`:
    - use `line`/`column` + `error` for diagnostics UI.
 
 ## Worker Branch (Current)
@@ -35,6 +36,8 @@ Use this to keep UI behavior deterministic before worker backend wiring.
 
 For worker-specific diagnostics UI, call `wasm_worker_blockers()` to get stable
 structured key/message rows without hardcoding blocker text.
+Use `wasm_worker_timeout_policy()` to keep timeout controls aligned with the
+current worker recycle model and unsupported timeout-enforcement phase.
 
 You can call lifecycle methods directly or via `WasmWorkerSession` for stateful
 UI telemetry (`starts_requested`, `terminates_requested`, `executes_requested`,

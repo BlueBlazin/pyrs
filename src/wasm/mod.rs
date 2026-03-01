@@ -9,6 +9,10 @@ pub const WASM_API_VERSION: u32 = 1;
 const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired";
 const WASM_WORKER_BLOCKER_RUNTIME_UNWIRED: &str = "worker_runtime_unwired";
 const WASM_WORKER_INTERRUPT_MODEL_RECYCLE: &str = "worker_recycle";
+const WASM_WORKER_TIMEOUT_DEFAULT_MS: u32 = 5_000;
+const WASM_WORKER_TIMEOUT_MIN_MS: u32 = 50;
+const WASM_WORKER_TIMEOUT_MAX_MS: u32 = 120_000;
+const WASM_WORKER_TIMEOUT_UNSUPPORTED_PHASE: &str = "unsupported_worker_timeout_enforcement";
 const WASM_MODULE_BLOCKER_POLICY: [(&str, &str); 10] = [
     ("_ctypes", "dynamic_library_load"),
     ("ctypes", "dynamic_library_load"),
@@ -257,6 +261,17 @@ pub struct WasmWorkerInfo {
 }
 
 #[wasm_bindgen(getter_with_clone)]
+pub struct WasmWorkerTimeoutPolicy {
+    default_timeout_ms: u32,
+    min_timeout_ms: u32,
+    max_timeout_ms: u32,
+    recycle_on_timeout: bool,
+    enforcement_supported: bool,
+    unsupported_phase: String,
+    unsupported_reason: Option<String>,
+}
+
+#[wasm_bindgen(getter_with_clone)]
 pub struct WasmWorkerLifecycleResult {
     success: bool,
     phase: String,
@@ -437,6 +452,44 @@ impl WasmWorkerInfo {
     #[wasm_bindgen(getter)]
     pub fn blocker_count(&self) -> usize {
         self.blocker_count
+    }
+}
+
+#[wasm_bindgen]
+impl WasmWorkerTimeoutPolicy {
+    #[wasm_bindgen(getter)]
+    pub fn default_timeout_ms(&self) -> u32 {
+        self.default_timeout_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn min_timeout_ms(&self) -> u32 {
+        self.min_timeout_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn max_timeout_ms(&self) -> u32 {
+        self.max_timeout_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn recycle_on_timeout(&self) -> bool {
+        self.recycle_on_timeout
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn enforcement_supported(&self) -> bool {
+        self.enforcement_supported
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn unsupported_phase(&self) -> String {
+        self.unsupported_phase.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn unsupported_reason(&self) -> Option<String> {
+        self.unsupported_reason.clone()
     }
 }
 
@@ -837,6 +890,22 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
         state: WasmWorkerState::Unwired.key().to_string(),
         interruption_model: WASM_WORKER_INTERRUPT_MODEL_RECYCLE.to_string(),
         blocker_count: blockers.len(),
+    }
+}
+
+/// Returns timeout/recycle policy contract for wasm worker execution.
+#[wasm_bindgen]
+pub fn wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy {
+    let reason = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
+        .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
+    WasmWorkerTimeoutPolicy {
+        default_timeout_ms: WASM_WORKER_TIMEOUT_DEFAULT_MS,
+        min_timeout_ms: WASM_WORKER_TIMEOUT_MIN_MS,
+        max_timeout_ms: WASM_WORKER_TIMEOUT_MAX_MS,
+        recycle_on_timeout: true,
+        enforcement_supported: false,
+        unsupported_phase: WASM_WORKER_TIMEOUT_UNSUPPORTED_PHASE.to_string(),
+        unsupported_reason: Some(reason),
     }
 }
 

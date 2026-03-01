@@ -303,6 +303,8 @@ Completed on this branch:
   `wasm_worker_execute(source)`; `WasmWorkerSession` now tracks `executes_requested`.
 - latest: worker blocker contract now exports structured rows via
   `wasm_worker_blockers()` for key/message UI integration.
+- latest: worker timeout/recycle policy is now exported via
+  `wasm_worker_timeout_policy()` with stable unwired enforcement metadata.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

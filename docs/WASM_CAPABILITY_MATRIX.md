@@ -55,6 +55,8 @@ Current wasm bridge exports for capability handling:
   returns module-level blocker entries for parse+compile-valid snippets.
 - `wasm_worker_info()` / `wasm_worker_blocker_keys()` / `wasm_worker_blocker_error()`:
   expose worker-runtime contract blockers while worker execution remains unwired.
+- `wasm_worker_timeout_policy()`:
+  exports timeout/recycle contract metadata while enforcement remains unwired.
 - `wasm_worker_blockers()`:
   returns structured worker blocker entries (`key`, `message`) for worker UX.
 - `wasm_worker_start()` / `wasm_worker_terminate()`:

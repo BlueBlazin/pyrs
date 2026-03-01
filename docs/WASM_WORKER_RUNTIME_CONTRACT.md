@@ -5,6 +5,7 @@ Status: branch-local draft.
 This document defines the browser worker-runtime contract currently exposed by:
 
 - `wasm_worker_info()`
+- `wasm_worker_timeout_policy()`
 - `wasm_worker_state_keys()`
 - `wasm_worker_lifecycle_phase_keys()`
 - `wasm_worker_execute_phase_keys()`
@@ -24,6 +25,16 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `state = "unwired"`
 - `interruption_model = "worker_recycle"`
 - `blocker_count = len(wasm_worker_blocker_keys())`
+
+`wasm_worker_timeout_policy()` currently returns:
+
+- `default_timeout_ms = 5000`
+- `min_timeout_ms = 50`
+- `max_timeout_ms = 120000`
+- `recycle_on_timeout = true`
+- `enforcement_supported = false`
+- `unsupported_phase = "unsupported_worker_timeout_enforcement"`
+- `unsupported_reason = "wasm worker runtime is not wired yet"`
 
 `wasm_worker_state_keys()` currently includes:
 

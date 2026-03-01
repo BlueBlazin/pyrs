@@ -18,8 +18,8 @@ use pyrs::wasm::{
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_support,
     wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_blockers, wasm_worker_execute,
     wasm_worker_execute_phase_keys, wasm_worker_info, wasm_worker_lifecycle_phase_keys,
-    wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate, WasmSession,
-    WasmWorkerSession,
+    wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate, wasm_worker_timeout_policy,
+    WasmSession, WasmWorkerSession,
 };
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
@@ -72,6 +72,24 @@ fn wasm_worker_contract_basics() {
         .expect("worker blocker.message as string");
     assert_eq!(first_key, "worker_runtime_unwired");
     assert!(first_message.contains("not wired"));
+}
+
+#[wasm_bindgen_test]
+fn wasm_worker_timeout_policy_contract_is_stable() {
+    let policy = wasm_worker_timeout_policy();
+    assert_eq!(policy.default_timeout_ms(), 5_000);
+    assert_eq!(policy.min_timeout_ms(), 50);
+    assert_eq!(policy.max_timeout_ms(), 120_000);
+    assert!(policy.recycle_on_timeout());
+    assert!(!policy.enforcement_supported());
+    assert_eq!(
+        policy.unsupported_phase(),
+        "unsupported_worker_timeout_enforcement".to_string()
+    );
+    let reason = policy
+        .unsupported_reason()
+        .expect("timeout policy should expose unsupported reason");
+    assert!(reason.contains("not wired"));
 }
 
 #[wasm_bindgen_test]

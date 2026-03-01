@@ -17,6 +17,8 @@ This document defines the JS-facing contract currently exported by
   - Returns bridge/runtime status summary.
 - `wasm_worker_info() -> WasmWorkerInfo`
   - Returns worker-runtime contract status summary.
+- `wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy`
+  - Returns timeout/recycle contract metadata for worker execution.
 - `wasm_worker_state_keys() -> Array`
   - Returns canonical worker runtime state keys.
 - `wasm_worker_lifecycle_phase_keys() -> Array`
@@ -88,6 +90,16 @@ This document defines the JS-facing contract currently exported by
 - `state: String` (currently `"unwired"`)
 - `interruption_model: String` (currently `"worker_recycle"`)
 - `blocker_count: usize`
+
+## `WasmWorkerTimeoutPolicy`
+
+- `default_timeout_ms: u32` (currently `5000`)
+- `min_timeout_ms: u32` (currently `50`)
+- `max_timeout_ms: u32` (currently `120000`)
+- `recycle_on_timeout: bool` (currently `true`)
+- `enforcement_supported: bool` (currently `false`)
+- `unsupported_phase: String` (currently `"unsupported_worker_timeout_enforcement"`)
+- `unsupported_reason: Option<String>`
 
 ## `WasmWorkerLifecycleResult`
 
