@@ -32,12 +32,11 @@ Current pain points this plan addresses:
 - Milestone 2 (Docs Shell and Navigation): COMPLETE
 - Milestone 3 (Component Library v1): COMPLETE
 - Milestone 4 (Content Refactor v1): COMPLETE
-- Milestone 5 (QA and Accessibility Hardening): IN PROGRESS
-  - Completed: skip links, focus-visible states, sidebar `aria-current`, mobile sidebar collapse, docs pager, link/meta validation checks.
-  - Remaining: broader manual contrast/device pass and optional keyboard-only walkthrough checklist.
+- Milestone 5 (QA and Accessibility Hardening): COMPLETE
+  - Completed: skip links, focus-visible states, sidebar `aria-current`, mobile sidebar collapse, docs pager, link/meta validation checks, sidebar visibility regression guardrails, and written pre-merge quality/accessibility checklist (`website/docs/QUALITY_CHECKLIST.md`).
 - Milestone 6 (Performance and Build Hygiene): IN PROGRESS
-  - Completed: copy-button script deduplication into one shared static script and scoped interaction scripts only where needed.
-  - Remaining: optional Lighthouse baseline capture and script-byte budget note.
+  - Completed: copy-button script deduplication into one shared static script, scoped interaction scripts only where needed, and deterministic local dist size reporting (`pnpm --dir website report:size` -> `website/perf/build_size_latest.json`).
+  - Remaining: optional Lighthouse baseline capture and explicit size budget threshold policy.
 - Milestone 7 (Deployment and Operations): COMPLETE
   - `website-pages` deploy workflow publishes `website/dist` to `gh-pages`, computes `ASTRO_SITE`/`ASTRO_BASE` deterministically, and gates deploys on `build:check`.
 - Milestone 8 (Expansion Track): PENDING
