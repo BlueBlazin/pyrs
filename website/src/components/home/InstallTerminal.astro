@@ -88,12 +88,16 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 	.cmd-box {
 		margin: 0;
 		overflow-x: auto;
+		overflow-y: hidden;
 		padding: 0.84rem 0.92rem 0.88rem;
 		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 		font-size: 0.78rem;
 		line-height: 1.52;
 		color: #ecd9cd;
 		background: #070605;
+		scrollbar-width: thin;
+		scrollbar-color: rgba(186, 142, 112, 0.6) rgba(25, 16, 12, 0.72);
+		scrollbar-gutter: stable both-edges;
 	}
 
 	.cmd-box code {
@@ -105,6 +109,7 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 		display: flex;
 		align-items: flex-start;
 		gap: 0.54rem;
+		min-width: 0;
 	}
 
 	.cmd-line + .cmd-line {
@@ -127,11 +132,50 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 
 	.cmd-text {
 		color: #ecd9cd;
-		white-space: pre;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		word-break: break-word;
+		min-width: 0;
+		flex: 1;
 	}
 
 	.cmd-box ::selection {
 		background: rgba(201, 110, 66, 0.28);
 		color: #fff5ef;
+	}
+
+	.cmd-box::-webkit-scrollbar {
+		height: 0.44rem;
+	}
+
+	.cmd-box::-webkit-scrollbar-track {
+		background: rgba(25, 16, 12, 0.72);
+		border-radius: 999px;
+	}
+
+	.cmd-box::-webkit-scrollbar-thumb {
+		background: linear-gradient(90deg, rgba(189, 144, 112, 0.68) 0%, rgba(164, 123, 95, 0.68) 100%);
+		border: 1px solid rgba(10, 7, 6, 0.92);
+		border-radius: 999px;
+	}
+
+	.cmd-box::-webkit-scrollbar-thumb:hover {
+		background: linear-gradient(90deg, rgba(205, 160, 127, 0.74) 0%, rgba(178, 136, 107, 0.74) 100%);
+	}
+
+	.cmd-box::-webkit-scrollbar-corner {
+		background: transparent;
+	}
+
+	@media (max-width: 760px) {
+		.cmd-box {
+			padding: 0.8rem 0.82rem 0.84rem;
+			font-size: 0.75rem;
+			line-height: 1.48;
+		}
+
+		.cmd-line {
+			gap: 0.44rem;
+		}
 	}
 </style>
