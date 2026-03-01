@@ -52,3 +52,13 @@ pnpm --dir website preview
 
 - Update install commands in `src/config/installCommands.ts`.
 - Both landing install section and docs install/getting-started pages consume these constants.
+
+## Deployment (GitHub Pages)
+
+- Workflow: `.github/workflows/website-pages.yml`.
+- Trigger: push to `main`/`master` when `website/**` changes (or manual dispatch).
+- Publish target: `gh-pages` branch root from `website/dist`.
+- The workflow sets:
+  - `ASTRO_SITE` to `https://<repo>.github.io` for user/org pages, or `https://<owner>.github.io` for project pages.
+  - `ASTRO_BASE` to `/` for user/org pages, or `/<repo>/` for project pages.
+- Release gate for deploy is `pnpm --dir website build:check` (build + internal link/meta validation).

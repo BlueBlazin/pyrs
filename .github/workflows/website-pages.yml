@@ -42,17 +42,20 @@ jobs:
       - name: Install website dependencies
         run: pnpm --dir website install --frozen-lockfile
 
-      - name: Configure Astro base path
+      - name: Configure Astro site and base path
         run: |
+          owner="${GITHUB_REPOSITORY%/*}"
           repo_name="${GITHUB_REPOSITORY#*/}"
           if [[ "$repo_name" == *.github.io ]]; then
+            echo "ASTRO_SITE=https://${repo_name}" >> "$GITHUB_ENV"
             echo "ASTRO_BASE=/" >> "$GITHUB_ENV"
           else
+            echo "ASTRO_SITE=https://${owner}.github.io" >> "$GITHUB_ENV"
             echo "ASTRO_BASE=/${repo_name}/" >> "$GITHUB_ENV"
           fi
 
-      - name: Build website
-        run: pnpm --dir website build
+      - name: Build and validate website
+        run: pnpm --dir website build:check
 
       - name: Publish dist to gh-pages branch root
         uses: peaceiris/actions-gh-pages@v4
