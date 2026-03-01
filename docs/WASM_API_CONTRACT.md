@@ -5,6 +5,15 @@ Status: branch-local draft, API version `1`.
 This document defines the JS-facing contract currently exported by
 `src/wasm/mod.rs`.
 
+## Execution Mode Matrix
+
+| Surface | Mode | Parse/compile invalid | Parse+compile valid with blocked capability import | Parse+compile valid without blocked imports |
+| --- | --- | --- | --- | --- |
+| `execute(source)` | default | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_execution` (`blocker_key = <capability_key>`) | `unsupported_execution` (`blocker_key = execution_backend_unwired`) |
+| `execute(source)` | `wasm-vm-probe` | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_execution` (`blocker_key = <capability_key>`) | `ok` (success) or `runtime_error` (`blocker_key = None`) |
+| `wasm_worker_execute(source)` | default | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_worker_execution` (`blocker_key = <capability_key>`) | `unsupported_worker_execution` (`blocker_key = worker_runtime_unwired`) |
+| `wasm_worker_execute(source)` | `wasm-vm-probe` | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_worker_execution` (`blocker_key = <capability_key>`) | `ok` (success) or `runtime_error` (`blocker_key = None`) |
+
 ## Top-Level Functions
 
 - `pyrs_version() -> String`
