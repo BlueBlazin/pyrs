@@ -479,6 +479,10 @@ Completed on this branch:
   in fixture rows, worker-summary validation can run in `--vm-probe` mode, and
   both wasm gate scripts now emit
   `perf/wasm_worker_contract_summary_vm_probe_latest.json`.
+- latest: wasm worker-session contract tests are now vm-probe aware for
+  execute/execute-with-operation baseline snippets (`x = 1`), so probe-mode
+  `ok` behavior and default-mode `unsupported_worker_execution` behavior are
+  both explicitly asserted.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

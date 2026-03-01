@@ -648,23 +648,38 @@ fn wasm_worker_session_contract_is_stable() {
     assert!(session.last_error().is_some());
 
     let execute = session.execute("x = 1\n");
-    assert_eq!(execute.phase(), "unsupported_worker_execution");
-    assert_eq!(
-        execute.blocker_key(),
-        Some("worker_runtime_unwired".to_string())
-    );
+    if vm_probe_enabled() {
+        assert_eq!(execute.phase(), "ok");
+        assert!(execute.blocker_key().is_none());
+    } else {
+        assert_eq!(execute.phase(), "unsupported_worker_execution");
+        assert_eq!(
+            execute.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+    }
     assert_eq!(session.executes_requested(), 1);
     let execute_operation_id = session
         .last_operation_id()
         .expect("last operation id after worker execute should exist");
     assert!(execute_operation_id.starts_with("worker_execute_"));
-    assert_eq!(
-        session
-            .last_phase()
-            .expect("last phase after worker execute should exist"),
-        "unsupported_worker_execution".to_string()
-    );
-    assert!(session.last_error().is_some());
+    if vm_probe_enabled() {
+        assert_eq!(
+            session
+                .last_phase()
+                .expect("last phase after worker execute should exist"),
+            "ok".to_string()
+        );
+        assert!(session.last_error().is_none());
+    } else {
+        assert_eq!(
+            session
+                .last_phase()
+                .expect("last phase after worker execute should exist"),
+            "unsupported_worker_execution".to_string()
+        );
+        assert!(session.last_error().is_some());
+    }
 
     let invalid_timeout = session.set_timeout_ms(0);
     assert_eq!(
@@ -717,23 +732,36 @@ fn wasm_worker_session_contract_is_stable() {
 fn wasm_worker_session_execute_with_operation_contract_is_stable() {
     let mut session = WasmWorkerSession::new();
     let first = session.execute_with_operation("x = 1\n");
-    assert_eq!(
-        first.phase(),
-        "unsupported_worker_execution",
-        "first worker execute-with-operation phase mismatch"
-    );
+    if vm_probe_enabled() {
+        assert_eq!(
+            first.phase(),
+            "ok",
+            "first worker execute-with-operation phase mismatch"
+        );
+    } else {
+        assert_eq!(
+            first.phase(),
+            "unsupported_worker_execution",
+            "first worker execute-with-operation phase mismatch"
+        );
+    }
     let first_id = first.operation_id();
     assert!(first_id.starts_with("worker_execute_"));
     assert_eq!(session.executes_requested(), 1);
     assert_eq!(session.last_operation_id(), Some(first_id.clone()));
-    assert_eq!(
-        session.last_phase(),
-        Some("unsupported_worker_execution".to_string())
-    );
-    assert_eq!(
-        first.blocker_key(),
-        Some("worker_runtime_unwired".to_string())
-    );
+    if vm_probe_enabled() {
+        assert_eq!(session.last_phase(), Some("ok".to_string()));
+        assert!(first.blocker_key().is_none());
+    } else {
+        assert_eq!(
+            session.last_phase(),
+            Some("unsupported_worker_execution".to_string())
+        );
+        assert_eq!(
+            first.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+    }
 
     let second = session.execute_with_operation("def broken(:\n");
     assert_eq!(
