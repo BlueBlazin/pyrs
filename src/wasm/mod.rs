@@ -1,5 +1,6 @@
 use std::sync::Once;
 
+use crate::host::{HostCapability, VmHost, WasmHost};
 use wasm_bindgen::prelude::*;
 
 /// Minimal WASM bridge surface used during compile-isolation bring-up.
@@ -79,6 +80,77 @@ impl WasmSession {
     #[wasm_bindgen(getter)]
     pub fn last_error(&self) -> Option<String> {
         self.last_error.clone()
+    }
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmCapabilityReport {
+    filesystem_read: bool,
+    filesystem_write: bool,
+    environment_read: bool,
+    process_args: bool,
+    process_spawn: bool,
+    dynamic_library_load: bool,
+    interactive_terminal: bool,
+    network_sockets: bool,
+}
+
+#[wasm_bindgen]
+impl WasmCapabilityReport {
+    #[wasm_bindgen(getter)]
+    pub fn filesystem_read(&self) -> bool {
+        self.filesystem_read
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn filesystem_write(&self) -> bool {
+        self.filesystem_write
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn environment_read(&self) -> bool {
+        self.environment_read
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn process_args(&self) -> bool {
+        self.process_args
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn process_spawn(&self) -> bool {
+        self.process_spawn
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn dynamic_library_load(&self) -> bool {
+        self.dynamic_library_load
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn interactive_terminal(&self) -> bool {
+        self.interactive_terminal
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn network_sockets(&self) -> bool {
+        self.network_sockets
+    }
+}
+
+/// Exposes explicit capability support for browser mode.
+#[wasm_bindgen]
+pub fn wasm_capabilities() -> WasmCapabilityReport {
+    let host = WasmHost;
+    WasmCapabilityReport {
+        filesystem_read: host.supports(HostCapability::FilesystemRead),
+        filesystem_write: host.supports(HostCapability::FilesystemWrite),
+        environment_read: host.supports(HostCapability::EnvironmentRead),
+        process_args: host.supports(HostCapability::ProcessArgs),
+        process_spawn: host.supports(HostCapability::ProcessSpawn),
+        dynamic_library_load: host.supports(HostCapability::DynamicLibraryLoad),
+        interactive_terminal: host.supports(HostCapability::InteractiveTerminal),
+        network_sockets: host.supports(HostCapability::NetworkSockets),
     }
 }
 
