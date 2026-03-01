@@ -11,15 +11,15 @@ const year = new Date().getFullYear();
 <footer class:list={["site-footer", isDocs ? "docs" : "home"]}>
 	<p>© {year} PYRS</p>
 	<nav aria-label="Footer links">
-		<a href="https://github.com/BlueBlazin/pyrs">GitHub</a>
 		{isDocs ? <a href="/">Home</a> : <a href="/docs/">Docs</a>}
+		<a href="https://github.com/BlueBlazin/pyrs">GitHub</a>
 	</nav>
 </footer>
 
 <style>
 	.site-footer {
 		margin-top: 2.2rem;
-		padding-top: 0.95rem;
+		padding: 1.3rem 0 0.8rem;
 		border-top: 1px solid;
 		display: flex;
 		align-items: center;
