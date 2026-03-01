@@ -443,14 +443,18 @@ fn run_interactive_session(
 
                 pending.push_str(&line);
                 pending.push('\n');
-                match parser::parse_module(&pending) {
+                let parse_source = repl_parse_candidate_source(&pending);
+                match parser::parse_module(parse_source) {
                     Ok(module) => {
+                        if repl_parse_success_requires_more_input(parse_source, &line) {
+                            continue;
+                        }
                         let completion_plan = repl_module_completion_plan(&module);
-                        vm.cache_source_text("<stdin>", &pending);
+                        vm.cache_source_text("<stdin>", parse_source);
                         if let Err(err) = execute_parsed_module_with_timing(
                             vm,
                             &module,
-                            &pending,
+                            parse_source,
                             "<stdin>",
                             true,
                             timing_enabled,
@@ -468,13 +472,13 @@ fn run_interactive_session(
                         pending.clear();
                     }
                     Err(parse_err) => {
-                        if repl_input_is_incomplete(&pending, &parse_err) {
+                        if repl_input_is_incomplete(parse_source, &parse_err) {
                             continue;
                         }
                         eprintln!(
                             "{}",
                             error_style::format_error_for_stderr(&format_parse_error(
-                                &pending, "<stdin>", &parse_err,
+                                parse_source, "<stdin>", &parse_err,
                             ))
                         );
                         pending.clear();
@@ -2062,6 +2066,38 @@ fn format_parse_error(source: &str, filename: &str, err: &ParseError) -> String 
     format_syntax_error(filename, source, err)
 }
 
+fn repl_parse_candidate_source(pending: &str) -> &str {
+    pending.strip_suffix('\n').unwrap_or(pending)
+}
+
+fn repl_parse_success_requires_more_input(source: &str, latest_line: &str) -> bool {
+    !latest_line.trim().is_empty() && repl_has_eof_implied_dedent(source)
+}
+
+fn repl_has_eof_implied_dedent(source: &str) -> bool {
+    let mut lexer = parser::lexer::Lexer::new(source);
+    let Ok(tokens) = lexer.tokenize() else {
+        return false;
+    };
+    let eof_offset = source.len();
+    let mut index = tokens.len();
+    while index > 0 && matches!(tokens[index - 1].kind, parser::token::TokenKind::EndMarker) {
+        index -= 1;
+    }
+    let mut saw_eof_dedent = false;
+    while index > 0 {
+        let token = &tokens[index - 1];
+        if !matches!(token.kind, parser::token::TokenKind::Dedent) {
+            break;
+        }
+        if token.offset == eof_offset {
+            saw_eof_dedent = true;
+        }
+        index -= 1;
+    }
+    saw_eof_dedent
+}
+
 fn repl_input_is_incomplete(source: &str, err: &ParseError) -> bool {
     let source_trimmed = source.trim_end();
     if source_trimmed.is_empty() {
@@ -2128,6 +2164,7 @@ mod tests {
         ReplMagicCommand, ReplThemeMode, ResolvedReplTheme, TimeItRequest, completion_fragment,
         format_parse_error, is_path_like, parse_colorfgbg_background_code, parse_magic_command,
         parse_meta_command, parse_repl_theme_mode, repl_input_is_incomplete,
+        repl_parse_candidate_source, repl_parse_success_requires_more_input,
         repl_module_completion_plan, repl_palette, resolve_repl_theme,
     };
     use crate::parser;
@@ -2151,6 +2188,35 @@ mod tests {
         let source = "if True print(1)\n";
         let err = parser::parse_module(source).expect_err("parse should fail");
         assert!(!repl_input_is_incomplete(source, &err));
+    }
+
+    #[test]
+    fn repl_candidate_source_omits_latest_synthetic_newline() {
+        assert_eq!(
+            repl_parse_candidate_source("class A:\n    x = 1\n"),
+            "class A:\n    x = 1"
+        );
+        assert_eq!(
+            repl_parse_candidate_source("class A:\n    x = 1\n\n"),
+            "class A:\n    x = 1\n"
+        );
+    }
+
+    #[test]
+    fn repl_class_block_stays_incomplete_until_blank_line() {
+        let without_blank = repl_parse_candidate_source("class A:\n    x = 1\n");
+        assert!(parser::parse_module(without_blank).is_ok());
+        assert!(repl_parse_success_requires_more_input(
+            without_blank,
+            "    x = 1"
+        ));
+
+        let with_blank = repl_parse_candidate_source("class A:\n    x = 1\n\n");
+        assert!(
+            parser::parse_module(with_blank).is_ok(),
+            "class block should complete after blank line"
+        );
+        assert!(!repl_parse_success_requires_more_input(with_blank, ""));
     }
 
     #[test]
