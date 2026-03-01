@@ -106,7 +106,7 @@ Exit criteria:
 
 ## Milestone W3: Web Host Baseline
 
-Current state: pending.
+Current state: in progress.
 
 Deliverables:
 - `WebHost` implementation with explicit unsupported-capability errors.
