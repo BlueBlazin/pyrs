@@ -1861,17 +1861,33 @@ fn execute_compiled_snippet_with_vm(code: &crate::bytecode::CodeObject) -> WasmE
             line: 0,
             column: 0,
         },
-        Err(err) => WasmExecutionResult {
-            success: false,
-            phase: WASM_EXECUTION_PHASE_RUNTIME_ERROR.to_string(),
-            stdout: String::new(),
-            stderr: err.message.clone(),
-            error: Some(err.message),
-            blocker_key: None,
-            line: 0,
-            column: 0,
-        },
+        Err(err) => {
+            let (line, column) = runtime_error_line_column(&err);
+            let message = err.message.clone();
+            WasmExecutionResult {
+                success: false,
+                phase: WASM_EXECUTION_PHASE_RUNTIME_ERROR.to_string(),
+                stdout: String::new(),
+                stderr: message.clone(),
+                error: Some(message),
+                blocker_key: None,
+                line,
+                column,
+            }
+        }
     }
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn runtime_error_line_column(err: &crate::runtime::RuntimeError) -> (usize, usize) {
+    if let Some(exception) = err.exception.as_ref() {
+        for frame in &exception.traceback_frames {
+            if frame.line > 0 {
+                return (frame.line, frame.column);
+            }
+        }
+    }
+    (0, 0)
 }
 
 /// Executes a snippet using the current wasm bridge contract.

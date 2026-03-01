@@ -159,6 +159,8 @@ This document defines the JS-facing contract currently exported by
 - `blocker_key: Option<String>`
 - `line: usize`
 - `column: usize`
+  - for `runtime_error` in `wasm-vm-probe` builds, populated from the innermost
+    available traceback frame when present.
 
 ## `WasmWorkerLifecycleResult`
 

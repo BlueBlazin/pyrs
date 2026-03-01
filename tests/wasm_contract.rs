@@ -1187,10 +1187,14 @@ fn wasm_vm_probe_runtime_error_phase_is_reported() {
     assert_eq!(runtime_error.phase(), "runtime_error");
     assert!(runtime_error.error().is_some());
     assert!(runtime_error.blocker_key().is_none());
+    assert!(runtime_error.line() > 0);
+    assert!(runtime_error.column() > 0);
 
     let worker_runtime_error = wasm_worker_execute("1 / 0\n");
     assert!(!worker_runtime_error.success());
     assert_eq!(worker_runtime_error.phase(), "runtime_error");
     assert!(worker_runtime_error.error().is_some());
     assert!(worker_runtime_error.blocker_key().is_none());
+    assert!(worker_runtime_error.line() > 0);
+    assert!(worker_runtime_error.column() > 0);
 }
