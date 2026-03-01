@@ -197,6 +197,13 @@ impl WasmSession {
         result
     }
 
+    pub fn check_compile(&mut self, source: &str) -> WasmCompileResult {
+        let result = check_compile_result(source);
+        self.snippets_checked += 1;
+        self.last_error = result.error.clone();
+        result
+    }
+
     pub fn execute(&mut self, source: &str) -> WasmExecutionResult {
         let result = execute(source);
         self.snippets_checked += 1;

@@ -125,12 +125,36 @@ fn wasm_session_tracks_and_resets_state() {
     assert!(first.ok());
     assert_eq!(session.snippets_checked(), 1);
 
-    let second = session.execute("x = 1\n");
-    assert_eq!(second.phase(), "unsupported_execution");
+    let second = session.check_compile("x = 1\n");
+    assert!(second.ok());
+    assert_eq!(second.phase(), "ok");
     assert_eq!(session.snippets_checked(), 2);
+
+    let third = session.execute("x = 1\n");
+    assert_eq!(third.phase(), "unsupported_execution");
+    assert_eq!(session.snippets_checked(), 3);
+    assert!(session.last_error().is_some());
+
+    let fourth = session.check_compile("return 1\n");
+    assert!(!fourth.ok());
+    assert_eq!(fourth.phase(), "compile_error");
+    assert_eq!(session.snippets_checked(), 4);
+
+    let fifth = session.execute("x = 1\n");
+    assert_eq!(fifth.phase(), "unsupported_execution");
+    assert_eq!(session.snippets_checked(), 5);
     assert!(session.last_error().is_some());
 
     session.reset();
     assert_eq!(session.snippets_checked(), 0);
     assert!(session.last_error().is_none());
+}
+
+#[wasm_bindgen_test]
+fn wasm_session_execute_contract_is_stable() {
+    let mut session = WasmSession::new();
+    let second = session.execute("x = 1\n");
+    assert_eq!(second.phase(), "unsupported_execution");
+    assert_eq!(session.snippets_checked(), 1);
+    assert!(session.last_error().is_some());
 }

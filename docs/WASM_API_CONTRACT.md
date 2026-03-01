@@ -92,6 +92,7 @@ This document defines the JS-facing contract currently exported by
 
 - `new()`
 - `check_syntax(source: &str) -> WasmSyntaxResult`
+- `check_compile(source: &str) -> WasmCompileResult`
 - `execute(source: &str) -> WasmExecutionResult`
 - `reset()`
 - `snippets_checked: usize`

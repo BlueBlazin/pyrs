@@ -265,8 +265,9 @@ Completed on this branch:
 - `c86b20c`: wasm execution blocker contract exports (`keys + error`) and execute-path error wiring.
 - `508317e`: wasm parse+compile contract for `execute()`/`check_compile(_result)` with explicit
   `compile_error` phase while runtime execution remains unwired.
-- latest: structured execution-blocker export (`wasm_execution_blockers`) now includes
+- `f64f85b`: structured execution-blocker export (`wasm_execution_blockers`) now includes
   backend + unsupported capability blockers as key/message entries.
+- latest: `WasmSession` now exposes `check_compile()` for stateful parse+compile validation.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
