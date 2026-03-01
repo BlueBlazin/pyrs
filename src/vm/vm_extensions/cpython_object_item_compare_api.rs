@@ -53,7 +53,7 @@ fn cpython_set_item_runtime_error(message: String) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetItem(object: *mut c_void, key: *mut c_void) -> *mut c_void {
-    let trace_getitem = std::env::var_os("PYRS_TRACE_CPY_GETITEM").is_some();
+    let trace_getitem = env_var_present_cached("PYRS_TRACE_CPY_GETITEM");
     if trace_getitem {
         let (object_tag, key_desc) = with_active_cpython_context_mut(|context| {
             let object_tag = context
@@ -175,7 +175,7 @@ pub unsafe extern "C" fn PyObject_SetItem(
     key: *mut c_void,
     value: *mut c_void,
 ) -> i32 {
-    let trace_setitem = std::env::var_os("PYRS_TRACE_CPY_SETITEM").is_some();
+    let trace_setitem = env_var_present_cached("PYRS_TRACE_CPY_SETITEM");
     if trace_setitem {
         let (obj_desc, key_desc, val_desc) = with_active_cpython_context_mut(|context| {
             let obj = context
@@ -244,7 +244,7 @@ pub unsafe extern "C" fn PyObject_SetItem(
             context.set_error("PyObject_SetItem received unknown value pointer");
             return -1;
         };
-        let trace_pyx_capi_enabled = std::env::var_os("PYRS_TRACE_PYX_CAPI").is_some();
+        let trace_pyx_capi_enabled = env_var_present_cached("PYRS_TRACE_PYX_CAPI");
         let trace_pyx_capi_item =
             trace_pyx_capi_enabled && matches!(&key_value, Value::Str(name) if name == "__pyx_capi__");
         let trace_module_dict_set = trace_pyx_capi_enabled && module_target.is_some();
@@ -1462,7 +1462,7 @@ pub unsafe extern "C" fn PyObject_RichCompareBool(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_IsInstance(object: *mut c_void, class: *mut c_void) -> i32 {
-    if std::env::var_os("PYRS_TRACE_ISINSTANCE").is_some() {
+    if env_var_present_cached("PYRS_TRACE_ISINSTANCE") {
         eprintln!(
             "[cpy-isinstance] raw-enter object={:p} class={:p}",
             object, class
@@ -1472,7 +1472,7 @@ pub unsafe extern "C" fn PyObject_IsInstance(object: *mut c_void, class: *mut c_
         unsafe { PyErr_BadInternalCall() };
         return -1;
     }
-    let trace_isinstance = std::env::var_os("PYRS_TRACE_ISINSTANCE").is_some();
+    let trace_isinstance = env_var_present_cached("PYRS_TRACE_ISINSTANCE");
     let class_type_name = if trace_isinstance {
         cpython_type_name_for_object_ptr(class)
     } else {
