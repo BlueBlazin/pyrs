@@ -1,0 +1,87 @@
+---
+interface Props {
+	variant?: "home" | "docs";
+}
+
+const { variant = "home" } = Astro.props;
+const isDocs = variant === "docs";
+const year = new Date().getFullYear();
+---
+
+<footer class:list={["site-footer", isDocs ? "docs" : "home"]}>
+	<p>© {year} PYRS</p>
+	<nav aria-label="Footer links">
+		<a href="https://github.com/BlueBlazin/pyrs">GitHub</a>
+		{isDocs ? <a href="/">Home</a> : <a href="/docs/">Docs</a>}
+	</nav>
+</footer>
+
+<style>
+	.site-footer {
+		margin-top: 2.2rem;
+		padding-top: 0.95rem;
+		border-top: 1px solid;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.9rem;
+	}
+
+	.site-footer p {
+		margin: 0;
+		font-size: 0.82rem;
+		letter-spacing: 0.02em;
+	}
+
+	.site-footer nav {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.9rem;
+	}
+
+	.site-footer a {
+		text-decoration: none;
+		font-size: 0.82rem;
+		transition: color 130ms ease;
+	}
+
+	.site-footer.home {
+		border-color: rgba(106, 70, 50, 0.72);
+	}
+
+	.site-footer.home p {
+		color: #beaa9f;
+	}
+
+	.site-footer.home a {
+		color: #c9ab95;
+	}
+
+	.site-footer.home a:hover {
+		color: #f7eee8;
+	}
+
+	.site-footer.docs {
+		border-color: rgba(48, 56, 74, 0.78);
+	}
+
+	.site-footer.docs p {
+		color: #a5aec0;
+	}
+
+	.site-footer.docs a {
+		color: #afbdd8;
+	}
+
+	.site-footer.docs a:hover {
+		color: #f3f6fb;
+	}
+
+	@media (max-width: 560px) {
+		.site-footer {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.5rem;
+		}
+	}
+</style>
