@@ -313,6 +313,8 @@ Completed on this branch:
   `wasm_host_unsupported_messages_are_stable` as a required local guard.
 - latest: worker timeout updates now have explicit contract APIs
   (`wasm_worker_set_timeout`, `wasm_worker_timeout_phase_keys`) with session telemetry.
+- latest: `scripts/run_wasm_contract_smoke.sh` now includes targeted host
+  capability/message nextest checks in the compile-only smoke path.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
