@@ -1213,26 +1213,26 @@ impl Drop for Vm {
                 let addr = raw as usize;
                 self.capi_registry_mark_pending_free(addr);
                 if !self.capi_owned_ptr_is_pinned(addr) {
-                    if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    if self.host.env_var_os("PYRS_TRACE_PIN_FREE").is_some() {
                         eprintln!("[pin-free] vm-skip ptr={:p} reason=not-in-set", raw);
                     }
                     self.capi_registry_mark_freed(addr);
                     continue;
                 }
                 if self.capi_registry_is_freed(addr) {
-                    if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    if self.host.env_var_os("PYRS_TRACE_PIN_FREE").is_some() {
                         eprintln!("[pin-free] vm-skip ptr={:p} reason=already-freed", raw);
                     }
                     self.capi_registry_mark_freed(addr);
                     continue;
                 }
                 if !freed_pinned_allocations.insert(addr) {
-                    if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    if self.host.env_var_os("PYRS_TRACE_PIN_FREE").is_some() {
                         eprintln!("[pin-free] vm-skip ptr={:p} reason=duplicate", raw);
                     }
                     continue;
                 }
-                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                if self.host.env_var_os("PYRS_TRACE_PIN_FREE").is_some() {
                     eprintln!("[pin-free] vm-free ptr={:p}", raw);
                 }
                 // SAFETY: pointers were allocated via libc malloc in C-API compat paths.
@@ -1908,7 +1908,7 @@ impl Vm {
     #[inline]
     fn ensure_can_push_python_frame(&self) -> Result<(), RuntimeError> {
         if self.frames.len() as i64 >= self.recursion_limit {
-            if std::env::var_os("PYRS_TRACE_RECURSION_LIMIT").is_some() {
+            if self.host.env_var_os("PYRS_TRACE_RECURSION_LIMIT").is_some() {
                 let frame_summary = self
                     .frames
                     .iter()
