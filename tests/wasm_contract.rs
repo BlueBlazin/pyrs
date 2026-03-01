@@ -2,7 +2,8 @@
 
 use pyrs::wasm::{
     WasmSession, check_syntax_result, execute, wasm_api_version, wasm_capabilities,
-    wasm_capability_error, wasm_capability_keys, wasm_runtime_info,
+    wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
+    wasm_execution_blocker_keys, wasm_runtime_info,
 };
 use wasm_bindgen_test::*;
 
@@ -42,6 +43,23 @@ fn wasm_capability_contract_is_stable() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_execution_blocker_contract_is_stable() {
+    let keys = wasm_execution_blocker_keys();
+    let mut listed_keys = Vec::new();
+    for index in 0..keys.length() {
+        let key = keys
+            .get(index)
+            .as_string()
+            .expect("blocker key should be string");
+        listed_keys.push(key);
+    }
+    assert!(listed_keys.contains(&"execution_backend_unwired".to_string()));
+    let err = wasm_execution_blocker_error("execution_backend_unwired")
+        .expect("backend blocker should have error");
+    assert!(err.contains("not wired"));
+}
+
+#[wasm_bindgen_test]
 fn wasm_syntax_and_execute_contract() {
     let valid = check_syntax_result("value = 1\n");
     assert!(valid.ok());
@@ -57,7 +75,7 @@ fn wasm_syntax_and_execute_contract() {
     assert!(!unsupported.success());
     assert_eq!(unsupported.phase(), "unsupported_execution");
     assert!(unsupported.error().is_some());
-    assert!(!unsupported.stderr().is_empty());
+    assert!(unsupported.stderr().contains("not wired"));
 }
 
 #[wasm_bindgen_test]

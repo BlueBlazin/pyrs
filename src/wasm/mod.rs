@@ -5,6 +5,7 @@ use js_sys::Array;
 use wasm_bindgen::prelude::*;
 
 pub const WASM_API_VERSION: u32 = 1;
+const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired";
 
 /// Minimal WASM bridge surface used during compile-isolation bring-up.
 #[wasm_bindgen]
@@ -272,6 +273,23 @@ pub fn wasm_runtime_info() -> WasmRuntimeInfo {
     }
 }
 
+/// Returns canonical blocker keys that currently prevent wasm execution.
+#[wasm_bindgen]
+pub fn wasm_execution_blocker_keys() -> Array {
+    let keys = Array::new();
+    keys.push(&JsValue::from_str(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED));
+    keys
+}
+
+/// Returns a stable blocker message for wasm execution blockers.
+#[wasm_bindgen]
+pub fn wasm_execution_blocker_error(blocker_key: &str) -> Option<String> {
+    if blocker_key == WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED {
+        return Some("wasm execution backend is not wired yet".to_string());
+    }
+    wasm_capability_error(blocker_key)
+}
+
 /// Executes a snippet using the current wasm bridge contract.
 ///
 /// Current milestone behavior:
@@ -293,13 +311,14 @@ pub fn execute(source: &str) -> WasmExecutionResult {
         };
     }
 
-    let message = "wasm execution backend is not wired yet; syntax validation is available";
+    let message = wasm_execution_blocker_error(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED)
+        .unwrap_or_else(|| "wasm execution backend is not wired yet".to_string());
     WasmExecutionResult {
         success: false,
         phase: "unsupported_execution".to_string(),
         stdout: String::new(),
-        stderr: message.to_string(),
-        error: Some(message.to_string()),
+        stderr: message.clone(),
+        error: Some(message),
     }
 }
 

@@ -261,7 +261,8 @@ Completed on this branch:
 - `c8310f7`: `cpython_contextvar_api`/`cpython_module_api`/`cpython_tuple_api` probes switched to cached env helper.
 - `cf08545`: multi-file host-seam cleanup across stdlib/import/C-API runtime helpers.
 - `5811498`: host-routed depth-limit config in `vm_builtin_metadata` and host-adapter profile env reads in `pickle`.
-- latest: audit script now reports actionable-vs-allowlisted hits for central seam internals.
+- `8ecb0f5`: audit script now reports actionable-vs-allowlisted hits for central seam internals.
+- latest: wasm execution blocker contract exports (`keys + error`) and execute-path error wiring.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
