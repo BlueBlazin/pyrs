@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
+    "check:links": "node scripts/check-internal-links.mjs",
+    "build:check": "pnpm run build && pnpm run check:links",
     "preview": "astro preview",
     "astro": "astro"
   },

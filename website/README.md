@@ -10,6 +10,8 @@ From repo root:
 pnpm --dir website install
 pnpm --dir website dev
 pnpm --dir website build
+pnpm --dir website check:links
+pnpm --dir website build:check
 pnpm --dir website preview
 ```
 
