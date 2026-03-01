@@ -102,14 +102,14 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 
 	.cmd-box code {
 		display: block;
-		white-space: normal;
+		width: max-content;
+		min-width: 100%;
 	}
 
 	.cmd-line {
 		display: flex;
 		align-items: flex-start;
 		gap: 0.54rem;
-		min-width: 0;
 	}
 
 	.cmd-line + .cmd-line {
@@ -132,11 +132,8 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 
 	.cmd-text {
 		color: #ecd9cd;
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
-		word-break: break-word;
-		min-width: 0;
-		flex: 1;
+		white-space: pre;
+		flex: 0 0 auto;
 	}
 
 	.cmd-box ::selection {
