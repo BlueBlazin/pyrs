@@ -13,6 +13,48 @@ pub enum HostCapability {
     NetworkSockets,
 }
 
+impl HostCapability {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::FilesystemRead => "filesystem_read",
+            Self::FilesystemWrite => "filesystem_write",
+            Self::EnvironmentRead => "environment_read",
+            Self::ProcessArgs => "process_args",
+            Self::ProcessSpawn => "process_spawn",
+            Self::DynamicLibraryLoad => "dynamic_library_load",
+            Self::InteractiveTerminal => "interactive_terminal",
+            Self::NetworkSockets => "network_sockets",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::FilesystemRead => "read host filesystem paths",
+            Self::FilesystemWrite => "write host filesystem paths",
+            Self::EnvironmentRead => "read process environment variables",
+            Self::ProcessArgs => "read process argv metadata",
+            Self::ProcessSpawn => "spawn subprocesses",
+            Self::DynamicLibraryLoad => "load dynamic libraries/extensions",
+            Self::InteractiveTerminal => "interact with terminal/tty capabilities",
+            Self::NetworkSockets => "open raw network sockets",
+        }
+    }
+
+    pub fn from_key(raw: &str) -> Option<Self> {
+        match raw {
+            "filesystem_read" => Some(Self::FilesystemRead),
+            "filesystem_write" => Some(Self::FilesystemWrite),
+            "environment_read" => Some(Self::EnvironmentRead),
+            "process_args" => Some(Self::ProcessArgs),
+            "process_spawn" => Some(Self::ProcessSpawn),
+            "dynamic_library_load" => Some(Self::DynamicLibraryLoad),
+            "interactive_terminal" => Some(Self::InteractiveTerminal),
+            "network_sockets" => Some(Self::NetworkSockets),
+            _ => None,
+        }
+    }
+}
+
 /// Host boundary for runtime setup and environment probes.
 ///
 /// This is introduced as a non-invasive seam: default native behavior remains
@@ -26,6 +68,18 @@ pub trait VmHost: Send + Sync {
     fn current_exe(&self) -> Option<PathBuf>;
     fn os_name(&self) -> &'static str;
     fn supports(&self, capability: HostCapability) -> bool;
+
+    fn unsupported_message(&self, capability: HostCapability) -> Option<String> {
+        if self.supports(capability) {
+            None
+        } else {
+            Some(format!(
+                "unsupported capability '{}' ({}) in current host",
+                capability.key(),
+                capability.description()
+            ))
+        }
+    }
 
     fn env_flag_enabled(&self, name: &str) -> bool {
         let Some(raw) = self.env_var(name) else {
@@ -151,5 +205,24 @@ mod tests {
         assert!(!host.supports(HostCapability::DynamicLibraryLoad));
         assert!(!host.supports(HostCapability::InteractiveTerminal));
         assert!(!host.supports(HostCapability::NetworkSockets));
+    }
+
+    #[test]
+    fn capability_key_roundtrip_is_stable() {
+        let expected = [
+            HostCapability::FilesystemRead,
+            HostCapability::FilesystemWrite,
+            HostCapability::EnvironmentRead,
+            HostCapability::ProcessArgs,
+            HostCapability::ProcessSpawn,
+            HostCapability::DynamicLibraryLoad,
+            HostCapability::InteractiveTerminal,
+            HostCapability::NetworkSockets,
+        ];
+        for capability in expected {
+            let key = capability.key();
+            assert_eq!(HostCapability::from_key(key), Some(capability));
+        }
+        assert_eq!(HostCapability::from_key("unknown_capability"), None);
     }
 }

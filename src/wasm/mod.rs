@@ -206,6 +206,14 @@ pub fn wasm_capabilities() -> WasmCapabilityReport {
     }
 }
 
+/// Returns a stable unsupported-capability message for browser mode.
+#[wasm_bindgen]
+pub fn wasm_capability_error(capability_key: &str) -> Option<String> {
+    let host = WasmHost;
+    let capability = HostCapability::from_key(capability_key)?;
+    host.unsupported_message(capability)
+}
+
 /// Executes a snippet using the current wasm bridge contract.
 ///
 /// Current milestone behavior:
