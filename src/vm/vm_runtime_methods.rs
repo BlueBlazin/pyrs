@@ -420,7 +420,7 @@ impl Vm {
         value: Value,
         index: Value,
     ) -> Result<Value, RuntimeError> {
-        if std::env::var_os("PYRS_TRACE_GETITEM_ENTRY").is_some() {
+        if self.host.env_var_os("PYRS_TRACE_GETITEM_ENTRY").is_some() {
             eprintln!(
                 "[getitem-entry] value_type={} index_type={}",
                 self.value_type_name_for_error(&value),
@@ -782,7 +782,7 @@ impl Vm {
                         let mut index_int = match value_to_int(index.clone()) {
                             Ok(index) => index as isize,
                             Err(err) => {
-                                if std::env::var_os("PYRS_TRACE_GETITEM_INDEX").is_some() {
+                                if self.host.env_var_os("PYRS_TRACE_GETITEM_INDEX").is_some() {
                                     eprintln!(
                                         "[getitem-index] list index conversion failed container={} index={}",
                                         format_repr(&Value::List(obj.clone())),
@@ -816,7 +816,7 @@ impl Vm {
                         let mut index_int = match value_to_int(index.clone()) {
                             Ok(index) => index as isize,
                             Err(err) => {
-                                if std::env::var_os("PYRS_TRACE_GETITEM_INDEX").is_some() {
+                                if self.host.env_var_os("PYRS_TRACE_GETITEM_INDEX").is_some() {
                                     eprintln!(
                                         "[getitem-index] tuple index conversion failed container={} index={}",
                                         format_repr(&Value::Tuple(obj.clone())),
@@ -840,7 +840,7 @@ impl Vm {
                     let mut index_int = match value_to_int(index.clone()) {
                         Ok(index) => index as isize,
                         Err(err) => {
-                            if std::env::var_os("PYRS_TRACE_GETITEM_INDEX").is_some() {
+                            if self.host.env_var_os("PYRS_TRACE_GETITEM_INDEX").is_some() {
                                 eprintln!(
                                     "[getitem-index] str index conversion failed container={} index={}",
                                     format_repr(&Value::Str(value.clone())),
@@ -1188,7 +1188,7 @@ impl Vm {
                             }
                         }
                     } else {
-                        if std::env::var_os("PYRS_TRACE_GETITEM_UNSUPPORTED").is_some() {
+                        if self.host.env_var_os("PYRS_TRACE_GETITEM_UNSUPPORTED").is_some() {
                             eprintln!(
                                 "[getitem-unsupported] value={} index={}",
                                 format_repr(&other),
@@ -2480,7 +2480,10 @@ impl Vm {
         value: Value,
         index: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = std::env::var_os("PYRS_TRACE_GENERIC_ALIAS_SUBSCRIPT").is_some();
+        let trace = self
+            .host
+            .env_var_os("PYRS_TRACE_GENERIC_ALIAS_SUBSCRIPT")
+            .is_some();
         if trace {
             eprintln!(
                 "[ga-sub] enter value_type={} index_type={}",
@@ -2706,7 +2709,7 @@ impl Vm {
         let iter = match self.to_iterator_value(source) {
             Ok(iter) => iter,
             Err(err) if runtime_error_matches_exception(&err, "TypeError") => {
-                if std::env::var("PYRS_DEBUG_EXPECTED_ITERABLE").is_ok() {
+                if self.host.env_var("PYRS_DEBUG_EXPECTED_ITERABLE").is_some() {
                     let frames = self
                         .frames
                         .iter()
@@ -3562,7 +3565,7 @@ impl Vm {
             _ => return Err(RuntimeError::new("class body must be a function")),
         };
         let orig_bases_tuple = self.heap.alloc_tuple(args.clone());
-        let trace_build_class = std::env::var_os("PYRS_TRACE_BUILD_CLASS").is_some();
+        let trace_build_class = self.host.env_var_os("PYRS_TRACE_BUILD_CLASS").is_some();
         let trace_this_class = trace_build_class && name == "_TagInfo";
         let mut resolved_bases = Vec::new();
         let mut used_mro_entries = false;
@@ -3622,7 +3625,7 @@ impl Vm {
             match self.class_from_base_value(base.clone()) {
                 Ok(class) => base_classes.push(class),
                 Err(err) => {
-                    if std::env::var_os("PYRS_TRACE_CLASS_BASE").is_some()
+                    if self.host.env_var_os("PYRS_TRACE_CLASS_BASE").is_some()
                         && runtime_error_matches_exception(&err, "TypeError")
                     {
                         eprintln!("[class-base] __build_class__ base={}", format_repr(&base));
@@ -3660,7 +3663,7 @@ impl Vm {
                 Err(err) => return Err(err),
             };
             if let Some(prepare_callable) = prepare_callable {
-                if std::env::var_os("PYRS_TRACE_PREPARE_CALL").is_some() {
+                if self.host.env_var_os("PYRS_TRACE_PREPARE_CALL").is_some() {
                     let callable_type = self.value_type_name_for_error(&prepare_callable);
                     let callable_repr = format_repr(&prepare_callable);
                     let meta_name = match &meta {
@@ -4179,7 +4182,7 @@ impl Vm {
                 Ok(self.synthetic_builtin_class("OrderedDict"))
             }
             other => {
-                if std::env::var_os("PYRS_TRACE_CLASS_BASE").is_some() {
+                if self.host.env_var_os("PYRS_TRACE_CLASS_BASE").is_some() {
                     eprintln!(
                         "[class-base] unsupported base value={}",
                         format_repr(&other)
