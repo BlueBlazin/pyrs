@@ -17,6 +17,7 @@ Use this file to find canonical ownership quickly.
 - `docs/EXTENSION_CAPI_V1.md`: first shipped C-API header/symbol slice for compiled-extension bring-up.
 - `docs/CAPI_PLAN.md`: two-lane C-API execution plan (Stable ABI closure + NumPy-required non-abi3 closure).
 - `docs/CAPI_LIFETIME_MODEL.md`: P0 ownership/lifetime architecture for CPython-compat pointers and UAF closure plan.
+- `docs/WEBSITE_DOCS_DESIGN_SYSTEM_PLAN.md`: multi-milestone website/docs design-system and IA execution plan.
 
 ## Gap Tracking
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.
