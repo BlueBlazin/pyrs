@@ -1,0 +1,76 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Troubleshooting
+description: Common PYRS setup, import, REPL, and diagnostics troubleshooting paths.
+pageTitle: Troubleshooting
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import CommandBlock from "../../components/docs/CommandBlock.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	Use this page to quickly isolate common runtime, import, and diagnostics issues.
+</DocSection>
+
+<DocSection title="Import and Startup Issues">
+	<DataTable headers={["Symptom", "Checks"]}>
+		<tr>
+			<td>Stdlib import fails unexpectedly</td>
+			<td>Verify <code>PYRS_CPYTHON_LIB</code> points to a valid CPython 3.14 <code>Lib/</code> tree.</td>
+		</tr>
+		<tr>
+			<td>Startup fails on <code>site</code> import</td>
+			<td>Run with <code>-S</code> to isolate startup behavior, then validate stdlib root contents.</td>
+		</tr>
+		<tr>
+			<td>Different imports in virtualenv vs non-virtualenv runs</td>
+			<td>Check whether <code>VIRTUAL_ENV</code> is active and contributing <code>site-packages</code> entries.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Diagnostics and Parse Failures">
+	<DataTable headers={["Symptom", "Checks"]}>
+		<tr>
+			<td>Unexpected syntax error formatting</td>
+			<td>Compare PYRS output with CPython for the same minimal snippet and mode (<code>-c</code> vs file).</td>
+		</tr>
+		<tr>
+			<td>Missing caret ranges</td>
+			<td>Check if startup used <code>-X no_debug_ranges</code> (caret range metadata disabled).</td>
+		</tr>
+		<tr>
+			<td>Runtime traceback shape mismatch</td>
+			<td>Capture complete output and include both PYRS and CPython traces in report.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Fast Triage Commands">
+	<CommandBlock
+		commands={[
+			"pyrs --version",
+			'pyrs -c "import sys; print(sys.version)"',
+			"pyrs -S -c \"import sys; print(sys.path)\"",
+			"pyrs --ast path/to/reproducer.py",
+			"pyrs --bytecode path/to/reproducer.py",
+		]}
+	/>
+</DocSection>
+
+<DocSection title="Bug Report Checklist">
+	<ul class="docs-list">
+		<li>Provide a minimal reproducer snippet or file.</li>
+		<li>Include exact invocation mode and flags used.</li>
+		<li>Include environment variables that influence startup/import behavior.</li>
+		<li>Provide both CPython and PYRS output for parity issues.</li>
+		<li>Include platform and architecture details (for example macOS arm64, Linux x86_64).</li>
+	</ul>
+	<Callout title="Related Pages">
+		See <a href="/docs/import-paths/">Import and Stdlib Paths</a>,
+		<a href="/docs/diagnostics/"> Diagnostics and Tracebacks</a>, and
+		<a href="/docs/reference/"> CLI and Environment Reference</a>.
+	</Callout>
+</DocSection>

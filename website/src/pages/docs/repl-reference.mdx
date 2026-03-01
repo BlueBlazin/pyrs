@@ -1,0 +1,113 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | REPL Reference
+description: Detailed command, keybinding, and environment reference for the PYRS REPL.
+pageTitle: REPL Reference
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import ReplTranscript from "../../components/docs/ReplTranscript.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	This page is the command-level reference for PYRS interactive mode.
+</DocSection>
+
+<DocSection title="Meta Commands">
+	<DataTable headers={["Command", "Behavior"]}>
+		<tr>
+			<td><code>:help</code>, <code>.help</code></td>
+			<td>Print REPL help and command summary.</td>
+		</tr>
+		<tr>
+			<td><code>:clear</code>, <code>.clear</code></td>
+			<td>Clear pending multiline input buffer.</td>
+		</tr>
+		<tr>
+			<td><code>:paste</code></td>
+			<td>Toggle paste mode; finish with <code>:paste</code>.</td>
+		</tr>
+		<tr>
+			<td><code>:timing</code></td>
+			<td>Toggle per-snippet timing output.</td>
+		</tr>
+		<tr>
+			<td><code>:reset</code></td>
+			<td>Rebuild interpreter session state.</td>
+		</tr>
+		<tr>
+			<td><code>:exit</code>, <code>:quit</code>, <code>.exit</code>, <code>.quit</code></td>
+			<td>Exit interactive REPL.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Magic Commands">
+	<DataTable headers={["Command", "Behavior"]}>
+		<tr>
+			<td><code>%time &lt;expr-or-stmt&gt;</code></td>
+			<td>Run one snippet and print execution time.</td>
+		</tr>
+		<tr>
+			<td><code>%timeit [-n N] [-r R] &lt;expr-or-stmt&gt;</code></td>
+			<td>Run repeated timing loops with optional loop/repeat controls.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Keys and Interaction">
+	<DataTable headers={["Key", "Action"]}>
+		<tr>
+			<td><code>Tab</code></td>
+			<td>Insert 4 spaces.</td>
+		</tr>
+		<tr>
+			<td><code>Shift+Tab</code>, <code>Ctrl+Space</code></td>
+			<td>Open completion menu.</td>
+		</tr>
+		<tr>
+			<td><code>Esc</code></td>
+			<td>Dismiss completion menu/current suggestion.</td>
+		</tr>
+		<tr>
+			<td><code>Ctrl+D</code></td>
+			<td>Exit REPL on macOS/Linux terminals.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="REPL Environment Variables">
+	<DataTable headers={["Variable", "Meaning"]}>
+		<tr>
+			<td><code>PYRS_REPL_THEME</code></td>
+			<td><code>auto</code>, <code>dark</code>, or <code>light</code> theme mode.</td>
+		</tr>
+		<tr>
+			<td><code>PYRS_REPL_HISTORY</code></td>
+			<td>Override history file path; empty value disables history file usage.</td>
+		</tr>
+		<tr>
+			<td><code>PYRS_REPL_INIT</code></td>
+			<td>Startup script path; default is <code>~/.pyrsrc</code>, empty disables startup script.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Session Example">
+	<ReplTranscript
+		label="REPL Command Flow"
+		lines={[
+			{ prompt: "primary", segments: [{ text: ":timing", tone: "plain" }] },
+			{ prompt: "none", segments: [{ text: "timing enabled", tone: "plain" }] },
+			{ prompt: "primary", segments: [{ text: "%time sum(range(1000))", tone: "plain" }] },
+			{ prompt: "none", segments: [{ text: "499500", tone: "number" }] },
+			{ prompt: "none", segments: [{ text: "[timing] 0.XXX ms", tone: "plain" }] },
+			{ prompt: "primary", segments: [{ text: "%timeit -n 1000 -r 5 sum(range(1000))", tone: "plain" }] },
+			{ prompt: "none", segments: [{ text: "best of 5: ...", tone: "plain" }] },
+		]}
+	/>
+	<Callout title="Related Page">
+		See <a href="/docs/repl/">REPL and Execution</a> for workflow-oriented guidance and examples.
+	</Callout>
+</DocSection>

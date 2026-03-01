@@ -1,0 +1,76 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Stdlib Compatibility
+description: Practical stdlib compatibility status and probe scope definitions for PYRS.
+pageTitle: Stdlib Compatibility
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import CommandBlock from "../../components/docs/CommandBlock.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	PYRS tracks stdlib compatibility with multiple probe scopes. Those scopes have different goals and
+	should not be interpreted as equivalent claims.
+</DocSection>
+
+<DocSection title="Current Snapshot (2026-02-26)">
+	<DataTable headers={["Scope", "Status"]}>
+		<tr>
+			<td>Top common-usecase checklist</td>
+			<td><code>26/26</code> import and common smoke green.</td>
+		</tr>
+		<tr>
+			<td>Extended common-usecase matrix</td>
+			<td><code>50/50</code> import and common smoke green.</td>
+		</tr>
+		<tr>
+			<td>Full stdlib inventory (host-supported modules)</td>
+			<td><code>278/288</code> imports passing in latest full probe snapshot.</td>
+		</tr>
+		<tr>
+			<td>Mapped CPython test modules (full probe eligible set)</td>
+			<td><code>PASS=33</code>, <code>FAIL=166</code>, <code>TIMEOUT=23</code>.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="How To Read These Numbers">
+	<DataTable headers={["Probe", "Meaning"]}>
+		<tr>
+			<td>Top / Extended common-usecase probes</td>
+			<td>Practical app-focused smoke viability for selected module sets.</td>
+		</tr>
+		<tr>
+			<td>Full stdlib probe</td>
+			<td>Comprehensive CPython 3.14 module inventory and mapped test-lane baseline.</td>
+		</tr>
+		<tr>
+			<td>Strict parity closure</td>
+			<td>Tracked separately in production-readiness and stub-accounting gates.</td>
+		</tr>
+	</DataTable>
+	<Callout title="Interpretation Rule">
+		Green common-usecase probes indicate high practical usability, not complete stdlib parity closure.
+	</Callout>
+</DocSection>
+
+<DocSection title="Run Probes Locally">
+	<CommandBlock
+		commands={[
+			"python3 scripts/probe_stdlib_extended.py --pyrs target/debug/pyrs --cpython-lib .local/Python-3.14.3/Lib --out perf/stdlib_compat_extended_latest.json --timeout 45",
+			"python3 scripts/probe_stdlib_full.py --pyrs target/debug/pyrs --cpython-bin /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 --cpython-lib .local/Python-3.14.3/Lib --out perf/stdlib_full_probe_latest.json --import-timeout 20 --test-timeout 120 --jobs 0",
+		]}
+	/>
+</DocSection>
+
+<DocSection title="Canonical Internal Trackers">
+	<ul class="docs-list">
+		<li><code>docs/STDLIB_COMMON_USECASE_CHECKLIST.md</code></li>
+		<li><code>docs/STDLIB_EXTENDED_COMMON_USECASE_CHECKLIST.md</code></li>
+		<li><code>docs/STDLIB_FULL_BASELINE.md</code></li>
+		<li><code>docs/PRODUCTION_READINESS.md</code></li>
+		<li><code>docs/STUB_ACCOUNTING.md</code></li>
+	</ul>
+</DocSection>

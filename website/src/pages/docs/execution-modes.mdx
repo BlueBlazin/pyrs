@@ -1,0 +1,98 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Execution Modes
+description: How PYRS runs code in REPL, script, command, stdin, and bytecode modes.
+pageTitle: Execution Modes
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import CommandBlock from "../../components/docs/CommandBlock.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	PYRS supports CPython-style execution entry points for interactive use, one-shot commands,
+	script execution, and <code>.pyc</code> execution.
+</DocSection>
+
+<DocSection title="Mode Overview">
+	<DataTable headers={["Invocation", "Behavior"]}>
+		<tr>
+			<td><code>pyrs</code></td>
+			<td>Starts interactive REPL when stdin/stdout are terminals.</td>
+		</tr>
+		<tr>
+			<td><code>pyrs</code> (with piped stdin)</td>
+			<td>Runs non-interactive stdin script input.</td>
+		</tr>
+		<tr>
+			<td><code>pyrs path/to/script.py</code></td>
+			<td>Runs source file and sets <code>__main__.__file__</code>.</td>
+		</tr>
+		<tr>
+			<td><code>pyrs path/to/module.pyc</code></td>
+			<td>Executes CPython bytecode file through the VM bytecode path.</td>
+		</tr>
+		<tr>
+			<td><code>pyrs -c "..."</code></td>
+			<td>Executes inline command string with CPython-shaped command mode semantics.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="sys.argv Semantics">
+	<DataTable headers={["Mode", "sys.argv shape"]}>
+		<tr>
+			<td>Script mode</td>
+			<td><code>[script_path, ...script_args]</code></td>
+		</tr>
+		<tr>
+			<td><code>-c</code> mode</td>
+			<td><code>["-c", ...args]</code></td>
+		</tr>
+		<tr>
+			<td>REPL/stdin mode</td>
+			<td><code>[""]</code></td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Startup Controls">
+	<DataTable headers={["Control", "Effect"]}>
+		<tr>
+			<td><code>-S</code>, <code>--no-site</code></td>
+			<td>Skips automatic <code>site</code> import at startup.</td>
+		</tr>
+		<tr>
+			<td><code>-I</code>, <code>-E</code></td>
+			<td>Accepted CPython compatibility flags; disables environment-driven warning option ingest.</td>
+		</tr>
+		<tr>
+			<td><code>PYRS_CPYTHON_LIB</code></td>
+			<td>Sets explicit CPython stdlib root and enables strict startup-site import behavior.</td>
+		</tr>
+		<tr>
+			<td><code>PYTHONPATH</code></td>
+			<td>Additional module search entries are appended to the VM import path.</td>
+		</tr>
+		<tr>
+			<td><code>VIRTUAL_ENV</code></td>
+			<td>Detected virtualenv <code>site-packages</code> paths are appended when present.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Practical Examples">
+	<CommandBlock
+		commands={[
+			'pyrs -c "import sys; print(sys.argv)" one two',
+			"pyrs path/to/script.py arg1 arg2",
+			"pyrs -S path/to/script.py",
+			"echo 'print(40 + 2)' | pyrs",
+			"pyrs path/to/module.pyc",
+		]}
+	/>
+	<Callout title="Deterministic Runs">
+		For automation and CI, prefer <code>-c</code> or script mode over REPL so inputs and startup behavior are explicit.
+	</Callout>
+</DocSection>

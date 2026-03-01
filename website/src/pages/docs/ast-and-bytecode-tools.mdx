@@ -1,0 +1,63 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | AST and Bytecode Tools
+description: Inspect parser and compiler output using AST and bytecode CLI tools.
+pageTitle: AST and Bytecode Tools
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import CommandBlock from "../../components/docs/CommandBlock.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	PYRS includes built-in inspection modes for parser and compiler debugging.
+</DocSection>
+
+<DocSection title="Inspection Flags">
+	<DataTable headers={["Flag", "Output"]}>
+		<tr>
+			<td><code>--ast path.py</code></td>
+			<td>Parses source and prints the module AST structure.</td>
+		</tr>
+		<tr>
+			<td><code>--bytecode path.py</code></td>
+			<td>Compiles source and prints disassembly of emitted code objects.</td>
+		</tr>
+		<tr>
+			<td><code>PYRS_BYTECODE_SHOW_TABLES=1</code></td>
+			<td>Includes names/constants tables in disassembly output.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Common Commands">
+	<CommandBlock
+		commands={[
+			"pyrs --ast path/to/script.py",
+			"pyrs --bytecode path/to/script.py",
+			"PYRS_BYTECODE_SHOW_TABLES=1 pyrs --bytecode path/to/script.py",
+		]}
+	/>
+</DocSection>
+
+<DocSection title="When To Use Each Tool">
+	<DataTable headers={["Use case", "Recommended mode"]}>
+		<tr>
+			<td>Validate parser behavior and syntax lowering</td>
+			<td><code>--ast</code></td>
+		</tr>
+		<tr>
+			<td>Debug opcode emission and nested code-object structure</td>
+			<td><code>--bytecode</code></td>
+		</tr>
+		<tr>
+			<td>Inspect compiler constant/name indexing details</td>
+			<td><code>--bytecode</code> + <code>PYRS_BYTECODE_SHOW_TABLES=1</code></td>
+		</tr>
+	</DataTable>
+	<Callout title="Scope Note">
+		These tools inspect source-compile paths. For runtime traceback behavior, use
+		<a href="/docs/diagnostics/"> Diagnostics and Tracebacks</a>.
+	</Callout>
+</DocSection>

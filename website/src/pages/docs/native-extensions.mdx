@@ -1,0 +1,98 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Native Extensions
+description: Current native-extension compatibility surface and scientific-stack bring-up status.
+pageTitle: Native Extensions
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import CommandBlock from "../../components/docs/CommandBlock.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	Native extension support is an active Milestone 15 workstream. PYRS targets a disciplined,
+	CPython-semantics-first extension substrate rather than ad-hoc compatibility shims.
+</DocSection>
+
+<DocSection title="Compatibility Modes">
+	<DataTable headers={["Mode", "Status"]}>
+		<tr>
+			<td><code>pyrs314</code> (source-build mode)</td>
+			<td>Primary supported mode for extension bring-up.</td>
+		</tr>
+		<tr>
+			<td><code>cp314</code> wheel-compat reuse</td>
+			<td>Deferred until ABI/runtime conformance evidence is sufficient.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Current Implemented Surface">
+	<DataTable headers={["Surface", "Current state"]}>
+		<tr>
+			<td>Manifest-backed extension loading (<code>.pyrs-ext</code>)</td>
+			<td>Implemented and smoke-covered.</td>
+		</tr>
+		<tr>
+			<td>Direct shared-object import (<code>.so</code>/<code>.dylib</code>/<code>.pyd</code>)</td>
+			<td>Implemented with <code>pyrs_extension_init_v1</code> and <code>PyInit_*</code> fallback.</td>
+		</tr>
+		<tr>
+			<td>CPython single-phase init compatibility slice</td>
+			<td>Partial baseline implemented; full C-API breadth remains open.</td>
+		</tr>
+		<tr>
+			<td>PEP 489 multi-phase init</td>
+			<td>Not closed yet.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Scientific-Stack Snapshot (2026-02-23)">
+	<DataTable headers={["Gate", "Status"]}>
+		<tr>
+			<td><code>import numpy as np</code></td>
+			<td>PASS</td>
+		</tr>
+		<tr>
+			<td><code>int(np.array([1,2,3]).sum()) == 6</code></td>
+			<td>PASS</td>
+		</tr>
+		<tr>
+			<td><code>numpy._core.numerictypes</code> core checks</td>
+			<td>PASS</td>
+		</tr>
+		<tr>
+			<td><code>import scipy</code></td>
+			<td>PASS (latest direct probe snapshot)</td>
+		</tr>
+		<tr>
+			<td><code>import pandas</code>, matplotlib probes</td>
+			<td>Still failing in direct mode; active root-cause closure work remains.</td>
+		</tr>
+	</DataTable>
+	<Callout title="Execution Lock">
+		C-API lifetime-model closure and scientific-stack bring-up are currently the primary execution lock.
+	</Callout>
+</DocSection>
+
+<DocSection title="Probe Commands">
+	<CommandBlock
+		commands={[
+			"python3 scripts/probe_numpy_gate.py --pyrs target/debug/pyrs --cpython-lib .local/Python-3.14.3/Lib --out perf/numpy_gate_latest.json --timeout 20",
+			"python3 scripts/probe_numpy_gate.py --pyrs target/debug/pyrs --cpython-lib .local/Python-3.14.3/Lib --include-scientific-stack --probe-local-stack --python-probe-bin .venv-ext314/bin/python --out perf/numpy_gate_direct_latest.json --timeout 30",
+		]}
+	/>
+</DocSection>
+
+<DocSection title="Canonical Internal Trackers">
+	<ul class="docs-list">
+		<li><code>docs/EXTENSION_CAPABILITY_MATRIX.md</code></li>
+		<li><code>docs/EXTENSION_PACKAGING_CONTRACT.md</code></li>
+		<li><code>docs/EXTENSION_CAPI_V1.md</code></li>
+		<li><code>docs/CAPI_PLAN.md</code></li>
+		<li><code>docs/CAPI_LIFETIME_MODEL.md</code></li>
+		<li><code>docs/NUMPY_BRINGUP_GATE.md</code></li>
+	</ul>
+</DocSection>
