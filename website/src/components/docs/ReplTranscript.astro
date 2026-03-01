@@ -1,0 +1,124 @@
+---
+import { cn } from "../../lib/cn";
+
+type Tone = "keyword" | "type" | "ident" | "string" | "number" | "operator" | "plain";
+
+interface Segment {
+	text: string;
+	tone?: Tone;
+}
+
+interface Line {
+	prompt?: "primary" | "cont" | "none";
+	segments: Segment[];
+}
+
+interface Props {
+	lines: Line[];
+	label?: string;
+	class?: string;
+}
+
+const { lines, label = "REPL", class: className } = Astro.props;
+
+const toneClass = (tone?: Tone) => {
+	switch (tone) {
+		case "keyword":
+			return "seg-keyword";
+		case "type":
+			return "seg-type";
+		case "ident":
+			return "seg-ident";
+		case "string":
+			return "seg-string";
+		case "number":
+			return "seg-number";
+		case "operator":
+			return "seg-operator";
+		default:
+			return "seg-plain";
+	}
+};
+---
+
+<div class={cn("repl-transcript overflow-hidden rounded-xl border border-[#2a3345] bg-[#0b1019]", className)}>
+	<div
+		class="flex items-center gap-4 border-b border-[#1f293a] bg-[linear-gradient(180deg,#111b2e_0%,#0b1423_100%)] px-4 py-2.5"
+	>
+		<div class="inline-flex gap-1.5" aria-hidden="true">
+			<span class="size-3 rounded-full bg-[#ff6b57]"></span>
+			<span class="size-3 rounded-full bg-[#fcbf4e]"></span>
+			<span class="size-3 rounded-full bg-[#35cd67]"></span>
+		</div>
+		<span class="text-[0.67rem] font-semibold uppercase tracking-[0.16em] text-[#b6c5e2]">{label}</span>
+	</div>
+	<pre class="m-0 overflow-x-auto px-4 py-3.5"><code class="block font-['IBM_Plex_Mono',ui-monospace,SFMono-Regular,Menlo,monospace] text-[0.8rem] leading-7 text-[#e4e9f6]">
+{lines.map((line) => (
+	<span class="repl-line">
+		<span class={line.prompt === "none" ? "repl-prompt repl-prompt-empty" : "repl-prompt"}>
+			{line.prompt === "cont" ? "..." : line.prompt === "none" ? " " : ">>>"}
+		</span>
+		<span class="repl-code">
+			{line.segments.map((seg) => (
+				<span class={toneClass(seg.tone)}>{seg.text}</span>
+			))}
+		</span>
+	</span>
+))}
+	</code></pre>
+</div>
+
+<style>
+	.repl-transcript {
+		box-shadow: 0 10px 28px rgba(2, 5, 12, 0.28);
+	}
+
+	.repl-line {
+		display: flex;
+		gap: 0.64rem;
+	}
+
+	.repl-prompt {
+		width: 1.52rem;
+		flex: 0 0 1.52rem;
+		user-select: none;
+		color: #70c7ff;
+		font-weight: 600;
+	}
+
+	.repl-prompt-empty {
+		color: transparent;
+	}
+
+	.repl-code {
+		white-space: pre;
+	}
+
+	.seg-plain {
+		color: #eef2fb;
+	}
+
+	.seg-keyword {
+		color: #46a4e8;
+	}
+
+	.seg-type {
+		color: #ffb638;
+	}
+
+	.seg-ident {
+		color: #ff5879;
+	}
+
+	.seg-string {
+		color: #10bb8d;
+	}
+
+	.seg-number {
+		color: #ff6f8f;
+	}
+
+	.seg-operator {
+		color: #c8d5f1;
+	}
+</style>

@@ -8,76 +8,78 @@ pageTitle: REPL and Execution
 import DocSection from "../../components/docs/DocSection.astro";
 import CommandBlock from "../../components/docs/CommandBlock.astro";
 import Callout from "../../components/docs/Callout.astro";
-import DataTable from "../../components/docs/DataTable.astro";
 import CodeBlock from "../../components/docs/CodeBlock.astro";
+import ReplTranscript from "../../components/docs/ReplTranscript.astro";
 
 <DocSection>
 	PYRS gives you three execution paths: interactive REPL, inline command mode, and script-file mode.
-	This page focuses on how to use each path effectively, and what behavior to expect when debugging.
+	This page focuses on high-signal REPL usage and when to switch to non-interactive runs.
 </DocSection>
 
-<DocSection title="Choose the Right Execution Mode">
-	<DataTable headers={["Mode", "Best for", "Command"]}>
-		{
-			[
-				{
-					mode: "REPL",
-					useCase: "Interactive exploration, quick checks, and step-by-step debugging of values.",
-					command: "pyrs",
-				},
-				{
-					mode: "Inline command",
-					useCase: "Deterministic one-off command from shell scripts or CI checks.",
-					command: "pyrs -c \"import sys; print(sys.version)\"",
-				},
-				{
-					mode: "Script file",
-					useCase: "Normal project/program execution with file-based entrypoint.",
-					command: "pyrs path/to/program.py",
-				},
-			].map((row) => (
-				<tr>
-					<td>{row.mode}</td>
-					<td>{row.useCase}</td>
-					<td><code>{row.command}</code></td>
-				</tr>
-			))
-		}
-	</DataTable>
-	<CommandBlock
-		commands={[
-			"pyrs",
-			"pyrs -c \"import platform; print(platform.python_version())\"",
-			"pyrs path/to/script.py",
-		]}
-	/>
+<DocSection title="Start in REPL First">
+	<p>Use REPL for rapid iteration and exploratory debugging:</p>
+	<CommandBlock commands={["pyrs"]} />
+	<Callout title="When Not to Use REPL">
+		For deterministic one-shot commands and CI, prefer `pyrs -c "..."` or `pyrs path/to/script.py`.
+	</Callout>
 </DocSection>
 
-<DocSection title="Prompt and Multiline Input Model">
+<DocSection title="Prompt Model and Interactive Flow">
 	<p>
-		Use the primary prompt (`>>>`) for new statements. The continuation prompt (`...`) indicates
-		you are inside an unfinished block or multiline construct.
+		The primary prompt (`>>>`) indicates a new statement. The continuation prompt (`...`) appears while
+		completing blocks, multiline literals, or decorators/class definitions.
 	</p>
-	<DataTable headers={["Prompt", "Meaning"]}>
-		<tr>
-			<td><code>&gt;&gt;&gt;</code></td>
-			<td>Primary prompt for a new statement.</td>
-		</tr>
-		<tr>
-			<td><code>...</code></td>
-			<td>Continuation prompt while completing a block or multi-line construct.</td>
-		</tr>
-	</DataTable>
-	<CodeBlock
+	<ReplTranscript
 		label="REPL Session"
-		code={`>>> from dataclasses import dataclass
->>> @dataclass
-... class User:
-...     name: str
-...     id: int
-...
->>> User("ada", 7)
-User(name='ada', id=7)`}
+		lines={[
+			{
+				prompt: "primary",
+				segments: [
+					{ text: "from ", tone: "keyword" },
+					{ text: "dataclasses", tone: "plain" },
+					{ text: " import ", tone: "keyword" },
+					{ text: "dataclass", tone: "plain" },
+				],
+			},
+			{ prompt: "primary", segments: [{ text: "@dataclass", tone: "plain" }] },
+			{
+				prompt: "cont",
+				segments: [
+					{ text: "class ", tone: "keyword" },
+					{ text: "User", tone: "ident" },
+					{ text: ":", tone: "operator" },
+				],
+			},
+			{
+				prompt: "cont",
+				segments: [
+					{ text: "    name", tone: "plain" },
+					{ text: ": ", tone: "operator" },
+					{ text: "str", tone: "type" },
+				],
+			},
+			{
+				prompt: "cont",
+				segments: [
+					{ text: "    id", tone: "plain" },
+					{ text: ": ", tone: "operator" },
+					{ text: "int", tone: "type" },
+				],
+			},
+			{ prompt: "cont", segments: [{ text: "" }] },
+			{
+				prompt: "primary",
+				segments: [
+					{ text: "User", tone: "ident" },
+					{ text: "(", tone: "operator" },
+					{ text: '"ada"', tone: "string" },
+					{ text: ", ", tone: "operator" },
+					{ text: "7", tone: "number" },
+					{ text: ")", tone: "operator" },
+				],
+			},
+			{ prompt: "none", segments: [{ text: "User(name='ada', id=7)", tone: "plain" }] },
+		]}
 	/>
 </DocSection>
 
@@ -104,13 +106,31 @@ User(name='ada', id=7)`}
 		Syntax and runtime failures are rendered with traceback context in CPython-style shapes. For
 		repeatable bug reports, capture the exact failing snippet and include both PYRS and CPython output.
 	</p>
-	<CodeBlock
+	<ReplTranscript
 		label="Runtime Error Shape"
-		code={`>>> items = {}
->>> items["missing"] + 1
-Traceback (most recent call last):
-  File "<stdin>", line 1, in <module>
-KeyError: 'missing'`}
+		lines={[
+			{
+				prompt: "primary",
+				segments: [
+					{ text: "items", tone: "plain" },
+					{ text: " = ", tone: "operator" },
+					{ text: "{}", tone: "operator" },
+				],
+			},
+			{
+				prompt: "primary",
+				segments: [
+					{ text: "items", tone: "plain" },
+					{ text: "[", tone: "operator" },
+					{ text: '"missing"', tone: "string" },
+					{ text: "] + ", tone: "operator" },
+					{ text: "1", tone: "number" },
+				],
+			},
+			{ prompt: "none", segments: [{ text: "Traceback (most recent call last):", tone: "plain" }] },
+			{ prompt: "none", segments: [{ text: "  File \"<stdin>\", line 1, in <module>", tone: "plain" }] },
+			{ prompt: "none", segments: [{ text: "KeyError: 'missing'", tone: "plain" }] },
+		]}
 	/>
 </DocSection>
 
@@ -118,9 +138,14 @@ KeyError: 'missing'`}
 	<ul class="m-0 list-disc space-y-1.5 pl-5">
 		<li><code>Ctrl+D</code> exits the REPL on macOS/Linux terminals.</li>
 		<li><code>Ctrl+C</code> interrupts the running statement where supported.</li>
-		<li>For deterministic automation, prefer `-c` or script-file execution over interactive REPL entry.</li>
-		<li>Use script mode for reproducible benchmarks and CI runs.</li>
+		<li>Use `-c` or script mode for reproducible automation and CI checks.</li>
 	</ul>
+	<CommandBlock
+		commands={[
+			'pyrs -c "import platform; print(platform.python_version())"',
+			"pyrs path/to/script.py",
+		]}
+	/>
 	<Callout title="Practical Workflow">
 		Develop quickly in REPL, then move stable snippets into script files once behavior is confirmed.
 		This keeps iteration fast without sacrificing reproducibility.
