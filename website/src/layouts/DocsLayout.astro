@@ -16,6 +16,7 @@ interface Props {
 		title?: string;
 		description?: string;
 		pageTitle?: string;
+		noindex?: boolean;
 	};
 	headings?: Array<{
 		depth: number;
@@ -28,6 +29,7 @@ const frontmatter = Astro.props.frontmatter ?? {};
 const title = Astro.props.title ?? frontmatter.title ?? "PYRS Docs";
 const description = Astro.props.description ?? frontmatter.description ?? "PYRS documentation.";
 const pageTitle = Astro.props.pageTitle ?? frontmatter.pageTitle ?? "Docs";
+const noindex = Astro.props.noindex ?? frontmatter.noindex ?? false;
 const headings = Astro.props.headings ?? [];
 const rawPath = Astro.url.pathname;
 const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
@@ -35,7 +37,7 @@ const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 
 <html lang="en">
 	<head>
-		<SiteHead title={title} description={description} url={Astro.url.toString()} />
+		<SiteHead title={title} description={description} url={Astro.url.toString()} noindex={noindex} />
 	</head>
 	<body>
 		<div class="site-shell">

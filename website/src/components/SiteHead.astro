@@ -4,9 +4,10 @@ interface Props {
 	description: string;
 	image?: string;
 	url?: string;
+	noindex?: boolean;
 }
 
-const { title, description, image = "/images/logo/logo-512.png", url } = Astro.props;
+const { title, description, image = "/images/logo/logo-512.png", url, noindex = false } = Astro.props;
 const absoluteImage = (() => {
 	if (!url) {
 		return image;
@@ -26,6 +27,7 @@ const absoluteImage = (() => {
 <meta name="generator" content={Astro.generator} />
 <title>{title}</title>
 <meta name="description" content={description} />
+{noindex && <meta name="robots" content="noindex, nofollow" />}
 <meta property="og:type" content="website" />
 <meta property="og:title" content={title} />
 <meta property="og:description" content={description} />

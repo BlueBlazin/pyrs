@@ -7,14 +7,15 @@ import "../styles/global.css";
 interface Props {
 	title: string;
 	description: string;
+	noindex?: boolean;
 }
 
-const { title, description } = Astro.props;
+const { title, description, noindex = false } = Astro.props;
 ---
 
 <html lang="en">
 	<head>
-		<SiteHead title={title} description={description} url={Astro.url.toString()} />
+		<SiteHead title={title} description={description} url={Astro.url.toString()} noindex={noindex} />
 	</head>
 	<body>
 		<div class="site-shell">
