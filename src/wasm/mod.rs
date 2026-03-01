@@ -150,6 +150,36 @@ impl WasmWorkerExecutePhase {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WasmExecutionPhase {
+    SyntaxError,
+    CompileError,
+    UnsupportedExecution,
+}
+
+impl WasmExecutionPhase {
+    const ALL: [WasmExecutionPhase; 3] = [
+        WasmExecutionPhase::SyntaxError,
+        WasmExecutionPhase::CompileError,
+        WasmExecutionPhase::UnsupportedExecution,
+    ];
+
+    fn key(self) -> &'static str {
+        match self {
+            WasmExecutionPhase::SyntaxError => "syntax_error",
+            WasmExecutionPhase::CompileError => "compile_error",
+            WasmExecutionPhase::UnsupportedExecution => "unsupported_execution",
+        }
+    }
+}
+
+fn execution_phase_keys() -> Vec<&'static str> {
+    WasmExecutionPhase::ALL
+        .iter()
+        .map(|phase| phase.key())
+        .collect()
+}
+
 fn worker_state_keys() -> Vec<&'static str> {
     WasmWorkerState::ALL
         .iter()
@@ -1079,6 +1109,16 @@ pub fn wasm_capability_keys() -> Array {
     keys
 }
 
+/// Returns canonical phase keys for top-level execute() contract responses.
+#[wasm_bindgen]
+pub fn wasm_execution_phase_keys() -> Array {
+    let keys = Array::new();
+    for key in execution_phase_keys() {
+        keys.push(&JsValue::from_str(key));
+    }
+    keys
+}
+
 /// Reports runtime contract status for browser clients.
 #[wasm_bindgen]
 pub fn wasm_runtime_info() -> WasmRuntimeInfo {
@@ -1657,9 +1697,14 @@ pub fn execute(source: &str) -> WasmExecutionResult {
         let stderr = error
             .clone()
             .unwrap_or_else(|| "parse/compile check failed".to_string());
+        let phase = if compile.phase == "syntax_error" {
+            WasmExecutionPhase::SyntaxError.key().to_string()
+        } else {
+            WasmExecutionPhase::CompileError.key().to_string()
+        };
         return WasmExecutionResult {
             success: false,
-            phase: compile.phase,
+            phase,
             stdout: String::new(),
             stderr,
             error,
@@ -1673,7 +1718,7 @@ pub fn execute(source: &str) -> WasmExecutionResult {
         .unwrap_or_else(|| "wasm execution backend is not wired yet".to_string());
     WasmExecutionResult {
         success: false,
-        phase: "unsupported_execution".to_string(),
+        phase: WasmExecutionPhase::UnsupportedExecution.key().to_string(),
         stdout: String::new(),
         stderr: message.clone(),
         error: Some(message),

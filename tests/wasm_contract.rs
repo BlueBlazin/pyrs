@@ -16,9 +16,9 @@ use pyrs::wasm::{
     WasmSession, WasmWorkerSession, check_compile_result, check_syntax_result, execute,
     wasm_api_version, wasm_capabilities, wasm_capability_error, wasm_capability_keys,
     wasm_execution_blocker_error, wasm_execution_blocker_keys, wasm_execution_blockers,
-    wasm_module_policy_entries, wasm_module_support, wasm_runtime_info, wasm_snippet_blockers,
-    wasm_snippet_import_roots, wasm_snippet_support, wasm_worker_blocker_error,
-    wasm_worker_blocker_keys, wasm_worker_blockers, wasm_worker_execute,
+    wasm_execution_phase_keys, wasm_module_policy_entries, wasm_module_support, wasm_runtime_info,
+    wasm_snippet_blockers, wasm_snippet_import_roots, wasm_snippet_support,
+    wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_blockers, wasm_worker_execute,
     wasm_worker_execute_phase_keys, wasm_worker_execute_with_operation, wasm_worker_info,
     wasm_worker_lifecycle_phase_keys, wasm_worker_recycle, wasm_worker_set_timeout,
     wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate,
@@ -42,6 +42,30 @@ fn wasm_runtime_contract_basics() {
         blocker_keys.length() as usize
     );
     assert!(!runtime.pyrs_version().is_empty());
+}
+
+#[wasm_bindgen_test]
+fn wasm_execution_phase_keys_are_stable() {
+    let keys = wasm_execution_phase_keys();
+    let mut phases = HashSet::new();
+    for index in 0..keys.length() {
+        let phase = keys
+            .get(index)
+            .as_string()
+            .expect("execution phase key should be string");
+        phases.insert(phase);
+    }
+    let expected: HashSet<String> = ["syntax_error", "compile_error", "unsupported_execution"]
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect();
+    assert_eq!(phases, expected);
+
+    let unsupported = execute("x = 1\n");
+    assert!(phases.contains(&unsupported.phase()));
+
+    let syntax = execute("def broken(:\n");
+    assert!(phases.contains(&syntax.phase()));
 }
 
 #[wasm_bindgen_test]

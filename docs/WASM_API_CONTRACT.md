@@ -61,6 +61,8 @@ This document defines the JS-facing contract currently exported by
     - `phase = "unsupported_execution"` for parse+compile-valid input.
     - `blocker_key = "execution_backend_unwired"` for unsupported execution.
   - `stderr` is populated for both current failure phases.
+- `wasm_execution_phase_keys() -> Array`
+  - Returns canonical top-level execute phase keys.
 - `wasm_capabilities() -> WasmCapabilityReport`
   - Returns explicit browser capability matrix.
 - `wasm_capability_error(capability_key: &str) -> Option<String>`
@@ -158,7 +160,7 @@ This document defines the JS-facing contract currently exported by
 ## `WasmExecutionResult`
 
 - `success: bool`
-- `phase: String`
+- `phase: String` (`"syntax_error"`, `"compile_error"`, `"unsupported_execution"`)
 - `stdout: String`
 - `stderr: String`
 - `error: Option<String>`

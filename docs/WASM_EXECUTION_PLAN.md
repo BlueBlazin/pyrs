@@ -343,6 +343,8 @@ Completed on this branch:
   `blocker_key` for deterministic unsupported-execution branching
   (`execution_backend_unwired` / `worker_runtime_unwired`) without
   message parsing.
+- latest: top-level execute phase enums are now exported via
+  `wasm_execution_phase_keys()` so clients can branch without hardcoded literals.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

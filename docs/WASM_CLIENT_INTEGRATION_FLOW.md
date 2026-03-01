@@ -17,6 +17,7 @@ This guide defines the recommended browser call order for current wasm APIs.
    - call `check_compile_result(source)` (optional if you already used snippet preflight),
    - call `execute(source)` (currently returns `unsupported_execution` by contract).
    - when phase is unsupported, use `result.blocker_key` for deterministic UI branching.
+   - optional: use `wasm_execution_phase_keys()` for execute-phase enum hydration.
 9. If `phase == "blocked_capability"`:
    - call `wasm_snippet_blockers(source)` for full blocker rows,
    - render module/capability-specific guidance.
