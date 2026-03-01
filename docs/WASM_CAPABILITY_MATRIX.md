@@ -25,6 +25,7 @@ branch. It is intentionally strict: unsupported behavior must fail explicitly.
   - `NativeHost::supports(...)`
   - `WasmHost::supports(...)`
 - Browser bridge export: `src/wasm/mod.rs` (`wasm_capabilities()`)
+- Module preflight policy: `docs/WASM_MODULE_SUPPORT_POLICY.md`
 
 ## Browser API Surface
 

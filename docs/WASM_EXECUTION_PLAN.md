@@ -271,8 +271,10 @@ Completed on this branch:
 - `656d0fd`: wasm contract tests now enforce blocker-key parity with the capability matrix.
 - `e2c41fc`: wasm module-level capability preflight API (`wasm_module_support`) exports
   structured blocker mapping for known unsupported module families.
-- latest: module blocker policy is now exported as canonical structured rows
+- `18abe6e`: module blocker policy is exported as canonical structured rows
   (`wasm_module_policy_entries`) for docs/UI parity.
+- latest: module preflight rationale is documented in
+  `docs/WASM_MODULE_SUPPORT_POLICY.md` and linked from capability docs.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
