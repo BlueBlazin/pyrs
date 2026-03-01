@@ -41,11 +41,11 @@ const next = currentIndex >= 0 && currentIndex < orderedItems.length - 1 ? order
 <style>
 	.docs-pager {
 		margin-top: 1.7rem;
-		padding-top: 1rem;
+		padding-top: 1.12rem;
 		border-top: 1px solid rgba(48, 56, 74, 0.82);
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		gap: 0.7rem;
+		gap: 0.74rem;
 	}
 
 	.pager-link {
@@ -53,11 +53,12 @@ const next = currentIndex >= 0 && currentIndex < orderedItems.length - 1 ? order
 		border: 1px solid #2a3347;
 		border-radius: 0.7rem;
 		background: #0f1521;
-		padding: 0.7rem 0.78rem;
+		padding: 0.74rem 0.84rem;
 		display: flex;
 		flex-direction: column;
-		gap: 0.18rem;
-		transition: background-color 130ms ease, border-color 130ms ease;
+		gap: 0.2rem;
+		box-shadow: 0 8px 18px rgba(2, 5, 12, 0.18);
+		transition: background-color 130ms ease, border-color 130ms ease, transform 130ms ease;
 	}
 
 	.pager-link.prev {
@@ -72,6 +73,7 @@ const next = currentIndex >= 0 && currentIndex < orderedItems.length - 1 ? order
 	.pager-link:hover {
 		background: #141d2e;
 		border-color: #354866;
+		transform: translateY(-1px);
 	}
 
 	.pager-link:focus-visible {
