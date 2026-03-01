@@ -178,6 +178,9 @@ def main() -> int:
     )
     execute_phase_keys = parse_string_array(fixture_source, "WASM_WORKER_EXECUTE_PHASE_KEYS")
     timeout_phase_keys = parse_string_array(fixture_source, "WASM_WORKER_TIMEOUT_PHASE_KEYS")
+    worker_blocker_keys = parse_string_array(
+        fixture_source, "WASM_WORKER_BLOCKER_KEYS"
+    )
 
     lifecycle_operation_prefixes = parse_operation_prefixes(
         fixture_source, "WASM_WORKER_LIFECYCLE_FIXTURES"
@@ -222,6 +225,9 @@ def main() -> int:
     source_operation_actions = parse_source_operation_actions(wasm_source)
     source_worker_blocker_key = parse_source_worker_blocker_key(wasm_source)
     source_module_policy_blocker_keys = parse_source_module_policy_blocker_keys(wasm_source)
+    source_expected_worker_blocker_keys = sorted(
+        {source_worker_blocker_key, *source_module_policy_blocker_keys}
+    )
     allowed_execute_unsupported_blocker_keys = sorted(
         {source_worker_blocker_key, *source_module_policy_blocker_keys}
     )
@@ -245,6 +251,7 @@ def main() -> int:
     validate_non_empty("WASM_WORKER_LIFECYCLE_PHASE_KEYS", lifecycle_phase_keys, errors)
     validate_non_empty("WASM_WORKER_EXECUTE_PHASE_KEYS", execute_phase_keys, errors)
     validate_non_empty("WASM_WORKER_TIMEOUT_PHASE_KEYS", timeout_phase_keys, errors)
+    validate_non_empty("WASM_WORKER_BLOCKER_KEYS", worker_blocker_keys, errors)
     validate_non_empty(
         "WASM_WORKER_LIFECYCLE_FIXTURES.expected_operation_prefix",
         lifecycle_operation_prefixes,
@@ -265,6 +272,7 @@ def main() -> int:
     validate_unique("WASM_WORKER_LIFECYCLE_PHASE_KEYS", lifecycle_phase_keys, errors)
     validate_unique("WASM_WORKER_EXECUTE_PHASE_KEYS", execute_phase_keys, errors)
     validate_unique("WASM_WORKER_TIMEOUT_PHASE_KEYS", timeout_phase_keys, errors)
+    validate_unique("WASM_WORKER_BLOCKER_KEYS", worker_blocker_keys, errors)
 
     validate_prefix_shape(
         "WASM_WORKER_LIFECYCLE_FIXTURES.expected_operation_prefix",
@@ -298,6 +306,11 @@ def main() -> int:
     if set(timeout_phase_keys) != set(source_timeout_phase_keys):
         errors.append(
             f"worker timeout phase key set mismatch fixtures={unique(timeout_phase_keys)} source={source_timeout_phase_keys}"
+        )
+    if set(worker_blocker_keys) != set(source_expected_worker_blocker_keys):
+        errors.append(
+            "worker blocker key set mismatch "
+            f"fixtures={unique(worker_blocker_keys)} source={source_expected_worker_blocker_keys}"
         )
 
     if unique(lifecycle_operation_prefixes) != expected_lifecycle_prefixes:
@@ -363,6 +376,7 @@ def main() -> int:
         "lifecycle_phase_keys": lifecycle_phase_keys,
         "execute_phase_keys": execute_phase_keys,
         "timeout_phase_keys": timeout_phase_keys,
+        "worker_blocker_keys": worker_blocker_keys,
         "source_key_sets": {
             "state": source_state_keys,
             "lifecycle_phase": source_lifecycle_phase_keys,
@@ -371,6 +385,7 @@ def main() -> int:
         },
         "source_worker_blocker_key": source_worker_blocker_key,
         "source_module_policy_blocker_keys": source_module_policy_blocker_keys,
+        "source_expected_worker_blocker_keys": source_expected_worker_blocker_keys,
         "allowed_execute_unsupported_blocker_keys": allowed_execute_unsupported_blocker_keys,
         "operation_prefixes": {
             "lifecycle": unique(lifecycle_operation_prefixes),
@@ -387,6 +402,7 @@ def main() -> int:
             "lifecycle_phase_keys": len(lifecycle_phase_keys),
             "execute_phase_keys": len(execute_phase_keys),
             "timeout_phase_keys": len(timeout_phase_keys),
+            "worker_blocker_keys": len(worker_blocker_keys),
             "lifecycle_prefix_entries": len(lifecycle_operation_prefixes),
             "execute_prefix_entries": len(execute_operation_prefixes),
             "timeout_prefix_entries": len(timeout_operation_prefixes),

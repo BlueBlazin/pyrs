@@ -80,9 +80,11 @@ This document defines the JS-facing contract currently exported by
 - `wasm_execution_blockers() -> Array`
   - Returns structured blocker entries (`key` + `message`).
 - `wasm_worker_blocker_keys() -> Array`
-  - Returns canonical worker blocker keys.
+  - Returns canonical worker blocker keys (`worker_runtime_unwired` plus
+    module-policy capability blocker keys).
 - `wasm_worker_blocker_error(blocker_key: &str) -> Option<String>`
-  - Returns stable worker blocker message for known keys.
+  - Returns stable worker blocker message for known keys (runtime-unwired or
+    capability-specific unsupported messages).
 - `wasm_worker_blockers() -> Array`
   - Returns structured worker blocker entries (`key` + `message`).
 - `wasm_module_support(module_name: &str) -> WasmModuleSupport`

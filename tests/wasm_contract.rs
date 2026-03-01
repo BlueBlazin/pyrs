@@ -12,7 +12,7 @@ use crate::wasm_module_policy::WASM_MODULE_POLICY_FIXTURES;
 use crate::wasm_worker_contract::{
     WASM_WORKER_EXECUTE_FIXTURES, WASM_WORKER_EXECUTE_PHASE_KEYS, WASM_WORKER_LIFECYCLE_FIXTURES,
     WASM_WORKER_LIFECYCLE_PHASE_KEYS, WASM_WORKER_STATE_KEYS, WASM_WORKER_TIMEOUT_FIXTURES,
-    WASM_WORKER_TIMEOUT_PHASE_KEYS,
+    WASM_WORKER_TIMEOUT_PHASE_KEYS, WASM_WORKER_BLOCKER_KEYS,
 };
 use js_sys::Reflect;
 use pyrs::wasm::{
@@ -82,6 +82,19 @@ fn wasm_worker_contract_basics() {
 
     let keys = wasm_worker_blocker_keys();
     assert_eq!(keys.length(), info.blocker_count() as u32);
+    let mut key_set = HashSet::new();
+    for index in 0..keys.length() {
+        let key = keys
+            .get(index)
+            .as_string()
+            .expect("worker blocker key should be string");
+        key_set.insert(key);
+    }
+    let expected_key_set: HashSet<String> = WASM_WORKER_BLOCKER_KEYS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect();
+    assert_eq!(key_set, expected_key_set);
     assert_eq!(
         keys.get(0).as_string().expect("worker blocker key"),
         "worker_runtime_unwired".to_string()
@@ -90,6 +103,9 @@ fn wasm_worker_contract_basics() {
     let message = wasm_worker_blocker_error("worker_runtime_unwired")
         .expect("worker runtime blocker message should exist");
     assert!(message.contains("not wired"));
+    let network_message = wasm_worker_blocker_error("network_sockets")
+        .expect("network socket blocker message should exist");
+    assert!(network_message.contains("network_sockets"));
 
     let blockers = wasm_worker_blockers();
     assert_eq!(blockers.length(), keys.length());

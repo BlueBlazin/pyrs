@@ -69,17 +69,20 @@ This document defines the browser worker-runtime contract currently exposed by:
 `wasm_worker_blocker_keys()` currently returns:
 
 - `worker_runtime_unwired`
+- module-policy capability keys currently emitted by worker preflight:
+  - `dynamic_library_load`
+  - `network_sockets`
+  - `process_spawn`
+  - `interactive_terminal`
 
-`wasm_worker_blocker_error("worker_runtime_unwired")` returns:
+`wasm_worker_blocker_error(key)` currently returns:
 
-- `"wasm worker runtime is not wired yet"`
+- `"wasm worker runtime is not wired yet"` for `worker_runtime_unwired`,
+- capability-specific unsupported messages (same message family as
+  `wasm_execution_blocker_error`) for known capability keys.
 
-Unknown blocker keys return `None`.
-
-`wasm_worker_blockers()` currently returns one structured row with:
-
-- `key = "worker_runtime_unwired"`
-- `message = "wasm worker runtime is not wired yet"`
+`wasm_worker_blockers()` currently returns structured rows for all worker blocker
+keys (`worker_runtime_unwired` + module-policy capability keys).
 
 `wasm_worker_start()` currently returns:
 

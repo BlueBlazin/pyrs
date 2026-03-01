@@ -37,6 +37,17 @@ fn module_blocker_key(module_name: &str) -> Option<&'static str> {
         .find_map(|(name, blocker)| (*name == module_name).then_some(*blocker))
 }
 
+fn module_policy_blocker_keys() -> Vec<&'static str> {
+    let mut keys = Vec::new();
+    let mut seen = HashSet::new();
+    for (_, blocker_key) in WASM_MODULE_BLOCKER_POLICY {
+        if seen.insert(blocker_key) {
+            keys.push(blocker_key);
+        }
+    }
+    keys
+}
+
 fn execution_blocker_keys(host: &dyn VmHost) -> Vec<&'static str> {
     let mut keys = vec![
         WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED,
@@ -51,7 +62,9 @@ fn execution_blocker_keys(host: &dyn VmHost) -> Vec<&'static str> {
 }
 
 fn worker_blocker_keys() -> Vec<&'static str> {
-    vec![WASM_WORKER_BLOCKER_RUNTIME_UNWIRED]
+    let mut keys = vec![WASM_WORKER_BLOCKER_RUNTIME_UNWIRED];
+    keys.extend(module_policy_blocker_keys());
+    keys
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1165,7 +1178,7 @@ pub fn wasm_worker_blocker_error(blocker_key: &str) -> Option<String> {
     if blocker_key == WASM_WORKER_BLOCKER_RUNTIME_UNWIRED {
         return Some("wasm worker runtime is not wired yet".to_string());
     }
-    None
+    wasm_execution_blocker_error(blocker_key)
 }
 
 /// Reports worker-runtime contract state for browser clients.

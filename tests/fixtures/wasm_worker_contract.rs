@@ -170,3 +170,11 @@ pub const WASM_WORKER_TIMEOUT_PHASE_KEYS: &[&str] = &[
     "unsupported_worker_timeout_enforcement",
     "invalid_worker_timeout",
 ];
+
+pub const WASM_WORKER_BLOCKER_KEYS: &[&str] = &[
+    "worker_runtime_unwired",
+    "dynamic_library_load",
+    "network_sockets",
+    "process_spawn",
+    "interactive_terminal",
+];

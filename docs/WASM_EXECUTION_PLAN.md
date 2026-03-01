@@ -400,6 +400,10 @@ Completed on this branch:
   module-policy-derived capability blocker keys in unsupported worker execute
   fixtures (in addition to runtime-unwired key), preserving source/fixture
   parity while capability preflight expands.
+- latest: worker blocker exports now include module-policy capability keys
+  (`dynamic_library_load`, `network_sockets`, `process_spawn`,
+  `interactive_terminal`) alongside `worker_runtime_unwired`, and
+  `wasm_worker_blocker_error` resolves capability messages for those keys.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
