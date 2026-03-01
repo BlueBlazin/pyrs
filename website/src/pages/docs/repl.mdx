@@ -8,7 +8,6 @@ pageTitle: REPL and Execution
 import DocSection from "../../components/docs/DocSection.astro";
 import CommandBlock from "../../components/docs/CommandBlock.astro";
 import Callout from "../../components/docs/Callout.astro";
-import CodeBlock from "../../components/docs/CodeBlock.astro";
 import ReplTranscript from "../../components/docs/ReplTranscript.astro";
 
 <DocSection>
@@ -89,15 +88,38 @@ import ReplTranscript from "../../components/docs/ReplTranscript.astro";
 		<li>Each entered statement executes in the current session state.</li>
 		<li>Restart REPL to clear state when debugging contamination between experiments.</li>
 	</ul>
-	<CodeBlock
+	<ReplTranscript
 		label="State Persistence Example"
-		code={`>>> counter = 0
->>> counter += 1
->>> counter
-1
->>> counter += 1
->>> counter
-2`}
+		lines={[
+			{
+				prompt: "primary",
+				segments: [
+					{ text: "counter", tone: "plain" },
+					{ text: " = ", tone: "operator" },
+					{ text: "0", tone: "number" },
+				],
+			},
+			{
+				prompt: "primary",
+				segments: [
+					{ text: "counter", tone: "plain" },
+					{ text: " += ", tone: "operator" },
+					{ text: "1", tone: "number" },
+				],
+			},
+			{ prompt: "primary", segments: [{ text: "counter", tone: "plain" }] },
+			{ prompt: "none", segments: [{ text: "1", tone: "number" }] },
+			{
+				prompt: "primary",
+				segments: [
+					{ text: "counter", tone: "plain" },
+					{ text: " += ", tone: "operator" },
+					{ text: "1", tone: "number" },
+				],
+			},
+			{ prompt: "primary", segments: [{ text: "counter", tone: "plain" }] },
+			{ prompt: "none", segments: [{ text: "2", tone: "number" }] },
+		]}
 	/>
 </DocSection>
 
