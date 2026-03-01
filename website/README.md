@@ -68,3 +68,8 @@ pnpm --dir website preview
   - `ASTRO_SITE` to `https://<repo>.github.io` for user/org pages, or `https://<owner>.github.io` for project pages.
   - `ASTRO_BASE` to `/` for user/org pages, or `/<repo>/` for project pages.
 - Release gate for deploy is `pnpm --dir website build:check` (build + internal link/meta validation).
+
+## Quality Checklist
+
+- Pre-merge website/docs QA checklist:
+  - `website/docs/QUALITY_CHECKLIST.md`
