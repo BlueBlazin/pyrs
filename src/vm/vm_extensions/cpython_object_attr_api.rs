@@ -425,7 +425,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             keys
         );
     }
-    if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
+    if super::super::env_var_present_cached("PYRS_TRACE_CPY_API") {
         let tag = cpython_value_debug_tag(&object_value);
         let (owned, known) = with_active_cpython_context_mut(|context| {
             (
@@ -446,7 +446,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             cpython_value_debug_tag(&object_value)
         );
     }
-    if name == "__array_finalize__" && std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
+    if name == "__array_finalize__" && super::super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_PTRS") {
         match &object_value {
             Value::Class(class_obj) => {
                 if let Object::Class(class_data) = &*class_obj.kind() {
@@ -474,7 +474,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
         vec![object_value, Value::Str(name.clone())],
     ) {
         Ok(value) => {
-            if std::env::var_os("PYRS_TRACE_GETATTR_RESULT").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_GETATTR_RESULT") {
                 eprintln!(
                     "[cpy-getattr-result] object={:p} attr={} value={}",
                     object,
@@ -528,7 +528,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
         }
         Err(err) => {
             if name == "__pyx_capi__"
-                && std::env::var_os("PYRS_TRACE_PYX_CAPI_GETATTR_FAIL").is_some()
+                && super::super::env_var_present_cached("PYRS_TRACE_PYX_CAPI_GETATTR_FAIL")
             {
                 match &object_value_for_debug {
                     Value::Module(module_obj) => {
@@ -565,7 +565,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             if trace_exit_lookup {
                 eprintln!("[cpy-attr-exit-lookup] error={}", err);
             }
-            if std::env::var_os("PYRS_TRACE_NONE_NAME_GETATTR").is_some()
+            if super::super::env_var_present_cached("PYRS_TRACE_NONE_NAME_GETATTR")
                 && name == "name"
                 && matches!(object_value_for_debug, Value::None)
             {
@@ -582,7 +582,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     object, name, err
                 );
             }
-            if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS")
                 && err.contains("attribute access unsupported type")
             {
                 eprintln!(
@@ -592,7 +592,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     name
                 );
             }
-            if std::env::var_os("PYRS_TRACE_CPY_ATTR_ERRORS").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_ATTR_ERRORS") {
                 eprintln!(
                     "[cpy-attr-error] getattr object_ptr={:p} object_tag={} attr={} err={}",
                     object,
@@ -644,7 +644,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
     if trace_exit_lookup {
         eprintln!("[cpy-attr-exit-lookup] get-attr enter object={:p}", object);
     }
-    let trace_seed_getattr = if std::env::var_os("PYRS_TRACE_NUMPY_SEED_ATTRS").is_some() {
+    let trace_seed_getattr = if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_SEED_ATTRS") {
         with_active_cpython_context_mut(|context| {
             context
                 .cpython_value_from_borrowed_ptr(name)
@@ -674,7 +674,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
             object, name, attr_name
         );
     }
-    let trace_generate_state = std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE").is_some()
+    let trace_generate_state = super::super::env_var_present_cached("PYRS_TRACE_GETATTR_GENERATE_STATE")
         && with_active_cpython_context_mut(|context| {
             context
                 .cpython_value_from_borrowed_ptr(name)
@@ -710,7 +710,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
             object == none_ptr,
             target_kind
         );
-        if std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE_BT").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_GETATTR_GENERATE_STATE_BT") {
             eprintln!(
                 "[cpy-getattr] attr=generate_state bt={}",
                 std::backtrace::Backtrace::force_capture()
@@ -928,7 +928,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                 {
                     return None;
                 }
-                if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_CPY_API") {
                     eprintln!(
                         "[cpy-api] PyObject_GetAttr native-fallback object={:p} name={:p} tp_getattro={:p}",
                         object, name, tp_getattro
@@ -979,7 +979,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                     object, attr_name, err
                 );
             }
-            if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS")
                 && err.contains("attribute access unsupported type")
             {
                 eprintln!(
@@ -987,7 +987,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                     object, object_debug_for_err, name_debug_for_err
                 );
             }
-            if err.contains("__exit__") && std::env::var_os("PYRS_TRACE_ATTR_MISS").is_some() {
+            if err.contains("__exit__") && super::super::env_var_present_cached("PYRS_TRACE_ATTR_MISS") {
                 eprintln!(
                     "[cpy-attr-miss] object={:p} object_value={} name={} err={} bt={:?}",
                     object,
@@ -1040,7 +1040,7 @@ pub unsafe extern "C" fn PyObject_GenericSetAttr(
 
     let object_value_for_debug = object_value.clone();
     let name_value_for_debug = name_value.clone();
-    let trace_common_setattr = std::env::var_os("PYRS_TRACE_PYX_CAPI").is_some()
+    let trace_common_setattr = super::super::env_var_present_cached("PYRS_TRACE_PYX_CAPI")
         && matches!(
             &object_value_for_debug,
             Value::Module(module_obj)
@@ -1112,7 +1112,7 @@ pub unsafe extern "C" fn PyObject_GenericSetAttr(
                     object, err
                 );
             }
-            if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS")
                 && err.contains("attribute assignment unsupported type")
             {
                 eprintln!(
@@ -1206,11 +1206,11 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
         }
     };
     let trace_pyx_capi_attr =
-        std::env::var_os("PYRS_TRACE_PYX_CAPI").is_some() && name_text == "__pyx_capi__";
+        super::super::env_var_present_cached("PYRS_TRACE_PYX_CAPI") && name_text == "__pyx_capi__";
     let trace_pybind11_attr =
-        std::env::var_os("PYRS_TRACE_PYBIND11_ATTRS").is_some() && name_text.contains("__pybind11");
+        super::super::env_var_present_cached("PYRS_TRACE_PYBIND11_ATTRS") && name_text.contains("__pybind11");
     let trace_seed_setattr =
-        std::env::var_os("PYRS_TRACE_NUMPY_SEED_ATTRS").is_some() && name_text == "_seed_seq";
+        super::super::env_var_present_cached("PYRS_TRACE_NUMPY_SEED_ATTRS") && name_text == "_seed_seq";
     if trace_seed_setattr {
         let _ = with_active_cpython_context_mut(|context| {
             let object_tag = context
@@ -1228,7 +1228,7 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
         });
     }
     if !object.is_null() {
-        let trace_native_setattr = std::env::var_os("PYRS_TRACE_SETATTR_NATIVE").is_some();
+        let trace_native_setattr = super::super::env_var_present_cached("PYRS_TRACE_SETATTR_NATIVE");
         let attr_name = name_text.clone();
         let native_status = with_active_cpython_context_mut(|context| {
             const MIN_VALID_PTR: usize = 0x1_0000_0000;
@@ -1458,7 +1458,7 @@ pub unsafe extern "C" fn PyObject_SetAttr(
     name: *mut c_void,
     value: *mut c_void,
 ) -> i32 {
-    let trace_pyx_capi = if std::env::var_os("PYRS_TRACE_PYX_CAPI").is_some() {
+    let trace_pyx_capi = if super::super::env_var_present_cached("PYRS_TRACE_PYX_CAPI") {
         with_active_cpython_context_mut(|context| {
             context
                 .cpython_value_from_borrowed_ptr(name)
