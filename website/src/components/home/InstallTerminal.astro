@@ -87,8 +87,10 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 
 	.cmd-box {
 		margin: 0;
-		overflow-x: auto;
+		overflow-x: scroll;
 		overflow-y: hidden;
+		overscroll-behavior-x: contain;
+		-webkit-overflow-scrolling: touch;
 		padding: 0.84rem 0.92rem 0.88rem;
 		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 		font-size: 0.78rem;
@@ -101,15 +103,16 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 	}
 
 	.cmd-box code {
-		display: block;
-		width: max-content;
+		display: inline-block;
 		min-width: 100%;
 	}
 
 	.cmd-line {
-		display: flex;
+		display: grid;
+		grid-template-columns: 0.7rem max-content;
 		align-items: flex-start;
-		gap: 0.54rem;
+		column-gap: 0.54rem;
+		min-width: 100%;
 	}
 
 	.cmd-line + .cmd-line {
@@ -133,7 +136,6 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 	.cmd-text {
 		color: #ecd9cd;
 		white-space: pre;
-		flex: 0 0 auto;
 	}
 
 	.cmd-box ::selection {
@@ -172,7 +174,7 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 		}
 
 		.cmd-line {
-			gap: 0.44rem;
+			column-gap: 0.44rem;
 		}
 	}
 </style>
