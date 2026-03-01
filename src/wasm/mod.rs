@@ -62,6 +62,43 @@ pub struct WasmSession {
     last_error: Option<String>,
 }
 
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmExecutionResult {
+    success: bool,
+    phase: String,
+    stdout: String,
+    stderr: String,
+    error: Option<String>,
+}
+
+#[wasm_bindgen]
+impl WasmExecutionResult {
+    #[wasm_bindgen(getter)]
+    pub fn success(&self) -> bool {
+        self.success
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn phase(&self) -> String {
+        self.phase.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn stdout(&self) -> String {
+        self.stdout.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn stderr(&self) -> String {
+        self.stderr.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn error(&self) -> Option<String> {
+        self.error.clone()
+    }
+}
+
 #[wasm_bindgen]
 impl WasmSession {
     #[wasm_bindgen(constructor)]
@@ -75,6 +112,13 @@ impl WasmSession {
 
     pub fn check_syntax(&mut self, source: &str) -> WasmSyntaxResult {
         let result = check_syntax_result(source);
+        self.snippets_checked += 1;
+        self.last_error = result.error.clone();
+        result
+    }
+
+    pub fn execute(&mut self, source: &str) -> WasmExecutionResult {
+        let result = execute(source);
         self.snippets_checked += 1;
         self.last_error = result.error.clone();
         result
@@ -159,6 +203,36 @@ pub fn wasm_capabilities() -> WasmCapabilityReport {
         dynamic_library_load: host.supports(HostCapability::DynamicLibraryLoad),
         interactive_terminal: host.supports(HostCapability::InteractiveTerminal),
         network_sockets: host.supports(HostCapability::NetworkSockets),
+    }
+}
+
+/// Executes a snippet using the current wasm bridge contract.
+///
+/// Current milestone behavior:
+/// - syntax-invalid input returns `phase = "syntax_error"`
+/// - syntax-valid input returns `phase = "unsupported_execution"`
+///   until VM execution is wired for wasm.
+#[wasm_bindgen]
+pub fn execute(source: &str) -> WasmExecutionResult {
+    let syntax = check_syntax_result(source);
+    if !syntax.ok {
+        return WasmExecutionResult {
+            success: false,
+            phase: "syntax_error".to_string(),
+            stdout: String::new(),
+            stderr: String::new(),
+            error: syntax.error,
+        };
+    }
+
+    WasmExecutionResult {
+        success: false,
+        phase: "unsupported_execution".to_string(),
+        stdout: String::new(),
+        stderr: String::new(),
+        error: Some(
+            "wasm execution backend is not wired yet; syntax validation is available".to_string(),
+        ),
     }
 }
 
