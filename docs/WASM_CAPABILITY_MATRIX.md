@@ -32,6 +32,8 @@ Current wasm bridge exports for capability handling:
 
 - `wasm_capabilities()`:
   returns the capability boolean matrix as a structured object.
+- `wasm_capability_keys()`:
+  returns the canonical key list used by the bridge.
 - `wasm_capability_error(capability_key)`:
   returns a stable unsupported-capability message for known keys,
   or `None` if the capability is supported.
