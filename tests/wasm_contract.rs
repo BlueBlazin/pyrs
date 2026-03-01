@@ -289,6 +289,28 @@ fn wasm_worker_lifecycle_stub_contract_is_stable() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_worker_operation_id_shape_is_stable() {
+    let start_id = wasm_worker_start().operation_id();
+    let terminate_id = wasm_worker_terminate().operation_id();
+    let recycle_id = wasm_worker_recycle().operation_id();
+    let timeout_id = wasm_worker_set_timeout(5_000).operation_id();
+    let timeout_invalid_id = wasm_worker_set_timeout(0).operation_id();
+
+    assert!(start_id.starts_with("worker_start_"));
+    assert!(terminate_id.starts_with("worker_terminate_"));
+    assert!(recycle_id.starts_with("worker_recycle_"));
+    assert!(timeout_id.starts_with("worker_set_timeout_"));
+    assert!(timeout_invalid_id.starts_with("worker_set_timeout_"));
+
+    let mut ids = HashSet::new();
+    assert!(ids.insert(start_id));
+    assert!(ids.insert(terminate_id));
+    assert!(ids.insert(recycle_id));
+    assert!(ids.insert(timeout_id));
+    assert!(ids.insert(timeout_invalid_id));
+}
+
+#[wasm_bindgen_test]
 fn wasm_worker_execute_stub_contract_is_stable() {
     for fixture in WASM_WORKER_EXECUTE_FIXTURES {
         let result = wasm_worker_execute(fixture.source);

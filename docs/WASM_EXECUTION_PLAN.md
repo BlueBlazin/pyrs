@@ -327,6 +327,8 @@ Completed on this branch:
   (`executes_requested`, `last_operation_id`, `last_phase`) end-to-end.
 - latest: client-flow pseudocode now demonstrates timeout policy/update,
   snippet import-root preflight, and operation-aware worker execute calls.
+- latest: worker operation-id shape/uniqueness is now explicitly covered across
+  lifecycle and timeout APIs in wasm contract tests.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
