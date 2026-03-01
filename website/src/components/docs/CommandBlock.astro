@@ -59,4 +59,34 @@ const copyPayload = commands.join("\n");
 		white-space: pre;
 	}
 
+	.command-lines {
+		overflow-y: hidden;
+		scrollbar-width: thin;
+		scrollbar-color: rgba(124, 141, 174, 0.58) rgba(18, 26, 39, 0.68);
+		scrollbar-gutter: stable both-edges;
+	}
+
+	.command-lines::-webkit-scrollbar {
+		height: 0.46rem;
+	}
+
+	.command-lines::-webkit-scrollbar-track {
+		background: rgba(17, 24, 36, 0.72);
+		border-radius: 999px;
+	}
+
+	.command-lines::-webkit-scrollbar-thumb {
+		background: linear-gradient(90deg, rgba(120, 139, 176, 0.74) 0%, rgba(98, 118, 156, 0.74) 100%);
+		border: 1px solid rgba(12, 17, 27, 0.92);
+		border-radius: 999px;
+	}
+
+	.command-lines::-webkit-scrollbar-thumb:hover {
+		background: linear-gradient(90deg, rgba(140, 158, 194, 0.78) 0%, rgba(111, 131, 169, 0.78) 100%);
+	}
+
+	.command-lines::-webkit-scrollbar-corner {
+		background: transparent;
+	}
+
 </style>
