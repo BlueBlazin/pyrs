@@ -2125,6 +2125,17 @@ mod tests {
         assert!(syntax_error.column() > 0);
     }
 
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
+    fn wasm_execute_vm_probe_runtime_error_contract_is_stable() {
+        let runtime_error = execute("1 / 0\n");
+        assert_eq!(runtime_error.phase(), "runtime_error".to_string());
+        assert!(runtime_error.blocker_key().is_none());
+        assert!(runtime_error.error().is_some());
+        assert!(runtime_error.line() > 0);
+        assert!(runtime_error.column() > 0);
+    }
+
     #[test]
     fn wasm_worker_execute_unwired_sets_worker_blocker_key() {
         let unsupported = wasm_worker_execute("x = 1\n");
@@ -2145,6 +2156,17 @@ mod tests {
         let compile_error = wasm_worker_execute("return 1\n");
         assert_eq!(compile_error.phase(), "compile_error".to_string());
         assert!(compile_error.blocker_key().is_none());
+    }
+
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
+    fn wasm_worker_execute_vm_probe_runtime_error_contract_is_stable() {
+        let runtime_error = wasm_worker_execute("1 / 0\n");
+        assert_eq!(runtime_error.phase(), "runtime_error".to_string());
+        assert!(runtime_error.blocker_key().is_none());
+        assert!(runtime_error.error().is_some());
+        assert!(runtime_error.line() > 0);
+        assert!(runtime_error.column() > 0);
     }
 
     #[test]

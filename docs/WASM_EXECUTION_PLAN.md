@@ -495,6 +495,9 @@ Completed on this branch:
   `wasm-vm-probe` (phase-key exports and baseline execute/worker-execute
   behavior), reducing hidden drift when vm-probe-enabled native test lanes are
   introduced later.
+- latest: feature-gated native wasm unit tests now also assert vm-probe
+  runtime-error contracts for top-level and worker execution (`1 / 0` =>
+  `phase = "runtime_error"`, no blocker key, populated line/column).
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
