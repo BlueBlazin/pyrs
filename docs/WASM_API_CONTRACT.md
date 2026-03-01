@@ -61,7 +61,8 @@ This document defines the JS-facing contract currently exported by
 - `wasm_capability_error(capability_key: &str) -> Option<String>`
   - Returns unsupported-capability message for known keys.
 - `wasm_execution_blocker_keys() -> Array`
-  - Returns canonical blocker keys for execution in browser mode.
+  - Returns canonical blocker keys for execution in browser mode
+    (includes `execution_backend_unwired` and `vm_runtime_unavailable`).
 - `wasm_execution_blocker_error(blocker_key: &str) -> Option<String>`
   - Returns stable blocker message for known execution blockers.
 - `wasm_execution_blockers() -> Array`

@@ -412,17 +412,22 @@ fn wasm_execution_blocker_contract_is_stable() {
         listed_keys.push(key);
     }
     assert!(listed_keys.contains(&"execution_backend_unwired".to_string()));
+    assert!(listed_keys.contains(&"vm_runtime_unavailable".to_string()));
     assert!(listed_keys.contains(&"filesystem_read".to_string()));
     let err = wasm_execution_blocker_error("execution_backend_unwired")
         .expect("backend blocker should have error");
     assert!(err.contains("not wired"));
+    let vm_err = wasm_execution_blocker_error("vm_runtime_unavailable")
+        .expect("vm runtime blocker should have error");
+    assert!(vm_err.contains("not available"));
     let fs_err =
         wasm_execution_blocker_error("filesystem_read").expect("filesystem_read should be blocked");
     assert!(fs_err.contains("filesystem_read"));
 
     let blockers = wasm_execution_blockers();
-    assert!(blockers.length() >= 2);
+    assert!(blockers.length() >= 3);
     let mut saw_backend = false;
+    let mut saw_vm_runtime = false;
     for index in 0..blockers.length() {
         let blocker = blockers.get(index);
         let key = Reflect::get(&blocker, &"key".into())
@@ -436,9 +441,13 @@ fn wasm_execution_blocker_contract_is_stable() {
         if key == "execution_backend_unwired" {
             assert!(message.contains("not wired"));
             saw_backend = true;
+        } else if key == "vm_runtime_unavailable" {
+            assert!(message.contains("not available"));
+            saw_vm_runtime = true;
         }
     }
     assert!(saw_backend);
+    assert!(saw_vm_runtime);
 }
 
 #[wasm_bindgen_test]
@@ -446,6 +455,7 @@ fn wasm_execution_blockers_match_capability_matrix() {
     let capabilities = wasm_capabilities();
     let mut expected = HashSet::new();
     expected.insert("execution_backend_unwired".to_string());
+    expected.insert("vm_runtime_unavailable".to_string());
     if !capabilities.filesystem_read() {
         expected.insert("filesystem_read".to_string());
     }

@@ -39,8 +39,8 @@ Current wasm bridge exports for capability handling:
   returns a stable wasm-host-specific unsupported-capability message for known keys,
   or `None` if the capability is supported.
 - `wasm_execution_blocker_keys()`:
-  returns canonical execution-blocker keys (`execution_backend_unwired` plus
-  unsupported capability keys in browser mode).
+  returns canonical execution-blocker keys (`execution_backend_unwired`,
+  `vm_runtime_unavailable`, plus unsupported capability keys in browser mode).
 - `wasm_execution_blocker_error(blocker_key)`:
   returns stable error text for execution blockers.
 - `wasm_execution_blockers()`:

@@ -7,6 +7,7 @@ use wasm_bindgen::prelude::*;
 
 pub const WASM_API_VERSION: u32 = 1;
 const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired";
+const WASM_EXECUTION_BLOCKER_VM_RUNTIME_UNAVAILABLE: &str = "vm_runtime_unavailable";
 const WASM_WORKER_BLOCKER_RUNTIME_UNWIRED: &str = "worker_runtime_unwired";
 const WASM_WORKER_INTERRUPT_MODEL_RECYCLE: &str = "worker_recycle";
 const WASM_WORKER_TIMEOUT_DEFAULT_MS: u32 = 5_000;
@@ -34,7 +35,10 @@ fn module_blocker_key(module_name: &str) -> Option<&'static str> {
 }
 
 fn execution_blocker_keys(host: &dyn VmHost) -> Vec<&'static str> {
-    let mut keys = vec![WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED];
+    let mut keys = vec![
+        WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED,
+        WASM_EXECUTION_BLOCKER_VM_RUNTIME_UNAVAILABLE,
+    ];
     for capability in HostCapability::all() {
         if !host.supports(*capability) {
             keys.push(capability.key());
@@ -1480,6 +1484,9 @@ pub fn wasm_snippet_blockers(source: &str) -> Array {
 pub fn wasm_execution_blocker_error(blocker_key: &str) -> Option<String> {
     if blocker_key == WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED {
         return Some("wasm execution backend is not wired yet".to_string());
+    }
+    if blocker_key == WASM_EXECUTION_BLOCKER_VM_RUNTIME_UNAVAILABLE {
+        return Some("vm runtime is not available on wasm target yet".to_string());
     }
     wasm_capability_error(blocker_key)
 }
