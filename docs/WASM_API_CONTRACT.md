@@ -27,6 +27,7 @@ This document defines the JS-facing contract currently exported by
   - Returns canonical worker lifecycle phase keys.
 - `wasm_worker_execute_phase_keys() -> Array`
   - Returns canonical worker execute phase keys.
+  - Includes `ok` + `runtime_error` only when built with `wasm-vm-probe`.
 - `wasm_worker_start() -> WasmWorkerLifecycleResult`
   - Worker lifecycle start contract (currently unsupported/unwired).
 - `wasm_worker_terminate() -> WasmWorkerLifecycleResult`
@@ -38,15 +39,18 @@ This document defines the JS-facing contract currently exported by
     - `unsupported_worker_timeout_enforcement` (in-range while unwired)
     - `invalid_worker_timeout` (out-of-range value)
 - `wasm_worker_execute(source: &str) -> WasmExecutionResult`
-  - Worker execute contract with deterministic phases:
+  - Default worker execute phases:
     - `syntax_error`
     - `compile_error`
     - `unsupported_worker_execution`
+  - `wasm-vm-probe` worker execute phases:
+    - same parse/compile/capability-preflight phases as default,
+    - capability-allowed snippets can return `ok` or `runtime_error`.
   - `blocker_key` is:
-    - `None` for parse/compile failures,
+    - `None` for parse/compile failures and vm-probe runtime execution results,
     - `Some("<capability_key>")` when parse+compile-valid source imports a known
       wasm-blocked module capability,
-    - `Some("worker_runtime_unwired")` for remaining unsupported worker execution.
+    - `Some("worker_runtime_unwired")` for remaining unsupported worker execution in default builds.
 - `wasm_worker_execute_with_operation(source: &str) -> WasmWorkerExecutionResult`
   - Worker execute contract with deterministic phases plus `operation_id`.
 - `check_syntax(source: &str) -> Result<(), JsValue>`

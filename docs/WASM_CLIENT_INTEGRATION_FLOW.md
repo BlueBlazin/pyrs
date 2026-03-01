@@ -41,7 +41,9 @@ are currently explicit stubs.
   - `syntax_error`
   - `compile_error`
   - `unsupported_worker_execution`
-  - unsupported phase sets `blocker_key = "worker_runtime_unwired"`
+  - default build: unsupported phase sets `blocker_key = "worker_runtime_unwired"`
+  - `wasm-vm-probe` build: capability-allowed snippets can return `ok` or
+    `runtime_error`
 - `wasm_worker_execute_with_operation(source)` -> same phases plus
   `operation_id = worker_execute_<n>`
 

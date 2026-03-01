@@ -457,6 +457,10 @@ Completed on this branch:
   snippets execute via `Vm::new_with_host(WasmHost)` and return
   `phase = \"ok\"` or `phase = \"runtime_error\"`; default wasm builds keep the
   existing unsupported-execution contract.
+- latest: `wasm_worker_execute()` now mirrors the same feature-gated runtime
+  probe behavior for capability-allowed snippets (`ok`/`runtime_error`) while
+  default builds keep `unsupported_worker_execution`; worker lifecycle stubs
+  (`start`/`terminate`/`recycle`) remain intentionally unwired.
 - latest: runtime metadata/blocker exports are now feature-aware for wasm
   vm-probe builds (`wasm_runtime_info.supports_execution = true`,
   `execution_backend = \"vm_probe\"`, and unwired execution blocker keys are
