@@ -129,7 +129,7 @@
 	}
 
 	.site-shell {
-		width: min(1160px, calc(100% - 2.8rem));
+		width: min(1280px, calc(100% - 2.8rem));
 		margin: 0 auto;
 		padding-bottom: 4rem;
 	}
@@ -269,8 +269,8 @@
 
 	.shot-stack {
 		display: grid;
-		grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
-		gap: 1.1rem;
+		grid-template-columns: minmax(0, 1.08fr) minmax(0, 1.02fr);
+		gap: 0.8rem;
 		align-items: start;
 	}
 
@@ -290,7 +290,10 @@
 
 	.shot-overlay {
 		background: #13161c;
-		margin-top: 1.6rem;
+		position: relative;
+		z-index: 2;
+		margin-top: 1rem;
+		margin-left: -2.35rem;
 	}
 
 	.visual-note {
@@ -328,6 +331,11 @@
 	@media (max-width: 1024px) {
 		.shot-stack {
 			grid-template-columns: 1fr 1fr;
+			gap: 0.9rem;
+		}
+
+		.shot-overlay {
+			margin-left: -0.9rem;
 		}
 	}
 
@@ -354,6 +362,7 @@
 
 		.shot-overlay {
 			margin-top: 0;
+			margin-left: 0;
 		}
 	}
 
