@@ -467,6 +467,12 @@ Completed on this branch:
   vm-probe builds (`wasm_runtime_info.supports_execution = true`,
   `execution_backend = \"vm_probe\"`, and unwired execution blocker keys are
   omitted when the probe runtime is enabled).
+- latest: execute-contract fixtures/scripts are now dual-mode aware:
+  fixture rows can declare vm-probe-specific execute expectations, a dedicated
+  runtime-error fixture (`1 / 0`) is tracked, execute-summary validation can
+  run in `--vm-probe` mode, and both wasm gate scripts now emit
+  `perf/wasm_execute_contract_summary_vm_probe_latest.json` in addition to the
+  default summary.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

@@ -11,7 +11,8 @@ mod wasm_worker_contract;
 
 use crate::wasm_capability_matrix::WASM_CAPABILITY_FIXTURES;
 use crate::wasm_contract_snippets::{
-    WASM_CONTRACT_SNIPPET_FIXTURES, WASM_EXECUTION_PHASE_KEYS, WASM_SUPPORT_PHASE_KEYS,
+    WasmContractSnippetFixture, WASM_CONTRACT_SNIPPET_FIXTURES, WASM_EXECUTION_PHASE_KEYS,
+    WASM_SUPPORT_PHASE_KEYS,
 };
 use crate::wasm_module_policy::WASM_MODULE_POLICY_FIXTURES;
 use crate::wasm_worker_contract::{
@@ -81,6 +82,26 @@ fn expected_execution_blocker_keys(capabilities: &WasmCapabilityReport) -> Vec<S
         }
     }
     expected
+}
+
+fn expected_execute_phase_for_fixture(fixture: &WasmContractSnippetFixture) -> String {
+    if vm_probe_enabled() {
+        if let Some(phase) = fixture.expected_vm_probe_execute_phase {
+            return phase.to_string();
+        }
+    }
+    fixture.expected_execute_phase.to_string()
+}
+
+fn expected_execute_blocker_key_for_fixture(
+    fixture: &WasmContractSnippetFixture,
+) -> Option<String> {
+    if vm_probe_enabled() {
+        if let Some(override_blocker) = fixture.expected_vm_probe_execute_blocker_key {
+            return override_blocker.map(str::to_string);
+        }
+    }
+    fixture.expected_execute_blocker_key.map(str::to_string)
 }
 
 #[wasm_bindgen_test]
@@ -1125,36 +1146,20 @@ fn wasm_contract_snippet_fixtures_are_current() {
         );
 
         let execution = execute(fixture.source);
-        if vm_probe_enabled()
-            && fixture.expected_execute_phase == "unsupported_execution"
-            && fixture.expected_execute_blocker_key == Some("execution_backend_unwired")
-        {
-            assert_eq!(
-                execution.phase(),
-                "ok",
-                "vm-probe execute phase mismatch: {}",
-                fixture.name
-            );
-            assert!(
-                execution.blocker_key().is_none(),
-                "vm-probe execute blocker should be none: {}",
-                fixture.name
-            );
-        } else {
-            assert_eq!(
-                execution.phase(),
-                fixture.expected_execute_phase,
-                "fixture execute phase mismatch: {}",
-                fixture.name
-            );
-            let expected_execute_blocker_key = fixture.expected_execute_blocker_key.map(str::to_string);
-            assert_eq!(
-                execution.blocker_key(),
-                expected_execute_blocker_key,
-                "fixture execute blocker key mismatch: {}",
-                fixture.name
-            );
-        }
+        let expected_execute_phase = expected_execute_phase_for_fixture(fixture);
+        assert_eq!(
+            execution.phase(),
+            expected_execute_phase,
+            "fixture execute phase mismatch: {}",
+            fixture.name
+        );
+        let expected_execute_blocker_key = expected_execute_blocker_key_for_fixture(fixture);
+        assert_eq!(
+            execution.blocker_key(),
+            expected_execute_blocker_key,
+            "fixture execute blocker key mismatch: {}",
+            fixture.name
+        );
 
         let support = wasm_snippet_support(fixture.source);
         assert_eq!(

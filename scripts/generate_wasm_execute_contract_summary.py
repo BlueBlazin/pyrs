@@ -17,6 +17,9 @@ class SnippetFixture:
     expected_compile_phase: str
     expected_execute_phase: str
     expected_execute_blocker_key: str | None
+    expected_vm_probe_execute_phase: str | None
+    expected_vm_probe_execute_blocker_key: str | None
+    has_vm_probe_execute_blocker_override: bool
     expected_support_phase: str
     expected_first_blocker_key: str | None
 
@@ -29,6 +32,7 @@ REQUIRED_STR_FIELDS = (
 )
 OPTIONAL_STR_FIELDS = (
     "expected_execute_blocker_key",
+    "expected_vm_probe_execute_phase",
     "expected_first_blocker_key",
 )
 
@@ -61,6 +65,26 @@ def parse_optional_string(body: str, field: str) -> str | None:
     raise ValueError(f"missing optional field '{field}' with Some(...) or None")
 
 
+def parse_optional_optional_string(body: str, field: str) -> tuple[bool, str | None]:
+    some_some_match = re.search(
+        rf"{re.escape(field)}:\s*Some\(\s*Some\(\"([^\"]+)\"\)\s*\)", body
+    )
+    if some_some_match:
+        return True, some_some_match.group(1)
+
+    some_none_match = re.search(rf"{re.escape(field)}:\s*Some\(\s*None\s*\)", body)
+    if some_none_match:
+        return True, None
+
+    none_match = re.search(rf"{re.escape(field)}:\s*None", body)
+    if none_match:
+        return False, None
+
+    raise ValueError(
+        f"missing optional field '{field}' with Some(Some(...)) / Some(None) / None"
+    )
+
+
 def parse_fixtures(source: str) -> list[SnippetFixture]:
     fixtures: list[SnippetFixture] = []
     pattern = re.compile(r"WasmContractSnippetFixture\s*\{(.*?)\n\s*\},", re.DOTALL)
@@ -71,12 +95,19 @@ def parse_fixtures(source: str) -> list[SnippetFixture]:
             values[field] = parse_required_string(body, field)
         for field in OPTIONAL_STR_FIELDS:
             values[field] = parse_optional_string(body, field)
+        (
+            has_vm_probe_execute_blocker_override,
+            expected_vm_probe_execute_blocker_key,
+        ) = parse_optional_optional_string(body, "expected_vm_probe_execute_blocker_key")
         fixtures.append(
             SnippetFixture(
                 name=values["name"] or "",
                 expected_compile_phase=values["expected_compile_phase"] or "",
                 expected_execute_phase=values["expected_execute_phase"] or "",
                 expected_execute_blocker_key=values["expected_execute_blocker_key"],
+                expected_vm_probe_execute_phase=values["expected_vm_probe_execute_phase"],
+                expected_vm_probe_execute_blocker_key=expected_vm_probe_execute_blocker_key,
+                has_vm_probe_execute_blocker_override=has_vm_probe_execute_blocker_override,
                 expected_support_phase=values["expected_support_phase"] or "",
                 expected_first_blocker_key=values["expected_first_blocker_key"],
             )
@@ -98,9 +129,37 @@ def ordered_unique(values: list[str]) -> list[str]:
     return ordered
 
 
-def parse_source_execution_phase_keys(wasm_source: str) -> list[str]:
-    keys = re.findall(r'WasmExecutionPhase::[A-Za-z]+\s*=>\s*"([^"]+)"', wasm_source)
-    return ordered_unique(keys)
+def parse_source_const_string(wasm_source: str, const_name: str) -> str:
+    match = re.search(
+        rf'const\s+{re.escape(const_name)}:\s*&str\s*=\s*"([^"]+)";',
+        wasm_source,
+    )
+    if not match:
+        raise ValueError(f"unable to parse {const_name} from wasm source")
+    return match.group(1)
+
+
+def parse_source_execution_phase_keys(wasm_source: str, vm_probe_enabled: bool) -> list[str]:
+    keys = ordered_unique(
+        re.findall(r'WasmExecutionPhase::[A-Za-z]+\s*=>\s*"([^"]+)"', wasm_source)
+    )
+    if vm_probe_enabled:
+        keys.append(parse_source_const_string(wasm_source, "WASM_EXECUTION_PHASE_OK"))
+        keys.append(parse_source_const_string(wasm_source, "WASM_EXECUTION_PHASE_RUNTIME_ERROR"))
+    return keys
+
+
+def effective_fixture_execute_expectation(
+    fixture: SnippetFixture, vm_probe_enabled: bool
+) -> tuple[str, str | None]:
+    phase = fixture.expected_execute_phase
+    blocker_key = fixture.expected_execute_blocker_key
+    if vm_probe_enabled:
+        if fixture.expected_vm_probe_execute_phase is not None:
+            phase = fixture.expected_vm_probe_execute_phase
+        if fixture.has_vm_probe_execute_blocker_override:
+            blocker_key = fixture.expected_vm_probe_execute_blocker_key
+    return phase, blocker_key
 
 
 def parse_source_backend_blocker_key(wasm_source: str) -> str:
@@ -132,6 +191,7 @@ def validate(
     source_phase_keys: list[str],
     source_backend_blocker_key: str,
     source_module_policy_blocker_keys: list[str],
+    vm_probe_enabled: bool,
 ) -> list[str]:
     errors: list[str] = []
     if not fixtures:
@@ -150,6 +210,11 @@ def validate(
 
     allowed_compile_phases = {"ok", "syntax_error", "compile_error"}
     allowed_execute_phases = {"syntax_error", "compile_error", "unsupported_execution"}
+    expected_fixture_execute_phase_keys = list(fixture_execute_phase_keys)
+    if vm_probe_enabled:
+        allowed_execute_phases.add("ok")
+        allowed_execute_phases.add("runtime_error")
+        expected_fixture_execute_phase_keys.extend(["ok", "runtime_error"])
     allowed_support_phases = {"supported", "blocked_capability", "syntax_error", "compile_error"}
 
     if set(source_phase_keys) != allowed_execute_phases:
@@ -157,20 +222,20 @@ def validate(
             "source execute phase keys must equal canonical set "
             f"{sorted(allowed_execute_phases)}; got {source_phase_keys}"
         )
-    if set(fixture_execute_phase_keys) != allowed_execute_phases:
+    if set(expected_fixture_execute_phase_keys) != allowed_execute_phases:
         errors.append(
             "fixture execute phase keys must equal canonical set "
-            f"{sorted(allowed_execute_phases)}; got {fixture_execute_phase_keys}"
+            f"{sorted(allowed_execute_phases)}; got {expected_fixture_execute_phase_keys}"
         )
     if set(fixture_support_phase_keys) != allowed_support_phases:
         errors.append(
             "fixture support phase keys must equal canonical set "
             f"{sorted(allowed_support_phases)}; got {fixture_support_phase_keys}"
         )
-    if fixture_execute_phase_keys != source_phase_keys:
+    if expected_fixture_execute_phase_keys != source_phase_keys:
         errors.append(
             "fixture execute phase key order must match source order; "
-            f"fixture={fixture_execute_phase_keys}, source={source_phase_keys}"
+            f"fixture={expected_fixture_execute_phase_keys}, source={source_phase_keys}"
         )
 
     seen_names: set[str] = set()
@@ -183,33 +248,37 @@ def validate(
             errors.append(
                 f"{fixture.name}: invalid expected_compile_phase '{fixture.expected_compile_phase}'"
             )
-        if fixture.expected_execute_phase not in allowed_execute_phases:
-            errors.append(
-                f"{fixture.name}: invalid expected_execute_phase '{fixture.expected_execute_phase}'"
-            )
         if fixture.expected_support_phase not in allowed_support_phases:
             errors.append(
                 f"{fixture.name}: invalid expected_support_phase '{fixture.expected_support_phase}'"
             )
 
-        if fixture.expected_execute_phase == "unsupported_execution":
+        effective_execute_phase, effective_execute_blocker_key = effective_fixture_execute_expectation(
+            fixture, vm_probe_enabled
+        )
+        if effective_execute_phase not in allowed_execute_phases:
+            errors.append(
+                f"{fixture.name}: invalid effective expected_execute_phase '{effective_execute_phase}'"
+            )
+
+        if effective_execute_phase == "unsupported_execution":
             if fixture.expected_support_phase == "blocked_capability":
-                if fixture.expected_execute_blocker_key != fixture.expected_first_blocker_key:
+                if effective_execute_blocker_key != fixture.expected_first_blocker_key:
                     errors.append(
                         f"{fixture.name}: blocked_capability unsupported_execution must align "
                         "expected_execute_blocker_key with expected_first_blocker_key"
                     )
-                elif fixture.expected_execute_blocker_key not in source_module_policy_blocker_keys:
+                elif effective_execute_blocker_key not in source_module_policy_blocker_keys:
                     errors.append(
                         f"{fixture.name}: blocked_capability blocker key must be in source "
                         f"module policy keys {source_module_policy_blocker_keys}"
                     )
-            elif fixture.expected_execute_blocker_key != source_backend_blocker_key:
+            elif effective_execute_blocker_key != source_backend_blocker_key:
                 errors.append(
                     f"{fixture.name}: unsupported_execution must use expected_execute_blocker_key="
                     f"'{source_backend_blocker_key}' when support phase is not blocked_capability"
                 )
-        elif fixture.expected_execute_blocker_key is not None:
+        elif effective_execute_blocker_key is not None:
             errors.append(
                 f"{fixture.name}: non-unsupported execute phase must set expected_execute_blocker_key=None"
             )
@@ -224,7 +293,12 @@ def validate(
                 f"{fixture.name}: non-blocked support phase must set expected_first_blocker_key=None"
             )
 
-    fixture_execute_phases = unique([fixture.expected_execute_phase for fixture in fixtures])
+    fixture_execute_phases = unique(
+        [
+            effective_fixture_execute_expectation(fixture, vm_probe_enabled)[0]
+            for fixture in fixtures
+        ]
+    )
     if set(fixture_execute_phases) != set(source_phase_keys):
         errors.append(
             "fixture execute phase set must match source execute phase keys; "
@@ -250,6 +324,11 @@ def main() -> int:
         default="src/wasm/mod.rs",
         help="Path to wasm source file for execute-phase/blocker parity checks",
     )
+    parser.add_argument(
+        "--vm-probe",
+        action="store_true",
+        help="Validate execute contract for wasm-vm-probe mode",
+    )
     args = parser.parse_args()
 
     fixture_path = Path(args.fixture)
@@ -263,7 +342,7 @@ def main() -> int:
     )
     wasm_source_path = Path(args.wasm_src)
     wasm_source = wasm_source_path.read_text(encoding="utf-8")
-    source_phase_keys = parse_source_execution_phase_keys(wasm_source)
+    source_phase_keys = parse_source_execution_phase_keys(wasm_source, args.vm_probe)
     source_backend_blocker_key = parse_source_backend_blocker_key(wasm_source)
     source_module_policy_blocker_keys = parse_source_module_policy_blocker_keys(wasm_source)
 
@@ -274,6 +353,7 @@ def main() -> int:
         source_phase_keys,
         source_backend_blocker_key,
         source_module_policy_blocker_keys,
+        args.vm_probe,
     )
     if errors:
         print("wasm execute contract summary validation failed:")
@@ -281,24 +361,38 @@ def main() -> int:
             print(f"- {error}")
         return 1
 
-    execute_blocker_keys = [
-        fixture.expected_execute_blocker_key
+    effective_rows = [
+        (
+            fixture,
+            *effective_fixture_execute_expectation(fixture, args.vm_probe),
+        )
         for fixture in fixtures
-        if fixture.expected_execute_blocker_key is not None
+    ]
+    fixture_execute_phase_keys_effective = list(fixture_execute_phase_keys)
+    if args.vm_probe:
+        fixture_execute_phase_keys_effective.extend(["ok", "runtime_error"])
+    execute_blocker_keys = [
+        effective_execute_blocker_key
+        for _, _, effective_execute_blocker_key in effective_rows
+        if effective_execute_blocker_key is not None
     ]
 
     summary = {
         "fixture": str(fixture_path),
         "wasm_source": str(wasm_source_path),
+        "mode": "vm_probe" if args.vm_probe else "default",
         "counts": {
             "fixtures": len(fixtures),
             "execute_blocker_rows": len(execute_blocker_keys),
         },
         "phases": {
             "compile": unique([fixture.expected_compile_phase for fixture in fixtures]),
-            "execute": unique([fixture.expected_execute_phase for fixture in fixtures]),
+            "execute": unique(
+                [effective_execute_phase for _, effective_execute_phase, _ in effective_rows]
+            ),
             "support": unique([fixture.expected_support_phase for fixture in fixtures]),
             "fixture_execute": fixture_execute_phase_keys,
+            "fixture_execute_effective": fixture_execute_phase_keys_effective,
             "fixture_support": fixture_support_phase_keys,
             "source_execute": source_phase_keys,
         },
@@ -311,10 +405,21 @@ def main() -> int:
                 "expected_compile_phase": fixture.expected_compile_phase,
                 "expected_execute_phase": fixture.expected_execute_phase,
                 "expected_execute_blocker_key": fixture.expected_execute_blocker_key,
+                "expected_vm_probe_execute_phase": fixture.expected_vm_probe_execute_phase,
+                "expected_vm_probe_execute_blocker_key": (
+                    fixture.expected_vm_probe_execute_blocker_key
+                    if fixture.has_vm_probe_execute_blocker_override
+                    else None
+                ),
+                "has_vm_probe_execute_blocker_override": (
+                    fixture.has_vm_probe_execute_blocker_override
+                ),
+                "effective_execute_phase": effective_execute_phase,
+                "effective_execute_blocker_key": effective_execute_blocker_key,
                 "expected_support_phase": fixture.expected_support_phase,
                 "expected_first_blocker_key": fixture.expected_first_blocker_key,
             }
-            for fixture in fixtures
+            for fixture, effective_execute_phase, effective_execute_blocker_key in effective_rows
         ],
     }
 
