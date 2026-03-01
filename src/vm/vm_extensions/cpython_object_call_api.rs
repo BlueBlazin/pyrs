@@ -171,7 +171,7 @@ pub unsafe extern "C" fn PyObject_Str(object: *mut c_void) -> *mut c_void {
     }) {
         Ok(Some(value)) => value,
         Ok(None) => {
-            if std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_UNKNOWN_PTR") {
                 eprintln!("[cpy-unknown-ptr] PyObject_Str object={:p}", object);
             }
             cpython_set_error("unknown PyObject pointer");
@@ -234,7 +234,7 @@ pub unsafe extern "C" fn PyObject_Repr(object: *mut c_void) -> *mut c_void {
     }) {
         Ok(Some(value)) => value,
         Ok(None) => {
-            if std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_UNKNOWN_PTR") {
                 eprintln!("[cpy-unknown-ptr] PyObject_Repr object={:p}", object);
             }
             cpython_set_error("unknown PyObject pointer");
@@ -261,7 +261,7 @@ pub unsafe extern "C" fn PyObject_ASCII(object: *mut c_void) -> *mut c_void {
     }) {
         Ok(Some(value)) => value,
         Ok(None) => {
-            if std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_UNKNOWN_PTR") {
                 eprintln!("[cpy-unknown-ptr] PyObject_ASCII object={:p}", object);
             }
             cpython_set_error("unknown PyObject pointer");
@@ -356,7 +356,7 @@ pub unsafe extern "C" fn PyObject_Format(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetIter(object: *mut c_void) -> *mut c_void {
-    let trace_getiter = std::env::var_os("PYRS_TRACE_CPY_GETITER").is_some();
+    let trace_getiter = super::super::env_var_present_cached("PYRS_TRACE_CPY_GETITER");
     if trace_getiter {
         let (desc, type_name, tp_iter, tp_iternext) = with_active_cpython_context_mut(|context| {
             let desc = context
@@ -430,7 +430,7 @@ pub unsafe extern "C" fn PyObject_GetIter(object: *mut c_void) -> *mut c_void {
         }) {
             return ptr;
         }
-        if std::env::var_os("PYRS_TRACE_CPY_GETITER_RECURSION").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_GETITER_RECURSION") {
             // SAFETY: best-effort diagnostics for recursion path.
             let (type_ptr, type_name, tp_iter) = unsafe {
                 let type_ptr = object
@@ -833,7 +833,7 @@ pub unsafe extern "C" fn PyUnstable_Object_EnableDeferredRefcount(object: *mut c
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyMethod_New(function: *mut c_void, self_obj: *mut c_void) -> *mut c_void {
-    let trace_pymethod_new = std::env::var_os("PYRS_TRACE_PYMETHOD_NEW").is_some();
+    let trace_pymethod_new = super::super::env_var_present_cached("PYRS_TRACE_PYMETHOD_NEW");
     with_active_cpython_context_mut(|context| {
         if function.is_null() || self_obj.is_null() {
             context.set_error("PyMethod_New expected non-null function and self");
@@ -1050,7 +1050,7 @@ pub unsafe extern "C" fn PyVectorcall_Call(
     tuple: *mut c_void,
     dict: *mut c_void,
 ) -> *mut c_void {
-    let trace_vectorcall_decode = std::env::var_os("PYRS_TRACE_VECTORCALL_DECODE").is_some();
+    let trace_vectorcall_decode = super::super::env_var_present_cached("PYRS_TRACE_VECTORCALL_DECODE");
     with_active_cpython_context_mut(|context| {
         let Some(vectorcall) = (unsafe { cpython_resolve_vectorcall(callable) }) else {
             context.set_error("PyVectorcall_Call target has no vectorcall function");
@@ -1213,7 +1213,7 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
     nargsf: usize,
     kwnames: *mut c_void,
 ) -> *mut c_void {
-    let trace_vectorcall_decode = std::env::var_os("PYRS_TRACE_VECTORCALL_DECODE").is_some();
+    let trace_vectorcall_decode = super::super::env_var_present_cached("PYRS_TRACE_VECTORCALL_DECODE");
     if trace_vectorcall_decode {
         let positional_count = nargsf & (usize::MAX >> 1);
         let kw_count = if kwnames.is_null() {
@@ -1528,7 +1528,7 @@ pub unsafe extern "C" fn PyObject_VectorcallDict(
     }
 
     with_active_cpython_context_mut(|context| {
-        let trace_seed_calls = std::env::var_os("PYRS_TRACE_SEED_CALLS").is_some();
+        let trace_seed_calls = super::super::env_var_present_cached("PYRS_TRACE_SEED_CALLS");
         let mut positional_values = Vec::with_capacity(positional_count);
         let mut positional_raw_ptrs = Vec::with_capacity(positional_count);
         for index in 0..positional_count {
@@ -1727,7 +1727,7 @@ pub unsafe extern "C" fn PyObject_VectorcallMethod(
     if method.is_null() {
         return std::ptr::null_mut();
     }
-    let trace_vectorcall_method = std::env::var_os("PYRS_TRACE_VECTORCALL_METHOD").is_some();
+    let trace_vectorcall_method = super::super::env_var_present_cached("PYRS_TRACE_VECTORCALL_METHOD");
     let method_type = unsafe {
         method
             .cast::<CpythonObjectHead>()
