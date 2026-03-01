@@ -231,6 +231,7 @@ Completed on this branch:
 - `5c1664c`: `vm_execution` env/debug probes routed through host seam.
 - `5b75de5`: `vm_native_dispatch` env/debug probes routed through host seam.
 - `05a3bb8`: `vm_runtime_methods` env/debug probes routed through host seam.
+- `3fe94f6`: import pending trace probes routed through host seam.
 
 Remaining near-term focus:
 1. W3: expand `WasmHost` capability stubs and error contracts for unsupported features.
