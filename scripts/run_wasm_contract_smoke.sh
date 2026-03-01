@@ -26,6 +26,10 @@ echo "[wasm-contract] wasm capability summary snapshot"
 python3 scripts/generate_wasm_capability_summary.py \
   --out perf/wasm_capability_summary_latest.json
 
+echo "[wasm-contract] wasm host seam audit snapshot"
+python3 scripts/audit_wasm_host_seam.py \
+  --out perf/wasm_host_seam_audit_latest.json
+
 echo "[wasm-contract] nextest host capability regression"
 cargo nextest run --lib wasm_host_capability_matrix_is_explicit --status-level fail --final-status-level fail
 

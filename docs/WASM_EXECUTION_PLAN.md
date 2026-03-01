@@ -316,7 +316,8 @@ Completed on this branch:
 - `5c4514e`: `WasmWorkerSession` stateful wrapper API landed for lifecycle orchestration.
 - `7988f5e`: worker state/lifecycle enum key exports were added for stable client branching.
 - `c9fc0c1`: worker contract strings are now centralized through internal enum-backed sources.
-- latest: worker enum contract tests now assert full set equality from fixture snapshots.
+- latest: worker enum contract tests now assert fixture-ordered key parity
+  (state/lifecycle/execute/timeout), not only set membership.
 - latest: worker execute contract now exports canonical execute phases and
   `wasm_worker_execute(source)`; `WasmWorkerSession` now tracks `executes_requested`.
 - latest: worker blocker contract now exports structured rows via
@@ -410,11 +411,24 @@ Completed on this branch:
 - latest: host capability contracts now include `clock_time` (supported in wasm)
   and `thread_sleep` (explicitly unsupported in wasm) with bridge/test/docs
   parity across host + wasm capability exports.
+- latest: execute phase fixture constants are now source-order-validated via
+  `scripts/generate_wasm_execute_contract_summary.py`, and wasm contract tests
+  assert ordered parity against `WASM_EXECUTION_PHASE_KEYS`.
+- latest: remaining allowlisted direct `std::env` probes in `src/vm/mod.rs`
+  were removed; env probe caching now routes through host-capability-aware
+  seam logic (`EnvironmentRead`) with no direct env calls left under `src/vm`.
+- latest: worker summary validation and wasm contract tests now enforce ordered
+  key parity for worker enum exports, reducing fixture/source drift risk.
+- latest: module-policy and capability/export tests now enforce deterministic
+  row/key ordering, and module-policy summary validation now checks
+  fixture/source/docs order parity in addition to set parity.
+- latest: `scripts/check_wasm_branch.sh` and
+  `scripts/run_wasm_contract_smoke.sh` now include
+  `scripts/audit_wasm_host_seam.py` snapshots so host-seam drift is guarded by
+  the standard local wasm gate scripts.
 
 Latest host seam audit (local branch run):
-- `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
-- allowlisted entries are intentionally scoped to:
-  - `src/vm/mod.rs` cached env-probe core (`env_var_present_cached` internals).
+- `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
 
 Remaining near-term focus:
 1. W3: expand `WasmHost` capability stubs and error contracts for unsupported features.
