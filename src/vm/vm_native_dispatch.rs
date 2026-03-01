@@ -276,7 +276,7 @@ impl Vm {
         }
         let _depth_guard = CallNativeMethodDepthGuard;
         let hard_limit = (self.recursion_limit.max(1) as usize).saturating_mul(4);
-        if std::env::var_os("PYRS_TRACE_NATIVE_CALL_DEPTH").is_some()
+        if self.host.env_var_os("PYRS_TRACE_NATIVE_CALL_DEPTH").is_some()
             && depth >= hard_limit.saturating_sub(16)
         {
             let receiver_name = match &*receiver.kind() {
@@ -341,7 +341,7 @@ impl Vm {
                     | NativeMethodKind::Builtin(_)
             )
         {
-            if std::env::var_os("PYRS_TRACE_NATIVE_KW_REJECT").is_some() {
+            if self.host.env_var_os("PYRS_TRACE_NATIVE_KW_REJECT").is_some() {
                 let mut kw_names = kwargs.keys().cloned().collect::<Vec<_>>();
                 kw_names.sort();
                 let receiver_type = match &*receiver.kind() {
@@ -10174,7 +10174,7 @@ impl Vm {
             }
         }
         let _guard = CallBuiltinDepthGuard;
-        if std::env::var_os("PYRS_DEBUG_CALL_BUILTIN_DEPTH").is_some() && depth > 256 {
+        if self.host.env_var_os("PYRS_DEBUG_CALL_BUILTIN_DEPTH").is_some() && depth > 256 {
             panic!("call_builtin recursion depth exceeded at depth={depth} builtin={builtin:?}");
         }
         match builtin {
