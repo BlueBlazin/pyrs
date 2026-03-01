@@ -554,6 +554,9 @@ Completed on this branch:
   `current_worker_state*` seam in `src/wasm/mod.rs` so worker info/lifecycle
   timeout/execute-with-operation surfaces stay state-consistent as backend
   wiring evolves.
+- latest: `WasmWorkerInfo` now exposes `execution_probe_enabled` so browser
+  clients can detect `wasm-vm-probe` runtime availability without changing
+  `supported` semantics for unwired worker lifecycle APIs.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

@@ -203,6 +203,7 @@ fn wasm_worker_contract_basics() {
     assert_eq!(info.backend(), "unwired".to_string());
     assert_eq!(info.state(), "unwired");
     assert_eq!(info.interruption_model(), "worker_recycle");
+    assert_eq!(info.execution_probe_enabled(), vm_probe_enabled());
 
     let keys = wasm_worker_blocker_keys();
     assert_eq!(keys.length(), info.blocker_count() as u32);
@@ -629,6 +630,7 @@ fn wasm_worker_session_contract_is_stable() {
     let info = session.info();
     assert!(!info.supported());
     assert_eq!(info.state(), "unwired");
+    assert_eq!(info.execution_probe_enabled(), vm_probe_enabled());
 
     let start = session.start();
     assert_eq!(start.phase(), "unsupported_worker_start");

@@ -28,6 +28,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `supported = false`
 - `state = "unwired"`
 - `interruption_model = "worker_recycle"`
+- `execution_probe_enabled = false` in default builds, `true` with `wasm-vm-probe`
 - `blocker_count = len(wasm_worker_blocker_keys())`
 
 `wasm_worker_timeout_policy()` currently returns:
