@@ -4,12 +4,13 @@ interface Props {
 }
 
 const { context = "home" } = Astro.props;
-const logoSize = context === "home" ? 48 : 44;
+const isHome = context === "home";
+const intrinsicLogoSize = isHome ? 68 : 44;
 ---
 
-<header class="global-topbar">
+<header class="global-topbar" data-context={context}>
 	<a class="global-brand" href="/">
-		<img src="/images/pyrs-logo.png" alt="PYRS logo" width={logoSize} height={logoSize} />
+		<img src="/images/pyrs-logo.png" alt="PYRS logo" width={intrinsicLogoSize} height={intrinsicLogoSize} />
 		<span>PYRS</span>
 	</a>
 	<nav class="global-topnav">
@@ -18,29 +19,64 @@ const logoSize = context === "home" ? 48 : 44;
 	</nav>
 </header>
 
+{
+	isHome && (
+		<script>
+			const header = document.querySelector(".global-topbar[data-context='home']");
+			if (header && header instanceof HTMLElement && header.dataset.scrollBound !== "1") {
+				header.dataset.scrollBound = "1";
+				const maxScroll = 180;
+				const update = () => {
+					const progress = Math.max(0, Math.min(1, window.scrollY / maxScroll));
+					header.style.setProperty("--home-progress", progress.toFixed(3));
+				};
+				update();
+				window.addEventListener("scroll", update, { passive: true });
+				window.addEventListener("resize", update);
+			}
+		</script>
+	)
+}
+
 <style>
 	.global-topbar {
+		--logo-size: 44px;
+		--brand-gap: 0.68rem;
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
 		padding: 1.4rem 0;
 	}
 
+	.global-topbar[data-context="home"] {
+		--home-progress: 0;
+		--logo-size: calc(44px + (1 - var(--home-progress)) * 24px);
+		--brand-gap: calc(0.68rem + (1 - var(--home-progress)) * 0.18rem);
+	}
+
 	.global-brand {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.68rem;
+		gap: var(--brand-gap);
 		text-decoration: none;
 		color: #f7eee8;
 		font-size: 1.15rem;
 		font-weight: 700;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
+		transition: gap 180ms ease;
 	}
 
 	.global-brand img {
+		width: var(--logo-size);
+		height: var(--logo-size);
 		border-radius: 0.52rem;
 		border: 1px solid rgba(255, 255, 255, 0.14);
+		transition: width 180ms ease, height 180ms ease, box-shadow 180ms ease;
+	}
+
+	.global-topbar[data-context="home"] .global-brand img {
+		box-shadow: 0 0 calc((1 - var(--home-progress)) * 18px) rgba(233, 125, 70, 0.26);
 	}
 
 	.global-brand:focus-visible {
@@ -72,6 +108,10 @@ const logoSize = context === "home" ? 48 : 44;
 	}
 
 	@media (max-width: 760px) {
+		.global-topbar[data-context="home"] {
+			--logo-size: calc(44px + (1 - var(--home-progress)) * 14px);
+		}
+
 		.global-topbar {
 			flex-direction: column;
 			align-items: flex-start;
