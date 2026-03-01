@@ -48,7 +48,7 @@ pub unsafe extern "C" fn PyFloat_AsDouble(object: *mut c_void) -> f64 {
         .and_then(ModuleCapiContext::cpython_proxy_raw_ptr_from_value)
         .filter(|ptr| !ptr.is_null())
         .unwrap_or(object);
-    let trace_pyfloat = std::env::var_os("PYRS_TRACE_PYFLOAT_AS_DOUBLE").is_some();
+    let trace_pyfloat = super::super::env_var_present_cached("PYRS_TRACE_PYFLOAT_AS_DOUBLE");
     if trace_pyfloat {
         let object_type = cpython_type_name_for_object_ptr(object);
         let slot_type = cpython_type_name_for_object_ptr(slot_object);
@@ -60,7 +60,7 @@ pub unsafe extern "C" fn PyFloat_AsDouble(object: *mut c_void) -> f64 {
             "[cpy-float-asdouble] object={:p} type={} slot_object={:p} slot_type={} mapped={}",
             object, object_type, slot_object, slot_type, mapped_tag
         );
-        if std::env::var_os("PYRS_TRACE_PYFLOAT_AS_DOUBLE_BT").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_PYFLOAT_AS_DOUBLE_BT") {
             eprintln!("[cpy-float-asdouble] bt={}", Backtrace::force_capture());
         }
     }
@@ -244,7 +244,7 @@ pub unsafe extern "C" fn PyLong_AsLong(object: *mut c_void) -> i64 {
     match cpython_value_from_ptr(object) {
         Ok(value) => match value_to_int(value) {
             Ok(value) => {
-                if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") {
                     eprintln!(
                         "[cpy-long] mapped value object={:p} value={}",
                         object, value
@@ -253,7 +253,7 @@ pub unsafe extern "C" fn PyLong_AsLong(object: *mut c_void) -> i64 {
                 value
             }
             Err(err) => {
-                if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") {
                     eprintln!(
                         "[cpy-long] mapped conversion failed object={:p} err={}",
                         object, err.message
@@ -265,7 +265,7 @@ pub unsafe extern "C" fn PyLong_AsLong(object: *mut c_void) -> i64 {
         },
         Err(err) => {
             if let Some(value) = unsafe { cpython_foreign_long_to_i64(object) } {
-                if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") {
                     eprintln!(
                         "[cpy-long] foreign fallback object={:p} value={}",
                         object, value
@@ -273,7 +273,7 @@ pub unsafe extern "C" fn PyLong_AsLong(object: *mut c_void) -> i64 {
                 }
                 return value;
             }
-            if std::env::var_os("PYRS_TRACE_CPY_LONG").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_LONG") {
                 eprintln!("[cpy-long] foreign fallback failed object={:p}", object);
             }
             cpython_set_error(err);
@@ -896,7 +896,7 @@ pub unsafe extern "C" fn pyrs_capi_tuple_pack_from_array(
 pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *const c_char) {
     match unsafe { c_name_to_string(message) } {
         Ok(message) => {
-            if std::env::var_os("PYRS_TRACE_NUMPY_DTYPE").is_some() && message.contains("data type")
+            if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_DTYPE") && message.contains("data type")
             {
                 eprintln!(
                     "[cpy-dtype] PyErr_SetString exc={:p} msg={} bt={:?}",
@@ -905,7 +905,7 @@ pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *cons
                     Backtrace::force_capture()
                 );
             }
-            if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS")
                 && message.starts_with("cannot add indexed loop to ufunc")
             {
                 let _ = with_active_cpython_context_mut(|context| {
@@ -916,7 +916,7 @@ pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *cons
                     }
                 });
             }
-            if std::env::var_os("PYRS_TRACE_DOCSTRING_ERRORS").is_some()
+            if super::super::env_var_present_cached("PYRS_TRACE_DOCSTRING_ERRORS")
                 && message == "Cannot set a docstring for that object"
             {
                 eprintln!(
@@ -926,7 +926,7 @@ pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *cons
                     Backtrace::force_capture()
                 );
             }
-            if std::env::var_os("PYRS_TRACE_NUMPY_PICKLE_FAIL").is_some()
+            if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_PICKLE_FAIL")
                 && message.starts_with("Unable to initialize pickling for ")
             {
                 eprintln!(
@@ -936,7 +936,7 @@ pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *cons
                 );
             }
             if message.starts_with("raise: exception class must be a subclass of BaseException")
-                && std::env::var_os("PYRS_TRACE_RAISE_CONTRACT_CONTEXT").is_some()
+                && super::super::env_var_present_cached("PYRS_TRACE_RAISE_CONTRACT_CONTEXT")
             {
                 let _ = with_active_cpython_context_mut(|context| {
                     let current_type = context
@@ -966,7 +966,7 @@ pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *cons
                     );
                 });
             }
-            if message == "__exit__" && std::env::var_os("PYRS_TRACE_CPY_ATTR_EXIT").is_some() {
+            if message == "__exit__" && super::super::env_var_present_cached("PYRS_TRACE_CPY_ATTR_EXIT") {
                 let incoming_type = cpython_exception_class_name_from_ptr(_exception)
                     .unwrap_or_else(|| cpython_type_name_for_object_ptr(_exception));
                 eprintln!(
@@ -1221,7 +1221,7 @@ pub unsafe extern "C" fn PyErr_Occurred() -> *mut c_void {
             .current_error
             .as_ref()
             .map_or(std::ptr::null_mut(), |state| state.ptype);
-        if std::env::var_os("PYRS_TRACE_PYERR_OCCURRED").is_some() && !ptr.is_null() {
+        if super::super::env_var_present_cached("PYRS_TRACE_PYERR_OCCURRED") && !ptr.is_null() {
             let active = ACTIVE_CPYTHON_INIT_CONTEXT.with(|cell| cell.get());
             eprintln!(
                 "[cpy-err-occurred] active_ctx={:p} ctx={:p} ptype={:p} last_error={:?}",
@@ -1238,7 +1238,7 @@ pub unsafe extern "C" fn PyErr_Occurred() -> *mut c_void {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_Clear() {
     let _ = with_active_cpython_context_mut(|context| {
-        if std::env::var_os("PYRS_TRACE_PYARROW_IMPORT").is_some()
+        if super::super::env_var_present_cached("PYRS_TRACE_PYARROW_IMPORT")
             && context
                 .last_error
                 .as_ref()
@@ -1249,7 +1249,7 @@ pub unsafe extern "C" fn PyErr_Clear() {
                 context.last_error.as_deref().unwrap_or("")
             );
         }
-        if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() && context.last_error.is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") && context.last_error.is_some() {
             if let Some(previous) = context.last_error.as_ref() {
                 eprintln!("[cpy-err-clear] clearing: {previous}");
             }
@@ -1492,7 +1492,7 @@ pub unsafe extern "C" fn PyErr_GivenExceptionMatches(
     }
     let given_type = cpython_exception_type_ptr(given);
     let expected_type = cpython_exception_type_ptr(expected);
-    let trace_import_match = std::env::var_os("PYRS_TRACE_IMPORT_EXCEPTION_MATCH").is_some();
+    let trace_import_match = super::super::env_var_present_cached("PYRS_TRACE_IMPORT_EXCEPTION_MATCH");
     if trace_import_match {
         let given_name = cpython_exception_expected_name_from_ptr(given)
             .unwrap_or_else(|| cpython_type_name_for_object_ptr(given));
@@ -1549,7 +1549,7 @@ pub unsafe extern "C" fn PyErr_Fetch(
             ptraceback: std::ptr::null_mut(),
         },
     );
-    if std::env::var_os("PYRS_TRACE_PYERR_FETCH").is_some() {
+    if super::super::env_var_present_cached("PYRS_TRACE_PYERR_FETCH") {
         const MIN_VALID_PTR: usize = 0x1_0000_0000;
         let mut type_name = "<null>".to_string();
         let mut type_tp_name = "<null>".to_string();
@@ -1577,7 +1577,7 @@ pub unsafe extern "C" fn PyErr_Fetch(
             state.ptype, state.pvalue, state.ptraceback, type_name, type_tp_name
         );
     }
-    if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_ERRFLOW").is_some()
+    if super::super::env_var_present_cached("PYRS_TRACE_DEFAULT_RNG_ERRFLOW")
         && (!state.ptype.is_null() || !state.pvalue.is_null() || !state.ptraceback.is_null())
     {
         eprintln!(
@@ -1609,7 +1609,7 @@ pub unsafe extern "C" fn PyErr_Restore(
     pvalue: *mut c_void,
     _ptraceback: *mut c_void,
 ) {
-    if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_ERRFLOW").is_some()
+    if super::super::env_var_present_cached("PYRS_TRACE_DEFAULT_RNG_ERRFLOW")
         && (!ptype.is_null() || !pvalue.is_null() || !_ptraceback.is_null())
     {
         eprintln!(
@@ -1644,7 +1644,7 @@ pub(in crate::vm::vm_extensions) fn cpython_exception_type_ptr_for_value(
                 .borrow()
                 .get(CPY_EXCEPTION_TYPE_PTR_ATTR)
                 .cloned();
-            if std::env::var_os("PYRS_TRACE_CPY_EXC_TYPE_HINT").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_EXC_TYPE_HINT") {
                 let map_hit = context
                     .exception_type_ptr_by_name
                     .get(&exception_obj.name)
@@ -1840,7 +1840,7 @@ fn cpython_is_exception_value(context: &ModuleCapiContext, value: &Value) -> boo
 pub unsafe extern "C" fn PyErr_GetRaisedException() -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         let state = context.fetch_error_state();
-        if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_RAISED_EXC").is_some()
+        if super::super::env_var_present_cached("PYRS_TRACE_DEFAULT_RNG_RAISED_EXC")
             && (!state.ptype.is_null() || !state.pvalue.is_null() || !state.ptraceback.is_null())
         {
             eprintln!(
@@ -1863,7 +1863,7 @@ pub unsafe extern "C" fn PyErr_GetRaisedException() -> *mut c_void {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_SetRaisedException(exc: *mut c_void) {
     let _ = with_active_cpython_context_mut(|context| {
-        if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_RAISED_EXC").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_DEFAULT_RNG_RAISED_EXC") {
             eprintln!(
                 "[pyerr-setraised] exc={:p} type={}",
                 exc,
@@ -2015,7 +2015,7 @@ pub unsafe extern "C" fn PyErr_SetExcInfo(
         } else {
             p_traceback
         };
-        if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_ERRFLOW").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_DEFAULT_RNG_ERRFLOW") {
             eprintln!(
                 "[pyerr-setexcinfo] raw_type={:p} raw_value={:p} raw_tb={:p} norm_type={:p}({}) norm_value={:p} norm_tb={:p}",
                 p_type,
@@ -2110,7 +2110,7 @@ pub unsafe extern "C" fn pyrs_capi_pyerr_format_fallback(
             .unwrap_or("error")
             .to_string()
     };
-    if std::env::var_os("PYRS_TRACE_NUMPY_DTYPE").is_some() && message.contains("data type") {
+    if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_DTYPE") && message.contains("data type") {
         eprintln!(
             "[cpy-dtype] PyErr_Format exception={:p} msg={} bt={:?}",
             exception,
@@ -2118,7 +2118,7 @@ pub unsafe extern "C" fn pyrs_capi_pyerr_format_fallback(
             Backtrace::force_capture()
         );
     }
-    if std::env::var_os("PYRS_TRACE_NUMPY_PICKLE_FAIL").is_some()
+    if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_PICKLE_FAIL")
         && message.starts_with("Unable to initialize pickling for ")
     {
         eprintln!(
@@ -2127,7 +2127,7 @@ pub unsafe extern "C" fn pyrs_capi_pyerr_format_fallback(
             Backtrace::force_capture()
         );
     }
-    if std::env::var_os("PYRS_TRACE_TYPED_CACHE_SUBSCRIPT").is_some()
+    if super::super::env_var_present_cached("PYRS_TRACE_TYPED_CACHE_SUBSCRIPT")
         && message.contains("_TypedCacheSpecialForm")
     {
         eprintln!(
@@ -2833,7 +2833,7 @@ pub unsafe extern "C" fn PyErr_SetObject(_exception: *mut c_void, value: *mut c_
             ptype = derived_ptype;
         }
         let value_obj = context.cpython_value_from_ptr_or_proxy(value);
-        if std::env::var_os("PYRS_TRACE_CPY_UFUNC_ERRORS").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_UFUNC_ERRORS") {
             let exception_name = cpython_exception_class_name_from_ptr(ptype)
                 .unwrap_or_else(|| cpython_type_name_for_object_ptr(ptype));
             if exception_name.contains("UFunc") || exception_name.contains("ufunc") {
@@ -2854,7 +2854,7 @@ pub unsafe extern "C" fn PyErr_SetObject(_exception: *mut c_void, value: *mut c_
         // Exception instance normalization belongs to `PyErr_NormalizeException`
         // and related retrieval APIs, not `PyErr_SetObject` itself.
         let message = context.error_message_from_ptr(value);
-        if message.contains("__exit__") && std::env::var_os("PYRS_TRACE_CPY_ATTR_EXIT").is_some() {
+        if message.contains("__exit__") && super::super::env_var_present_cached("PYRS_TRACE_CPY_ATTR_EXIT") {
             let exception_name = cpython_exception_class_name_from_ptr(ptype)
                 .unwrap_or_else(|| cpython_type_name_for_object_ptr(ptype));
             eprintln!(
