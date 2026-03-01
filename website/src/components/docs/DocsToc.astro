@@ -439,17 +439,6 @@ const tocEnabled = mergedConfig.enabled !== false;
 			}
 		};
 
-		const syncHash = (nextActiveId) => {
-			if (!nextActiveId) {
-				return;
-			}
-			const targetHash = `#${nextActiveId}`;
-			if (window.location.hash === targetHash) {
-				return;
-			}
-			history.replaceState(history.state, "", `${window.location.pathname}${window.location.search}${targetHash}`);
-		};
-
 		const followActiveLink = (nextActiveId) => {
 			if (!nextActiveId) {
 				return;
@@ -483,7 +472,6 @@ const tocEnabled = mergedConfig.enabled !== false;
 			}
 			activeId = nextActiveId;
 			setActive(activeId);
-			syncHash(activeId);
 			followActiveLink(activeId);
 		};
 
