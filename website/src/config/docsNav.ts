@@ -14,13 +14,14 @@ export const docsNavGroups: DocsNavGroup[] = [
 		items: [
 			{ href: "/docs/", label: "Getting Started" },
 			{ href: "/docs/install/", label: "Installation" },
+			{ href: "/docs/repl/", label: "REPL and Execution" },
 		],
 	},
 	{
 		label: "Reference",
 		items: [
 			{ href: "/docs/reference/", label: "CLI and Environment" },
-			{ href: "/docs/style-guide/", label: "Authoring Style Guide" },
+			{ href: "/docs/compatibility/", label: "Compatibility Targets" },
 		],
 	},
 ];

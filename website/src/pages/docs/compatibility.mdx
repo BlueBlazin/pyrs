@@ -1,0 +1,52 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Compatibility Targets
+description: Compatibility scope and platform targets for PYRS.
+pageTitle: Compatibility Targets
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	PYRS targets CPython 3.14 semantics as the only correctness baseline. Behavior that diverges from
+	CPython is treated as a bug, not an alternative dialect.
+</DocSection>
+
+<DocSection title="Release Platform Targets">
+	<DataTable headers={["Platform", "Priority"]}>
+		<tr>
+			<td><code>Linux (x86_64 + aarch64)</code></td>
+			<td>Required release target.</td>
+		</tr>
+		<tr>
+			<td><code>macOS (x86_64 + aarch64)</code></td>
+			<td>Required release target.</td>
+		</tr>
+		<tr>
+			<td><code>Windows</code></td>
+			<td>Non-priority target for current release cycle.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Runtime Scope">
+	<DataTable headers={["Area", "Current Position"]}>
+		<tr>
+			<td>Source Language</td>
+			<td>CPython 3.14 grammar and runtime behavior parity is the target.</td>
+		</tr>
+		<tr>
+			<td>Bytecode</td>
+			<td>CPython 3.14 <code>.pyc</code> execution compatibility is in scope.</td>
+		</tr>
+		<tr>
+			<td>Native Extensions</td>
+			<td>Active C-API closure work for scientific-stack and ecosystem compatibility.</td>
+		</tr>
+	</DataTable>
+	<Callout title="Design Rule">
+		Compatibility work is implemented from CPython reference behavior first, then validated by tests.
+	</Callout>
+</DocSection>

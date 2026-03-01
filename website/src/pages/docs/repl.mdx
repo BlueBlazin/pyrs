@@ -1,0 +1,45 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | REPL and Execution
+description: REPL behavior and execution modes for PYRS.
+pageTitle: REPL and Execution
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import CommandBlock from "../../components/docs/CommandBlock.astro";
+import Callout from "../../components/docs/Callout.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import { quickRunCommands } from "../../config/installCommands";
+
+<DocSection>
+	PYRS supports REPL, inline command mode, and script execution with CPython-style startup paths.
+</DocSection>
+
+<DocSection title="Quick Modes">
+	<CommandBlock commands={quickRunCommands} />
+</DocSection>
+
+<DocSection title="Prompt Behavior">
+	<DataTable headers={["Prompt", "Meaning"]}>
+		<tr>
+			<td><code>&gt;&gt;&gt;</code></td>
+			<td>Primary prompt for a new statement.</td>
+		</tr>
+		<tr>
+			<td><code>...</code></td>
+			<td>Continuation prompt while completing a block or multi-line construct.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Exit and Interrupt">
+	<ul class="m-0 list-disc space-y-1.5 pl-5">
+		<li><code>Ctrl+D</code> exits the REPL on macOS/Linux terminals.</li>
+		<li><code>Ctrl+C</code> interrupts the running statement where supported.</li>
+		<li>Fatal runtime exceptions print traceback output and return to prompt when possible.</li>
+	</ul>
+	<Callout title="Tip">
+		If you need deterministic non-interactive behavior for scripts and CI, prefer `pyrs -c ...` or
+		file execution over a REPL session.
+	</Callout>
+</DocSection>
