@@ -70,7 +70,7 @@ In web mode, unsupported capabilities must fail explicitly and deterministically
 Deliverables:
 - Add this plan and branch policy.
 - Add a WASM track checklist doc section to release/engineering gates.
-- Define initial capability matrix document.
+- Define initial capability matrix document (`docs/WASM_CAPABILITY_MATRIX.md`).
 
 Exit criteria:
 - Native test baseline unchanged.
