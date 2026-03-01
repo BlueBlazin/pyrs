@@ -200,6 +200,9 @@ Branch helper:
 - execute-contract summary helper:
   `python3 scripts/generate_wasm_execute_contract_summary.py --out perf/wasm_execute_contract_summary_latest.json`
   for fixture-driven execute phase/blocker consistency.
+- worker-contract summary helper:
+  `python3 scripts/generate_wasm_worker_contract_summary.py --out perf/wasm_worker_contract_summary_latest.json`
+  for fixture + source parity on worker key sets/prefixes/blockers.
 
 ## Merge Decision Rubric
 
@@ -341,10 +344,11 @@ Completed on this branch:
   lifecycle/timeout/execute wasm contract tests.
 - latest: operation-id docs now explicitly scope guarantees to prefix shape +
   per-process uniqueness (no cross-run ordering contract).
-- latest: fixture-driven worker contract summary snapshots are now emitted via
-  `scripts/generate_wasm_worker_contract_summary.py` to
-  `perf/wasm_worker_contract_summary_latest.json` and enforced in branch/smoke
-  gate scripts.
+- latest: worker contract summary snapshots now validate fixture rows against
+  `src/wasm/mod.rs` source key/prefix/blocker contracts via
+  `scripts/generate_wasm_worker_contract_summary.py`
+  (`perf/wasm_worker_contract_summary_latest.json`) and are enforced in
+  branch/smoke gate scripts.
 - latest: `WasmExecutionResult`/`WasmWorkerExecutionResult` now expose
   `blocker_key` for deterministic unsupported-execution branching
   (`execution_backend_unwired` / `worker_runtime_unwired`) without
