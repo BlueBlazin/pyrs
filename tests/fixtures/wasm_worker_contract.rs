@@ -34,6 +34,28 @@ pub struct WasmWorkerTimeoutFixture {
     pub expected_blocker_key: Option<&'static str>,
 }
 
+pub struct WasmWorkerInfoFixture {
+    pub name: &'static str,
+    pub expected_supported: bool,
+    pub expected_backend: &'static str,
+    pub expected_vm_probe_backend: Option<&'static str>,
+    pub expected_state: &'static str,
+    pub expected_interruption_model: &'static str,
+    pub expected_execution_probe_enabled: bool,
+    pub expected_vm_probe_execution_probe_enabled: Option<bool>,
+}
+
+pub const WASM_WORKER_INFO_FIXTURES: &[WasmWorkerInfoFixture] = &[WasmWorkerInfoFixture {
+    name: "worker_info_runtime_contract",
+    expected_supported: false,
+    expected_backend: "unwired",
+    expected_vm_probe_backend: Some("vm_probe"),
+    expected_state: "unwired",
+    expected_interruption_model: "worker_recycle",
+    expected_execution_probe_enabled: false,
+    expected_vm_probe_execution_probe_enabled: Some(true),
+},];
+
 pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[
     WasmWorkerLifecycleFixture {
         name: "worker_start_unwired",

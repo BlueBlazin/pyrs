@@ -39,6 +39,28 @@ class WorkerExecuteExpectation:
     expect_line_column: bool
 
 
+@dataclass
+class WorkerInfoFixtureRow:
+    name: str
+    expected_supported: bool
+    expected_backend: str
+    expected_vm_probe_backend: str | None
+    expected_state: str
+    expected_interruption_model: str
+    expected_execution_probe_enabled: bool
+    expected_vm_probe_execution_probe_enabled: bool | None
+
+
+@dataclass
+class WorkerInfoExpectation:
+    name: str
+    expected_supported: bool
+    backend: str
+    expected_state: str
+    expected_interruption_model: str
+    execution_probe_enabled: bool
+
+
 def parse_const_body(source: str, const_name: str) -> str:
     pattern = CONST_RE_TEMPLATE.format(name=re.escape(const_name))
     match = re.search(pattern, source, flags=re.DOTALL)
@@ -180,6 +202,35 @@ def parse_worker_execute_fixture_rows(source: str) -> list[WorkerExecuteFixtureR
     return rows
 
 
+def parse_worker_info_fixture_rows(source: str) -> list[WorkerInfoFixtureRow]:
+    body = parse_const_body(source, "WASM_WORKER_INFO_FIXTURES")
+    pattern = re.compile(r"WasmWorkerInfoFixture\s*\{(.*?)\n\s*\},", re.DOTALL)
+    rows: list[WorkerInfoFixtureRow] = []
+    for match in pattern.finditer(body):
+        row_body = match.group(1)
+        rows.append(
+            WorkerInfoFixtureRow(
+                name=parse_required_string_field(row_body, "name"),
+                expected_supported=parse_required_bool_field(row_body, "expected_supported"),
+                expected_backend=parse_required_string_field(row_body, "expected_backend"),
+                expected_vm_probe_backend=parse_optional_string_field(
+                    row_body, "expected_vm_probe_backend"
+                ),
+                expected_state=parse_required_string_field(row_body, "expected_state"),
+                expected_interruption_model=parse_required_string_field(
+                    row_body, "expected_interruption_model"
+                ),
+                expected_execution_probe_enabled=parse_required_bool_field(
+                    row_body, "expected_execution_probe_enabled"
+                ),
+                expected_vm_probe_execution_probe_enabled=parse_optional_bool_field(
+                    row_body, "expected_vm_probe_execution_probe_enabled"
+                ),
+            )
+        )
+    return rows
+
+
 def effective_worker_execute_expectation(
     row: WorkerExecuteFixtureRow, vm_probe_enabled: bool
 ) -> WorkerExecuteExpectation:
@@ -206,6 +257,26 @@ def effective_worker_execute_expectation(
         expect_error=expect_error,
         expected_success=expected_success,
         expect_line_column=expect_line_column,
+    )
+
+
+def effective_worker_info_expectation(
+    row: WorkerInfoFixtureRow, vm_probe_enabled: bool
+) -> WorkerInfoExpectation:
+    backend = row.expected_backend
+    execution_probe_enabled = row.expected_execution_probe_enabled
+    if vm_probe_enabled:
+        if row.expected_vm_probe_backend is not None:
+            backend = row.expected_vm_probe_backend
+        if row.expected_vm_probe_execution_probe_enabled is not None:
+            execution_probe_enabled = row.expected_vm_probe_execution_probe_enabled
+    return WorkerInfoExpectation(
+        name=row.name,
+        expected_supported=row.expected_supported,
+        backend=backend,
+        expected_state=row.expected_state,
+        expected_interruption_model=row.expected_interruption_model,
+        execution_probe_enabled=execution_probe_enabled,
     )
 
 
@@ -316,6 +387,28 @@ def parse_source_module_policy_blocker_keys(wasm_source: str) -> list[str]:
     return keys
 
 
+def parse_source_wasm_worker_info_body(wasm_source: str) -> str:
+    pattern = re.compile(
+        r"pub fn wasm_worker_info\(\) -> WasmWorkerInfo \{(.*?)\n\}",
+        flags=re.DOTALL,
+    )
+    match = pattern.search(wasm_source)
+    if not match:
+        raise ValueError("unable to parse wasm_worker_info function body")
+    return match.group(1)
+
+
+def parse_source_worker_info_supported_literal(worker_info_body: str) -> bool:
+    match = re.search(r"supported:\s*(true|false)\s*,", worker_info_body)
+    if not match:
+        raise ValueError("unable to parse supported literal from wasm_worker_info")
+    return match.group(1) == "true"
+
+
+def parse_source_worker_info_uses_runtime_probe_flag(worker_info_body: str) -> bool:
+    return "execution_probe_enabled: wasm_vm_runtime_enabled()" in worker_info_body
+
+
 def validate_non_empty(name: str, values: list[str], errors: list[str]) -> None:
     if not values:
         errors.append(f"{name} must not be empty")
@@ -396,6 +489,10 @@ def main() -> int:
     timeout_blocker_keys = parse_optional_blocker_keys(
         fixture_source, "WASM_WORKER_TIMEOUT_FIXTURES"
     )
+    worker_info_rows = parse_worker_info_fixture_rows(fixture_source)
+    worker_info_effective_expectations = [
+        effective_worker_info_expectation(row, args.vm_probe) for row in worker_info_rows
+    ]
 
     source_const_map = parse_source_const_string_map(wasm_source)
     source_state_keys = parse_source_enum_keys(
@@ -414,6 +511,13 @@ def main() -> int:
     source_operation_actions = parse_source_operation_actions(wasm_source)
     source_worker_blocker_key = parse_source_worker_blocker_key(wasm_source)
     source_module_policy_blocker_keys = parse_source_module_policy_blocker_keys(wasm_source)
+    source_worker_info_body = parse_source_wasm_worker_info_body(wasm_source)
+    source_worker_info_supported = parse_source_worker_info_supported_literal(
+        source_worker_info_body
+    )
+    source_worker_info_uses_runtime_probe_flag = (
+        parse_source_worker_info_uses_runtime_probe_flag(source_worker_info_body)
+    )
     source_expected_worker_blocker_keys = [
         source_worker_blocker_key,
         *source_module_policy_blocker_keys,
@@ -421,6 +525,19 @@ def main() -> int:
     allowed_execute_unsupported_blocker_keys = sorted(
         {source_worker_blocker_key, *source_module_policy_blocker_keys}
     )
+    source_worker_backend_default = source_const_map["WASM_WORKER_BACKEND_UNWIRED"]
+    source_worker_backend_vm_probe = source_const_map.get(
+        "WASM_WORKER_BACKEND_VM_PROBE",
+        source_worker_backend_default,
+    )
+    source_expected_worker_backend = (
+        source_worker_backend_vm_probe if args.vm_probe else source_worker_backend_default
+    )
+    source_expected_worker_execution_probe_enabled = args.vm_probe
+    source_expected_worker_state = source_state_keys[0]
+    source_expected_worker_interruption_model = source_const_map[
+        "WASM_WORKER_INTERRUPT_MODEL_RECYCLE"
+    ]
 
     expected_lifecycle_prefixes = unique(
         [f"worker_{action}_" for action in source_lifecycle_actions]
@@ -463,6 +580,11 @@ def main() -> int:
     validate_non_empty(
         "WASM_WORKER_TIMEOUT_FIXTURES.expected_operation_prefix",
         timeout_operation_prefixes,
+        errors,
+    )
+    validate_non_empty(
+        "WASM_WORKER_INFO_FIXTURES",
+        [row.name for row in worker_info_rows],
         errors,
     )
 
@@ -536,6 +658,40 @@ def main() -> int:
             "worker blocker key order mismatch "
             f"fixtures={worker_blocker_keys} source={source_expected_worker_blocker_keys}"
         )
+
+    if not source_worker_info_uses_runtime_probe_flag:
+        errors.append(
+            "wasm_worker_info should set execution_probe_enabled from wasm_vm_runtime_enabled()"
+        )
+
+    for row in worker_info_effective_expectations:
+        if row.expected_supported != source_worker_info_supported:
+            errors.append(
+                f"{row.name}: worker info expected_supported mismatch "
+                f"fixture={row.expected_supported} source={source_worker_info_supported}"
+            )
+        if row.backend != source_expected_worker_backend:
+            errors.append(
+                f"{row.name}: worker info backend mismatch "
+                f"fixture={row.backend} source={source_expected_worker_backend}"
+            )
+        if row.expected_state != source_expected_worker_state:
+            errors.append(
+                f"{row.name}: worker info state mismatch "
+                f"fixture={row.expected_state} source={source_expected_worker_state}"
+            )
+        if row.expected_interruption_model != source_expected_worker_interruption_model:
+            errors.append(
+                f"{row.name}: worker info interruption model mismatch "
+                f"fixture={row.expected_interruption_model} "
+                f"source={source_expected_worker_interruption_model}"
+            )
+        if row.execution_probe_enabled != source_expected_worker_execution_probe_enabled:
+            errors.append(
+                f"{row.name}: worker info execution_probe_enabled mismatch "
+                f"fixture={row.execution_probe_enabled} "
+                f"source={source_expected_worker_execution_probe_enabled}"
+            )
 
     if unique(lifecycle_operation_prefixes) != expected_lifecycle_prefixes:
         errors.append(
@@ -666,6 +822,25 @@ def main() -> int:
         "source_worker_blocker_key": source_worker_blocker_key,
         "source_module_policy_blocker_keys": source_module_policy_blocker_keys,
         "source_expected_worker_blocker_keys": source_expected_worker_blocker_keys,
+        "source_worker_info": {
+            "supported": source_worker_info_supported,
+            "backend": source_expected_worker_backend,
+            "state": source_expected_worker_state,
+            "interruption_model": source_expected_worker_interruption_model,
+            "execution_probe_enabled": source_expected_worker_execution_probe_enabled,
+            "uses_runtime_probe_flag": source_worker_info_uses_runtime_probe_flag,
+        },
+        "worker_info_effective_rows": [
+            {
+                "name": row.name,
+                "expected_supported": row.expected_supported,
+                "backend": row.backend,
+                "expected_state": row.expected_state,
+                "expected_interruption_model": row.expected_interruption_model,
+                "execution_probe_enabled": row.execution_probe_enabled,
+            }
+            for row in worker_info_effective_expectations
+        ],
         "allowed_execute_unsupported_blocker_keys": allowed_execute_unsupported_blocker_keys,
         "operation_prefixes": {
             "lifecycle": unique(lifecycle_operation_prefixes),
@@ -683,6 +858,7 @@ def main() -> int:
             "execute_phase_keys": len(execute_phase_keys_effective),
             "timeout_phase_keys": len(timeout_phase_keys),
             "worker_blocker_keys": len(worker_blocker_keys),
+            "worker_info_rows": len(worker_info_rows),
             "lifecycle_prefix_entries": len(lifecycle_operation_prefixes),
             "execute_prefix_entries": len(execute_operation_prefixes),
             "timeout_prefix_entries": len(timeout_operation_prefixes),

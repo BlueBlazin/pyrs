@@ -211,7 +211,7 @@ Branch helper:
   for source/doc parity on browser call-order guidance, worker phase enums, and `WasmWorkerSession` telemetry fields.
 - worker-contract summary helper:
   `python3 scripts/generate_wasm_worker_contract_summary.py --out perf/wasm_worker_contract_summary_latest.json`
-  for fixture + source parity on worker key sets/prefixes/blockers.
+  for fixture + source parity on worker key sets/prefixes/blockers and worker-info mode semantics.
 - module-policy summary helper:
   `python3 scripts/generate_wasm_module_policy_summary.py --out perf/wasm_module_policy_summary_latest.json`
   for fixture + source + docs parity on module blocker mappings.
@@ -560,6 +560,10 @@ Completed on this branch:
 - latest: `WasmWorkerInfo.backend` is now mode-aware (`"unwired"` default,
   `"vm_probe"` with `wasm-vm-probe`) while worker lifecycle APIs remain
   explicitly unsupported.
+- latest: worker contract fixtures now include explicit `WASM_WORKER_INFO_FIXTURES`,
+  wasm contract tests consume those fixtures for `wasm_worker_info()`/session
+  info assertions, and `generate_wasm_worker_contract_summary.py` enforces
+  fixture-vs-source parity for worker-info mode semantics.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

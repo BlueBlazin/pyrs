@@ -17,7 +17,7 @@ use crate::wasm_contract_snippets::{
 use crate::wasm_module_policy::WASM_MODULE_POLICY_FIXTURES;
 use crate::wasm_worker_contract::{
     WasmWorkerExecuteFixture, WASM_WORKER_BLOCKER_KEYS, WASM_WORKER_EXECUTE_FIXTURES,
-    WASM_WORKER_EXECUTE_PHASE_KEYS, WASM_WORKER_LIFECYCLE_FIXTURES,
+    WASM_WORKER_EXECUTE_PHASE_KEYS, WASM_WORKER_INFO_FIXTURES, WASM_WORKER_LIFECYCLE_FIXTURES,
     WASM_WORKER_LIFECYCLE_PHASE_KEYS, WASM_WORKER_STATE_KEYS, WASM_WORKER_TIMEOUT_FIXTURES,
     WASM_WORKER_TIMEOUT_PHASE_KEYS,
 };
@@ -152,6 +152,26 @@ fn expected_worker_execute_line_column_for_fixture(fixture: &WasmWorkerExecuteFi
     fixture.expect_line_column
 }
 
+fn expected_worker_info_backend_for_fixture(fixture: &wasm_worker_contract::WasmWorkerInfoFixture) -> String {
+    if vm_probe_enabled() {
+        if let Some(backend) = fixture.expected_vm_probe_backend {
+            return backend.to_string();
+        }
+    }
+    fixture.expected_backend.to_string()
+}
+
+fn expected_worker_info_execution_probe_enabled_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerInfoFixture,
+) -> bool {
+    if vm_probe_enabled() {
+        if let Some(enabled) = fixture.expected_vm_probe_execution_probe_enabled {
+            return enabled;
+        }
+    }
+    fixture.expected_execution_probe_enabled
+}
+
 #[wasm_bindgen_test]
 fn wasm_runtime_contract_basics() {
     let runtime = wasm_runtime_info();
@@ -199,15 +219,37 @@ fn wasm_execution_phase_keys_are_stable() {
 #[wasm_bindgen_test]
 fn wasm_worker_contract_basics() {
     let info = wasm_worker_info();
-    assert!(!info.supported());
-    if vm_probe_enabled() {
-        assert_eq!(info.backend(), "vm_probe".to_string());
-    } else {
-        assert_eq!(info.backend(), "unwired".to_string());
-    }
-    assert_eq!(info.state(), "unwired");
-    assert_eq!(info.interruption_model(), "worker_recycle");
-    assert_eq!(info.execution_probe_enabled(), vm_probe_enabled());
+    let fixture = &WASM_WORKER_INFO_FIXTURES[0];
+    assert_eq!(
+        info.supported(),
+        fixture.expected_supported,
+        "worker info supported mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.backend(),
+        expected_worker_info_backend_for_fixture(fixture),
+        "worker info backend mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.state(),
+        fixture.expected_state.to_string(),
+        "worker info state mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.interruption_model(),
+        fixture.expected_interruption_model.to_string(),
+        "worker info interruption model mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.execution_probe_enabled(),
+        expected_worker_info_execution_probe_enabled_for_fixture(fixture),
+        "worker info execution_probe_enabled mismatch: {}",
+        fixture.name
+    );
 
     let keys = wasm_worker_blocker_keys();
     assert_eq!(keys.length(), info.blocker_count() as u32);
@@ -632,14 +674,31 @@ fn wasm_worker_session_contract_is_stable() {
     assert!(initial_snapshot.last_error().is_none());
 
     let info = session.info();
-    assert!(!info.supported());
-    if vm_probe_enabled() {
-        assert_eq!(info.backend(), "vm_probe".to_string());
-    } else {
-        assert_eq!(info.backend(), "unwired".to_string());
-    }
-    assert_eq!(info.state(), "unwired");
-    assert_eq!(info.execution_probe_enabled(), vm_probe_enabled());
+    let fixture = &WASM_WORKER_INFO_FIXTURES[0];
+    assert_eq!(
+        info.supported(),
+        fixture.expected_supported,
+        "worker session info supported mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.backend(),
+        expected_worker_info_backend_for_fixture(fixture),
+        "worker session info backend mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.state(),
+        fixture.expected_state.to_string(),
+        "worker session info state mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.execution_probe_enabled(),
+        expected_worker_info_execution_probe_enabled_for_fixture(fixture),
+        "worker session info execution_probe_enabled mismatch: {}",
+        fixture.name
+    );
 
     let start = session.start();
     assert_eq!(start.phase(), "unsupported_worker_start");
