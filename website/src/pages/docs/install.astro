@@ -1,0 +1,66 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout
+	title="PYRS Docs | Installation"
+	description="Installation guide for PYRS on macOS and Linux."
+	pageTitle="Installation"
+>
+	<section>
+		<h2>Cargo Install from GitHub</h2>
+		<p>Recommended for quickly getting a global `pyrs` binary in your cargo bin directory.</p>
+		<pre><code>cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs
+pyrs --version</code></pre>
+	</section>
+
+	<section>
+		<h2>Cargo Source Build</h2>
+		<p>Build from a local clone when you want a pinned workspace checkout.</p>
+		<pre><code>git clone https://github.com/BlueBlazin/pyrs.git
+cd pyrs
+cargo build --release
+target/release/pyrs --version</code></pre>
+	</section>
+
+	<section>
+		<h2>Docker Nightly Container</h2>
+		<p>Use the nightly container published to GHCR.</p>
+		<pre><code>docker pull ghcr.io/blueblazin/pyrs:nightly
+docker run --rm -it ghcr.io/blueblazin/pyrs:nightly</code></pre>
+	</section>
+
+	<section>
+		<h2>Nightly Archives</h2>
+		<p>
+			Use GitHub nightly release archives for direct binary usage without a local Rust toolchain.
+		</p>
+
+		<h3>macOS</h3>
+		<pre><code>ARCH="$(uname -m)"
+case "$ARCH" in
+  arm64) PKG="pyrs-nightly-aarch64-apple-darwin.tar.gz" ;;
+  *)     PKG="pyrs-nightly-x86_64-apple-darwin.tar.gz" ;;
+esac
+curl -L "https://github.com/BlueBlazin/pyrs/releases/download/nightly/$PKG" -o "$PKG"
+tar -xzf "$PKG"
+./pyrs --version</code></pre>
+
+		<h3>Linux</h3>
+		<pre><code>PKG="pyrs-nightly-x86_64-unknown-linux-gnu.tar.gz"
+curl -L "https://github.com/BlueBlazin/pyrs/releases/download/nightly/$PKG" -o "$PKG"
+tar -xzf "$PKG"
+./pyrs --version</code></pre>
+	</section>
+</DocsLayout>
+
+<style>
+	section + section {
+		margin-top: 1.35rem;
+	}
+
+	h3 {
+		margin: 0.9rem 0 0;
+		font-size: 1.02rem;
+	}
+</style>

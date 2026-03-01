@@ -1,0 +1,143 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout
+	title="PYRS Docs | CLI and Environment Reference"
+	description="Command-line and environment reference for PYRS."
+	pageTitle="CLI and Environment Reference"
+>
+	<section>
+		<h2>Invocation Modes</h2>
+		<div class="table-wrap">
+			<table>
+				<thead>
+					<tr>
+						<th>Command</th>
+						<th>Behavior</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td><code>pyrs</code></td>
+						<td>Start interactive REPL (or read from stdin when piped).</td>
+					</tr>
+					<tr>
+						<td><code>pyrs path/to/script.py</code></td>
+						<td>Run a Python source file.</td>
+					</tr>
+					<tr>
+						<td><code>pyrs path/to/module.pyc</code></td>
+						<td>Run a CPython bytecode file.</td>
+					</tr>
+					<tr>
+						<td><code>pyrs -c "code"</code></td>
+						<td>Execute inline source passed on the command line.</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+	</section>
+
+	<section>
+		<h2>Supported CLI Flags</h2>
+		<div class="table-wrap">
+			<table>
+				<thead>
+					<tr>
+						<th>Flag</th>
+						<th>Behavior</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td><code>-h</code>, <code>--help</code></td>
+						<td>Print command-line usage help.</td>
+					</tr>
+					<tr>
+						<td><code>-V</code>, <code>--version</code></td>
+						<td>Print interpreter version.</td>
+					</tr>
+					<tr>
+						<td><code>--ast path.py</code></td>
+						<td>Print parsed AST for a source file.</td>
+					</tr>
+					<tr>
+						<td><code>--bytecode path.py</code></td>
+						<td>Print bytecode disassembly for a source file.</td>
+					</tr>
+					<tr>
+						<td><code>-S</code>, <code>--no-site</code></td>
+						<td>Disable automatic site import at startup.</td>
+					</tr>
+					<tr>
+						<td><code>-W option</code>, <code>-Woption</code></td>
+						<td>Configure warning filters.</td>
+					</tr>
+					<tr>
+						<td><code>-X no_debug_ranges</code></td>
+						<td>Disable traceback caret range debug metadata.</td>
+					</tr>
+					<tr>
+						<td><code>-X tracemalloc</code>, <code>-X tracemalloc=&lt;N&gt;</code></td>
+						<td>Enable tracemalloc startup configuration.</td>
+					</tr>
+					<tr>
+						<td><code>-I</code>, <code>-E</code>, <code>-u</code>, <code>-B</code></td>
+						<td>Accepted CPython compatibility flags (`-I` and `-E` disable env-based startup config).</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+	</section>
+
+	<section>
+		<h2>Environment Variables</h2>
+		<div class="table-wrap">
+			<table>
+				<thead>
+					<tr>
+						<th>Variable</th>
+						<th>Purpose</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td><code>PYRS_CPYTHON_LIB</code></td>
+						<td>Set explicit CPython stdlib root used for imports.</td>
+					</tr>
+					<tr>
+						<td><code>PYRS_REPL_THEME</code></td>
+						<td>Set REPL theme mode: <code>auto</code>, <code>dark</code>, or <code>light</code>.</td>
+					</tr>
+					<tr>
+						<td><code>PYTHONWARNINGS</code></td>
+						<td>Startup warning filters consumed by warning configuration.</td>
+					</tr>
+					<tr>
+						<td><code>PYTHONPATH</code>, <code>PYTHONHOME</code></td>
+						<td>Participate in module and stdlib path resolution.</td>
+					</tr>
+					<tr>
+						<td><code>COLORFGBG</code></td>
+						<td>Used for auto light/dark terminal color tuning in CLI output and REPL theming.</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+	</section>
+
+	<section>
+		<h2>Notes</h2>
+		<p>
+			Reference behavior here is aligned to the current CLI implementation in
+			<code>src/cli/mod.rs</code> and related runtime wiring.
+		</p>
+	</section>
+</DocsLayout>
+
+<style>
+	section + section {
+		margin-top: 1.3rem;
+	}
+</style>

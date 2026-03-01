@@ -4,186 +4,69 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
 
 <DocsLayout
 	title="PYRS Docs | Getting Started"
-	description="User-facing PYRS documentation for install, quickstart, and core usage."
-	active="docs"
+	description="Getting started guide for PYRS runtime usage and first execution flow."
+	pageTitle="Getting Started"
 >
-	<section class="page-hero">
-		<p class="eyebrow">Documentation</p>
-		<h1>Get productive with PYRS quickly.</h1>
-		<p class="lede">
-			This is the user-facing docs surface for installation, first-run workflow, and runtime usage.
-			Reference details live in the dedicated reference pages.
+	<section class="intro">
+		<p>
+			PYRS is a Python interpreter in Rust targeting CPython 3.14 compatibility. This page covers
+			the fastest way to install, verify, and start running code.
 		</p>
 	</section>
 
-	<section class="link-grid">
-		<a class="link-card" href="/#install">
-			<h2>Install</h2>
-			<p>Use MacOS/Linux install commands with Cargo, Docker, or nightly archives.</p>
-		</a>
-		<a class="link-card" href="/reference/">
-			<h2>Reference</h2>
-			<p>CLI modes, startup flags, and environment variables from the current implementation.</p>
-		</a>
-		<a class="link-card" href="https://github.com/BlueBlazin/pyrs">
-			<h2>Repository</h2>
-			<p>Track releases, CI status, issues, and implementation updates directly on GitHub.</p>
-		</a>
+	<section>
+		<h2>Prerequisites</h2>
+		<ul>
+			<li>Rust stable toolchain (`rustup`, `cargo`)</li>
+			<li>Git</li>
+			<li>macOS or Linux</li>
+		</ul>
 	</section>
 
-	<section class="doc-section">
-		<h2>Quickstart</h2>
-		<p class="section-lede">Install from GitHub and verify your runtime is available.</p>
+	<section>
+		<h2>Install and Verify</h2>
+		<p>Install the latest `pyrs` directly from GitHub and verify your binary is available.</p>
 		<pre><code>cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs
-pyrs --version
-pyrs
-pyrs -c "import sys; print(sys.version)"</code></pre>
+pyrs --version</code></pre>
+		<p>For all install methods (Cargo source build, Docker, nightly archives), see the Installation page.</p>
+		<p><a class="doc-link" href="/docs/install/">Open Installation Guide</a></p>
 	</section>
 
-	<section class="doc-section">
-		<h2>Core Workflow</h2>
-		<div class="checklist">
-			<div class="check-item">
-				<h3>Run source files</h3>
-				<p>Execute Python source directly with `pyrs path/to/script.py`.</p>
-			</div>
-			<div class="check-item">
-				<h3>Run CPython bytecode</h3>
-				<p>Execute `.pyc` files with `pyrs path/to/module.pyc`.</p>
-			</div>
-			<div class="check-item">
-				<h3>Interactive REPL</h3>
-				<p>Use `pyrs` with syntax highlighting, multiline input, and expression echo.</p>
-			</div>
-		</div>
+	<section>
+		<h2>Run Python</h2>
+		<p>Start with REPL, inline command mode, and source-file execution.</p>
+		<pre><code>pyrs
+pyrs -c "import sys; print(sys.version)"
+pyrs path/to/script.py</code></pre>
+	</section>
+
+	<section>
+		<h2>Next Steps</h2>
+		<ul>
+			<li>Review <a class="doc-link" href="/docs/reference/">CLI and Environment Reference</a>.</li>
+			<li>Use <code>pyrs --help</code> to inspect runtime options directly from the binary.</li>
+			<li>Track release and compatibility progress in the project repository.</li>
+		</ul>
 	</section>
 </DocsLayout>
 
 <style>
-	.page-hero {
-		padding: 0.6rem 0 0.2rem;
+	.intro p {
+		margin-top: 0;
 	}
 
-	.eyebrow {
-		margin: 0 0 0.75rem;
-		color: var(--accent-2);
-		letter-spacing: 0.09em;
-		text-transform: uppercase;
-		font-size: 0.76rem;
-		font-weight: 600;
-	}
-
-	h1 {
-		margin: 0;
-		font-size: clamp(1.8rem, 5vw, 2.7rem);
-		line-height: 1.08;
-		letter-spacing: -0.01em;
-	}
-
-	.lede {
-		margin: 0.92rem 0 0;
-		max-width: 66ch;
-		color: var(--text-muted);
-		line-height: 1.58;
-	}
-
-	.link-grid {
+	section + section {
 		margin-top: 1.35rem;
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 0.86rem;
 	}
 
-	.link-card {
-		display: block;
+	.doc-link {
+		color: #e1a47a;
 		text-decoration: none;
-		color: inherit;
-		background: var(--bg-card);
-		border: 1px solid var(--line);
-		border-radius: 0.92rem;
-		padding: 0.88rem 0.95rem;
-		transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+		border-bottom: 1px solid rgba(225, 164, 122, 0.45);
 	}
 
-	.link-card:hover {
-		transform: translateY(-1px);
-		border-color: #6a4432;
-		box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
-	}
-
-	.link-card h2 {
-		margin: 0;
-		font-size: 1.02rem;
-	}
-
-	.link-card p {
-		margin: 0.55rem 0 0;
-		color: var(--text-muted);
-		font-size: 0.9rem;
-		line-height: 1.5;
-	}
-
-	.doc-section {
-		margin-top: 1.5rem;
-		padding: 1rem 1.06rem;
-		border-radius: 0.92rem;
-		border: 1px solid var(--line);
-		background: rgba(18, 12, 10, 0.7);
-	}
-
-	.doc-section h2 {
-		margin: 0;
-		font-size: 1.25rem;
-	}
-
-	.section-lede {
-		margin: 0.6rem 0 0;
-		color: var(--text-muted);
-	}
-
-	pre {
-		margin: 0.82rem 0 0;
-		overflow-x: auto;
-		padding: 0.82rem 0.92rem;
-		border-radius: 0.76rem;
-		border: 1px solid #3f2a1f;
-		background: #080605;
-		color: #ecd9cd;
-		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.8rem;
-		line-height: 1.56;
-	}
-
-	.checklist {
-		margin-top: 0.85rem;
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 0.7rem;
-	}
-
-	.check-item {
-		padding: 0.78rem 0.8rem;
-		border-radius: 0.76rem;
-		border: 1px solid #3f2b20;
-		background: rgba(10, 8, 7, 0.72);
-	}
-
-	.check-item h3 {
-		margin: 0;
-		font-size: 0.95rem;
-	}
-
-	.check-item p {
-		margin: 0.5rem 0 0;
-		color: var(--text-muted);
-		font-size: 0.87rem;
-		line-height: 1.5;
-	}
-
-	@media (max-width: 960px) {
-		.link-grid,
-		.checklist {
-			grid-template-columns: 1fr;
-		}
+	.doc-link:hover {
+		color: #f0bc97;
+		border-bottom-color: rgba(240, 188, 151, 0.75);
 	}
 </style>
