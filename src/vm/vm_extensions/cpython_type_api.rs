@@ -275,7 +275,7 @@ unsafe extern "C" fn cpython_type_mp_subscript_slot(
     object: *mut c_void,
     key: *mut c_void,
 ) -> *mut c_void {
-    let trace_type_subscript = std::env::var_os("PYRS_TRACE_TYPE_SUBSCRIPT").is_some();
+    let trace_type_subscript = super::super::env_var_present_cached("PYRS_TRACE_TYPE_SUBSCRIPT");
     with_active_cpython_context_mut(|context| {
         if context.vm.is_null() {
             context.set_error("type mp_subscript missing VM context");
@@ -444,7 +444,7 @@ fn cpython_build_type_from_three_arg_call(
         std::ptr::addr_of_mut!(spec).cast::<c_void>(),
         bases_ptr,
     );
-    if std::env::var_os("PYRS_TRACE_CPY_TYPE_BUILD").is_some() {
+    if super::super::env_var_present_cached("PYRS_TRACE_CPY_TYPE_BUILD") {
         eprintln!(
             "[cpy-type-build] three-arg name={} bases_ptr={:p} type_obj={:p}",
             name, bases_ptr, type_obj
@@ -494,7 +494,7 @@ unsafe fn cpython_type_populate_method_descriptors(ty: *mut CpythonTypeObject) -
     }
     let method_align = align_of::<CpythonMethodDef>();
     if (method as usize) % method_align != 0 {
-        if std::env::var_os("PYRS_TRACE_CPY_TYPE_METHODS").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_TYPE_METHODS") {
             eprintln!(
                 "[cpy-type-methods] skip unaligned method table ty={:p} tp_methods={:p}",
                 ty, method
@@ -504,7 +504,7 @@ unsafe fn cpython_type_populate_method_descriptors(ty: *mut CpythonTypeObject) -
     }
     loop {
         if (method as usize) % method_align != 0 {
-            if std::env::var_os("PYRS_TRACE_CPY_TYPE_METHODS").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_TYPE_METHODS") {
                 eprintln!(
                     "[cpy-type-methods] stop on unaligned entry ty={:p} method={:p}",
                     ty, method
@@ -560,9 +560,9 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
         }
     };
     let type_ptr = object.cast::<CpythonTypeObject>();
-    let trace_type_getattr = std::env::var_os("PYRS_TRACE_TYPE_GETATTR").is_some();
+    let trace_type_getattr = super::super::env_var_present_cached("PYRS_TRACE_TYPE_GETATTR");
     let trace_prepare =
-        std::env::var_os("PYRS_TRACE_TYPE_PREPARE").is_some() && attr_name == "__prepare__";
+        super::super::env_var_present_cached("PYRS_TRACE_TYPE_PREPARE") && attr_name == "__prepare__";
     if trace_prepare {
         let object_tag = cpython_value_from_ptr(object)
             .map(|value| cpython_value_debug_tag(&value))
@@ -999,7 +999,7 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
     );
     if attr_name == "__getitem__"
         && type_name == "type"
-        && std::env::var_os("PYRS_TRACE_TYPE_GETATTR_BT").is_some()
+        && super::super::env_var_present_cached("PYRS_TRACE_TYPE_GETATTR_BT")
     {
         eprintln!(
             "[cpy-type-getattr-bt] object={:p} attr={} type={}\n{}",
@@ -1041,7 +1041,7 @@ pub(super) unsafe extern "C" fn cpython_type_tp_setattro(
             return -1;
         }
     };
-    let trace_type_setattr = std::env::var_os("PYRS_TRACE_TYPE_SETATTR").is_some();
+    let trace_type_setattr = super::super::env_var_present_cached("PYRS_TRACE_TYPE_SETATTR");
     let type_name = if object.is_null() {
         "<null>".to_string()
     } else {
@@ -1134,8 +1134,8 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
         static ACTIVE_RUNTIME_TYPE_CALL_FALLBACK: std::cell::RefCell<Vec<usize>> =
             const { std::cell::RefCell::new(Vec::new()) };
     }
-    let trace_calls = std::env::var_os("PYRS_TRACE_CPY_CALLS").is_some();
-    let trace_seed_calls = std::env::var_os("PYRS_TRACE_SEED_CALLS").is_some();
+    let trace_calls = super::super::env_var_present_cached("PYRS_TRACE_CPY_CALLS");
+    let trace_seed_calls = super::super::env_var_present_cached("PYRS_TRACE_SEED_CALLS");
     if callable.is_null() {
         cpython_set_error("type call received null callable");
         return std::ptr::null_mut();
@@ -1191,7 +1191,7 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
             let already_active = ACTIVE_RUNTIME_TYPE_CALL_FALLBACK
                 .with(|active| active.borrow().contains(&callable_key));
             if already_active {
-                if std::env::var_os("PYRS_TRACE_TYPE_RUNTIME_CALL_FALLBACK").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_TYPE_RUNTIME_CALL_FALLBACK") {
                     eprintln!(
                         "[cpy-type-call] runtime-fallback-skip(reentry) callable={:p} name={}",
                         callable, callable_name
@@ -1217,7 +1217,7 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
                     active.borrow_mut().push(callable_key);
                 });
                 let _guard = RuntimeTypeFallbackGuard { callable_key };
-                if std::env::var_os("PYRS_TRACE_TYPE_RUNTIME_CALL_FALLBACK").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_TYPE_RUNTIME_CALL_FALLBACK") {
                     eprintln!(
                         "[cpy-type-call] runtime-fallback callable={:p} name={}",
                         callable, callable_name
@@ -1257,7 +1257,7 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
             }
         }
     }
-    if std::env::var_os("PYRS_TRACE_NUMPY_DTYPE_ARGS").is_some()
+    if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_DTYPE_ARGS")
         && callable_name.to_ascii_lowercase().contains("dtype")
     {
         let tuple_len = if args.is_null() {
@@ -1523,7 +1523,7 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
         );
     }
     if status < 0 {
-        if std::env::var_os("PYRS_TRACE_TYPE_INIT_FAILURE").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_TYPE_INIT_FAILURE") {
             let mut last_error = String::new();
             let _ = with_active_cpython_context_mut(|context| {
                 if let Some(err) = context.last_error.as_ref() {
@@ -1659,7 +1659,7 @@ fn cpython_resolve_type_base_from_arg(
         return Ok(bases.cast::<CpythonTypeObject>());
     }
     let value = cpython_value_from_ptr(bases)?;
-    if std::env::var_os("PYRS_TRACE_CPY_TYPE_BUILD").is_some() {
+    if super::super::env_var_present_cached("PYRS_TRACE_CPY_TYPE_BUILD") {
         eprintln!(
             "[cpy-type-build] resolve-bases ptr={:p} value={}",
             bases,
@@ -1671,7 +1671,7 @@ fn cpython_resolve_type_base_from_arg(
             let Object::Tuple(items) = &*tuple_obj.kind() else {
                 return Ok(default);
             };
-            if std::env::var_os("PYRS_TRACE_CPY_TYPE_BUILD").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_TYPE_BUILD") {
                 let summary = items
                     .iter()
                     .map(cpython_value_debug_tag)
@@ -2546,7 +2546,7 @@ fn cpython_type_from_spec_impl(
             return std::ptr::null_mut();
         }
     };
-    if std::env::var_os("PYRS_TRACE_CPY_TYPE_BUILD").is_some()
+    if super::super::env_var_present_cached("PYRS_TRACE_CPY_TYPE_BUILD")
         && (full_name.contains("cython_function_or_method")
             || full_name.contains("_common_types_metatype"))
     {
@@ -2576,7 +2576,7 @@ fn cpython_type_from_spec_impl(
     };
     // SAFETY: base pointer is validated and can be copied by value as a template.
     let mut type_value = unsafe { std::ptr::read(base) };
-    if std::env::var_os("PYRS_TRACE_EXT_SLOTS").is_some() {
+    if super::super::env_var_present_cached("PYRS_TRACE_EXT_SLOTS") {
         // SAFETY: `base` is validated type pointer for type creation.
         let base_name = unsafe { c_name_to_string((*base).tp_name) }
             .unwrap_or_else(|_| "<unnamed>".to_string());
@@ -2886,7 +2886,7 @@ pub unsafe extern "C" fn PyType_GetFullyQualifiedName(ty: *mut c_void) -> *mut c
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyType_GetSlot(ty: *mut c_void, slot: c_int) -> *mut c_void {
-    let trace_slots = std::env::var_os("PYRS_TRACE_TYPE_SLOT_GET").is_some();
+    let trace_slots = super::super::env_var_present_cached("PYRS_TRACE_TYPE_SLOT_GET");
     if ty.is_null() {
         unsafe { PyErr_BadInternalCall() };
         return std::ptr::null_mut();
@@ -2949,7 +2949,7 @@ pub unsafe extern "C" fn _PyType_Lookup(ty: *mut c_void, name: *mut c_void) -> *
                     if !descriptor.is_null() {
                         return descriptor;
                     }
-                    if std::env::var_os("PYRS_TRACE_TYPE_LOOKUP_EXIT").is_some() {
+                    if super::super::env_var_present_cached("PYRS_TRACE_TYPE_LOOKUP_EXIT") {
                         let error = context
                             .last_error
                             .clone()
@@ -3075,7 +3075,7 @@ pub unsafe extern "C" fn _PyType_Lookup(ty: *mut c_void, name: *mut c_void) -> *
         }
 
         let name_value = context.cpython_value_from_ptr_or_proxy(name);
-        let trace_exit_lookup = std::env::var_os("PYRS_TRACE_TYPE_LOOKUP_EXIT").is_some();
+        let trace_exit_lookup = super::super::env_var_present_cached("PYRS_TRACE_TYPE_LOOKUP_EXIT");
         if trace_exit_lookup {
             let type_name = unsafe {
                 let type_ptr = ty.cast::<CpythonTypeObject>();
@@ -3221,7 +3221,7 @@ pub unsafe extern "C" fn _PyType_Lookup(ty: *mut c_void, name: *mut c_void) -> *
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyType_GetModule(ty: *mut c_void) -> *mut c_void {
-    let trace = std::env::var_os("PYRS_TRACE_TYPE_MODULE").is_some();
+    let trace = super::super::env_var_present_cached("PYRS_TRACE_TYPE_MODULE");
     if ty.is_null() {
         unsafe { PyErr_BadInternalCall() };
         return std::ptr::null_mut();
@@ -3280,13 +3280,13 @@ pub unsafe extern "C" fn PyType_GetModule(ty: *mut c_void) -> *mut c_void {
 pub unsafe extern "C" fn PyType_GetModuleState(ty: *mut c_void) -> *mut c_void {
     let module = unsafe { PyType_GetModule(ty) };
     if module.is_null() {
-        if std::env::var_os("PYRS_TRACE_TYPE_MODULE").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_TYPE_MODULE") {
             eprintln!("[cpy-type-module] state miss ty={:p} module=<null>", ty);
         }
         return std::ptr::null_mut();
     }
     let state = unsafe { PyModule_GetState(module) };
-    if std::env::var_os("PYRS_TRACE_TYPE_MODULE").is_some() {
+    if super::super::env_var_present_cached("PYRS_TRACE_TYPE_MODULE") {
         eprintln!(
             "[cpy-type-module] state hit ty={:p} module={:p} state={:p}",
             ty, module, state
@@ -3309,7 +3309,7 @@ pub unsafe extern "C" fn PyType_GetModuleByDef(
         return std::ptr::null_mut();
     }
     let requested_module_def = module_def as usize;
-    let trace_moddef = std::env::var_os("PYRS_TRACE_CPY_TYPE_MODDEF").is_some();
+    let trace_moddef = super::super::env_var_present_cached("PYRS_TRACE_CPY_TYPE_MODDEF");
     let trace_module_ptr = |label: &str, module_ptr: *mut c_void| {
         if !trace_moddef || module_ptr.is_null() {
             return;
@@ -3495,7 +3495,7 @@ pub unsafe extern "C" fn PyType_GetBaseByToken(
     token: *mut c_void,
     result: *mut *mut c_void,
 ) -> c_int {
-    let trace_token = std::env::var_os("PYRS_TRACE_TYPE_TOKEN").is_some();
+    let trace_token = super::super::env_var_present_cached("PYRS_TRACE_TYPE_TOKEN");
     if !result.is_null() {
         // SAFETY: output pointer is caller-provided and writable.
         unsafe { *result = std::ptr::null_mut() };
@@ -3639,9 +3639,9 @@ pub unsafe extern "C" fn PyType_GetFlags(ty: *mut c_void) -> usize {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void) -> i32 {
-    let trace = std::env::var_os("PYRS_TRACE_TYPE_SUBTYPE").is_some();
-    let trace_iseed = std::env::var_os("PYRS_TRACE_ISEED_SUBTYPE").is_some();
-    let trace_tzinfo = std::env::var_os("PYRS_TRACE_TZINFO_SUBTYPE").is_some();
+    let trace = super::super::env_var_present_cached("PYRS_TRACE_TYPE_SUBTYPE");
+    let trace_iseed = super::super::env_var_present_cached("PYRS_TRACE_ISEED_SUBTYPE");
+    let trace_tzinfo = super::super::env_var_present_cached("PYRS_TRACE_TZINFO_SUBTYPE");
     let type_name_for = |ptr: *mut c_void| -> String {
         if ptr.is_null() {
             return "<null>".to_string();
@@ -3732,7 +3732,7 @@ pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void)
                     "[type-subtype] invalid-current current={:p} guard={}",
                     current, guard
                 );
-                if std::env::var_os("PYRS_TRACE_TYPE_SUBTYPE_BT").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_TYPE_SUBTYPE_BT") {
                     eprintln!(
                         "[type-subtype] invalid-current bt={}",
                         std::backtrace::Backtrace::force_capture()
@@ -3779,7 +3779,7 @@ pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void)
                     "[type-subtype] invalid-next next={:p} current={:p} guard={}",
                     next, current, guard
                 );
-                if std::env::var_os("PYRS_TRACE_TYPE_SUBTYPE_BT").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_TYPE_SUBTYPE_BT") {
                     eprintln!(
                         "[type-subtype] invalid-next bt={}",
                         std::backtrace::Backtrace::force_capture()
@@ -4003,7 +4003,7 @@ pub unsafe extern "C" fn PyType_GenericAlloc(subtype: *mut c_void, nitems: isize
         return std::ptr::null_mut();
     }
     let ty = subtype.cast::<CpythonTypeObject>();
-    let trace_type_alloc = std::env::var_os("PYRS_TRACE_TYPE_ALLOC").is_some();
+    let trace_type_alloc = super::super::env_var_present_cached("PYRS_TRACE_TYPE_ALLOC");
     let (tp_name, tp_basicsize, tp_itemsize) = unsafe {
         (
             c_name_to_string((*ty).tp_name).unwrap_or_else(|_| "<unnamed>".to_string()),
