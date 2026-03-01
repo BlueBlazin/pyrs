@@ -13,7 +13,8 @@ use pyrs::wasm::{
     wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
     wasm_execution_blocker_keys, wasm_execution_blockers, wasm_module_policy_entries,
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_support,
-    wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_info, wasm_worker_start,
+    wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_info,
+    wasm_worker_lifecycle_phase_keys, wasm_worker_start, wasm_worker_state_keys,
     wasm_worker_terminate, WasmSession, WasmWorkerSession,
 };
 use std::collections::HashSet;
@@ -53,6 +54,34 @@ fn wasm_worker_contract_basics() {
     let message = wasm_worker_blocker_error("worker_runtime_unwired")
         .expect("worker runtime blocker message should exist");
     assert!(message.contains("not wired"));
+}
+
+#[wasm_bindgen_test]
+fn wasm_worker_enum_keys_are_stable() {
+    let state_keys = wasm_worker_state_keys();
+    let mut states = Vec::new();
+    for index in 0..state_keys.length() {
+        let state = state_keys
+            .get(index)
+            .as_string()
+            .expect("worker state key should be string");
+        states.push(state);
+    }
+    assert!(states.contains(&"unwired".to_string()));
+    assert!(states.contains(&"ready".to_string()));
+    assert!(states.contains(&"failed".to_string()));
+
+    let lifecycle_keys = wasm_worker_lifecycle_phase_keys();
+    let mut lifecycle_phases = Vec::new();
+    for index in 0..lifecycle_keys.length() {
+        let phase = lifecycle_keys
+            .get(index)
+            .as_string()
+            .expect("worker lifecycle phase key should be string");
+        lifecycle_phases.push(phase);
+    }
+    assert!(lifecycle_phases.contains(&"unsupported_worker_start".to_string()));
+    assert!(lifecycle_phases.contains(&"unsupported_worker_terminate".to_string()));
 }
 
 #[wasm_bindgen_test]

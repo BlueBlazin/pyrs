@@ -57,6 +57,8 @@ Current wasm bridge exports for capability handling:
   expose worker-runtime contract blockers while worker execution remains unwired.
 - `wasm_worker_start()` / `wasm_worker_terminate()`:
   expose stable lifecycle stub phases while worker backend is unwired.
+- `wasm_worker_state_keys()` / `wasm_worker_lifecycle_phase_keys()`:
+  expose canonical worker contract enums for UI/client branching.
 
 See `docs/WASM_CLIENT_INTEGRATION_FLOW.md` for end-to-end browser call sequencing.
 

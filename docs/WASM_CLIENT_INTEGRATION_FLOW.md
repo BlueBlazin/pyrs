@@ -32,6 +32,9 @@ Use this to keep UI behavior deterministic before worker backend wiring.
 You can call lifecycle methods directly or via `WasmWorkerSession` for stateful
 UI telemetry (`starts_requested`, `terminates_requested`, `last_phase`, `last_error`).
 
+Prefer `wasm_worker_state_keys()` and `wasm_worker_lifecycle_phase_keys()` for
+UI branching enums instead of hardcoding string literals.
+
 ## Minimal Browser Pseudocode
 
 ```js

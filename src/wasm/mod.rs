@@ -10,6 +10,8 @@ const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired"
 const WASM_WORKER_BLOCKER_RUNTIME_UNWIRED: &str = "worker_runtime_unwired";
 const WASM_WORKER_PHASE_UNSUPPORTED_START: &str = "unsupported_worker_start";
 const WASM_WORKER_PHASE_UNSUPPORTED_TERMINATE: &str = "unsupported_worker_terminate";
+const WASM_WORKER_STATE_UNWIRED: &str = "unwired";
+const WASM_WORKER_INTERRUPT_MODEL_RECYCLE: &str = "worker_recycle";
 const WASM_MODULE_BLOCKER_POLICY: [(&str, &str); 10] = [
     ("_ctypes", "dynamic_library_load"),
     ("ctypes", "dynamic_library_load"),
@@ -37,6 +39,24 @@ fn execution_blocker_keys(host: &dyn VmHost) -> Vec<&'static str> {
         }
     }
     keys
+}
+
+fn worker_state_keys() -> &'static [&'static str] {
+    &[
+        "unwired",
+        "starting",
+        "ready",
+        "busy",
+        "terminating",
+        "failed",
+    ]
+}
+
+fn worker_lifecycle_phase_keys() -> &'static [&'static str] {
+    &[
+        WASM_WORKER_PHASE_UNSUPPORTED_START,
+        WASM_WORKER_PHASE_UNSUPPORTED_TERMINATE,
+    ]
 }
 
 /// Minimal WASM bridge surface used during compile-isolation bring-up.
@@ -698,10 +718,30 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
     let blockers = wasm_worker_blocker_keys();
     WasmWorkerInfo {
         supported: false,
-        state: "unwired".to_string(),
-        interruption_model: "worker_recycle".to_string(),
+        state: WASM_WORKER_STATE_UNWIRED.to_string(),
+        interruption_model: WASM_WORKER_INTERRUPT_MODEL_RECYCLE.to_string(),
         blocker_count: blockers.length() as usize,
     }
+}
+
+/// Returns canonical worker state keys for wasm worker runtime contracts.
+#[wasm_bindgen]
+pub fn wasm_worker_state_keys() -> Array {
+    let keys = Array::new();
+    for key in worker_state_keys() {
+        keys.push(&JsValue::from_str(key));
+    }
+    keys
+}
+
+/// Returns canonical lifecycle phase keys for wasm worker runtime contracts.
+#[wasm_bindgen]
+pub fn wasm_worker_lifecycle_phase_keys() -> Array {
+    let keys = Array::new();
+    for key in worker_lifecycle_phase_keys() {
+        keys.push(&JsValue::from_str(key));
+    }
+    keys
 }
 
 fn worker_unwired_result(phase: &'static str) -> WasmWorkerLifecycleResult {
@@ -711,7 +751,7 @@ fn worker_unwired_result(phase: &'static str) -> WasmWorkerLifecycleResult {
     WasmWorkerLifecycleResult {
         success: false,
         phase: phase.to_string(),
-        state: "unwired".to_string(),
+        state: WASM_WORKER_STATE_UNWIRED.to_string(),
         error: Some(message),
         blocker_key: Some(blocker_key),
     }

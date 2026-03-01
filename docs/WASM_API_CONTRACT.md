@@ -17,6 +17,10 @@ This document defines the JS-facing contract currently exported by
   - Returns bridge/runtime status summary.
 - `wasm_worker_info() -> WasmWorkerInfo`
   - Returns worker-runtime contract status summary.
+- `wasm_worker_state_keys() -> Array`
+  - Returns canonical worker runtime state keys.
+- `wasm_worker_lifecycle_phase_keys() -> Array`
+  - Returns canonical worker lifecycle phase keys.
 - `wasm_worker_start() -> WasmWorkerLifecycleResult`
   - Worker lifecycle start contract (currently unsupported/unwired).
 - `wasm_worker_terminate() -> WasmWorkerLifecycleResult`

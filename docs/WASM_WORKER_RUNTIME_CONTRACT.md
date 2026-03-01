@@ -5,6 +5,8 @@ Status: branch-local draft.
 This document defines the browser worker-runtime contract currently exposed by:
 
 - `wasm_worker_info()`
+- `wasm_worker_state_keys()`
+- `wasm_worker_lifecycle_phase_keys()`
 - `wasm_worker_blocker_keys()`
 - `wasm_worker_blocker_error(blocker_key)`
 - `wasm_worker_start()`
@@ -19,6 +21,20 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `state = "unwired"`
 - `interruption_model = "worker_recycle"`
 - `blocker_count = len(wasm_worker_blocker_keys())`
+
+`wasm_worker_state_keys()` currently includes:
+
+- `unwired`
+- `starting`
+- `ready`
+- `busy`
+- `terminating`
+- `failed`
+
+`wasm_worker_lifecycle_phase_keys()` currently includes:
+
+- `unsupported_worker_start`
+- `unsupported_worker_terminate`
 
 `wasm_worker_blocker_keys()` currently returns:
 
