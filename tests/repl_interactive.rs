@@ -79,7 +79,7 @@ fn repl_banner_and_expression_echo_work_under_pty() {
         "script status failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
-        stdout.contains("RSPYTHON"),
+        stdout.contains("PYRS"),
         "missing REPL banner\nstdout:\n{stdout}"
     );
     assert!(

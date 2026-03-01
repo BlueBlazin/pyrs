@@ -336,7 +336,7 @@ fn run_interactive_session(
     import_site: bool,
     warnoptions: &[String],
 ) -> Result<i32, String> {
-    println!("RSPYTHON {VERSION} (CPython 3.14 compatible)");
+    println!("PYRS {VERSION} (CPython 3.14 compatible)");
     println!("Type :help for REPL commands, Ctrl-D to exit.");
 
     let theme_mode = resolve_repl_theme_from_env();
