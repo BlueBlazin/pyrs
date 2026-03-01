@@ -16,7 +16,7 @@ const isActive = (href: string) => {
 ---
 
 <aside class="docs-sidebar">
-	<details class="sidebar-details">
+	<details class="sidebar-details" id="docs-sidebar-details">
 		<summary class="sidebar-summary">Documentation</summary>
 		<div class="sidebar-inner">
 			<div class="sidebar-title">Documentation</div>
@@ -39,6 +39,22 @@ const isActive = (href: string) => {
 		</div>
 	</details>
 </aside>
+
+<script is:inline>
+	const details = document.getElementById('docs-sidebar-details');
+	if (details) {
+		const mediaQuery = window.matchMedia('(min-width: 761px)');
+		function updateDetailsState(e) {
+			if (e.matches) {
+				details.setAttribute('open', '');
+			} else {
+				details.removeAttribute('open');
+			}
+		}
+		updateDetailsState(mediaQuery);
+		mediaQuery.addEventListener('change', updateDetailsState);
+	}
+</script>
 
 <style>
 	.docs-sidebar {
@@ -72,7 +88,6 @@ const isActive = (href: string) => {
 
 	.sidebar-inner {
 		padding: 0.86rem 0.78rem 0.88rem;
-		display: block !important;
 	}
 
 	.sidebar-title {
@@ -156,12 +171,7 @@ const isActive = (href: string) => {
 		}
 
 		.sidebar-inner {
-			display: none !important;
 			padding-top: 0.32rem;
-		}
-
-		.sidebar-details[open] .sidebar-inner {
-			display: block !important;
 		}
 	}
 </style>
