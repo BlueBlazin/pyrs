@@ -27,7 +27,7 @@ use super::{
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyFloat_AsDouble(object: *mut c_void) -> f64 {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     if object.is_null() {
         unsafe { PyErr_BadInternalCall() };
         return -1.0;
@@ -1277,7 +1277,7 @@ pub(in crate::vm::vm_extensions) fn cpython_ptr_is_type_object(ptr: *mut c_void)
 }
 
 fn cpython_probable_c_string_ptr(ptr: *const c_char) -> bool {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     if ptr.is_null() {
         return false;
     }
@@ -1306,7 +1306,7 @@ fn cpython_safe_type_name(type_ptr: *mut CpythonTypeObject) -> Option<String> {
 pub(in crate::vm::vm_extensions) fn cpython_safe_object_type_name(
     object: *mut c_void,
 ) -> Option<String> {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     if object.is_null() {
         return None;
     }
@@ -1556,7 +1556,7 @@ pub unsafe extern "C" fn PyErr_Fetch(
         },
     );
     if super::super::env_var_present_cached("PYRS_TRACE_PYERR_FETCH") {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
         let mut type_name = "<null>".to_string();
         let mut type_tp_name = "<null>".to_string();
         if !state.ptype.is_null() && (state.ptype as usize) >= MIN_VALID_PTR {
@@ -2741,7 +2741,8 @@ pub unsafe extern "C" fn PyUnstable_Object_IsUniquelyReferenced(object: *mut c_v
         return 0;
     }
     let raw = object as usize;
-    if raw < 0x1_0000_0000 || raw % std::mem::align_of::<CpythonObjectHead>() != 0 {
+    if raw < super::MIN_VALID_PTR_THRESHOLD || raw % std::mem::align_of::<CpythonObjectHead>() != 0
+    {
         return 0;
     }
     // SAFETY: pointer shape validated above; this is a best-effort query API.

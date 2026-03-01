@@ -46,6 +46,11 @@ const CPY_RICHCMP_EQ: i32 = 2;
 const CPY_RICHCMP_NE: i32 = 3;
 const CPY_RICHCMP_GT: i32 = 4;
 const CPY_RICHCMP_GE: i32 = 5;
+pub(crate) const MIN_VALID_PTR_THRESHOLD: usize = if usize::BITS > 32 {
+    0x1_0000_0000_u64 as usize
+} else {
+    0x1_0000_u64 as usize
+};
 static TRACE_NUMPY_TYPEDICT_PTR: AtomicUsize = AtomicUsize::new(0);
 thread_local! {
     static CPYTHON_DESCRIPTOR_REGISTRY: RefCell<HashMap<usize, CpythonDescriptorKind>> =
@@ -1260,7 +1265,7 @@ type CpythonVectorcallFn =
     unsafe extern "C" fn(*mut c_void, *const *mut c_void, usize, *mut c_void) -> *mut c_void;
 
 unsafe fn cpython_resolve_vectorcall(callable: *mut c_void) -> Option<CpythonVectorcallFn> {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
     if callable.is_null() {
         return None;
     }
@@ -1321,7 +1326,7 @@ unsafe fn cpython_resolve_vectorcall(callable: *mut c_void) -> Option<CpythonVec
 }
 
 unsafe fn cpython_foreign_long_to_i64(object: *mut c_void) -> Option<i64> {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
     if object.is_null() {
         return None;
     }
@@ -1367,7 +1372,7 @@ unsafe fn cpython_foreign_long_to_i64(object: *mut c_void) -> Option<i64> {
 }
 
 unsafe fn cpython_foreign_long_to_u64(object: *mut c_void) -> Option<u64> {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
     if object.is_null() {
         return None;
     }
@@ -3399,7 +3404,7 @@ unsafe extern "C" fn cpython_slot_dunder_init(
         (self_obj, args_tuple)
     };
 
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
     let target_type = if receiver_is_type_object {
         self_obj.cast::<CpythonTypeObject>()
     } else if (target as usize) < MIN_VALID_PTR
@@ -4176,7 +4181,7 @@ impl Drop for ModuleCapiContext {
         let drained_cpython_allocations = std::mem::take(&mut self.cpython_allocations);
         let mut seen_cpython_allocations: HashSet<usize> = HashSet::new();
         for raw in drained_cpython_allocations {
-            const MIN_VALID_PTR: usize = 0x1_0000_0000;
+            const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
             let raw_addr = raw as usize;
             if !seen_cpython_allocations.insert(raw_addr) {
                 if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
@@ -4519,7 +4524,7 @@ impl ModuleCapiContext {
     }
 
     fn is_probable_c_string_pointer(ptr: *const c_char) -> bool {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
         if ptr.is_null() {
             return false;
         }
@@ -4528,7 +4533,7 @@ impl ModuleCapiContext {
     }
 
     fn is_probable_type_object_without_metatype(object: *mut c_void) -> bool {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
         if object.is_null() {
             return false;
         }
@@ -4589,7 +4594,7 @@ impl ModuleCapiContext {
     }
 
     fn is_probable_type_object_ptr(object: *mut c_void) -> bool {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
         if object.is_null() {
             return false;
         }
@@ -4628,7 +4633,7 @@ impl ModuleCapiContext {
     }
 
     fn is_probable_external_cpython_object_ptr(object: *mut c_void) -> bool {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
         if object.is_null() {
             return false;
         }
@@ -7694,7 +7699,7 @@ impl ModuleCapiContext {
             // for those type-like pointers so C-API tuple/dict setters can carry
             // them through initialization paths.
             let likely_type_object = unsafe {
-                const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
                 let object_addr = object as usize;
                 if object_addr < MIN_VALID_PTR
                     || object_addr % std::mem::align_of::<CpythonObjectHead>() != 0
@@ -8669,7 +8674,7 @@ impl ModuleCapiContext {
     }
 
     fn cpython_slot_table_ptr_is_valid<T>(ptr: *const T) -> bool {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
         !ptr.is_null()
             && (ptr as usize) >= MIN_VALID_PTR
             && (ptr as usize) % std::mem::align_of::<T>() == 0
@@ -8680,7 +8685,7 @@ impl ModuleCapiContext {
         mapping_ptr: *mut c_void,
         key: &str,
     ) -> *mut c_void {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
         if mapping_ptr.is_null()
             || (mapping_ptr as usize) < MIN_VALID_PTR
             || (mapping_ptr as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
@@ -10161,7 +10166,7 @@ impl ModuleCapiContext {
         args: &[Value],
         kwargs: &HashMap<String, Value>,
     ) -> Option<*mut c_void> {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
         let trace_calls = super::env_var_present_cached("PYRS_TRACE_CPY_CALLS");
         if callable.is_null() || self.vm.is_null() {
             if trace_calls {

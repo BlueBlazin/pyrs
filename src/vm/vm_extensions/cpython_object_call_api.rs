@@ -39,7 +39,7 @@ pub unsafe extern "C" fn PyObject_IsTrue(object: *mut c_void) -> i32 {
             return if is_truthy(&value) { 1 } else { 0 };
         }
         if !object.is_null()
-            && (object as usize) >= 0x1_0000_0000
+            && (object as usize) >= super::MIN_VALID_PTR_THRESHOLD
             && (object as usize) % std::mem::align_of::<usize>() == 0
         {
             // SAFETY: pointer shape is validated above; slot calls follow CPython slot ABI.

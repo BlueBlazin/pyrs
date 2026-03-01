@@ -1572,7 +1572,7 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
 }
 
 pub(super) fn cpython_is_type_object_ptr(ptr: *mut c_void) -> bool {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     if ptr.is_null() {
         return false;
     }
@@ -3690,7 +3690,7 @@ pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void)
         }
         return 0;
     }
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     const TYPE_ALIGN: usize = std::mem::align_of::<CpythonTypeObject>();
     if (subtype as usize) < MIN_VALID_PTR || (ty as usize) < MIN_VALID_PTR {
         if trace {

@@ -30,7 +30,7 @@ impl Vm {
         if result_ptr.is_null() {
             return None;
         }
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
         let raw = result_ptr as usize;
         if raw < MIN_VALID_PTR || raw % std::mem::align_of::<CpythonObjectHead>() != 0 {
             return None;
@@ -58,7 +58,7 @@ impl Vm {
         if raw_ptr.is_null() {
             return false;
         }
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
         if (raw_ptr as usize) < MIN_VALID_PTR
             || (raw_ptr as usize) % std::mem::align_of::<usize>() != 0
         {
@@ -198,7 +198,7 @@ impl Vm {
                 return Err(err);
             }
             if super::super::env_var_present_cached("PYRS_TRACE_PROXY_CALL_FAIL") {
-                const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
                 let valid_object_ptr = (raw_ptr as usize) >= MIN_VALID_PTR
                     && (raw_ptr as usize) % std::mem::align_of::<usize>() == 0;
                 let (type_ptr, type_name, tp_call, tp_vectorcall_offset) = if valid_object_ptr {
@@ -311,7 +311,7 @@ impl Vm {
         {
             let mut type_ptr: *mut CpythonTypeObject = std::ptr::null_mut();
             let mut type_name = "<invalid-ptr>".to_string();
-            const MIN_VALID_PTR: usize = 0x1_0000_0000;
+            const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
             let result_addr = result_ptr as usize;
             if result_addr >= MIN_VALID_PTR
                 && result_addr % std::mem::align_of::<CpythonObjectHead>() == 0
@@ -352,7 +352,7 @@ impl Vm {
         proxy_value: &Value,
     ) -> Option<Result<Value, RuntimeError>> {
         let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(proxy_value)?;
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
         if (raw_ptr as usize) < MIN_VALID_PTR
             || (raw_ptr as usize) % std::mem::align_of::<usize>() != 0
         {
@@ -417,7 +417,7 @@ impl Vm {
 
     pub(in crate::vm) fn cpython_proxy_has_iternext(proxy_value: &Value) -> Option<bool> {
         let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(proxy_value)?;
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
         if (raw_ptr as usize) < MIN_VALID_PTR
             || (raw_ptr as usize) % std::mem::align_of::<usize>() != 0
         {

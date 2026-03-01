@@ -112,7 +112,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
     }
     if !object.is_null() {
         let native_result = with_active_cpython_context_mut(|context| {
-            const MIN_VALID_PTR: usize = 0x1_0000_0000;
+            const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
             if (object as usize) < MIN_VALID_PTR {
                 return None;
             }
@@ -309,7 +309,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                 );
             }
             if trace_seed_attrs {
-                const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
                 let valid_result_ptr = !result.is_null()
                     && (result as usize) >= MIN_VALID_PTR
                     && (result as usize) % std::mem::align_of::<usize>() == 0;
@@ -373,7 +373,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             }
             let (type_ptr, tp_getattro, tp_getattr, owned) =
                 with_active_cpython_context_mut(|context| {
-                    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
                     // SAFETY: best-effort diagnostics for unknown-pointer failures.
                     let type_ptr = unsafe {
                         object
@@ -743,7 +743,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
     }
     if !object.is_null() {
         let native_result = with_active_cpython_context_mut(|context| {
-            const MIN_VALID_PTR: usize = 0x1_0000_0000;
+            const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
             if (object as usize) < MIN_VALID_PTR {
                 return None;
             }
@@ -859,7 +859,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
         Ok(value) => value,
         Err(err) => {
             let (type_ptr, tp_getattro, owned) = with_active_cpython_context_mut(|context| {
-                const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
                 // SAFETY: best-effort diagnostics for unknown-pointer failures.
                 let type_ptr = unsafe {
                     object
@@ -901,7 +901,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
         Ok(value) => value,
         Err(err) => {
             let native_fallback = with_active_cpython_context_mut(|context| {
-                const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
                 if object.is_null() || name.is_null() {
                     return None;
                 }
@@ -1238,7 +1238,7 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             super::super::env_var_present_cached("PYRS_TRACE_SETATTR_NATIVE");
         let attr_name = name_text.clone();
         let native_status = with_active_cpython_context_mut(|context| {
-            const MIN_VALID_PTR: usize = 0x1_0000_0000;
+            const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
             if (object as usize) < MIN_VALID_PTR {
                 return None;
             }

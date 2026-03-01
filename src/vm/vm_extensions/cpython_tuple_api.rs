@@ -10,7 +10,7 @@ use super::{
 };
 
 fn owned_ptr_is_tuple_like(context: &mut ModuleCapiContext, tuple: *mut c_void) -> bool {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     if !context.owns_cpython_allocation_ptr(tuple)
         || tuple.is_null()
         || (tuple as usize) < MIN_VALID_PTR

@@ -389,6 +389,9 @@ Completed on this branch:
 - latest: unix-only fd/process trait imports are now locally gated in
   `builtins_io`/`builtins_os`, removing wasm-vm-probe unresolved-import blockers
   for `AsRawFd`/`FromRawFd`/`IntoRawFd`/`ExitStatusExt`/`UnixStream`.
+- latest: pointer-threshold guards now use a shared width-safe
+  `MIN_VALID_PTR_THRESHOLD` across vm extension surfaces, removing wasm32
+  `usize` overflow compile blockers from `0x1_0000_0000` literals.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
@@ -401,9 +404,10 @@ Remaining near-term focus:
 3. Add wasm smoke harness (JS/wasm-bindgen-test or equivalent) without touching native CI gates yet.
 
 Current `wasm-vm-probe` snapshot (non-gating, latest local run):
-- current hard blocker: widespread `usize` literal overflow guards under wasm32
-  (`0x1_0000_0000` into `usize`) across vm extension surfaces
-  (`src/vm/vm_extensions.rs` and multiple `src/vm/vm_extensions/*` modules).
+- compile status: `scripts/probe_wasm_vm_compile.sh` now completes without
+  compile errors.
+- current probe debt is warning-only (unused imports/locals and dead-code paths
+  in `builtins_os`/`vm/mod` under wasm-vm probe) and does not block compile.
 
 ## Risk Register
 

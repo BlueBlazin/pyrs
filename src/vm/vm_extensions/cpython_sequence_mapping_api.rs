@@ -38,7 +38,7 @@ pub unsafe extern "C" fn PySequence_Check(object: *mut c_void) -> i32 {
                 return 0;
             }
         }
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
         if (object as usize) < MIN_VALID_PTR
             || (object as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
         {
@@ -667,7 +667,7 @@ pub unsafe extern "C" fn PyMapping_Check(object: *mut c_void) -> i32 {
                 return 1;
             }
         }
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
         if (object as usize) < MIN_VALID_PTR
             || (object as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
         {

@@ -35,7 +35,7 @@ struct DebugDecimalObject {
 }
 
 pub(super) fn cpython_valid_type_ptr(type_ptr: *mut CpythonTypeObject) -> bool {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     if type_ptr.is_null() {
         return false;
     }
@@ -235,7 +235,7 @@ pub(super) fn cpython_try_richcompare_slot(
     right: *mut c_void,
     op: i32,
 ) -> Option<*mut c_void> {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     if left.is_null() || right.is_null() {
         return None;
     }
@@ -378,7 +378,7 @@ pub(super) fn cpython_try_binary_number_slot(
     slot_offset: usize,
 ) -> Option<*mut c_void> {
     let trace = super::super::env_var_present_cached("PYRS_TRACE_NUMBER_SLOT");
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     if left.is_null() || right.is_null() {
         return None;
     }

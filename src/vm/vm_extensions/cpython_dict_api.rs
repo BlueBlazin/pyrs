@@ -372,7 +372,7 @@ pub unsafe extern "C" fn PyDict_SetItem(
 
         // External-dict fallback: native extensions can pass foreign dict pointers that are
         // not owned by this runtime's C-API object table.
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
         if dict.is_null()
             || key.is_null()
             || value.is_null()
@@ -736,7 +736,7 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
 
         // External-dict fallback: NumPy and other native modules may call PyDict_GetItem
         // against foreign dict pointers not owned by this runtime.
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
         if dict.is_null()
             || key.is_null()
             || (dict as usize) < MIN_VALID_PTR
@@ -1216,7 +1216,7 @@ pub unsafe extern "C" fn PyDict_DelItem(dict: *mut c_void, key: *mut c_void) -> 
 
         // External-dict fallback: native code may pass foreign dict pointers not present
         // in the runtime-owned C-API object table.
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
         if dict.is_null()
             || key.is_null()
             || (dict as usize) < MIN_VALID_PTR

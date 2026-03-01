@@ -643,7 +643,7 @@ pub unsafe extern "C" fn PyObject_DelItem(object: *mut c_void, key: *mut c_void)
 pub unsafe extern "C" fn PyObject_Size(object: *mut c_void) -> isize {
     let size = with_active_cpython_context_mut(|context| {
         if !object.is_null()
-            && (object as usize) >= 0x1_0000_0000
+            && (object as usize) >= super::MIN_VALID_PTR_THRESHOLD
             && (object as usize) % std::mem::align_of::<usize>() == 0
         {
             // SAFETY: pointer shape validated above; slot calls follow CPython slot ABI.
