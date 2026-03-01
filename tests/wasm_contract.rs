@@ -246,64 +246,72 @@ fn wasm_worker_timeout_set_contract_is_stable() {
 #[wasm_bindgen_test]
 fn wasm_worker_enum_keys_are_stable() {
     let state_keys = wasm_worker_state_keys();
-    let mut states = HashSet::new();
+    let mut states = Vec::new();
     for index in 0..state_keys.length() {
         let state = state_keys
             .get(index)
             .as_string()
             .expect("worker state key should be string");
-        states.insert(state);
+        states.push(state);
     }
-    let expected_states: HashSet<String> = WASM_WORKER_STATE_KEYS
+    let expected_states: Vec<String> = WASM_WORKER_STATE_KEYS
         .iter()
         .map(|value| (*value).to_string())
         .collect();
     assert_eq!(states, expected_states);
+    let state_set: HashSet<String> = states.iter().cloned().collect();
+    assert_eq!(state_set.len(), expected_states.len());
 
     let lifecycle_keys = wasm_worker_lifecycle_phase_keys();
-    let mut lifecycle_phases = HashSet::new();
+    let mut lifecycle_phases = Vec::new();
     for index in 0..lifecycle_keys.length() {
         let phase = lifecycle_keys
             .get(index)
             .as_string()
             .expect("worker lifecycle phase key should be string");
-        lifecycle_phases.insert(phase);
+        lifecycle_phases.push(phase);
     }
-    let expected_phases: HashSet<String> = WASM_WORKER_LIFECYCLE_PHASE_KEYS
+    let expected_phases: Vec<String> = WASM_WORKER_LIFECYCLE_PHASE_KEYS
         .iter()
         .map(|value| (*value).to_string())
         .collect();
     assert_eq!(lifecycle_phases, expected_phases);
+    let lifecycle_phase_set: HashSet<String> = lifecycle_phases.iter().cloned().collect();
+    assert_eq!(lifecycle_phase_set.len(), expected_phases.len());
 
     let execute_keys = wasm_worker_execute_phase_keys();
-    let mut execute_phases = HashSet::new();
+    let mut execute_phases = Vec::new();
     for index in 0..execute_keys.length() {
         let phase = execute_keys
             .get(index)
             .as_string()
             .expect("worker execute phase key should be string");
-        execute_phases.insert(phase);
+        execute_phases.push(phase);
     }
-    let expected_execute_phases: HashSet<String> = WASM_WORKER_EXECUTE_PHASE_KEYS
+    let expected_execute_phases: Vec<String> = WASM_WORKER_EXECUTE_PHASE_KEYS
         .iter()
         .map(|value| (*value).to_string())
         .collect();
     assert_eq!(execute_phases, expected_execute_phases);
+    let execute_phase_set: HashSet<String> = execute_phases.iter().cloned().collect();
+    assert_eq!(execute_phase_set.len(), expected_execute_phases.len());
 
     let timeout_keys = wasm_worker_timeout_phase_keys();
-    let mut timeout_phases = HashSet::new();
+    let mut timeout_phases = Vec::new();
     for index in 0..timeout_keys.length() {
         let phase = timeout_keys
             .get(index)
             .as_string()
             .expect("worker timeout phase key should be string");
-        timeout_phases.insert(phase);
+        timeout_phases.push(phase);
     }
-    let expected_timeout_phases: HashSet<String> = WASM_WORKER_TIMEOUT_PHASE_KEYS
+    let expected_timeout_phases: Vec<String> = WASM_WORKER_TIMEOUT_PHASE_KEYS
         .iter()
         .map(|value| (*value).to_string())
         .collect();
     assert_eq!(timeout_phases, expected_timeout_phases);
+    let timeout_phase_set: HashSet<String> = timeout_phases.iter().cloned().collect();
+    assert_eq!(timeout_phase_set.len(), expected_timeout_phases.len());
 }
 
 #[wasm_bindgen_test]

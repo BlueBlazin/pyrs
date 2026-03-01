@@ -56,6 +56,17 @@ def unique(values: list[str]) -> list[str]:
     return sorted(set(values))
 
 
+def ordered_unique(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
 def parse_source_const_string_map(wasm_source: str) -> dict[str, str]:
     const_map: dict[str, str] = {}
     pattern = re.compile(r'const\s+([A-Z0-9_]+):\s*&str\s*=\s*"([^"]+)";')
@@ -90,7 +101,7 @@ def parse_source_enum_keys(
         raise ValueError(
             f"unable to resolve enum key mapping value '{raw_value}' in {enum_name}::key"
         )
-    return unique(keys)
+    return ordered_unique(keys)
 
 
 def parse_source_lifecycle_actions(wasm_source: str) -> list[str]:
@@ -301,18 +312,38 @@ def main() -> int:
         errors.append(
             f"worker state key set mismatch fixtures={unique(state_keys)} source={source_state_keys}"
         )
+    if state_keys != source_state_keys:
+        errors.append(
+            "worker state key order mismatch "
+            f"fixtures={state_keys} source={source_state_keys}"
+        )
     if set(lifecycle_phase_keys) != set(source_lifecycle_phase_keys):
         errors.append(
             "worker lifecycle phase key set mismatch "
             f"fixtures={unique(lifecycle_phase_keys)} source={source_lifecycle_phase_keys}"
         )
+    if lifecycle_phase_keys != source_lifecycle_phase_keys:
+        errors.append(
+            "worker lifecycle phase key order mismatch "
+            f"fixtures={lifecycle_phase_keys} source={source_lifecycle_phase_keys}"
+        )
     if set(execute_phase_keys) != set(source_execute_phase_keys):
         errors.append(
             f"worker execute phase key set mismatch fixtures={unique(execute_phase_keys)} source={source_execute_phase_keys}"
         )
+    if execute_phase_keys != source_execute_phase_keys:
+        errors.append(
+            "worker execute phase key order mismatch "
+            f"fixtures={execute_phase_keys} source={source_execute_phase_keys}"
+        )
     if set(timeout_phase_keys) != set(source_timeout_phase_keys):
         errors.append(
             f"worker timeout phase key set mismatch fixtures={unique(timeout_phase_keys)} source={source_timeout_phase_keys}"
+        )
+    if timeout_phase_keys != source_timeout_phase_keys:
+        errors.append(
+            "worker timeout phase key order mismatch "
+            f"fixtures={timeout_phase_keys} source={source_timeout_phase_keys}"
         )
     if set(worker_blocker_keys) != set(source_expected_worker_blocker_keys):
         errors.append(
