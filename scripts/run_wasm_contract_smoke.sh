@@ -42,12 +42,20 @@ if ! command -v wasm-pack >/dev/null 2>&1; then
   exit 1
 fi
 
+run_browser_smoke() {
+  local browser="$1"
+  echo "[wasm-contract] wasm-pack ${browser}: integration contract tests"
+  wasm-pack test --headless --"${browser}" -- --test wasm_contract
+  echo "[wasm-contract] wasm-pack ${browser}: lib unit tests"
+  wasm-pack test --headless --"${browser}" -- --lib
+}
+
 echo "[wasm-contract] wasm-pack detected; running optional browser smoke tests"
-if wasm-pack test --headless --chrome -- --test wasm_contract; then
+if run_browser_smoke chrome; then
   echo "[wasm-contract] browser smoke tests passed"
   exit 0
 fi
 
 echo "[wasm-contract] chrome smoke failed; trying firefox"
-wasm-pack test --headless --firefox -- --test wasm_contract
+run_browser_smoke firefox
 echo "[wasm-contract] browser smoke tests passed (firefox)"

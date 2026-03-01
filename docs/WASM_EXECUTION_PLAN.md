@@ -187,7 +187,7 @@ Branch helper:
 - `scripts/check_wasm_branch.sh` runs the current minimum checkpoint validation set.
 - `scripts/run_wasm_contract_smoke.sh` runs local wasm contract smoke checks
   (compile-only by default; set `PYRS_WASM_RUN_BROWSER_SMOKE=1` for optional
-  browser run via `wasm-pack`).
+  browser run via `wasm-pack` covering both `--test wasm_contract` and `--lib`).
 - wasm harness note: use targeted wasm contract compile lane
   (`cargo check --target wasm32-unknown-unknown --test wasm_contract`)
   instead of all-tests wasm compile.
@@ -372,6 +372,9 @@ Completed on this branch:
   (`\"unwired\"`) so clients can branch on backend readiness without message parsing.
 - latest: `WasmWorkerInfo` now includes explicit `backend`
   (`\"unwired\"`) for worker-readiness branching without inferring from state text.
+- latest: optional browser smoke path now runs both wasm integration contract
+  tests (`--test wasm_contract`) and wasm lib unit tests (`--lib`) via
+  `wasm-pack`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
