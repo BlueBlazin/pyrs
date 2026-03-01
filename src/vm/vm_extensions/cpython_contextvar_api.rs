@@ -117,7 +117,7 @@ pub unsafe extern "C" fn PyContextVar_New(
         cpython_set_error(err);
         std::ptr::null_mut()
     });
-    if std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some() {
+    if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_INIT") {
         eprintln!(
             "[numpy-init] PyContextVar_New name={} default_ptr={:p} result={:p}",
             name, default_value, result
@@ -137,7 +137,7 @@ pub unsafe extern "C" fn PyContextVar_Get(
         return -1;
     }
     with_active_cpython_context_mut(|context| {
-        let trace_contextvar = std::env::var_os("PYRS_TRACE_CPY_CONTEXTVAR").is_some();
+        let trace_contextvar = super::super::env_var_present_cached("PYRS_TRACE_CPY_CONTEXTVAR");
         let var_dict = match contextvar_dict_from_var_ptr(context, var, "PyContextVar_Get") {
             Ok(dict) => dict,
             Err(status) => return status,
@@ -232,7 +232,7 @@ pub unsafe extern "C" fn PyContextVar_Get(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyContextVar_Set(var: *mut c_void, value: *mut c_void) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
-        let trace_contextvar = std::env::var_os("PYRS_TRACE_CPY_CONTEXTVAR").is_some();
+        let trace_contextvar = super::super::env_var_present_cached("PYRS_TRACE_CPY_CONTEXTVAR");
         let var_dict = match contextvar_dict_from_var_ptr(context, var, "PyContextVar_Set") {
             Ok(dict) => dict,
             Err(_) => return std::ptr::null_mut(),

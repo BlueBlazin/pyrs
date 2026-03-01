@@ -57,7 +57,7 @@ pub unsafe extern "C" fn PyTuple_New(size: isize) -> *mut c_void {
             .heap
             .alloc(Object::Tuple(vec![Value::None; size as usize]));
         let ptr = context.alloc_cpython_ptr_for_value(Value::Tuple(tuple));
-        if std::env::var_os("PYRS_TRACE_CPY_TUPLE").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_TUPLE") {
             eprintln!("[cpy-tuple] new size={} ptr={:p}", size, ptr);
         }
         ptr
@@ -255,7 +255,7 @@ pub unsafe extern "C" fn PyTuple_SetItem(
                 return -1;
             }
         };
-        if std::env::var_os("PYRS_TRACE_CPY_TUPLE_SET").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_TUPLE_SET") {
             eprintln!(
                 "[cpy-tuple-set] tuple={:p} idx={} item_ptr={:p} item={}",
                 tuple,
@@ -310,7 +310,7 @@ pub unsafe extern "C" fn PyTuple_SetItem(
                 }
             }
         }
-        if std::env::var_os("PYRS_TRACE_CPY_TUPLE").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_TUPLE") {
             eprintln!(
                 "[cpy-tuple] set ptr={:p} index={} item={:p}",
                 tuple, index, item
