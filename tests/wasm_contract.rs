@@ -642,19 +642,21 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
 #[wasm_bindgen_test]
 fn wasm_capability_contract_is_stable() {
     let keys = wasm_capability_keys();
-    let mut listed_keys = HashSet::new();
+    let mut listed_keys = Vec::new();
     for index in 0..keys.length() {
         let key = keys
             .get(index)
             .as_string()
             .expect("capability key should be string");
-        listed_keys.insert(key);
+        listed_keys.push(key);
     }
-    let expected_keys: HashSet<String> = WASM_CAPABILITY_FIXTURES
+    let expected_keys: Vec<String> = WASM_CAPABILITY_FIXTURES
         .iter()
         .map(|fixture| fixture.key.to_string())
         .collect();
     assert_eq!(listed_keys, expected_keys);
+    let key_set: HashSet<String> = listed_keys.iter().cloned().collect();
+    assert_eq!(key_set.len(), expected_keys.len());
 
     let capabilities = wasm_capabilities();
     for fixture in WASM_CAPABILITY_FIXTURES {
@@ -699,17 +701,17 @@ fn wasm_execution_blocker_contract_is_stable() {
             .expect("blocker key should be string");
         listed_keys.push(key);
     }
-    assert!(listed_keys.contains(&"execution_backend_unwired".to_string()));
-    assert!(listed_keys.contains(&"vm_runtime_unavailable".to_string()));
-    for fixture in WASM_CAPABILITY_FIXTURES {
-        if !fixture.wasm_supported {
-            assert!(
-                listed_keys.contains(&fixture.key.to_string()),
-                "execution blockers should include unsupported capability key: {}",
-                fixture.key
-            );
-        }
-    }
+    let mut expected_keys = vec![
+        "execution_backend_unwired".to_string(),
+        "vm_runtime_unavailable".to_string(),
+    ];
+    expected_keys.extend(
+        WASM_CAPABILITY_FIXTURES
+            .iter()
+            .filter(|fixture| !fixture.wasm_supported)
+            .map(|fixture| fixture.key.to_string()),
+    );
+    assert_eq!(listed_keys, expected_keys);
     let err = wasm_execution_blocker_error("execution_backend_unwired")
         .expect("backend blocker should have error");
     assert!(err.contains("not wired"));
@@ -817,7 +819,7 @@ fn wasm_module_support_contract_is_stable() {
 #[wasm_bindgen_test]
 fn wasm_module_policy_entries_are_stable() {
     let entries = wasm_module_policy_entries();
-    let mut mappings = HashSet::new();
+    let mut mappings = Vec::new();
     for index in 0..entries.length() {
         let entry = entries.get(index);
         let module = Reflect::get(&entry, &"module".into())
@@ -828,14 +830,16 @@ fn wasm_module_policy_entries_are_stable() {
             .expect("entry.blocker_key")
             .as_string()
             .expect("entry.blocker_key string");
-        mappings.insert((module, blocker_key));
+        mappings.push((module, blocker_key));
     }
 
-    let expected: HashSet<(String, String)> = WASM_MODULE_POLICY_FIXTURES
+    let expected: Vec<(String, String)> = WASM_MODULE_POLICY_FIXTURES
         .iter()
         .map(|fixture| (fixture.module.to_string(), fixture.blocker_key.to_string()))
         .collect();
     assert_eq!(mappings, expected);
+    let mapping_set: HashSet<(String, String)> = mappings.iter().cloned().collect();
+    assert_eq!(mapping_set.len(), expected.len());
 }
 
 #[wasm_bindgen_test]

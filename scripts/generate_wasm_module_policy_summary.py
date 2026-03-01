@@ -49,10 +49,6 @@ def parse_doc_pairs(source: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def unique_pairs(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    return sorted(set(pairs))
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -113,6 +109,11 @@ def main() -> int:
             errors.append(f"rows missing in fixture: {missing_in_fixture}")
         if missing_in_source:
             errors.append(f"rows missing in source: {missing_in_source}")
+    if fixture_pairs != source_pairs:
+        errors.append(
+            "fixture/source module-policy row order mismatch "
+            f"fixture={fixture_pairs} source={source_pairs}"
+        )
     if source_set != doc_set:
         missing_in_doc = sorted(source_set - doc_set)
         missing_in_source_from_doc = sorted(doc_set - source_set)
@@ -120,6 +121,11 @@ def main() -> int:
             errors.append(f"rows missing in docs: {missing_in_doc}")
         if missing_in_source_from_doc:
             errors.append(f"rows present in docs but missing in source: {missing_in_source_from_doc}")
+    if source_pairs != doc_pairs:
+        errors.append(
+            "source/docs module-policy row order mismatch "
+            f"source={source_pairs} docs={doc_pairs}"
+        )
 
     if errors:
         print("wasm module policy summary validation failed:")
@@ -138,7 +144,7 @@ def main() -> int:
         },
         "rows": [
             {"module": module, "blocker_key": blocker}
-            for module, blocker in unique_pairs(fixture_pairs)
+            for module, blocker in fixture_pairs
         ],
     }
 
