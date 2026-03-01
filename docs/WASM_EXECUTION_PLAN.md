@@ -483,6 +483,10 @@ Completed on this branch:
   execute/execute-with-operation baseline snippets (`x = 1`), so probe-mode
   `ok` behavior and default-mode `unsupported_worker_execution` behavior are
   both explicitly asserted.
+- latest: vm-probe execute/worker contract summaries are now emitted directly
+  by `scripts/probe_wasm_vm_compile.sh`; branch/smoke wrapper scripts rely on
+  that lane for vm-probe summary artifacts and keep default-summary generation
+  local to wrapper scope.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
