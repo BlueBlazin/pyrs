@@ -42,13 +42,19 @@ const copyPayload = commands.join("\n");
 </div>
 
 <script>
-	const block = document.currentScript?.previousElementSibling;
-	const button = block?.querySelector(".copy-btn");
-	if (button) {
+	const buttons = document.querySelectorAll(".command-block .copy-btn[data-copy]");
+	for (const button of buttons) {
+		if (!(button instanceof HTMLButtonElement)) {
+			continue;
+		}
+		if (button.dataset.copyBound === "1") {
+			continue;
+		}
+		button.dataset.copyBound = "1";
 		let resetTimer;
+		const originalLabel = button.textContent || "Copy";
 		button.addEventListener("click", async () => {
 			const payload = button.getAttribute("data-copy") || "";
-			const originalLabel = button.textContent || "Copy";
 			try {
 				await navigator.clipboard.writeText(payload);
 				button.textContent = "Copied";

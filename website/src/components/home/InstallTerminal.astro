@@ -35,9 +35,15 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 </div>
 
 <script>
-	const terminal = document.currentScript?.previousElementSibling;
-	const button = terminal?.querySelector(".cmd-copy");
-	if (button) {
+	const buttons = document.querySelectorAll(".terminal .cmd-copy[data-copy]");
+	for (const button of buttons) {
+		if (!(button instanceof HTMLButtonElement)) {
+			continue;
+		}
+		if (button.dataset.copyBound === "1") {
+			continue;
+		}
+		button.dataset.copyBound = "1";
 		let resetTimer;
 		button.addEventListener("click", async () => {
 			const payload = button.getAttribute("data-copy") || "";
