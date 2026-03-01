@@ -1,0 +1,89 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Language Compatibility
+description: CPython 3.14 language-feature compatibility model and probe coverage in PYRS.
+pageTitle: Language Compatibility
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import CommandBlock from "../../components/docs/CommandBlock.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	PYRS treats CPython 3.14 language semantics as the only correctness target. Language compatibility
+	is tracked through explicit feature manifests and differential probes.
+</DocSection>
+
+<DocSection title="Current Inventory Baseline">
+	<DataTable headers={["Metric", "Current value"]}>
+		<tr>
+			<td>Inventory rows</td>
+			<td><code>578</code> source-derived language rows.</td>
+		</tr>
+		<tr>
+			<td>Grammar rules</td>
+			<td><code>249</code> total (<code>188</code> public, <code>61</code> internal <code>invalid_*</code>).</td>
+		</tr>
+		<tr>
+			<td>Tokens</td>
+			<td><code>69</code></td>
+		</tr>
+		<tr>
+			<td>Reference headings</td>
+			<td><code>260</code></td>
+		</tr>
+		<tr>
+			<td>Mapped inventory coverage</td>
+			<td><code>pass=578</code>, <code>fail=0</code>, <code>unprobed=0</code>.</td>
+		</tr>
+		<tr>
+			<td>Current probe baseline</td>
+			<td><code>29/29</code> manifest probes passing.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="How Parity Is Enforced">
+	<DataTable headers={["Layer", "Gate behavior"]}>
+		<tr>
+			<td><code>LANGUAGE_FEATURE_MANIFEST.json</code></td>
+			<td>Feature-level manifest with required/non-required probe tracking.</td>
+		</tr>
+		<tr>
+			<td><code>check_language_feature_manifest.py</code></td>
+			<td>Compares PYRS vs CPython probe behavior and emits latest result artifact.</td>
+		</tr>
+		<tr>
+			<td><code>LANGUAGE_FEATURE_INVENTORY.json</code></td>
+			<td>Source-derived CPython 3.14 inventory baseline.</td>
+		</tr>
+		<tr>
+			<td><code>check_language_feature_coverage.py</code></td>
+			<td>Enforces full mapping coverage (<code>fail=0</code>, <code>unprobed=0</code>).</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Run Manifest and Coverage Checks">
+	<CommandBlock
+		commands={[
+			"python3 scripts/check_language_feature_manifest.py --pyrs target/debug/pyrs --cpython-bin /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 --manifest docs/LANGUAGE_FEATURE_MANIFEST.json --out perf/language_feature_manifest_latest.json",
+			"python3 scripts/check_language_feature_coverage.py --inventory docs/LANGUAGE_FEATURE_INVENTORY.json --probe-results perf/language_feature_manifest_latest.json --probe-map docs/LANGUAGE_FEATURE_PROBE_MAP.json --out perf/language_feature_coverage_latest.json --enforce --min-coverage-percent 100 --max-probe-fanout 90",
+		]}
+	/>
+	<Callout title="Interpretation">
+		A green manifest/inventory gate means tracked feature probes currently match CPython for covered rows;
+		it is not a blanket claim that every runtime edge case outside those probes is closed.
+	</Callout>
+</DocSection>
+
+<DocSection title="Canonical Internal Trackers">
+	<ul class="docs-list">
+		<li><code>docs/LANGUAGE_FEATURE_MANIFEST.md</code></li>
+		<li><code>docs/LANGUAGE_FEATURE_INVENTORY.md</code></li>
+		<li><code>docs/LANGUAGE_FEATURE_PROBE_MAP.json</code></li>
+		<li><code>perf/language_feature_manifest_latest.json</code></li>
+		<li><code>perf/language_feature_coverage_latest.json</code></li>
+	</ul>
+</DocSection>

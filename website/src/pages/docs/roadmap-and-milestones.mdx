@@ -1,0 +1,71 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Roadmap and Milestones
+description: Milestone status and release-readiness framing for PYRS.
+pageTitle: Roadmap and Milestones
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	PYRS roadmap is milestone-driven with CPython parity and engineering gates as closure criteria.
+</DocSection>
+
+<DocSection title="Milestone Status Snapshot">
+	<DataTable headers={["Milestone", "Status"]}>
+		<tr><td><code>0-12</code></td><td>Complete</td></tr>
+		<tr><td><code>13</code></td><td>In progress (long-tail parity and stdlib usability closure)</td></tr>
+		<tr><td><code>14</code></td><td>Pending (performance and architecture hardening)</td></tr>
+		<tr><td><code>15</code></td><td>In progress (active execution lock: native extension ecosystem)</td></tr>
+		<tr><td><code>16</code></td><td>Pending (release hardening and certification)</td></tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Current Active Execution Lock">
+	<DataTable headers={["Workstream", "Current focus"]}>
+		<tr>
+			<td>Milestone 15</td>
+			<td>C-API substrate closure and scientific-stack direct-mode bring-up.</td>
+		</tr>
+		<tr>
+			<td>Lane A</td>
+			<td>CPython 3.14 Stable ABI surface closure and conformance maintenance.</td>
+		</tr>
+		<tr>
+			<td>Lane B</td>
+			<td>Non-abi3 surfaces required by NumPy/scientific stack in real workloads.</td>
+		</tr>
+	</DataTable>
+	<Callout title="Policy">
+		Closure is gate-driven: milestones do not close on partial behavior or temporary workaround accumulation.
+	</Callout>
+</DocSection>
+
+<DocSection title="Release Readiness Framing">
+	<DataTable headers={["Area", "Rule"]}>
+		<tr>
+			<td>Milestone 13 closure</td>
+			<td>All P0 readiness blockers and stub-accounting P0 rows must be closed.</td>
+		</tr>
+		<tr>
+			<td>Milestone 15 closure</td>
+			<td>Extension capability matrix P0 rows and NumPy bring-up gate criteria must be green.</td>
+		</tr>
+		<tr>
+			<td>Milestone 16</td>
+			<td>Release certification gates across supported platforms and artifact policy.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Canonical Internal Trackers">
+	<ul class="docs-list">
+		<li><code>docs/ROADMAP.md</code></li>
+		<li><code>docs/PRODUCTION_READINESS.md</code></li>
+		<li><code>docs/STUB_ACCOUNTING.md</code></li>
+		<li><code>docs/ENGINEERING_GATES.md</code></li>
+		<li><code>docs/RELEASE_PLAN_BETA.md</code></li>
+	</ul>
+</DocSection>

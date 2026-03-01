@@ -1,0 +1,85 @@
+---
+layout: ../../../layouts/DocsLayout.astro
+title: PYRS Docs | Extension C-API v1
+description: Overview of the current PYRS extension C-API v1 surface and guarantees.
+pageTitle: Extension C-API v1
+---
+
+import DocSection from "../../../components/docs/DocSection.astro";
+import DataTable from "../../../components/docs/DataTable.astro";
+import Callout from "../../../components/docs/Callout.astro";
+
+<DocSection>
+	PYRS exposes an extension C-API v1 slice for native extension bring-up. This is an active substrate,
+	not full CPython C-API parity.
+</DocSection>
+
+<DocSection title="Version and Entry Contract">
+	<DataTable headers={["Field", "Current contract"]}>
+		<tr>
+			<td>Header</td>
+			<td><code>include/pyrs_capi.h</code></td>
+		</tr>
+		<tr>
+			<td>ABI version</td>
+			<td><code>PYRS_CAPI_ABI_VERSION = 1</code></td>
+		</tr>
+		<tr>
+			<td>Init symbol</td>
+			<td><code>pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx)</code></td>
+		</tr>
+		<tr>
+			<td>Handle model</td>
+			<td>Init-scoped object handles with explicit <code>incref/decref</code> operations.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Implemented Surface Categories">
+	<DataTable headers={["Category", "Examples"]}>
+		<tr>
+			<td>Module globals and attrs</td>
+			<td><code>module_set_*</code>, <code>module_get_object</code>, <code>module_set_attr</code>, <code>module_has_attr</code></td>
+		</tr>
+		<tr>
+			<td>Object constructors and getters</td>
+			<td><code>object_new_int</code>, <code>object_new_string</code>, <code>object_get_int</code>, <code>object_get_string</code></td>
+		</tr>
+		<tr>
+			<td>Container and mapping helpers</td>
+			<td><code>object_len</code>, <code>object_get_item</code>, <code>object_set_item</code>, dict/list helpers</td>
+		</tr>
+		<tr>
+			<td>Callable registration and invocation</td>
+			<td><code>module_add_function</code>, <code>module_add_function_kw</code>, <code>object_call*</code></td>
+		</tr>
+		<tr>
+			<td>Buffer and capsule interop</td>
+			<td><code>object_get_buffer*</code>, <code>capsule_new</code>, <code>capsule_import</code></td>
+		</tr>
+		<tr>
+			<td>Error and capability introspection</td>
+			<td><code>error_set</code>, <code>error_get_message</code>, <code>api_has_capability</code></td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Lifecycle and Scope Notes">
+	<ul class="docs-list">
+		<li>Module-state lifecycle helpers are present (<code>module_set_state</code>, <code>module_set_finalize</code>).</li>
+		<li>Per-surface behavior is regression-tested in extension smoke fixtures.</li>
+		<li>Unsupported surfaces should fail explicitly instead of silent fallback.</li>
+	</ul>
+	<Callout title="Not Full CPython C-API">
+		Multi-phase init and broad C-API closure remain active Milestone 15 work.
+	</Callout>
+</DocSection>
+
+<DocSection title="Canonical Internal References">
+	<ul class="docs-list">
+		<li><code>docs/EXTENSION_CAPI_V1.md</code></li>
+		<li><code>docs/EXTENSION_CAPABILITY_MATRIX.md</code></li>
+		<li><code>docs/EXTENSION_PACKAGING_CONTRACT.md</code></li>
+		<li><code>include/pyrs_capi.h</code></li>
+	</ul>
+</DocSection>

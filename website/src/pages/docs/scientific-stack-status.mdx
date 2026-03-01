@@ -1,0 +1,88 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Scientific Stack Status
+description: NumPy and scientific-stack bring-up status for native extension execution.
+pageTitle: Scientific Stack Status
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import CommandBlock from "../../components/docs/CommandBlock.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	This page tracks the public snapshot of scientific-stack compatibility through direct native-extension
+	execution gates.
+</DocSection>
+
+<DocSection title="Base NumPy Gate (2026-02-23 snapshot)">
+	<DataTable headers={["Gate", "Status"]}>
+		<tr>
+			<td><code>numpy_import</code></td>
+			<td>PASS</td>
+		</tr>
+		<tr>
+			<td><code>numpy_ndarray_sum</code></td>
+			<td>PASS</td>
+		</tr>
+		<tr>
+			<td><code>numpy_numerictypes_core</code></td>
+			<td>PASS</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Direct Scientific-Stack Probe Snapshot (2026-02-23)">
+	<DataTable headers={["Probe", "Status"]}>
+		<tr>
+			<td><code>scipy_import</code></td>
+			<td>PASS</td>
+		</tr>
+		<tr>
+			<td><code>pandas_import</code></td>
+			<td>FAIL</td>
+		</tr>
+		<tr>
+			<td><code>pandas_series_sum</code></td>
+			<td>FAIL</td>
+		</tr>
+		<tr>
+			<td><code>matplotlib_import</code></td>
+			<td>FAIL</td>
+		</tr>
+		<tr>
+			<td><code>matplotlib_pyplot_smoke</code></td>
+			<td>FAIL</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Active P0 Blockers">
+	<ul class="docs-list">
+		<li><code>numpy.ma.core</code> import still overflows stack in current direct bring-up flow.</li>
+		<li>Pandas direct path currently fails in <code>pandas._libs.tslibs.dtypes</code> with class-attribute lookup mismatch.</li>
+		<li>Matplotlib direct path still fails in tuple-unpack/call-materialization paths for Cython-heavy modules.</li>
+	</ul>
+	<Callout title="Execution Model">
+		Milestone 15 uses a two-lane strategy: Stable ABI closure (Lane A) and non-abi3 scientific-stack closure (Lane B).
+	</Callout>
+</DocSection>
+
+<DocSection title="Run Gate Probes">
+	<CommandBlock
+		commands={[
+			"python3 scripts/probe_numpy_gate.py --pyrs target/debug/pyrs --cpython-lib .local/Python-3.14.3/Lib --out perf/numpy_gate_latest.json --timeout 20",
+			"python3 scripts/probe_numpy_gate.py --pyrs target/debug/pyrs --cpython-lib .local/Python-3.14.3/Lib --include-scientific-stack --probe-local-stack --python-probe-bin .venv-ext314/bin/python --out perf/numpy_gate_direct_latest.json --timeout 30",
+		]}
+	/>
+</DocSection>
+
+<DocSection title="Canonical Internal Trackers">
+	<ul class="docs-list">
+		<li><code>docs/NUMPY_BRINGUP_GATE.md</code></li>
+		<li><code>docs/CAPI_PLAN.md</code></li>
+		<li><code>docs/CAPI_LIFETIME_MODEL.md</code></li>
+		<li><code>docs/EXTENSION_CAPABILITY_MATRIX.md</code></li>
+		<li><code>perf/numpy_gate_direct_latest.json</code></li>
+	</ul>
+</DocSection>

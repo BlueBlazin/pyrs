@@ -33,11 +33,20 @@ export const docsNavGroups: DocsNavGroup[] = [
 		label: "Compatibility",
 		items: [
 			{ href: "/docs/compatibility/", label: "Compatibility Targets" },
+			{ href: "/docs/language-compatibility/", label: "Language Compatibility" },
 			{ href: "/docs/stdlib-compatibility/", label: "Stdlib Compatibility" },
+			{ href: "/docs/scientific-stack-status/", label: "Scientific Stack Status" },
 		],
 	},
 	{
 		label: "Extensions",
-		items: [{ href: "/docs/native-extensions/", label: "Native Extensions" }],
+		items: [
+			{ href: "/docs/native-extensions/", label: "Native Extensions" },
+			{ href: "/docs/extensions/capi-v1/", label: "Extension C-API v1" },
+		],
+	},
+	{
+		label: "Project",
+		items: [{ href: "/docs/roadmap-and-milestones/", label: "Roadmap and Milestones" }],
 	},
 ];
