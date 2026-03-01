@@ -329,6 +329,8 @@ Completed on this branch:
   snippet import-root preflight, and operation-aware worker execute calls.
 - latest: worker operation-id shape/uniqueness is now explicitly covered across
   lifecycle and timeout APIs in wasm contract tests.
+- latest: host contract checks now include a capability-matrix consistency gate
+  (`wasm_host_unsupported_message_matrix_matches_supports`) in branch/smoke scripts.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

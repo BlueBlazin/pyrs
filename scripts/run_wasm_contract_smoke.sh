@@ -13,6 +13,9 @@ cargo nextest run --lib wasm_host_capability_matrix_is_explicit --status-level f
 echo "[wasm-contract] nextest host unsupported-message regression"
 cargo nextest run --lib wasm_host_unsupported_messages_are_stable --status-level fail --final-status-level fail
 
+echo "[wasm-contract] nextest host unsupported-message matrix regression"
+cargo nextest run --lib wasm_host_unsupported_message_matrix_matches_supports --status-level fail --final-status-level fail
+
 if [[ "${PYRS_WASM_RUN_BROWSER_SMOKE:-0}" != "1" ]]; then
   echo "[wasm-contract] browser smoke disabled (set PYRS_WASM_RUN_BROWSER_SMOKE=1 to enable)"
   echo "[wasm-contract] compile-only smoke checks passed"

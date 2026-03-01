@@ -290,6 +290,34 @@ mod tests {
     }
 
     #[test]
+    fn wasm_host_unsupported_message_matrix_matches_supports() {
+        let host = WasmHost;
+        for capability in HostCapability::all() {
+            let supported = host.supports(*capability);
+            let message = host.unsupported_message(*capability);
+            if supported {
+                assert!(
+                    message.is_none(),
+                    "supported capability should not emit unsupported message: {}",
+                    capability.key()
+                );
+            } else {
+                let text = message.unwrap_or_else(|| {
+                    panic!(
+                        "unsupported capability should emit unsupported message: {}",
+                        capability.key()
+                    )
+                });
+                assert!(
+                    text.contains(capability.key()),
+                    "unsupported message should include capability key: {}",
+                    capability.key()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn capability_key_roundtrip_is_stable() {
         for capability in HostCapability::all() {
             let key = capability.key();

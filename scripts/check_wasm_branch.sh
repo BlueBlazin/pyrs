@@ -16,6 +16,9 @@ cargo nextest run --lib wasm_host_capability_matrix_is_explicit --status-level f
 echo "[wasm-branch] nextest host unsupported-message regression"
 cargo nextest run --lib wasm_host_unsupported_messages_are_stable --status-level fail --final-status-level fail
 
+echo "[wasm-branch] nextest host unsupported-message matrix regression"
+cargo nextest run --lib wasm_host_unsupported_message_matrix_matches_supports --status-level fail --final-status-level fail
+
 echo "[wasm-branch] nextest vm smoke regression"
 cargo nextest run --test vm callable_instance_dispatch_matches_explicit_dunder_call_path --status-level fail --final-status-level fail
 
