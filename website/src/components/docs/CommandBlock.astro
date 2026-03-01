@@ -32,19 +32,30 @@ const copyPayload = commands.join("\n");
 			Copy
 		</button>
 	</div>
-	<pre class="m-0 overflow-x-auto px-4 py-3.5"><code class="block font-['IBM_Plex_Mono',ui-monospace,SFMono-Regular,Menlo,monospace] text-[0.8rem] leading-7 text-[#e4e9f6]">
-{commands.map((command) => (
-	<span class="flex">
-		<span class="select-none pr-3 text-[#efb087]">$</span>
-		<span>{command}</span>
-	</span>
-))}
-	</code></pre>
+	<div class="command-lines overflow-x-auto px-4 py-2.5">
+		<code class="block font-['IBM_Plex_Mono',ui-monospace,SFMono-Regular,Menlo,monospace] text-[0.8rem] leading-6 text-[#e4e9f6]">
+			{commands.map((command) => (
+				<span class="command-line">
+					<span class="command-prompt select-none pr-3 text-[#efb087]">$</span>
+					<span class="command-text">{command}</span>
+				</span>
+			))}
+		</code>
+	</div>
 </div>
 
 <style>
 	.command-block {
 		box-shadow: 0 10px 28px rgba(2, 5, 12, 0.28);
+	}
+
+	.command-line {
+		display: flex;
+		gap: 0.28rem;
+	}
+
+	.command-text {
+		white-space: pre;
 	}
 
 	.copy-btn.is-copied {
