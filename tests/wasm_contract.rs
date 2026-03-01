@@ -18,8 +18,8 @@ use pyrs::wasm::{
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_support,
     wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_blockers, wasm_worker_execute,
     wasm_worker_execute_phase_keys, wasm_worker_info, wasm_worker_lifecycle_phase_keys,
-    wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate, wasm_worker_timeout_policy,
-    WasmSession, WasmWorkerSession,
+    wasm_worker_recycle, wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate,
+    wasm_worker_timeout_policy, WasmSession, WasmWorkerSession,
 };
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
@@ -146,6 +146,7 @@ fn wasm_worker_lifecycle_stub_contract_is_stable() {
         let result = match fixture.action {
             "start" => wasm_worker_start(),
             "terminate" => wasm_worker_terminate(),
+            "recycle" => wasm_worker_recycle(),
             other => panic!("unknown worker fixture action: {other}"),
         };
 
@@ -235,6 +236,7 @@ fn wasm_worker_session_contract_is_stable() {
     let mut session = WasmWorkerSession::new();
     assert_eq!(session.starts_requested(), 0);
     assert_eq!(session.terminates_requested(), 0);
+    assert_eq!(session.recycles_requested(), 0);
     assert_eq!(session.executes_requested(), 0);
     assert!(session.last_phase().is_none());
     assert!(session.last_error().is_none());
@@ -264,6 +266,17 @@ fn wasm_worker_session_contract_is_stable() {
     );
     assert!(session.last_error().is_some());
 
+    let recycle = session.recycle();
+    assert_eq!(recycle.phase(), "unsupported_worker_recycle");
+    assert_eq!(session.recycles_requested(), 1);
+    assert_eq!(
+        session
+            .last_phase()
+            .expect("last phase after worker recycle should exist"),
+        "unsupported_worker_recycle".to_string()
+    );
+    assert!(session.last_error().is_some());
+
     let execute = session.execute("x = 1\n");
     assert_eq!(execute.phase(), "unsupported_worker_execution");
     assert_eq!(session.executes_requested(), 1);
@@ -278,6 +291,7 @@ fn wasm_worker_session_contract_is_stable() {
     session.reset();
     assert_eq!(session.starts_requested(), 0);
     assert_eq!(session.terminates_requested(), 0);
+    assert_eq!(session.recycles_requested(), 0);
     assert_eq!(session.executes_requested(), 0);
     assert!(session.last_phase().is_none());
     assert!(session.last_error().is_none());

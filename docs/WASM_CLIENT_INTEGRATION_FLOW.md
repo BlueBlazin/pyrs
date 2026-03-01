@@ -22,10 +22,12 @@ This guide defines the recommended browser call order for current wasm APIs.
 
 ## Worker Branch (Current)
 
-`wasm_worker_start()` and `wasm_worker_terminate()` are currently explicit stubs.
+`wasm_worker_start()`, `wasm_worker_terminate()`, and `wasm_worker_recycle()`
+are currently explicit stubs.
 
 - `wasm_worker_start()` -> `phase = "unsupported_worker_start"`
 - `wasm_worker_terminate()` -> `phase = "unsupported_worker_terminate"`
+- `wasm_worker_recycle()` -> `phase = "unsupported_worker_recycle"`
 - both return `blocker_key = "worker_runtime_unwired"`
 - `wasm_worker_execute(source)` -> `phase` in:
   - `syntax_error`
@@ -40,7 +42,7 @@ Use `wasm_worker_timeout_policy()` to keep timeout controls aligned with the
 current worker recycle model and unsupported timeout-enforcement phase.
 
 You can call lifecycle methods directly or via `WasmWorkerSession` for stateful
-UI telemetry (`starts_requested`, `terminates_requested`, `executes_requested`,
+UI telemetry (`starts_requested`, `terminates_requested`, `recycles_requested`, `executes_requested`,
 `last_phase`, `last_error`).
 
 Prefer `wasm_worker_state_keys()`, `wasm_worker_lifecycle_phase_keys()`, and

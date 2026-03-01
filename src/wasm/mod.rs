@@ -82,18 +82,21 @@ impl WasmWorkerState {
 enum WasmWorkerLifecyclePhase {
     UnsupportedStart,
     UnsupportedTerminate,
+    UnsupportedRecycle,
 }
 
 impl WasmWorkerLifecyclePhase {
-    const ALL: [WasmWorkerLifecyclePhase; 2] = [
+    const ALL: [WasmWorkerLifecyclePhase; 3] = [
         WasmWorkerLifecyclePhase::UnsupportedStart,
         WasmWorkerLifecyclePhase::UnsupportedTerminate,
+        WasmWorkerLifecyclePhase::UnsupportedRecycle,
     ];
 
     fn key(self) -> &'static str {
         match self {
             WasmWorkerLifecyclePhase::UnsupportedStart => "unsupported_worker_start",
             WasmWorkerLifecyclePhase::UnsupportedTerminate => "unsupported_worker_terminate",
+            WasmWorkerLifecyclePhase::UnsupportedRecycle => "unsupported_worker_recycle",
         }
     }
 }
@@ -212,6 +215,7 @@ pub struct WasmSession {
 pub struct WasmWorkerSession {
     starts_requested: usize,
     terminates_requested: usize,
+    recycles_requested: usize,
     executes_requested: usize,
     last_phase: Option<String>,
     last_error: Option<String>,
@@ -577,6 +581,7 @@ impl WasmWorkerSession {
         Self {
             starts_requested: 0,
             terminates_requested: 0,
+            recycles_requested: 0,
             executes_requested: 0,
             last_phase: None,
             last_error: None,
@@ -603,6 +608,14 @@ impl WasmWorkerSession {
         result
     }
 
+    pub fn recycle(&mut self) -> WasmWorkerLifecycleResult {
+        let result = wasm_worker_recycle();
+        self.recycles_requested += 1;
+        self.last_phase = Some(result.phase.clone());
+        self.last_error = result.error.clone();
+        result
+    }
+
     pub fn execute(&mut self, source: &str) -> WasmExecutionResult {
         let result = wasm_worker_execute(source);
         self.executes_requested += 1;
@@ -614,6 +627,7 @@ impl WasmWorkerSession {
     pub fn reset(&mut self) {
         self.starts_requested = 0;
         self.terminates_requested = 0;
+        self.recycles_requested = 0;
         self.executes_requested = 0;
         self.last_phase = None;
         self.last_error = None;
@@ -627,6 +641,11 @@ impl WasmWorkerSession {
     #[wasm_bindgen(getter)]
     pub fn terminates_requested(&self) -> usize {
         self.terminates_requested
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn recycles_requested(&self) -> usize {
+        self.recycles_requested
     }
 
     #[wasm_bindgen(getter)]
@@ -983,6 +1002,15 @@ pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
 #[wasm_bindgen]
 pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
     worker_unwired_result(WasmWorkerLifecyclePhase::UnsupportedTerminate)
+}
+
+/// Recycles worker runtime execution state.
+///
+/// Current milestone behavior:
+/// - returns `phase = "unsupported_worker_recycle"` until worker backend is wired.
+#[wasm_bindgen]
+pub fn wasm_worker_recycle() -> WasmWorkerLifecycleResult {
+    worker_unwired_result(WasmWorkerLifecyclePhase::UnsupportedRecycle)
 }
 
 /// Executes a snippet through the wasm worker contract.

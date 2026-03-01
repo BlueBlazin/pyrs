@@ -32,6 +32,14 @@ pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[
         expected_success: false,
         expected_blocker_key: "worker_runtime_unwired",
     },
+    WasmWorkerLifecycleFixture {
+        name: "worker_recycle_unwired",
+        action: "recycle",
+        expected_phase: "unsupported_worker_recycle",
+        expected_state: "unwired",
+        expected_success: false,
+        expected_blocker_key: "worker_runtime_unwired",
+    },
 ];
 
 pub const WASM_WORKER_EXECUTE_FIXTURES: &[WasmWorkerExecuteFixture] = &[
@@ -67,8 +75,11 @@ pub const WASM_WORKER_STATE_KEYS: &[&str] = &[
     "failed",
 ];
 
-pub const WASM_WORKER_LIFECYCLE_PHASE_KEYS: &[&str] =
-    &["unsupported_worker_start", "unsupported_worker_terminate"];
+pub const WASM_WORKER_LIFECYCLE_PHASE_KEYS: &[&str] = &[
+    "unsupported_worker_start",
+    "unsupported_worker_terminate",
+    "unsupported_worker_recycle",
+];
 
 pub const WASM_WORKER_EXECUTE_PHASE_KEYS: &[&str] = &[
     "syntax_error",

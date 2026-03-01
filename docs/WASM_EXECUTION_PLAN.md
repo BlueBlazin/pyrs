@@ -305,6 +305,8 @@ Completed on this branch:
   `wasm_worker_blockers()` for key/message UI integration.
 - latest: worker timeout/recycle policy is now exported via
   `wasm_worker_timeout_policy()` with stable unwired enforcement metadata.
+- latest: worker lifecycle now includes explicit recycle stub contract
+  (`wasm_worker_recycle`) and `WasmWorkerSession` tracks `recycles_requested`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

@@ -59,7 +59,7 @@ Current wasm bridge exports for capability handling:
   exports timeout/recycle contract metadata while enforcement remains unwired.
 - `wasm_worker_blockers()`:
   returns structured worker blocker entries (`key`, `message`) for worker UX.
-- `wasm_worker_start()` / `wasm_worker_terminate()`:
+- `wasm_worker_start()` / `wasm_worker_terminate()` / `wasm_worker_recycle()`:
   expose stable lifecycle stub phases while worker backend is unwired.
 - `wasm_worker_state_keys()` / `wasm_worker_lifecycle_phase_keys()`:
   expose canonical worker contract enums for UI/client branching.

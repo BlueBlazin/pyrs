@@ -14,6 +14,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `wasm_worker_blockers()`
 - `wasm_worker_start()`
 - `wasm_worker_terminate()`
+- `wasm_worker_recycle()`
 - `wasm_worker_execute(source)`
 - `WasmWorkerSession` (stateful wrapper)
 
@@ -49,6 +50,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 
 - `unsupported_worker_start`
 - `unsupported_worker_terminate`
+- `unsupported_worker_recycle`
 
 `wasm_worker_execute_phase_keys()` currently includes:
 
@@ -87,6 +89,14 @@ Unknown blocker keys return `None`.
 - `blocker_key = "worker_runtime_unwired"`
 - `error = "wasm worker runtime is not wired yet"`
 
+`wasm_worker_recycle()` currently returns:
+
+- `success = false`
+- `phase = "unsupported_worker_recycle"`
+- `state = "unwired"`
+- `blocker_key = "worker_runtime_unwired"`
+- `error = "wasm worker runtime is not wired yet"`
+
 `wasm_worker_execute(source)` currently returns:
 
 - `phase = "syntax_error"` when parse fails,
@@ -97,6 +107,7 @@ Unknown blocker keys return `None`.
 
 - `starts_requested`
 - `terminates_requested`
+- `recycles_requested`
 - `executes_requested`
 - `last_phase`
 - `last_error`

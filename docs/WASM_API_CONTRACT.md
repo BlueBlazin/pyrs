@@ -29,6 +29,8 @@ This document defines the JS-facing contract currently exported by
   - Worker lifecycle start contract (currently unsupported/unwired).
 - `wasm_worker_terminate() -> WasmWorkerLifecycleResult`
   - Worker lifecycle terminate contract (currently unsupported/unwired).
+- `wasm_worker_recycle() -> WasmWorkerLifecycleResult`
+  - Worker lifecycle recycle contract (currently unsupported/unwired).
 - `wasm_worker_execute(source: &str) -> WasmExecutionResult`
   - Worker execute contract with deterministic phases:
     - `syntax_error`
@@ -104,7 +106,7 @@ This document defines the JS-facing contract currently exported by
 ## `WasmWorkerLifecycleResult`
 
 - `success: bool`
-- `phase: String` (`"unsupported_worker_start"`, `"unsupported_worker_terminate"`)
+- `phase: String` (`"unsupported_worker_start"`, `"unsupported_worker_terminate"`, `"unsupported_worker_recycle"`)
 - `state: String` (currently `"unwired"`)
 - `error: Option<String>`
 - `blocker_key: Option<String>`
@@ -202,10 +204,12 @@ This document defines the JS-facing contract currently exported by
 - `info() -> WasmWorkerInfo`
 - `start() -> WasmWorkerLifecycleResult`
 - `terminate() -> WasmWorkerLifecycleResult`
+- `recycle() -> WasmWorkerLifecycleResult`
 - `execute(source: &str) -> WasmExecutionResult`
 - `reset()`
 - `starts_requested: usize`
 - `terminates_requested: usize`
+- `recycles_requested: usize`
 - `executes_requested: usize`
 - `last_phase: Option<String>`
 - `last_error: Option<String>`
