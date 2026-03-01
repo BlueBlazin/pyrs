@@ -108,14 +108,14 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
         context.set_error("missing method definition");
         return std::ptr::null_mut();
     }
-    let trace_calls = std::env::var_os("PYRS_TRACE_CPY_METHOD_CALLS").is_some();
-    let trace_numpy_empty = std::env::var_os("PYRS_TRACE_NUMPY_EMPTY_CALL").is_some();
-    let trace_numpy_result_type = std::env::var_os("PYRS_TRACE_NUMPY_RESULT_TYPE").is_some();
-    let trace_set_typedict = std::env::var_os("PYRS_TRACE_NUMPY_TYPEDICT").is_some();
-    let trace_numpy_subtract = std::env::var_os("PYRS_TRACE_NUMPY_SUBTRACT").is_some();
-    let trace_method_precall = std::env::var_os("PYRS_TRACE_CPY_METHOD_PRECALL").is_some();
+    let trace_calls = super::super::env_var_present_cached("PYRS_TRACE_CPY_METHOD_CALLS");
+    let trace_numpy_empty = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_EMPTY_CALL");
+    let trace_numpy_result_type = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_RESULT_TYPE");
+    let trace_set_typedict = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_TYPEDICT");
+    let trace_numpy_subtract = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_SUBTRACT");
+    let trace_method_precall = super::super::env_var_present_cached("PYRS_TRACE_CPY_METHOD_PRECALL");
     let trace_array_function_dispatcher =
-        std::env::var_os("PYRS_TRACE_ARRAY_FUNCTION_DISPATCHER").is_some();
+        super::super::env_var_present_cached("PYRS_TRACE_ARRAY_FUNCTION_DISPATCHER");
     // SAFETY: method definition pointer is valid for metadata reads.
     let method_name = unsafe {
         c_name_to_string((*method_def).ml_name).unwrap_or_else(|_| "<invalid>".to_string())
@@ -177,7 +177,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             kwargs.len()
         );
     }
-    if std::env::var_os("PYRS_TRACE_ADD_DOCSTRING").is_some()
+    if super::super::env_var_present_cached("PYRS_TRACE_ADD_DOCSTRING")
         && method_name.contains("add_docstring")
     {
         let arg_tags = args
@@ -196,7 +196,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             arg_tags
         );
     }
-    if std::env::var_os("PYRS_TRACE_COPYTO_CALL").is_some() && method_name == "copyto" {
+    if super::super::env_var_present_cached("PYRS_TRACE_COPYTO_CALL") && method_name == "copyto" {
         let mut kw_names = kwargs.keys().cloned().collect::<Vec<_>>();
         kw_names.sort();
         let arg_tags = args
@@ -228,7 +228,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             kw_entries
         );
     }
-    if std::env::var_os("PYRS_TRACE_NUMPY_METHOD_BINDING").is_some()
+    if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_METHOD_BINDING")
         && matches!(
             method_name.as_str(),
             "copyto"
@@ -271,7 +271,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             arg_tags,
             kw_entries.join(", ")
         );
-        if std::env::var_os("PYRS_TRACE_NUMPY_METHOD_BINDING_BT").is_some()
+        if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_METHOD_BINDING_BT")
             && (method_name == "dot"
                 || (method_name == "zeros" && matches!(args.first(), Some(Value::Class(_)))))
         {
@@ -501,7 +501,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             let call: unsafe extern "C" fn(*mut c_void, *const *mut c_void, usize, *mut c_void) -> *mut c_void =
                 // SAFETY: method flags indicate FASTCALL|KEYWORDS signature.
                 unsafe { std::mem::transmute(method) };
-            if std::env::var_os("PYRS_TRACE_GENERATE_STATE_CALL").is_some()
+            if super::super::env_var_present_cached("PYRS_TRACE_GENERATE_STATE_CALL")
                 && method_name == "generate_state"
             {
                 let arg_tags = args
@@ -624,7 +624,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             );
         }
         if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
-            if std::env::var_os("PYRS_TRACE_NULL_NOERR_METHOD").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_NULL_NOERR_METHOD") {
                 let arg_tags = args
                     .iter()
                     .map(cpython_value_debug_tag)
@@ -974,7 +974,7 @@ pub unsafe extern "C" fn PyDescr_NewMethod(
             return std::ptr::null_mut();
         }
         if !cpython_descriptor_owner_is_type(context, type_obj) {
-            if std::env::var_os("PYRS_TRACE_CPY_DESCR_TYPE_CHECK").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_DESCR_TYPE_CHECK") {
                 // SAFETY: diagnostics for candidate type pointer during descriptor creation.
                 unsafe {
                     let object_type = type_obj
@@ -1747,7 +1747,7 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_cfunction_tp_call(
             .get(&(method_def as usize))
             .copied()
         {
-            if std::env::var_os("PYRS_TRACE_CPY_CFUNCTION_BUILTIN").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_CFUNCTION_BUILTIN") {
                 let method_name = unsafe { c_name_to_string((*method_def).ml_name) }
                     .unwrap_or_else(|_| "<unnamed>".to_string());
                 if method_name == "__init__" || method_name == "register" {
@@ -1801,7 +1801,7 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_tp_call(
     kwargs: *mut c_void,
 ) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
-        let trace_method_calls = std::env::var_os("PYRS_TRACE_CPY_METHOD_CALLS").is_some();
+        let trace_method_calls = super::super::env_var_present_cached("PYRS_TRACE_CPY_METHOD_CALLS");
         if callable.is_null() {
             unsafe { PyErr_BadInternalCall() };
             return std::ptr::null_mut();
