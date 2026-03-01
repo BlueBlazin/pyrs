@@ -146,6 +146,31 @@ const parseHeadChecks = (html) => {
 	return issues;
 };
 
+const parseDocsShellChecks = (html, sourceRelPath) => {
+	const issues = [];
+	if (!sourceRelPath.startsWith("docs/")) {
+		return issues;
+	}
+
+	const asideMatch = html.match(/<aside class=["']docs-sidebar["'][\s\S]*?<\/aside>/i);
+	if (!asideMatch) {
+		issues.push("missing docs sidebar container");
+		return issues;
+	}
+
+	const sidebarHtml = asideMatch[0];
+	if (!/<details[^>]*class=["'][^"']*sidebar-details[^"']*["'][^>]*\bopen\b/i.test(sidebarHtml)) {
+		issues.push("docs sidebar details missing default open state");
+	}
+
+	const linkCount = (sidebarHtml.match(/<a\b/gi) || []).length;
+	if (linkCount === 0) {
+		issues.push("docs sidebar has no navigation links");
+	}
+
+	return issues;
+};
+
 const main = async () => {
 	if (!(await exists(distDir))) {
 		console.error(`[link-check] missing dist directory: ${distDir}`);
@@ -158,10 +183,20 @@ const main = async () => {
 
 	for (const htmlFile of htmlFiles) {
 		const html = await fs.readFile(htmlFile, "utf8");
+		const sourceRelPath = path.relative(distDir, htmlFile).split(path.sep).join("/");
 		const headIssues = parseHeadChecks(html);
 		for (const issue of headIssues) {
 			failures.push({
-				source: path.relative(distDir, htmlFile),
+				source: sourceRelPath,
+				link: "",
+				pathname: "",
+				issue,
+			});
+		}
+		const docsShellIssues = parseDocsShellChecks(html, sourceRelPath);
+		for (const issue of docsShellIssues) {
+			failures.push({
+				source: sourceRelPath,
 				link: "",
 				pathname: "",
 				issue,
@@ -187,7 +222,7 @@ const main = async () => {
 			}
 			if (!found) {
 				failures.push({
-					source: path.relative(distDir, htmlFile),
+					source: sourceRelPath,
 					link,
 					pathname,
 					issue: "broken internal link",

@@ -15,6 +15,12 @@ pnpm --dir website build:check
 pnpm --dir website preview
 ```
 
+`build:check` validates:
+- website build succeeds,
+- internal links/assets resolve,
+- per-page metadata (`title`, description) exists,
+- docs shell invariants (sidebar container present, default-open sidebar state, and sidebar links exist).
+
 ## Directory Map
 
 - `src/layouts/`
