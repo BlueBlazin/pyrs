@@ -491,6 +491,10 @@ Completed on this branch:
   contract-mode execution helper in `src/wasm/mod.rs`, removing duplicated
   parse/compile/blocker/runtime-probe fallback logic and reducing future
   drift risk between top-level and worker wasm execution paths.
+- latest: native wasm unit tests in `src/wasm/mod.rs` are now feature-aware for
+  `wasm-vm-probe` (phase-key exports and baseline execute/worker-execute
+  behavior), reducing hidden drift when vm-probe-enabled native test lanes are
+  introduced later.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

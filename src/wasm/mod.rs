@@ -2055,6 +2055,10 @@ mod tests {
         wasm_worker_execute,
     };
 
+    fn vm_probe_enabled() -> bool {
+        cfg!(feature = "wasm-vm-probe")
+    }
+
     #[test]
     fn wasm_exports_version() {
         assert!(!pyrs_version().is_empty());
@@ -2072,24 +2076,31 @@ mod tests {
 
     #[test]
     fn wasm_execution_phase_keys_are_stable_native() {
-        assert_eq!(
-            execution_phase_keys(),
-            vec![
-                WasmExecutionPhase::SyntaxError.key(),
-                WasmExecutionPhase::CompileError.key(),
-                WasmExecutionPhase::UnsupportedExecution.key(),
-            ]
-        );
+        let mut expected = vec![
+            WasmExecutionPhase::SyntaxError.key(),
+            WasmExecutionPhase::CompileError.key(),
+            WasmExecutionPhase::UnsupportedExecution.key(),
+        ];
+        if vm_probe_enabled() {
+            expected.push("ok");
+            expected.push("runtime_error");
+        }
+        assert_eq!(execution_phase_keys(), expected);
     }
 
     #[test]
     fn wasm_execute_unwired_sets_backend_blocker_key() {
         let result = execute("x = 1\n");
-        assert_eq!(result.phase(), "unsupported_execution".to_string());
-        assert_eq!(
-            result.blocker_key(),
-            Some("execution_backend_unwired".to_string())
-        );
+        if vm_probe_enabled() {
+            assert_eq!(result.phase(), "ok".to_string());
+            assert!(result.blocker_key().is_none());
+        } else {
+            assert_eq!(result.phase(), "unsupported_execution".to_string());
+            assert_eq!(
+                result.blocker_key(),
+                Some("execution_backend_unwired".to_string())
+            );
+        }
     }
 
     #[test]
@@ -2117,14 +2128,19 @@ mod tests {
     #[test]
     fn wasm_worker_execute_unwired_sets_worker_blocker_key() {
         let unsupported = wasm_worker_execute("x = 1\n");
-        assert_eq!(
-            unsupported.phase(),
-            "unsupported_worker_execution".to_string()
-        );
-        assert_eq!(
-            unsupported.blocker_key(),
-            Some("worker_runtime_unwired".to_string())
-        );
+        if vm_probe_enabled() {
+            assert_eq!(unsupported.phase(), "ok".to_string());
+            assert!(unsupported.blocker_key().is_none());
+        } else {
+            assert_eq!(
+                unsupported.phase(),
+                "unsupported_worker_execution".to_string()
+            );
+            assert_eq!(
+                unsupported.blocker_key(),
+                Some("worker_runtime_unwired".to_string())
+            );
+        }
 
         let compile_error = wasm_worker_execute("return 1\n");
         assert_eq!(compile_error.phase(), "compile_error".to_string());
