@@ -426,6 +426,21 @@ Completed on this branch:
   `scripts/run_wasm_contract_smoke.sh` now include
   `scripts/audit_wasm_host_seam.py` snapshots so host-seam drift is guarded by
   the standard local wasm gate scripts.
+- `671171f`: capability matrix fixture/source/docs summary gate landed and is
+  enforced in branch/smoke scripts.
+- `3d0684f`: worker blocker key order parity is enforced against source order.
+- `6c9beea`: execute phase key fixture constants and source-order parity checks
+  landed for top-level execute contract summaries/tests.
+- `26e8e87`: vm env-probe cache no longer uses direct `std::env` in `src/vm`;
+  host seam routing now drives env probe behavior.
+- `a199816`: worker enum key exports are now fixture-order validated in both
+  wasm contract tests and worker summary generation.
+- `cec1dbb`: module-policy and capability/export contracts now enforce ordered
+  parity (fixture/source/docs where applicable).
+- `ca6f0af`: host seam audit snapshots were folded into default local wasm gate
+  scripts.
+- `276a82c`: execution blocker matrix test now enforces deterministic blocker
+  ordering with uniqueness guard.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
