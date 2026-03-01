@@ -92,10 +92,23 @@ def parse_source_backend_blocker_key(wasm_source: str) -> str:
     return match.group(1)
 
 
+def parse_source_module_policy_blocker_keys(wasm_source: str) -> list[str]:
+    match = re.search(
+        r"const\s+WASM_MODULE_BLOCKER_POLICY:[^=]*=\s*\[(.*?)\];",
+        wasm_source,
+        flags=re.DOTALL,
+    )
+    if not match:
+        raise ValueError("unable to parse WASM_MODULE_BLOCKER_POLICY from wasm source")
+    body = match.group(1)
+    return unique(re.findall(r'\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*\)', body))
+
+
 def validate(
     fixtures: list[SnippetFixture],
     source_phase_keys: list[str],
     source_backend_blocker_key: str,
+    source_module_policy_blocker_keys: list[str],
 ) -> list[str]:
     errors: list[str] = []
     if not fixtures:
@@ -105,6 +118,8 @@ def validate(
         errors.append("no execute phase keys parsed from wasm source")
     if not source_backend_blocker_key:
         errors.append("empty backend blocker key parsed from wasm source")
+    if not source_module_policy_blocker_keys:
+        errors.append("no module-policy blocker keys parsed from wasm source")
 
     allowed_compile_phases = {"ok", "syntax_error", "compile_error"}
     allowed_execute_phases = {"syntax_error", "compile_error", "unsupported_execution"}
@@ -141,6 +156,11 @@ def validate(
                     errors.append(
                         f"{fixture.name}: blocked_capability unsupported_execution must align "
                         "expected_execute_blocker_key with expected_first_blocker_key"
+                    )
+                elif fixture.expected_execute_blocker_key not in source_module_policy_blocker_keys:
+                    errors.append(
+                        f"{fixture.name}: blocked_capability blocker key must be in source "
+                        f"module policy keys {source_module_policy_blocker_keys}"
                     )
             elif fixture.expected_execute_blocker_key != source_backend_blocker_key:
                 errors.append(
@@ -198,8 +218,14 @@ def main() -> int:
     wasm_source = wasm_source_path.read_text(encoding="utf-8")
     source_phase_keys = parse_source_execution_phase_keys(wasm_source)
     source_backend_blocker_key = parse_source_backend_blocker_key(wasm_source)
+    source_module_policy_blocker_keys = parse_source_module_policy_blocker_keys(wasm_source)
 
-    errors = validate(fixtures, source_phase_keys, source_backend_blocker_key)
+    errors = validate(
+        fixtures,
+        source_phase_keys,
+        source_backend_blocker_key,
+        source_module_policy_blocker_keys,
+    )
     if errors:
         print("wasm execute contract summary validation failed:")
         for error in errors:
@@ -226,6 +252,7 @@ def main() -> int:
             "source_execute": source_phase_keys,
         },
         "source_backend_blocker_key": source_backend_blocker_key,
+        "source_module_policy_blocker_keys": source_module_policy_blocker_keys,
         "execute_blocker_keys": unique(execute_blocker_keys),
         "rows": [
             {
