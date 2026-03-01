@@ -5,9 +5,11 @@ interface Props {
 	title?: string;
 	id?: string;
 	class?: string;
+	toc?: boolean;
+	tocLabel?: string;
 }
 
-const { title, id, class: className } = Astro.props;
+const { title, id, class: className, toc = true, tocLabel } = Astro.props;
 const slugify = (value: string): string =>
 	value
 		.toLowerCase()
@@ -20,7 +22,12 @@ const resolvedHeadingId = id ?? (title ? slugify(title) : undefined);
 
 <section id={title ? undefined : id} class={cn("doc-section mt-10 first:mt-0", className)}>
 	{title && (
-		<h2 id={resolvedHeadingId} class="m-0 text-[1.15rem] font-semibold tracking-[-0.01em] text-docs-text">
+		<h2
+			id={resolvedHeadingId}
+			class="m-0 text-[1.15rem] font-semibold tracking-[-0.01em] text-docs-text"
+			data-toc-exclude={toc ? undefined : "1"}
+			data-toc-label={tocLabel}
+		>
 			{title}
 		</h2>
 	)}

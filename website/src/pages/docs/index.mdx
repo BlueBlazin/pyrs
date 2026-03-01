@@ -3,6 +3,10 @@ layout: ../../layouts/DocsLayout.astro
 title: PYRS Docs | Getting Started
 description: Getting started guide for PYRS runtime usage and first execution flow.
 pageTitle: Getting Started
+toc:
+  minLevel: 2
+  maxLevel: 2
+  maxItems: 8
 ---
 
 import DocSection from "../../components/docs/DocSection.astro";
@@ -16,7 +20,7 @@ import { cargoInstallGitHubCommands, quickRunCommands } from "../../config/insta
 	fastest way to install, verify, and run code.
 </DocSection>
 
-<DocSection title="Prerequisites">
+<DocSection title="Prerequisites" toc={false}>
 	<ul class="docs-list">
 		<li>Rust stable toolchain (`rustup`, `cargo`)</li>
 		<li>Git</li>
@@ -24,7 +28,7 @@ import { cargoInstallGitHubCommands, quickRunCommands } from "../../config/insta
 	</ul>
 </DocSection>
 
-<DocSection title="Jump to Key Topics">
+<DocSection title="Jump to Key Topics" toc={false}>
 	<DocsLinkGrid
 		items={[
 			{
@@ -65,7 +69,7 @@ import { cargoInstallGitHubCommands, quickRunCommands } from "../../config/insta
 	<CommandBlock commands={quickRunCommands} />
 </DocSection>
 
-<DocSection title="Next Steps">
+<DocSection title="Next Steps" toc={false}>
 	<ul class="docs-list">
 		<li>
 			Review <a href="/docs/reference/">CLI and Environment Reference</a>.

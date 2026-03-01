@@ -8,6 +8,17 @@ import DocsPager from "../components/docs/DocsPager.astro";
 import DocsToc from "../components/docs/DocsToc.astro";
 import "../styles/global.css";
 
+interface TocConfig {
+	enabled?: boolean;
+	minLevel?: number;
+	maxLevel?: number;
+	maxItems?: number;
+	subheadings?: "all" | "active" | "none";
+	include?: string[];
+	exclude?: string[];
+	backToTop?: boolean;
+}
+
 interface Props {
 	title: string;
 	description: string;
@@ -17,7 +28,9 @@ interface Props {
 		description?: string;
 		pageTitle?: string;
 		noindex?: boolean;
+		toc?: TocConfig | boolean;
 	};
+	toc?: TocConfig | boolean;
 	headings?: Array<{
 		depth: number;
 		slug?: string;
@@ -31,6 +44,8 @@ const description = Astro.props.description ?? frontmatter.description ?? "PYRS 
 const pageTitle = Astro.props.pageTitle ?? frontmatter.pageTitle ?? "Docs";
 const noindex = Astro.props.noindex ?? frontmatter.noindex ?? false;
 const headings = Astro.props.headings ?? [];
+const rawTocConfig = Astro.props.toc ?? frontmatter.toc ?? {};
+const tocConfig: TocConfig = typeof rawTocConfig === "boolean" ? { enabled: rawTocConfig } : rawTocConfig;
 const rawPath = Astro.url.pathname;
 const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 const sourceFile = path === "/docs/" ? "docs/index.mdx" : `docs${path.slice("/docs".length, -1)}.mdx`;
@@ -52,7 +67,7 @@ const editUrl = `https://github.com/BlueBlazin/pyrs/edit/master/website/src/page
 					<slot />
 					<DocsPager path={path} />
 				</section>
-				<DocsToc headings={headings} />
+				<DocsToc headings={headings} config={tocConfig} />
 			</main>
 			<Footer variant="docs" />
 		</div>
