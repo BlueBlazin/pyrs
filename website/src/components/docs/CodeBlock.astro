@@ -10,15 +10,21 @@ interface Props {
 const { code, label = "Code", class: className } = Astro.props;
 ---
 
-<div class={cn("overflow-hidden rounded-xl border border-[#2a3345] bg-[#0b1019]", className)}>
+<div class={cn("code-block overflow-hidden rounded-xl border border-[#2a3345] bg-[#0b1019]", className)}>
 	<div
-		class="border-b border-[#1e2635] bg-[linear-gradient(180deg,#111a29_0%,#0c1320_100%)] px-4 py-2 text-[0.67rem] font-semibold uppercase tracking-[0.16em] text-[#aebad4]"
+		class="border-b border-[#1f293a] bg-[linear-gradient(180deg,#111b2e_0%,#0b1423_100%)] px-4 py-2.5 text-[0.67rem] font-semibold uppercase tracking-[0.16em] text-[#b6c5e2]"
 	>
 		{label}
 	</div>
 	<pre
 		class={cn(
-			"m-0 overflow-x-auto px-4 py-3 text-[0.8rem] leading-6 text-[#e4e9f6]",
+			"m-0 overflow-x-auto px-4 py-3.5 text-[0.8rem] leading-6 text-[#e4e9f6]",
 			"font-['IBM_Plex_Mono',ui-monospace,SFMono-Regular,Menlo,monospace]",
 		)}><code>{code}</code></pre>
 </div>
+
+<style>
+	.code-block {
+		box-shadow: 0 10px 28px rgba(2, 5, 12, 0.28);
+	}
+</style>

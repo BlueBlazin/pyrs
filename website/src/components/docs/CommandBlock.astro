@@ -13,7 +13,7 @@ const copyPayload = commands.join("\n");
 
 <div class={cn("command-block overflow-hidden rounded-xl border border-[#2a3345] bg-[#0b1019]", className)}>
 	<div
-		class="flex items-center justify-between gap-3 border-b border-[#1e2635] bg-[linear-gradient(180deg,#111a29_0%,#0c1320_100%)] px-4 py-2"
+		class="flex items-center justify-between gap-3 border-b border-[#1f293a] bg-[linear-gradient(180deg,#111b2e_0%,#0b1423_100%)] px-4 py-2.5"
 	>
 		<div class="flex items-center gap-4">
 			<div class="inline-flex gap-1.5" aria-hidden="true">
@@ -21,21 +21,21 @@ const copyPayload = commands.join("\n");
 				<span class="size-3 rounded-full bg-[#fcbf4e]"></span>
 				<span class="size-3 rounded-full bg-[#35cd67]"></span>
 			</div>
-			<span class="text-[0.67rem] font-semibold uppercase tracking-[0.16em] text-[#aebad4]">{label}</span>
+			<span class="text-[0.67rem] font-semibold uppercase tracking-[0.16em] text-[#b6c5e2]">{label}</span>
 		</div>
 		<button
 			type="button"
 			data-copy={copyPayload}
 			data-copy-button="1"
-			class="copy-btn rounded-md border border-[#33415a] bg-[#182234] px-2.5 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-[#dbe4f8] transition-colors duration-150 hover:bg-[#20304b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5a84c8] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b1019]"
+			class="copy-btn rounded-md border border-[#394f73] bg-[#17233a] px-2.5 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-[#e3eafa] transition-colors duration-150 hover:bg-[#223452] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f92ca] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b1019]"
 		>
 			Copy
 		</button>
 	</div>
-	<pre class="m-0 overflow-x-auto px-4 py-3"><code class="block font-['IBM_Plex_Mono',ui-monospace,SFMono-Regular,Menlo,monospace] text-[0.8rem] leading-7 text-[#e4e9f6]">
+	<pre class="m-0 overflow-x-auto px-4 py-3.5"><code class="block font-['IBM_Plex_Mono',ui-monospace,SFMono-Regular,Menlo,monospace] text-[0.8rem] leading-7 text-[#e4e9f6]">
 {commands.map((command) => (
 	<span class="flex">
-		<span class="select-none pr-3 text-[#f2b88b]">$</span>
+		<span class="select-none pr-3 text-[#efb087]">$</span>
 		<span>{command}</span>
 	</span>
 ))}
@@ -43,13 +43,17 @@ const copyPayload = commands.join("\n");
 </div>
 
 <style>
+	.command-block {
+		box-shadow: 0 10px 28px rgba(2, 5, 12, 0.28);
+	}
+
 	.copy-btn.is-copied {
-		background: #1d304d;
-		border-color: #4b6694;
+		background: #1c334f;
+		border-color: #5673a7;
 	}
 
 	.copy-btn.is-copy-failed {
-		background: #4f1f2c;
-		border-color: #9c4056;
+		background: #522333;
+		border-color: #a64f68;
 	}
 </style>

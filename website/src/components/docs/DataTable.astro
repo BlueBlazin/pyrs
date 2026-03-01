@@ -9,24 +9,63 @@ interface Props {
 const { headers, class: className } = Astro.props;
 ---
 
-<div class={cn("overflow-x-auto rounded-xl border border-[#273143] bg-[#0d121c]", className)}>
-	<table class="min-w-full border-collapse text-left">
+<div class={cn("data-table-wrap overflow-x-auto rounded-xl border border-[#273143] bg-[#0d121c]", className)}>
+	<table class="data-table min-w-full border-collapse text-left">
 		<thead>
 			<tr>
 				{headers.map((header) => (
-					<th
-						scope="col"
-						class="border-b border-[#2d374c] bg-[#10192a] px-4 py-3 text-[0.76rem] font-semibold uppercase tracking-[0.12em] text-[#dee7fa]"
-					>
+					<th scope="col" class="data-table-head">
 						{header}
 					</th>
 				))}
 			</tr>
 		</thead>
-		<tbody
-			class="[&>tr:last-child>td]:border-b-0 [&>tr>td]:border-b [&>tr>td]:border-[#273247] [&>tr>td]:px-4 [&>tr>td]:py-3 [&>tr>td]:text-[0.87rem] [&>tr>td]:leading-6 [&>tr>td]:text-docs-muted [&_code]:font-['IBM_Plex_Mono',ui-monospace,SFMono-Regular,Menlo,monospace] [&_code]:text-[0.83rem] [&_code]:text-[#d7def0]"
-		>
+		<tbody class="data-table-body">
 			<slot />
 		</tbody>
 	</table>
 </div>
+
+<style>
+	.data-table-wrap {
+		box-shadow: 0 10px 28px rgba(2, 5, 12, 0.25);
+	}
+
+	.data-table-head {
+		border-bottom: 1px solid #2d374c;
+		background: #10192a;
+		padding: 0.72rem 1rem;
+		font-size: 0.74rem;
+		font-weight: 600;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: #dfe8fb;
+	}
+
+	.data-table-body td {
+		border-bottom: 1px solid #273247;
+		padding: 0.72rem 1rem;
+		font-size: 0.87rem;
+		line-height: 1.55;
+		color: var(--color-docs-muted);
+		vertical-align: top;
+	}
+
+	.data-table-body tr:last-child td {
+		border-bottom: 0;
+	}
+
+	.data-table-body tr:nth-child(even) td {
+		background: rgba(255, 255, 255, 0.015);
+	}
+
+	.data-table-body tr:hover td {
+		background: rgba(174, 196, 235, 0.07);
+	}
+
+	.data-table-body code {
+		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.83rem;
+		color: #d7def0;
+	}
+</style>

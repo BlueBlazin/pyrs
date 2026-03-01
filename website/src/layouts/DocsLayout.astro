@@ -127,6 +127,7 @@ const editUrl = `https://github.com/BlueBlazin/pyrs/edit/master/website/src/page
 		color: var(--text-muted);
 		line-height: 1.6;
 		margin: 0.72rem 0 0;
+		max-width: 74ch;
 	}
 
 	.docs-content ul {
@@ -134,6 +135,11 @@ const editUrl = `https://github.com/BlueBlazin/pyrs/edit/master/website/src/page
 		padding-left: 1.15rem;
 		color: var(--text-muted);
 		line-height: 1.58;
+		max-width: 74ch;
+	}
+
+	.docs-content li + li {
+		margin-top: 0.42rem;
 	}
 
 	.docs-content code {
@@ -142,8 +148,17 @@ const editUrl = `https://github.com/BlueBlazin/pyrs/edit/master/website/src/page
 		color: #d8def0;
 	}
 
+	.docs-content strong {
+		color: #edf3ff;
+		font-weight: 600;
+	}
+
 	.docs-content pre {
 		margin: 0.85rem 0 0;
+	}
+
+	.docs-content :is(h2, h3) + :is(p, ul, ol, .data-table-wrap) {
+		margin-top: 0.72rem;
 	}
 
 	.docs-content a {

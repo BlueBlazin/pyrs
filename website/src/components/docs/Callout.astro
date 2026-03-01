@@ -9,12 +9,12 @@ interface Props {
 
 const { title, variant = "info", class: className } = Astro.props;
 const tone = variant === "warning"
-	? "border-[#6b5422] bg-[#1b1509] text-[#f6db9f]"
-	: "border-[#2f4260] bg-[#111a29] text-[#bbcced]";
+	? "border-[#725521] bg-[#191205] text-[#f4daa3] shadow-[inset_0_0_0_1px_rgba(175,136,52,0.18)]"
+	: "border-[#2f4260] bg-[#101827] text-[#c1d2f2] shadow-[inset_0_0_0_1px_rgba(83,114,163,0.18)]";
 ---
 
-<aside class={cn("rounded-xl border px-4 py-3", tone, className)}>
-	{title && <p class="m-0 text-[0.82rem] font-semibold uppercase tracking-[0.09em]">{title}</p>}
+<aside class={cn("rounded-xl border px-4 py-3.5", tone, className)}>
+	{title && <p class="m-0 text-[0.78rem] font-semibold uppercase tracking-[0.11em]">{title}</p>}
 	<div class={cn("leading-6 text-[0.92rem]", title ? "mt-1.5" : "")}>
 		<slot />
 	</div>

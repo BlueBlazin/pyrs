@@ -42,7 +42,8 @@ const { items, class: className } = Astro.props;
 		border-radius: 0.72rem;
 		background: #0d121c;
 		text-decoration: none;
-		transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+		box-shadow: 0 8px 22px rgba(2, 5, 12, 0.2);
+		transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
 	}
 
 	.docs-link-card h3 {
@@ -61,9 +62,10 @@ const { items, class: className } = Astro.props;
 	}
 
 	.docs-link-card:hover {
-		background: #10182a;
-		border-color: #3b4d6e;
+		background: #111b2f;
+		border-color: #47628d;
 		transform: translateY(-1px);
+		box-shadow: 0 12px 26px rgba(2, 5, 12, 0.28);
 	}
 
 	.docs-link-card:focus-visible {
