@@ -1,0 +1,64 @@
+---
+import { cn } from "../../lib/cn";
+
+interface Props {
+	commands: string[];
+	label?: string;
+	class?: string;
+}
+
+const { commands, label = "Shell", class: className } = Astro.props;
+const copyPayload = commands.join("\n");
+---
+
+<div class={cn("command-block overflow-hidden rounded-xl border border-[#2a3345] bg-[#0b1019]", className)}>
+	<div
+		class="flex items-center justify-between gap-3 border-b border-[#1e2635] bg-[linear-gradient(180deg,#111a29_0%,#0c1320_100%)] px-4 py-2"
+	>
+		<div class="flex items-center gap-4">
+			<div class="inline-flex gap-1.5" aria-hidden="true">
+				<span class="size-3 rounded-full bg-[#ff6b57]"></span>
+				<span class="size-3 rounded-full bg-[#fcbf4e]"></span>
+				<span class="size-3 rounded-full bg-[#35cd67]"></span>
+			</div>
+			<span class="text-[0.67rem] font-semibold uppercase tracking-[0.16em] text-[#aebad4]">{label}</span>
+		</div>
+		<button
+			type="button"
+			data-copy={copyPayload}
+			class="copy-btn rounded-md border border-[#33415a] bg-[#182234] px-2.5 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-[#dbe4f8] transition-colors duration-150 hover:bg-[#20304b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5a84c8] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b1019]"
+		>
+			Copy
+		</button>
+	</div>
+	<pre class="m-0 overflow-x-auto px-4 py-3"><code class="block font-['IBM_Plex_Mono',ui-monospace,SFMono-Regular,Menlo,monospace] text-[0.8rem] leading-7 text-[#e4e9f6]">
+{commands.map((command) => (
+	<span class="flex">
+		<span class="select-none pr-3 text-[#f2b88b]">$</span>
+		<span>{command}</span>
+	</span>
+))}
+	</code></pre>
+</div>
+
+<script>
+	const block = document.currentScript?.previousElementSibling;
+	const button = block?.querySelector(".copy-btn");
+	if (button) {
+		let resetTimer;
+		button.addEventListener("click", async () => {
+			const payload = button.getAttribute("data-copy") || "";
+			const originalLabel = button.textContent || "Copy";
+			try {
+				await navigator.clipboard.writeText(payload);
+				button.textContent = "Copied";
+			} catch {
+				button.textContent = "Failed";
+			}
+			clearTimeout(resetTimer);
+			resetTimer = window.setTimeout(() => {
+				button.textContent = originalLabel;
+			}, 1400);
+		});
+	}
+</script>

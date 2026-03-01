@@ -1,5 +1,7 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
+import DocSection from "../../components/docs/DocSection.astro";
+import CommandBlock from "../../components/docs/CommandBlock.astro";
 ---
 
 <DocsLayout
@@ -7,60 +9,81 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
 	description="Installation guide for PYRS on macOS and Linux."
 	pageTitle="Installation"
 >
-	<section>
-		<h2>Cargo Install from GitHub</h2>
+	<DocSection>
+		<p>Use any of the supported install paths below based on your workflow.</p>
+	</DocSection>
+
+	<DocSection title="Cargo Install from GitHub">
 		<p>Recommended for quickly getting a global `pyrs` binary in your cargo bin directory.</p>
-		<pre><code>cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs
-pyrs --version</code></pre>
-	</section>
+		<CommandBlock
+			commands={[
+				"cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs",
+				"pyrs --version",
+			]}
+		/>
+	</DocSection>
 
-	<section>
-		<h2>Cargo Source Build</h2>
-		<p>Build from a local clone when you want a pinned workspace checkout.</p>
-		<pre><code>git clone https://github.com/BlueBlazin/pyrs.git
-cd pyrs
-cargo build --release
-target/release/pyrs --version</code></pre>
-	</section>
+	<DocSection title="Cargo Install (Repo Path)">
+		<p>Install from a local repository checkout with a locked dependency graph.</p>
+		<CommandBlock
+			commands={[
+				"git clone https://github.com/BlueBlazin/pyrs.git",
+				"cd pyrs",
+				"cargo install --locked --path .",
+				"pyrs --version",
+			]}
+		/>
+	</DocSection>
 
-	<section>
-		<h2>Docker Nightly Container</h2>
+	<DocSection title="Cargo Source Build">
+		<p>Build and run directly from a local clone without installing into cargo bin.</p>
+		<CommandBlock
+			commands={[
+				"git clone https://github.com/BlueBlazin/pyrs.git",
+				"cd pyrs",
+				"cargo build --release",
+				"target/release/pyrs --version",
+			]}
+		/>
+	</DocSection>
+
+	<DocSection title="Docker Nightly Container">
 		<p>Use the nightly container published to GHCR.</p>
-		<pre><code>docker pull ghcr.io/blueblazin/pyrs:nightly
-docker run --rm -it ghcr.io/blueblazin/pyrs:nightly</code></pre>
-	</section>
+		<CommandBlock
+			commands={[
+				"docker pull ghcr.io/blueblazin/pyrs:nightly",
+				"docker run --rm -it ghcr.io/blueblazin/pyrs:nightly",
+			]}
+		/>
+	</DocSection>
 
-	<section>
-		<h2>Nightly Archives</h2>
+	<DocSection title="Nightly Archives">
 		<p>
 			Use GitHub nightly release archives for direct binary usage without a local Rust toolchain.
 		</p>
 
-		<h3>macOS</h3>
-		<pre><code>ARCH="$(uname -m)"
-case "$ARCH" in
-  arm64) PKG="pyrs-nightly-aarch64-apple-darwin.tar.gz" ;;
-  *)     PKG="pyrs-nightly-x86_64-apple-darwin.tar.gz" ;;
-esac
-curl -L "https://github.com/BlueBlazin/pyrs/releases/download/nightly/$PKG" -o "$PKG"
-tar -xzf "$PKG"
-./pyrs --version</code></pre>
+		<h3 class="m-0 text-[1.02rem] font-semibold tracking-[-0.01em] text-docs-text">macOS</h3>
+		<CommandBlock
+			commands={[
+				"ARCH=\"$(uname -m)\"",
+				"case \"$ARCH\" in",
+				"  arm64) PKG=\"pyrs-nightly-aarch64-apple-darwin.tar.gz\" ;;",
+				"  *)     PKG=\"pyrs-nightly-x86_64-apple-darwin.tar.gz\" ;;",
+				"esac",
+				"curl -L \"https://github.com/BlueBlazin/pyrs/releases/download/nightly/$PKG\" -o \"$PKG\"",
+				"tar -xzf \"$PKG\"",
+				"./pyrs --version",
+			]}
+		/>
 
-		<h3>Linux</h3>
-		<pre><code>PKG="pyrs-nightly-x86_64-unknown-linux-gnu.tar.gz"
-curl -L "https://github.com/BlueBlazin/pyrs/releases/download/nightly/$PKG" -o "$PKG"
-tar -xzf "$PKG"
-./pyrs --version</code></pre>
-	</section>
+		<h3 class="m-0 pt-2 text-[1.02rem] font-semibold tracking-[-0.01em] text-docs-text">Linux</h3>
+		<CommandBlock
+			commands={[
+				"PKG=\"pyrs-nightly-x86_64-unknown-linux-gnu.tar.gz\"",
+				"curl -L \"https://github.com/BlueBlazin/pyrs/releases/download/nightly/$PKG\" -o \"$PKG\"",
+				"tar -xzf \"$PKG\"",
+				"./pyrs --version",
+			]}
+		/>
+	</DocSection>
 </DocsLayout>
-
-<style>
-	section + section {
-		margin-top: 1.35rem;
-	}
-
-	h3 {
-		margin: 0.9rem 0 0;
-		font-size: 1.02rem;
-	}
-</style>

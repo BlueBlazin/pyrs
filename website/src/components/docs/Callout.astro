@@ -1,0 +1,21 @@
+---
+import { cn } from "../../lib/cn";
+
+interface Props {
+	title?: string;
+	variant?: "info" | "warning";
+	class?: string;
+}
+
+const { title, variant = "info", class: className } = Astro.props;
+const tone = variant === "warning"
+	? "border-[#6b5422] bg-[#1b1509] text-[#f6db9f]"
+	: "border-[#2f4260] bg-[#111a29] text-[#bbcced]";
+---
+
+<aside class={cn("rounded-xl border px-4 py-3", tone, className)}>
+	{title && <p class="m-0 text-[0.82rem] font-semibold uppercase tracking-[0.09em]">{title}</p>}
+	<div class={cn("leading-6 text-[0.92rem]", title ? "mt-1.5" : "")}>
+		<slot />
+	</div>
+</aside>

@@ -1,0 +1,18 @@
+---
+import { cn } from "../../lib/cn";
+
+interface Props {
+	title?: string;
+	id?: string;
+	class?: string;
+}
+
+const { title, id, class: className } = Astro.props;
+---
+
+<section id={id} class={cn("mt-8 first:mt-0", className)}>
+	{title && <h2 class="text-[1.15rem] font-semibold tracking-[-0.01em] text-docs-text">{title}</h2>}
+	<div class={cn(title ? "mt-3" : "", "space-y-3 text-docs-muted leading-7 text-[0.97rem]")}>
+		<slot />
+	</div>
+</section>

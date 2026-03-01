@@ -1,5 +1,8 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
+import DocSection from "../../components/docs/DocSection.astro";
+import CommandBlock from "../../components/docs/CommandBlock.astro";
+import Callout from "../../components/docs/Callout.astro";
 ---
 
 <DocsLayout
@@ -7,66 +10,58 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
 	description="Getting started guide for PYRS runtime usage and first execution flow."
 	pageTitle="Getting Started"
 >
-	<section class="intro">
+	<DocSection>
 		<p>
 			PYRS is a Python interpreter in Rust targeting CPython 3.14 compatibility. This page covers
-			the fastest way to install, verify, and start running code.
+			the fastest way to install, verify, and run code.
 		</p>
-	</section>
+	</DocSection>
 
-	<section>
-		<h2>Prerequisites</h2>
-		<ul>
+	<DocSection title="Prerequisites">
+		<ul class="m-0 list-disc space-y-1.5 pl-5">
 			<li>Rust stable toolchain (`rustup`, `cargo`)</li>
 			<li>Git</li>
 			<li>macOS or Linux</li>
 		</ul>
-	</section>
+	</DocSection>
 
-	<section>
-		<h2>Install and Verify</h2>
-		<p>Install the latest `pyrs` directly from GitHub and verify your binary is available.</p>
-		<pre><code>cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs
-pyrs --version</code></pre>
-		<p>For all install methods (Cargo source build, Docker, nightly archives), see the Installation page.</p>
-		<p><a class="doc-link" href="/docs/install/">Open Installation Guide</a></p>
-	</section>
+	<DocSection title="Install and Verify">
+		<p>Install the latest `pyrs` from GitHub and verify your binary is available.</p>
+		<CommandBlock
+			commands={[
+				"cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs",
+				"pyrs --version",
+			]}
+		/>
+		<Callout title="Need more options">
+			For all install methods (Cargo source build, Docker, nightly archives), open the{" "}
+			<a class="font-medium text-[#b7c8eb] no-underline hover:text-[#d8e1f6]" href="/docs/install/"
+				>Installation page</a
+			>.
+		</Callout>
+	</DocSection>
 
-	<section>
-		<h2>Run Python</h2>
+	<DocSection title="Run Python">
 		<p>Start with REPL, inline command mode, and source-file execution.</p>
-		<pre><code>pyrs
-pyrs -c "import sys; print(sys.version)"
-pyrs path/to/script.py</code></pre>
-	</section>
+		<CommandBlock
+			commands={[
+				"pyrs",
+				"pyrs -c \"import sys; print(sys.version)\"",
+				"pyrs path/to/script.py",
+			]}
+		/>
+	</DocSection>
 
-	<section>
-		<h2>Next Steps</h2>
-		<ul>
-			<li>Review <a class="doc-link" href="/docs/reference/">CLI and Environment Reference</a>.</li>
+	<DocSection title="Next Steps">
+		<ul class="m-0 list-disc space-y-1.5 pl-5">
+			<li>
+				Review{" "}
+				<a class="font-medium text-[#b7c8eb] no-underline hover:text-[#d8e1f6]" href="/docs/reference/"
+					>CLI and Environment Reference</a
+				>.
+			</li>
 			<li>Use <code>pyrs --help</code> to inspect runtime options directly from the binary.</li>
 			<li>Track release and compatibility progress in the project repository.</li>
 		</ul>
-	</section>
+	</DocSection>
 </DocsLayout>
-
-<style>
-	.intro p {
-		margin-top: 0;
-	}
-
-	section + section {
-		margin-top: 1.35rem;
-	}
-
-	.doc-link {
-		color: #9fb5e6;
-		text-decoration: none;
-		border-bottom: 1px solid rgba(159, 181, 230, 0.45);
-	}
-
-	.doc-link:hover {
-		color: #bed0f0;
-		border-bottom-color: rgba(190, 208, 240, 0.75);
-	}
-</style>

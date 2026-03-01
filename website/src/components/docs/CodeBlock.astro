@@ -1,0 +1,24 @@
+---
+import { cn } from "../../lib/cn";
+
+interface Props {
+	code: string;
+	label?: string;
+	class?: string;
+}
+
+const { code, label = "Code", class: className } = Astro.props;
+---
+
+<div class={cn("overflow-hidden rounded-xl border border-[#2a3345] bg-[#0b1019]", className)}>
+	<div
+		class="border-b border-[#1e2635] bg-[linear-gradient(180deg,#111a29_0%,#0c1320_100%)] px-4 py-2 text-[0.67rem] font-semibold uppercase tracking-[0.16em] text-[#aebad4]"
+	>
+		{label}
+	</div>
+	<pre
+		class={cn(
+			"m-0 overflow-x-auto px-4 py-3 text-[0.8rem] leading-6 text-[#e4e9f6]",
+			"font-['IBM_Plex_Mono',ui-monospace,SFMono-Regular,Menlo,monospace]",
+		)}><code>{code}</code></pre>
+</div>

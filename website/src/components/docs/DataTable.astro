@@ -1,0 +1,32 @@
+---
+import { cn } from "../../lib/cn";
+
+interface Props {
+	headers: string[];
+	class?: string;
+}
+
+const { headers, class: className } = Astro.props;
+---
+
+<div class={cn("overflow-x-auto rounded-xl border border-[#273143] bg-[#0d121c]", className)}>
+	<table class="min-w-full border-collapse text-left">
+		<thead>
+			<tr>
+				{headers.map((header) => (
+					<th
+						scope="col"
+						class="border-b border-[#2d374c] bg-[#10192a] px-4 py-3 text-[0.76rem] font-semibold uppercase tracking-[0.12em] text-[#dee7fa]"
+					>
+						{header}
+					</th>
+				))}
+			</tr>
+		</thead>
+		<tbody
+			class="[&>tr:last-child>td]:border-b-0 [&>tr>td]:border-b [&>tr>td]:border-[#273247] [&>tr>td]:px-4 [&>tr>td]:py-3 [&>tr>td]:text-[0.87rem] [&>tr>td]:leading-6 [&>tr>td]:text-docs-muted [&_code]:font-['IBM_Plex_Mono',ui-monospace,SFMono-Regular,Menlo,monospace] [&_code]:text-[0.83rem] [&_code]:text-[#d7def0]"
+		>
+			<slot />
+		</tbody>
+	</table>
+</div>
