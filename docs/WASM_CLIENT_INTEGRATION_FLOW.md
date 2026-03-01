@@ -29,6 +29,9 @@ This guide defines the recommended browser call order for current wasm APIs.
 
 Use this to keep UI behavior deterministic before worker backend wiring.
 
+You can call lifecycle methods directly or via `WasmWorkerSession` for stateful
+UI telemetry (`starts_requested`, `terminates_requested`, `last_phase`, `last_error`).
+
 ## Minimal Browser Pseudocode
 
 ```js

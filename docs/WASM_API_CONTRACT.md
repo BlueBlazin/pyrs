@@ -166,6 +166,18 @@ This document defines the JS-facing contract currently exported by
 - `snippets_checked: usize`
 - `last_error: Option<String>`
 
+## `WasmWorkerSession`
+
+- `new()`
+- `info() -> WasmWorkerInfo`
+- `start() -> WasmWorkerLifecycleResult`
+- `terminate() -> WasmWorkerLifecycleResult`
+- `reset()`
+- `starts_requested: usize`
+- `terminates_requested: usize`
+- `last_phase: Option<String>`
+- `last_error: Option<String>`
+
 ## Stability Rules
 
 1. Any breaking contract change must bump `wasm_api_version()`.

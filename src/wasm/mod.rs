@@ -106,6 +106,14 @@ pub struct WasmSession {
 }
 
 #[wasm_bindgen(getter_with_clone)]
+pub struct WasmWorkerSession {
+    starts_requested: usize,
+    terminates_requested: usize,
+    last_phase: Option<String>,
+    last_error: Option<String>,
+}
+
+#[wasm_bindgen(getter_with_clone)]
 pub struct WasmExecutionResult {
     success: bool,
     phase: String,
@@ -400,6 +408,67 @@ impl WasmSession {
     #[wasm_bindgen(getter)]
     pub fn snippets_checked(&self) -> usize {
         self.snippets_checked
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_error(&self) -> Option<String> {
+        self.last_error.clone()
+    }
+}
+
+#[wasm_bindgen]
+impl WasmWorkerSession {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        init_wasm_runtime();
+        Self {
+            starts_requested: 0,
+            terminates_requested: 0,
+            last_phase: None,
+            last_error: None,
+        }
+    }
+
+    pub fn info(&self) -> WasmWorkerInfo {
+        wasm_worker_info()
+    }
+
+    pub fn start(&mut self) -> WasmWorkerLifecycleResult {
+        let result = wasm_worker_start();
+        self.starts_requested += 1;
+        self.last_phase = Some(result.phase.clone());
+        self.last_error = result.error.clone();
+        result
+    }
+
+    pub fn terminate(&mut self) -> WasmWorkerLifecycleResult {
+        let result = wasm_worker_terminate();
+        self.terminates_requested += 1;
+        self.last_phase = Some(result.phase.clone());
+        self.last_error = result.error.clone();
+        result
+    }
+
+    pub fn reset(&mut self) {
+        self.starts_requested = 0;
+        self.terminates_requested = 0;
+        self.last_phase = None;
+        self.last_error = None;
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn starts_requested(&self) -> usize {
+        self.starts_requested
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn terminates_requested(&self) -> usize {
+        self.terminates_requested
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_phase(&self) -> Option<String> {
+        self.last_phase.clone()
     }
 
     #[wasm_bindgen(getter)]

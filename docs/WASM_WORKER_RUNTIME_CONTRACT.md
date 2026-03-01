@@ -9,6 +9,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `wasm_worker_blocker_error(blocker_key)`
 - `wasm_worker_start()`
 - `wasm_worker_terminate()`
+- `WasmWorkerSession` (stateful wrapper)
 
 ## Current Contract (Unwired Baseline)
 
@@ -44,6 +45,13 @@ Unknown blocker keys return `None`.
 - `state = "unwired"`
 - `blocker_key = "worker_runtime_unwired"`
 - `error = "wasm worker runtime is not wired yet"`
+
+`WasmWorkerSession` currently wraps lifecycle calls and tracks:
+
+- `starts_requested`
+- `terminates_requested`
+- `last_phase`
+- `last_error`
 
 ## State Model (Planned)
 

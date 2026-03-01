@@ -293,8 +293,9 @@ Completed on this branch:
   `docs/WASM_WORKER_RUNTIME_CONTRACT.md`.
 - `d5691f0`: worker lifecycle stubs (`wasm_worker_start`/`wasm_worker_terminate`) with
   fixture-backed contract tests were added.
-- latest: canonical browser call order is documented in
+- `df03f8d`: canonical browser call order is documented in
   `docs/WASM_CLIENT_INTEGRATION_FLOW.md`.
+- latest: `WasmWorkerSession` stateful wrapper API landed for lifecycle orchestration.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

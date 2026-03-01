@@ -14,7 +14,7 @@ use pyrs::wasm::{
     wasm_execution_blocker_keys, wasm_execution_blockers, wasm_module_policy_entries,
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_support,
     wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_info, wasm_worker_start,
-    wasm_worker_terminate, WasmSession,
+    wasm_worker_terminate, WasmSession, WasmWorkerSession,
 };
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
@@ -99,6 +99,46 @@ fn wasm_worker_lifecycle_stub_contract_is_stable() {
             fixture.name
         );
     }
+}
+
+#[wasm_bindgen_test]
+fn wasm_worker_session_contract_is_stable() {
+    let mut session = WasmWorkerSession::new();
+    assert_eq!(session.starts_requested(), 0);
+    assert_eq!(session.terminates_requested(), 0);
+    assert!(session.last_phase().is_none());
+    assert!(session.last_error().is_none());
+
+    let info = session.info();
+    assert!(!info.supported());
+    assert_eq!(info.state(), "unwired");
+
+    let start = session.start();
+    assert_eq!(start.phase(), "unsupported_worker_start");
+    assert_eq!(session.starts_requested(), 1);
+    assert_eq!(
+        session
+            .last_phase()
+            .expect("last phase after worker start should exist"),
+        "unsupported_worker_start".to_string()
+    );
+
+    let terminate = session.terminate();
+    assert_eq!(terminate.phase(), "unsupported_worker_terminate");
+    assert_eq!(session.terminates_requested(), 1);
+    assert_eq!(
+        session
+            .last_phase()
+            .expect("last phase after worker terminate should exist"),
+        "unsupported_worker_terminate".to_string()
+    );
+    assert!(session.last_error().is_some());
+
+    session.reset();
+    assert_eq!(session.starts_requested(), 0);
+    assert_eq!(session.terminates_requested(), 0);
+    assert!(session.last_phase().is_none());
+    assert!(session.last_error().is_none());
 }
 
 #[wasm_bindgen_test]
