@@ -10,6 +10,9 @@ pub trait VmHost: Send + Sync {
     fn current_dir(&self) -> Result<PathBuf, String>;
     fn env_var(&self, name: &str) -> Option<String>;
     fn env_var_os(&self, name: &str) -> Option<OsString>;
+    fn process_args(&self) -> Vec<String>;
+    fn current_exe(&self) -> Option<PathBuf>;
+    fn os_name(&self) -> &'static str;
 
     fn env_flag_enabled(&self, name: &str) -> bool {
         let Some(raw) = self.env_var(name) else {
@@ -47,6 +50,18 @@ impl VmHost for NativeHost {
     fn env_var_os(&self, name: &str) -> Option<OsString> {
         std::env::var_os(name)
     }
+
+    fn process_args(&self) -> Vec<String> {
+        std::env::args().collect()
+    }
+
+    fn current_exe(&self) -> Option<PathBuf> {
+        std::env::current_exe().ok()
+    }
+
+    fn os_name(&self) -> &'static str {
+        std::env::consts::OS
+    }
 }
 
 #[derive(Debug, Default)]
@@ -63,6 +78,18 @@ impl VmHost for WasmHost {
 
     fn env_var_os(&self, _name: &str) -> Option<OsString> {
         None
+    }
+
+    fn process_args(&self) -> Vec<String> {
+        vec!["pyrs".to_string()]
+    }
+
+    fn current_exe(&self) -> Option<PathBuf> {
+        None
+    }
+
+    fn os_name(&self) -> &'static str {
+        "emscripten"
     }
 }
 
@@ -83,5 +110,12 @@ mod tests {
         assert!(host.env_var("HOME").is_none());
         assert!(host.env_var_os("HOME").is_none());
     }
-}
 
+    #[test]
+    fn wasm_host_reports_stubbed_process_metadata() {
+        let host = WasmHost;
+        assert_eq!(host.process_args(), vec!["pyrs".to_string()]);
+        assert!(host.current_exe().is_none());
+        assert_eq!(host.os_name(), "emscripten");
+    }
+}

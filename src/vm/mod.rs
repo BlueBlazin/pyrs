@@ -4090,19 +4090,23 @@ impl Vm {
             module_data
                 .globals
                 .insert("implementation".to_string(), Value::Module(implementation));
-            let argv = std::env::args().map(Value::Str).collect::<Vec<_>>();
+            let process_args = self.host.process_args();
+            let argv = process_args
+                .iter()
+                .cloned()
+                .map(Value::Str)
+                .collect::<Vec<_>>();
             module_data
                 .globals
                 .insert("argv".to_string(), self.heap.alloc_list(argv.clone()));
             module_data
                 .globals
                 .insert("orig_argv".to_string(), self.heap.alloc_list(argv));
-            let executable_path = std::env::current_exe().unwrap_or_else(|_| {
-                std::env::args()
-                    .next()
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("pyrs"))
-            });
+            let executable_path = self
+                .host
+                .current_exe()
+                .or_else(|| process_args.first().map(PathBuf::from))
+                .unwrap_or_else(|| PathBuf::from("pyrs"));
             let executable = executable_path.to_string_lossy().to_string();
             let mut inferred_prefix = executable_path
                 .parent()
@@ -4129,7 +4133,9 @@ impl Vm {
                 }
             }
             let inferred_prefix_str = inferred_prefix.to_string_lossy().to_string();
-            let venv_prefix = std::env::var_os("VIRTUAL_ENV")
+            let venv_prefix = self
+                .host
+                .env_var_os("VIRTUAL_ENV")
                 .map(PathBuf::from)
                 .filter(|path| path.is_dir())
                 .map(|path| path.to_string_lossy().to_string());
@@ -4154,7 +4160,7 @@ impl Vm {
             module_data
                 .globals
                 .insert("base_exec_prefix".to_string(), Value::Str(base_exec_prefix));
-            let platform = match std::env::consts::OS {
+            let platform = match self.host.os_name() {
                 "macos" => "darwin",
                 other => other,
             };
