@@ -7,6 +7,7 @@ use pyrs::wasm::{
     wasm_execution_blocker_keys, wasm_runtime_info,
 };
 use js_sys::Reflect;
+use std::collections::HashSet;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -83,6 +84,54 @@ fn wasm_execution_blocker_contract_is_stable() {
         }
     }
     assert!(saw_backend);
+}
+
+#[wasm_bindgen_test]
+fn wasm_execution_blockers_match_capability_matrix() {
+    let capabilities = wasm_capabilities();
+    let mut expected = HashSet::new();
+    expected.insert("execution_backend_unwired".to_string());
+    if !capabilities.filesystem_read() {
+        expected.insert("filesystem_read".to_string());
+    }
+    if !capabilities.filesystem_write() {
+        expected.insert("filesystem_write".to_string());
+    }
+    if !capabilities.environment_read() {
+        expected.insert("environment_read".to_string());
+    }
+    if !capabilities.process_args() {
+        expected.insert("process_args".to_string());
+    }
+    if !capabilities.process_spawn() {
+        expected.insert("process_spawn".to_string());
+    }
+    if !capabilities.dynamic_library_load() {
+        expected.insert("dynamic_library_load".to_string());
+    }
+    if !capabilities.interactive_terminal() {
+        expected.insert("interactive_terminal".to_string());
+    }
+    if !capabilities.network_sockets() {
+        expected.insert("network_sockets".to_string());
+    }
+
+    let keys = wasm_execution_blocker_keys();
+    let mut listed_keys = HashSet::new();
+    for index in 0..keys.length() {
+        let key = keys
+            .get(index)
+            .as_string()
+            .expect("blocker key should be string");
+        listed_keys.insert(key);
+    }
+    assert_eq!(listed_keys, expected);
+
+    for key in listed_keys {
+        let message = wasm_execution_blocker_error(&key)
+            .unwrap_or_else(|| panic!("missing blocker error for key: {key}"));
+        assert!(!message.trim().is_empty());
+    }
 }
 
 #[wasm_bindgen_test]

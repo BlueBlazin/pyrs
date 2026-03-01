@@ -267,7 +267,8 @@ Completed on this branch:
   `compile_error` phase while runtime execution remains unwired.
 - `f64f85b`: structured execution-blocker export (`wasm_execution_blockers`) now includes
   backend + unsupported capability blockers as key/message entries.
-- latest: `WasmSession` now exposes `check_compile()` for stateful parse+compile validation.
+- `16dee07`: `WasmSession` now exposes `check_compile()` for stateful parse+compile validation.
+- latest: wasm contract tests now enforce blocker-key parity with the capability matrix.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
