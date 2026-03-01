@@ -239,9 +239,10 @@ Completed on this branch:
 - `30d9c45`: `vm/ops` trace probes switched to shared env-probe helper.
 - `b79aac8`: `vm/mod` trace/debug checks consolidated through env-probe helper.
 - `a5819d6`: `cpython_object_item_compare_api` probes switched to cached env helper.
+- `fe6de19`: `vm_bootstrap_import` env/config reads routed through host seam.
 
 Latest host seam audit (local branch run):
-- `python3 scripts/audit_wasm_host_seam.py` => `total_hits=384`.
+- `python3 scripts/audit_wasm_host_seam.py` => `total_hits=364`.
 
 Remaining near-term focus:
 1. W3: expand `WasmHost` capability stubs and error contracts for unsupported features.
