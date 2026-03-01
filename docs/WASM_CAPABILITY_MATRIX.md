@@ -46,6 +46,8 @@ Current wasm bridge exports for capability handling:
   returns structured blocker entries (`key`, `message`) for UI rendering.
 - `wasm_module_support(module_name)`:
   returns structured module preflight status for known capability-gated modules.
+- `wasm_module_policy_entries()`:
+  returns the canonical module->blocker mapping consumed by `wasm_module_support`.
 
 Accepted capability keys:
 

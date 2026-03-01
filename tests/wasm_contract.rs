@@ -2,7 +2,7 @@
 
 use pyrs::wasm::{
     WasmSession, check_compile_result, check_syntax_result, execute, wasm_api_version,
-    wasm_capabilities, wasm_execution_blockers, wasm_module_support,
+    wasm_capabilities, wasm_execution_blockers, wasm_module_policy_entries, wasm_module_support,
     wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
     wasm_execution_blocker_keys, wasm_runtime_info,
 };
@@ -164,6 +164,28 @@ fn wasm_module_support_contract_is_stable() {
     assert!(neutral_math.supported());
     assert!(neutral_math.blocker_key().is_none());
     assert!(neutral_math.message().is_none());
+}
+
+#[wasm_bindgen_test]
+fn wasm_module_policy_entries_are_stable() {
+    let entries = wasm_module_policy_entries();
+    let mut mappings = HashSet::new();
+    for index in 0..entries.length() {
+        let entry = entries.get(index);
+        let module = Reflect::get(&entry, &"module".into())
+            .expect("entry.module")
+            .as_string()
+            .expect("entry.module string");
+        let blocker_key = Reflect::get(&entry, &"blocker_key".into())
+            .expect("entry.blocker_key")
+            .as_string()
+            .expect("entry.blocker_key string");
+        mappings.insert((module, blocker_key));
+    }
+
+    assert!(mappings.contains(&("numpy".to_string(), "dynamic_library_load".to_string())));
+    assert!(mappings.contains(&("socket".to_string(), "network_sockets".to_string())));
+    assert!(mappings.contains(&("subprocess".to_string(), "process_spawn".to_string())));
 }
 
 #[wasm_bindgen_test]

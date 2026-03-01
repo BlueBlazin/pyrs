@@ -41,6 +41,8 @@ This document defines the JS-facing contract currently exported by
   - Returns structured blocker entries (`key` + `message`).
 - `wasm_module_support(module_name: &str) -> WasmModuleSupport`
   - Returns module-level support/preflight status (`supported`, blocker key/message).
+- `wasm_module_policy_entries() -> Array`
+  - Returns module->blocker policy rows used for browser preflight UX.
 
 ## Exported Types
 
@@ -96,6 +98,11 @@ This document defines the JS-facing contract currently exported by
 - `supported: bool`
 - `blocker_key: Option<String>`
 - `message: Option<String>`
+
+## `WasmModulePolicyEntry`
+
+- `module: String`
+- `blocker_key: String`
 
 ## `WasmSession`
 

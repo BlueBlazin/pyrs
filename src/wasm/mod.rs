@@ -6,15 +6,23 @@ use wasm_bindgen::prelude::*;
 
 pub const WASM_API_VERSION: u32 = 1;
 const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired";
+const WASM_MODULE_BLOCKER_POLICY: [(&str, &str); 10] = [
+    ("_ctypes", "dynamic_library_load"),
+    ("ctypes", "dynamic_library_load"),
+    ("numpy", "dynamic_library_load"),
+    ("scipy", "dynamic_library_load"),
+    ("_socket", "network_sockets"),
+    ("socket", "network_sockets"),
+    ("_posixsubprocess", "process_spawn"),
+    ("subprocess", "process_spawn"),
+    ("multiprocessing", "process_spawn"),
+    ("readline", "interactive_terminal"),
+];
 
 fn module_blocker_key(module_name: &str) -> Option<&'static str> {
-    match module_name {
-        "_ctypes" | "ctypes" | "numpy" | "scipy" => Some("dynamic_library_load"),
-        "_socket" | "socket" => Some("network_sockets"),
-        "_posixsubprocess" | "subprocess" | "multiprocessing" => Some("process_spawn"),
-        "readline" => Some("interactive_terminal"),
-        _ => None,
-    }
+    WASM_MODULE_BLOCKER_POLICY
+        .iter()
+        .find_map(|(name, blocker)| (*name == module_name).then_some(*blocker))
 }
 
 fn execution_blocker_keys(host: &dyn VmHost) -> Vec<&'static str> {
@@ -263,6 +271,12 @@ pub struct WasmModuleSupport {
     message: Option<String>,
 }
 
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmModulePolicyEntry {
+    module: String,
+    blocker_key: String,
+}
+
 #[wasm_bindgen]
 impl WasmCapabilityReport {
     #[wasm_bindgen(getter)]
@@ -339,6 +353,19 @@ impl WasmModuleSupport {
     #[wasm_bindgen(getter)]
     pub fn message(&self) -> Option<String> {
         self.message.clone()
+    }
+}
+
+#[wasm_bindgen]
+impl WasmModulePolicyEntry {
+    #[wasm_bindgen(getter)]
+    pub fn module(&self) -> String {
+        self.module.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn blocker_key(&self) -> String {
+        self.blocker_key.clone()
     }
 }
 
@@ -432,6 +459,19 @@ pub fn wasm_module_support(module_name: &str) -> WasmModuleSupport {
         blocker_key: blocker_key.map(str::to_string),
         message,
     }
+}
+
+/// Returns module-level blocker policy entries for browser-mode preflight UX.
+#[wasm_bindgen]
+pub fn wasm_module_policy_entries() -> Array {
+    let entries = Array::new();
+    for (module, blocker_key) in WASM_MODULE_BLOCKER_POLICY {
+        entries.push(&JsValue::from(WasmModulePolicyEntry {
+            module: module.to_string(),
+            blocker_key: blocker_key.to_string(),
+        }));
+    }
+    entries
 }
 
 /// Returns a stable blocker message for wasm execution blockers.
