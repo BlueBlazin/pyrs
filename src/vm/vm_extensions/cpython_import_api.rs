@@ -47,17 +47,17 @@ pub unsafe extern "C" fn PyImport_GetMagicTag() -> *const c_char {
 pub unsafe extern "C" fn PyImport_ImportModule(name: *const c_char) -> *mut c_void {
     match unsafe { c_name_to_string(name) } {
         Ok(module_name) => {
-            let trace_pyarrow_import = std::env::var_os("PYRS_TRACE_PYARROW_IMPORT").is_some()
+            let trace_pyarrow_import = super::super::env_var_present_cached("PYRS_TRACE_PYARROW_IMPORT")
                 && module_name.contains("pyarrow");
             if trace_pyarrow_import {
                 eprintln!("[pyarrow-import] PyImport_ImportModule name={module_name}");
             }
-            let trace_ctypes = std::env::var_os("PYRS_TRACE_CPY_CTYPES_IMPORT").is_some()
+            let trace_ctypes = super::super::env_var_present_cached("PYRS_TRACE_CPY_CTYPES_IMPORT")
                 && module_name.contains("ctypes");
             if trace_ctypes {
                 eprintln!("[cpy-ctypes-import] PyImport_ImportModule name={module_name}");
             }
-            if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_API") {
                 eprintln!("[cpy-api] PyImport_ImportModule name={module_name}");
             }
             with_active_cpython_context_mut(|context| {
@@ -185,7 +185,7 @@ pub unsafe extern "C" fn PyImport_AddModuleRef(name: *const c_char) -> *mut c_vo
             return std::ptr::null_mut();
         }
     };
-    if std::env::var_os("PYRS_TRACE_CPY_CTYPES_IMPORT").is_some() && module_name.contains("ctypes")
+    if super::super::env_var_present_cached("PYRS_TRACE_CPY_CTYPES_IMPORT") && module_name.contains("ctypes")
     {
         eprintln!("[cpy-ctypes-import] PyImport_AddModuleRef name={module_name}");
     }
@@ -215,7 +215,7 @@ pub unsafe extern "C" fn PyImport_AddModuleObject(name: *mut c_void) -> *mut c_v
                     return std::ptr::null_mut();
                 }
             };
-        if std::env::var_os("PYRS_TRACE_CPY_CTYPES_IMPORT").is_some()
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_CTYPES_IMPORT")
             && module_name.contains("ctypes")
         {
             eprintln!("[cpy-ctypes-import] PyImport_AddModuleObject name={module_name}");
@@ -553,7 +553,7 @@ pub unsafe extern "C" fn PyImport_GetImporter(path: *mut c_void) -> *mut c_void 
             Ok(value) => value,
             Err(err) => {
                 vm.clear_active_exception();
-                if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_CPY_API") {
                     eprintln!(
                         "[cpy-api] PyImport_GetImporter fallback (pkgutil import failed): {}",
                         err.message
@@ -574,7 +574,7 @@ pub unsafe extern "C" fn PyImport_GetImporter(path: *mut c_void) -> *mut c_void 
             }
             Err(err) => {
                 vm.clear_active_exception();
-                if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_CPY_API") {
                     eprintln!(
                         "[cpy-api] PyImport_GetImporter fallback (getattr failed): {}",
                         err.message
@@ -591,7 +591,7 @@ pub unsafe extern "C" fn PyImport_GetImporter(path: *mut c_void) -> *mut c_void 
             }
             Err(err) => {
                 vm.clear_active_exception();
-                if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_CPY_API") {
                     eprintln!(
                         "[cpy-api] PyImport_GetImporter fallback (call failed): {}",
                         err.message
@@ -657,7 +657,7 @@ pub unsafe extern "C" fn PyImport_ImportModuleLevelObject(
             fromlist_value,
             Value::Int(level as i64),
         ];
-        let trace_pyarrow_import = std::env::var_os("PYRS_TRACE_PYARROW_IMPORT").is_some()
+        let trace_pyarrow_import = super::super::env_var_present_cached("PYRS_TRACE_PYARROW_IMPORT")
             && matches!(args.first(), Some(Value::Str(name)) if name.contains("pyarrow"));
         if trace_pyarrow_import {
             let fromlist_desc = match args.get(3) {
