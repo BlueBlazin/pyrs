@@ -20,6 +20,10 @@
   <a href="#contributing">Contributing</a>
 </p>
 
+<p align="center">
+  <img src="website/public/images/repl/repl1.png" alt="PYRS REPL screenshot 1" width="92%" />
+</p>
+
 ## At a Glance
 
 | Area | Current State |
@@ -30,11 +34,8 @@
 | C-extension support | In progress (scientific stack bring-up underway) |
 | Local test runner | `cargo nextest run` |
 
-## REPL Preview
-
 <p align="center">
-  <img src="website/public/images/repl/repl1.png" alt="PYRS REPL screenshot 1" width="48.5%" />
-  <img src="website/public/images/repl/repl2.png" alt="PYRS REPL screenshot 2" width="48.5%" />
+  <img src="website/public/images/repl/repl2.png" alt="PYRS REPL screenshot 2" width="92%" />
 </p>
 
 ## Quick Start
