@@ -27,45 +27,73 @@ const { headers, class: className } = Astro.props;
 </div>
 
 <style>
-	.data-table-wrap {
-		box-shadow: 0 10px 28px rgba(2, 5, 12, 0.25);
+	:global(.data-table-wrap) {
+		box-shadow: 0 10px 30px rgba(2, 5, 12, 0.3);
 	}
 
-	.data-table-head {
-		border-bottom: 1px solid #2d374c;
-		background: #10192a;
-		padding: 0.72rem 1rem;
-		font-size: 0.74rem;
+	:global(.data-table) {
+		table-layout: fixed;
+	}
+
+	:global(.data-table-head) {
+		border-bottom: 1px solid #2d3a53;
+		background: linear-gradient(180deg, #13203a 0%, #10192b 100%);
+		padding: 0.82rem 1.1rem;
+		font-size: 0.75rem;
 		font-weight: 600;
 		letter-spacing: 0.12em;
 		text-transform: uppercase;
-		color: #dfe8fb;
+		color: #dce7fb;
 	}
 
-	.data-table-body td {
-		border-bottom: 1px solid #273247;
-		padding: 0.72rem 1rem;
-		font-size: 0.87rem;
-		line-height: 1.55;
-		color: var(--color-docs-muted);
+	:global(.data-table-body > tr > td) {
+		border-bottom: 1px solid #263149;
+		padding: 0.86rem 1.1rem;
+		font-size: 0.92rem;
+		line-height: 1.52;
+		color: #b7c3db;
 		vertical-align: top;
 	}
 
-	.data-table-body tr:last-child td {
+	:global(.data-table-body > tr > td:first-child) {
+		width: 38%;
+		color: #d2dcef;
+		font-weight: 500;
+	}
+
+	:global(.data-table-body > tr:last-child > td) {
 		border-bottom: 0;
 	}
 
-	.data-table-body tr:nth-child(even) td {
-		background: rgba(255, 255, 255, 0.015);
+	:global(.data-table-body > tr:nth-child(even) > td) {
+		background: rgba(165, 190, 239, 0.03);
 	}
 
-	.data-table-body tr:hover td {
-		background: rgba(174, 196, 235, 0.07);
+	:global(.data-table-body > tr:hover > td) {
+		background: rgba(174, 196, 235, 0.09);
 	}
 
-	.data-table-body code {
+	:global(.data-table-body code) {
+		display: inline-block;
+		padding: 0.11rem 0.4rem;
+		border-radius: 0.38rem;
+		border: 1px solid #2f4365;
+		background: #10192c;
 		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.83rem;
-		color: #d7def0;
+		font-size: 0.82rem;
+		color: #dbe7ff;
+		line-height: 1.32;
+	}
+
+	@media (max-width: 760px) {
+		:global(.data-table-head) {
+			padding: 0.72rem 0.88rem;
+			font-size: 0.69rem;
+		}
+
+		:global(.data-table-body > tr > td) {
+			padding: 0.72rem 0.88rem;
+			font-size: 0.88rem;
+		}
 	}
 </style>

@@ -35,23 +35,23 @@ import {
 	<DataTable headers={["Need", "Best Install Path"]}>
 		<tr>
 			<td>Fast local setup on macOS/Linux</td>
-			<td><code>cargo install --locked --git ... --bin pyrs</code></td>
+			<td>Use <code>cargo install --locked --git ... --bin pyrs</code> (recommended default).</td>
 		</tr>
 		<tr>
 			<td>Install from a cloned local repo</td>
-			<td><code>cargo install --locked --path .</code></td>
+			<td>Install directly from checkout with <code>cargo install --locked --path .</code>.</td>
 		</tr>
 		<tr>
 			<td>Build directly from source without install</td>
-			<td><code>cargo build --release</code> then run <code>target/release/pyrs</code></td>
+			<td>Build via <code>cargo build --release</code>, then run <code>target/release/pyrs</code>.</td>
 		</tr>
 		<tr>
 			<td>Containerized runs</td>
-			<td><code>ghcr.io/blueblazin/pyrs:nightly</code> via Docker</td>
+			<td>Run nightly container image <code>ghcr.io/blueblazin/pyrs:nightly</code> via Docker.</td>
 		</tr>
 		<tr>
 			<td>No local Rust toolchain</td>
-			<td>Nightly release archive download</td>
+			<td>Download a nightly release archive for your platform.</td>
 		</tr>
 	</DataTable>
 </DocSection>
