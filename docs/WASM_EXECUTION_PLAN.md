@@ -386,6 +386,9 @@ Completed on this branch:
   deeper wasm-specific blockers.
 - latest: `PyMember_GetOne` bool conversion now matches `PyBool_FromLong(i64)`
   signature, removing the previous wasm-vm-probe numeric-type blocker.
+- latest: unix-only fd/process trait imports are now locally gated in
+  `builtins_io`/`builtins_os`, removing wasm-vm-probe unresolved-import blockers
+  for `AsRawFd`/`FromRawFd`/`IntoRawFd`/`ExitStatusExt`/`UnixStream`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
@@ -398,9 +401,9 @@ Remaining near-term focus:
 3. Add wasm smoke harness (JS/wasm-bindgen-test or equivalent) without touching native CI gates yet.
 
 Current `wasm-vm-probe` snapshot (non-gating, latest local run):
-- unix-only fd/process imports (`AsRawFd`/`FromRawFd`/`IntoRawFd`/`ExitStatusExt`/`UnixStream`)
-  leak into wasm-vm probe surfaces via `src/vm/builtins_io.rs` and
-  `src/vm/builtins_os.rs`.
+- current hard blocker: widespread `usize` literal overflow guards under wasm32
+  (`0x1_0000_0000` into `usize`) across vm extension surfaces
+  (`src/vm/vm_extensions.rs` and multiple `src/vm/vm_extensions/*` modules).
 
 ## Risk Register
 

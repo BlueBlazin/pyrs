@@ -1,18 +1,22 @@
 use super::{
-    AsRawFd, AtexitHandler, BuiltinFunction, ClassObject, Command, Duration, ExceptionObject,
-    ExitStatusExt, FormatterFieldKey, FromRawFd, HashMap, InstanceObject, InternalCallOutcome,
-    IntoRawFd, IsTerminal, ModuleObject, NativeMethodKind, ObjRef, Object, Path, PathBuf, Read,
-    RuntimeError, Seek, SeekFrom, Stdio, SystemTime, TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH,
-    UnixStream, Value, Vm, Write, bytes_like_from_value, collect_env_entries, collect_process_argv,
-    decode_escape_bytes, decode_text_bytes, dict_get_value, encode_text_bytes, format_value, fs,
-    is_missing_attribute_error, is_pyrs_executable, is_truthy, mul_values,
-    normalize_codec_encoding, normalize_codec_errors, parse_decimal_bigint_literal,
-    parse_modules_to_block_literal, parse_string_formatter, pow_values, seconds_to_system_time,
-    split_formatter_field_name, system_time_to_secs_f64, value_from_bigint, value_to_bigint,
-    value_to_f64, value_to_int, value_to_process_text, value_to_sequence_items,
+    AtexitHandler, BuiltinFunction, ClassObject, Command, Duration, ExceptionObject,
+    FormatterFieldKey, HashMap, InstanceObject, InternalCallOutcome, IsTerminal, ModuleObject,
+    NativeMethodKind, ObjRef, Object, Path, PathBuf, Read, RuntimeError, Seek, SeekFrom, Stdio,
+    SystemTime, TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH, Value, Vm, Write, bytes_like_from_value,
+    collect_env_entries, collect_process_argv, decode_escape_bytes, decode_text_bytes,
+    dict_get_value, encode_text_bytes, format_value, fs, is_missing_attribute_error,
+    is_pyrs_executable, is_truthy, mul_values, normalize_codec_encoding, normalize_codec_errors,
+    parse_decimal_bigint_literal, parse_modules_to_block_literal, parse_string_formatter,
+    pow_values, seconds_to_system_time, split_formatter_field_name, system_time_to_secs_f64,
+    value_from_bigint, value_to_bigint, value_to_f64, value_to_int, value_to_process_text,
+    value_to_sequence_items,
 };
 #[cfg(unix)]
-use std::os::unix::process::CommandExt;
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 const CODECS_ATTR_ENCODING: &str = "__pyrs_codec_encoding__";
 const CODECS_ATTR_ERRORS: &str = "__pyrs_codec_errors__";
