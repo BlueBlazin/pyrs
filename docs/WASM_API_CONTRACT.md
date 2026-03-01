@@ -90,6 +90,8 @@ This document defines the JS-facing contract currently exported by
   - Returns explicit browser capability matrix.
 - `wasm_capability_error(capability_key: &str) -> Option<String>`
   - Returns unsupported-capability message for known keys.
+- `wasm_capability_keys() -> Array`
+  - Returns canonical browser capability keys in stable order.
 - `wasm_execution_blocker_keys() -> Array`
   - Returns canonical blocker keys for execution in browser mode
     (default build includes `execution_backend_unwired` and `vm_runtime_unavailable`).

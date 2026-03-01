@@ -200,6 +200,9 @@ Branch helper:
 - execute-contract summary helper:
   `python3 scripts/generate_wasm_execute_contract_summary.py --out perf/wasm_execute_contract_summary_latest.json`
   for fixture-driven execute phase/blocker consistency.
+- api-contract surface summary helper:
+  `python3 scripts/generate_wasm_api_contract_surface_summary.py --out perf/wasm_api_contract_surface_summary_latest.json`
+  for source/doc parity on top-level wasm exports and exported type field coverage.
 - worker-docs summary helper:
   `python3 scripts/generate_wasm_worker_docs_contract_summary.py --out perf/wasm_worker_docs_contract_summary_latest.json`
   for source/doc parity on worker state/lifecycle/execute/timeout keys, interruption model, timeout bounds, and blocker keys.
@@ -530,6 +533,10 @@ Completed on this branch:
   `WASM_CLIENT_INTEGRATION_FLOW.md` call-order guidance and function tokens
   against source-exported wasm APIs, plus worker lifecycle/execute/vm-probe
   phase and `WasmWorkerSession` telemetry-field parity.
+- latest: `generate_wasm_api_contract_surface_summary.py` now validates
+  `WASM_API_CONTRACT.md` top-level export listings and exported type field
+  coverage against `src/wasm/mod.rs`, and is enforced in both local wasm gate
+  scripts.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
