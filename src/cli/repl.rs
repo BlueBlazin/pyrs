@@ -118,7 +118,7 @@ fn resolve_repl_theme_from_env() -> ReplThemeMode {
 fn repl_palette(theme: ResolvedReplTheme) -> ReplPalette {
     match theme {
         ResolvedReplTheme::Dark => ReplPalette {
-            keyword_style: Style::new().fg(AnsiColor::Fixed(25)).bold(),
+            keyword_style: Style::new().fg(AnsiColor::Rgb(46, 149, 211)).bold(),
             class_name_style: Style::new().fg(AnsiColor::Fixed(203)).bold(),
             function_name_style: Style::new().fg(AnsiColor::Fixed(214)).bold(),
             decorator_style: Style::new().fg(AnsiColor::Fixed(111)),
