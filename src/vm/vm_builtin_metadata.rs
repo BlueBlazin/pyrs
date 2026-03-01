@@ -11,8 +11,8 @@ use super::{
     Value, Vm, apply_bindings, bind_arguments, bytes_like_source_is_readonly, class_attr_lookup,
     class_attr_lookup_direct, class_attr_walk, class_inherits_dynamic_instance_dict,
     class_name_for_instance, collect_slot_names, dict_get_value, dict_remove_value, dict_set_value,
-    format_repr, memoryview_bounds, runtime_error_matches_exception, value_from_bigint,
-    value_from_object_ref, with_bytes_like_source,
+    env_var_present_cached, format_repr, memoryview_bounds, runtime_error_matches_exception,
+    value_from_bigint, value_from_object_ref, with_bytes_like_source,
 };
 
 thread_local! {
@@ -46,7 +46,7 @@ struct LoadAttrSuperDepthGuard;
 
 impl LoadAttrSuperDepthGuard {
     fn enter() -> Option<(Self, usize)> {
-        let trace_enabled = std::env::var_os("PYRS_TRACE_LOAD_ATTR_SUPER").is_some();
+        let trace_enabled = env_var_present_cached("PYRS_TRACE_LOAD_ATTR_SUPER");
         let limit = std::env::var("PYRS_DEBUG_LOAD_ATTR_SUPER_DEPTH_LIMIT")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
@@ -2745,7 +2745,7 @@ impl Vm {
             "pop" => NativeMethodKind::DictPop,
             _ => {
                 if attr_name == "_member_names"
-                    && std::env::var_os("PYRS_TRACE_ENUM_MEMBER_NAMES").is_some()
+                    && env_var_present_cached("PYRS_TRACE_ENUM_MEMBER_NAMES")
                 {
                     eprintln!("[enum-member-names] attr lookup on dict");
                     for frame in self.frames.iter().rev().take(12) {
@@ -4457,7 +4457,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
         kwargs_order: Option<Vec<String>>,
     ) -> Result<InternalCallOutcome, RuntimeError> {
-        if std::env::var_os("PYRS_TRACE_CALLABLE_NONE_BT").is_some()
+        if env_var_present_cached("PYRS_TRACE_CALLABLE_NONE_BT")
             && matches!(callable, Value::None)
         {
             let args_summary = args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
@@ -4488,7 +4488,7 @@ impl Vm {
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|limit| *limit > 0)
             .unwrap_or_else(|| self.recursion_limit.max(1) as usize * 4);
-        if std::env::var_os("PYRS_TRACE_CALL_DEPTH").is_some()
+        if env_var_present_cached("PYRS_TRACE_CALL_DEPTH")
             && call_depth >= hard_limit.saturating_sub(16)
         {
             let callable_type = self.value_type_name_for_error(&callable);
@@ -4574,7 +4574,7 @@ impl Vm {
                 )
             })
             .unwrap_or((0, None));
-        let trace_class_call = std::env::var_os("PYRS_TRACE_CLASS_CALL_RUNTIME").is_some();
+        let trace_class_call = env_var_present_cached("PYRS_TRACE_CLASS_CALL_RUNTIME");
         let callable_was_class = matches!(&callable, Value::Class(_));
         let trace_callable_repr =
             (trace_class_call && callable_was_class).then(|| format_repr(&callable));
@@ -4674,7 +4674,7 @@ impl Vm {
                                 callable_type_name.as_str(),
                                 "builtin_function_or_method" | "method"
                             ) || self.cpython_proxy_callable_has_bound_self(&callable));
-                        if std::env::var_os("PYRS_TRACE_PROXY_BOUND_CALL").is_some() {
+                        if env_var_present_cached("PYRS_TRACE_PROXY_BOUND_CALL") {
                             let receiver_tag = format_repr(&receiver_value);
                             let receiver_type = self.value_type_name_for_error(&receiver_value);
                             let receiver_ptr =
@@ -5005,7 +5005,7 @@ impl Vm {
                             ) {
                                 Ok(bindings) => bindings,
                                 Err(err) => {
-                                    if std::env::var_os("PYRS_TRACE_BIND_ARGS_STACK").is_some()
+                                    if env_var_present_cached("PYRS_TRACE_BIND_ARGS_STACK")
                                         && err.message.contains("argument count mismatch")
                                     {
                                         let stack = self
@@ -5032,7 +5032,7 @@ impl Vm {
                                             "[bind-args-stack] failing_fn={} file={} stack={}",
                                             func_data.code.name, func_data.code.filename, stack
                                         );
-                                        if std::env::var_os("PYRS_TRACE_BIND_ARGS_BT").is_some() {
+                                        if env_var_present_cached("PYRS_TRACE_BIND_ARGS_BT") {
                                             eprintln!(
                                                 "[bind-args-bt] failing_fn={} bt={}",
                                                 func_data.code.name,
@@ -5342,7 +5342,7 @@ impl Vm {
                                     ));
                                 }
                             } else if !kwargs.is_empty() || !args.is_empty() {
-                                if std::env::var_os("PYRS_TRACE_CLASS_CTOR_NOARGS").is_some() {
+                                if env_var_present_cached("PYRS_TRACE_CLASS_CTOR_NOARGS") {
                                     let class_name = match &*class.kind() {
                                         Object::Class(data) => data.name.clone(),
                                         _ => "<non-class>".to_string(),
@@ -5395,7 +5395,7 @@ impl Vm {
                 }
             }
             other => {
-                if std::env::var_os("PYRS_TRACE_CALL_NON_FUNCTION").is_some() {
+                if env_var_present_cached("PYRS_TRACE_CALL_NON_FUNCTION") {
                     if let Some(frame) = self.frames.last() {
                         let location = frame.code.locations.get(frame.last_ip);
                         let opcode = frame
@@ -5414,7 +5414,7 @@ impl Vm {
                             opcode,
                             format_repr(&other),
                         );
-                        if std::env::var_os("PYRS_TRACE_CALL_NON_FUNCTION_ARGS").is_some() {
+                        if env_var_present_cached("PYRS_TRACE_CALL_NON_FUNCTION_ARGS") {
                             let args_summary =
                                 args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
                             let mut kw_entries = kwargs.iter().collect::<Vec<_>>();
@@ -5429,7 +5429,7 @@ impl Vm {
                                 args_summary, kwargs_summary
                             );
                         }
-                        if std::env::var_os("PYRS_TRACE_CALL_NON_FUNCTION_BT").is_some() {
+                        if env_var_present_cached("PYRS_TRACE_CALL_NON_FUNCTION_BT") {
                             eprintln!(
                                 "[call-non-function-bt]\n{:?}",
                                 std::backtrace::Backtrace::force_capture()
@@ -6007,7 +6007,7 @@ impl Vm {
             } else if let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name) {
                 proxy_attr
             } else {
-                if std::env::var_os("PYRS_TRACE_PROXY_CLASS_ATTR_MISS").is_some() {
+                if env_var_present_cached("PYRS_TRACE_PROXY_CLASS_ATTR_MISS") {
                     let class_kind = class.kind();
                     if let Object::Class(class_data) = &*class_kind {
                         let mut keys = class_data.attrs.keys().cloned().collect::<Vec<_>>();
@@ -6037,7 +6037,7 @@ impl Vm {
         } else if let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name) {
             proxy_attr
         } else {
-            if std::env::var_os("PYRS_TRACE_PROXY_CLASS_ATTR_MISS").is_some() {
+            if env_var_present_cached("PYRS_TRACE_PROXY_CLASS_ATTR_MISS") {
                 let class_kind = class.kind();
                 if let Object::Class(class_data) = &*class_kind {
                     let mut keys = class_data.attrs.keys().cloned().collect::<Vec<_>>();
@@ -6401,7 +6401,7 @@ impl Vm {
         let custom_new = resolve_metaclass_ctor("__new__", self)
             .filter(|callable| !matches!(callable, Value::Builtin(BuiltinFunction::Type)));
         if let Some(new_callable) = custom_new {
-            if std::env::var_os("PYRS_TRACE_METACLASS_NEW_FAIL").is_some() {
+            if env_var_present_cached("PYRS_TRACE_METACLASS_NEW_FAIL") {
                 eprintln!(
                     "[metaclass-new] metaclass={} callable_type={} callable_repr={}",
                     match &*metaclass.kind() {
@@ -6425,7 +6425,7 @@ impl Vm {
                 }
             };
             if !matches!(created, Value::Class(_)) {
-                if std::env::var_os("PYRS_TRACE_METACLASS_NEW_FAIL").is_some() {
+                if env_var_present_cached("PYRS_TRACE_METACLASS_NEW_FAIL") {
                     let meta_name = match &*metaclass.kind() {
                         Object::Class(class_data) => class_data.name.clone(),
                         _ => "<non-class>".to_string(),
@@ -7512,7 +7512,7 @@ impl Vm {
             Object::Class(class_data) => class_data.name.clone(),
             _ => "<class>".to_string(),
         };
-        if std::env::var_os("PYRS_TRACE_PROXY_INSTANCE_ATTR_MISS").is_some()
+        if env_var_present_cached("PYRS_TRACE_PROXY_INSTANCE_ATTR_MISS")
             && class_name == "__pyrs_cpython_proxy__"
         {
             let raw_ptr = match &*instance.kind() {
@@ -7549,7 +7549,7 @@ impl Vm {
                 ));
             }
         };
-        if std::env::var_os("PYRS_TRACE_LOAD_ATTR_SUPER").is_some() && super_depth > 1 {
+        if env_var_present_cached("PYRS_TRACE_LOAD_ATTR_SUPER") && super_depth > 1 {
             let start_name = match &*start_class.kind() {
                 Object::Class(class_data) => class_data.name.clone(),
                 _ => "<non-class>".to_string(),
@@ -7602,7 +7602,7 @@ impl Vm {
                 .map(|idx| idx + 1);
         }
         let start_idx = start_idx.unwrap_or_else(|| usize::from(!mro.is_empty()));
-        if std::env::var_os("PYRS_TRACE_SUPER_DTYPE").is_some() && attr_name == "dtype" {
+        if env_var_present_cached("PYRS_TRACE_SUPER_DTYPE") && attr_name == "dtype" {
             let start_name = match &*start_class.kind() {
                 Object::Class(class_data) => class_data.name.clone(),
                 _ => "<non-class>".to_string(),
@@ -7634,7 +7634,7 @@ impl Vm {
             let class_attr = class_attr_lookup_direct(&class, attr_name)
                 .or_else(|| self.load_cpython_proxy_attr(&class, attr_name));
             if let Some(attr) = class_attr {
-                if std::env::var_os("PYRS_TRACE_LOAD_ATTR_SUPER").is_some() && super_depth > 1 {
+                if env_var_present_cached("PYRS_TRACE_LOAD_ATTR_SUPER") && super_depth > 1 {
                     let owner_name = match &*class.kind() {
                         Object::Class(class_data) => class_data.name.clone(),
                         _ => "<non-class>".to_string(),
@@ -7647,7 +7647,7 @@ impl Vm {
                         self.value_type_name_for_error(&attr)
                     );
                 }
-                if std::env::var_os("PYRS_TRACE_SUPER_DTYPE").is_some() && attr_name == "dtype" {
+                if env_var_present_cached("PYRS_TRACE_SUPER_DTYPE") && attr_name == "dtype" {
                     let class_name = match &*class.kind() {
                         Object::Class(class_data) => class_data.name.clone(),
                         _ => "<non-class>".to_string(),
@@ -7690,7 +7690,7 @@ impl Vm {
                     return Ok(AttrAccessOutcome::Value(bound_result?));
                 }
                 let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
-                if std::env::var_os("PYRS_TRACE_SUPER_DTYPE").is_some() && attr_name == "dtype" {
+                if env_var_present_cached("PYRS_TRACE_SUPER_DTYPE") && attr_name == "dtype" {
                     let getter_tag = getter
                         .as_ref()
                         .map(|value| {
