@@ -184,6 +184,9 @@ Required after each meaningful checkpoint:
 
 Branch helper:
 - `scripts/check_wasm_branch.sh` runs the current minimum checkpoint validation set.
+- wasm harness note: use targeted wasm contract compile lane
+  (`cargo check --target wasm32-unknown-unknown --test wasm_contract`)
+  instead of all-tests wasm compile.
 
 ## Merge Decision Rubric
 

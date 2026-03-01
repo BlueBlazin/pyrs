@@ -24,6 +24,9 @@ js-sys = "0.3.91"
 wasm-bindgen = "0.2.114"
 web-sys = "0.3.91"
 
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
 [build-dependencies]
 cc = "1.2.43"
 
