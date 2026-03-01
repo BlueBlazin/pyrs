@@ -174,11 +174,12 @@
 	}
 
 	.hero {
-		display: grid;
-		grid-template-columns: 1.02fr 0.98fr;
-		gap: 2.25rem;
-		align-items: center;
+		display: block;
 		padding: 1.6rem 0 0.7rem;
+	}
+
+	.hero-copy {
+		max-width: 62rem;
 	}
 
 	.eyebrow {
@@ -263,16 +264,20 @@
 
 	.hero-visual {
 		position: relative;
+		margin-top: 1.8rem;
 	}
 
 	.shot-stack {
-		position: relative;
-		min-height: 23rem;
+		display: grid;
+		grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+		gap: 1.1rem;
+		align-items: start;
 	}
 
 	.shot {
 		display: block;
-		max-width: 100%;
+		width: 100%;
+		max-width: none;
 		height: auto;
 		border: 1px solid #2a3d58;
 		border-radius: 0.95rem;
@@ -280,16 +285,12 @@
 	}
 
 	.shot-base {
-		width: min(100%, 44rem);
 		background: #05070b;
 	}
 
 	.shot-overlay {
-		position: absolute;
-		width: 57%;
-		right: -2%;
-		top: 11%;
 		background: #13161c;
+		margin-top: 1.6rem;
 	}
 
 	.visual-note {
@@ -325,12 +326,8 @@
 	}
 
 	@media (max-width: 1024px) {
-		.hero {
-			grid-template-columns: 1fr;
-		}
-
 		.shot-stack {
-			min-height: 19rem;
+			grid-template-columns: 1fr 1fr;
 		}
 	}
 
@@ -350,51 +347,19 @@
 			grid-template-columns: 1fr;
 		}
 
+		.shot-stack {
+			grid-template-columns: 1fr;
+			gap: 0.85rem;
+		}
+
 		.shot-overlay {
-			width: 68%;
-			right: 0;
-			top: 14%;
+			margin-top: 0;
 		}
 	}
 
 	@media (max-width: 520px) {
-		.shot-stack {
-			min-height: auto;
-		}
-
-		.shot-overlay {
-			position: relative;
-			width: 92%;
-			margin: -1.3rem 0 0 auto;
-			top: 0;
-			right: 0;
-		}
-	}
-
-	@media (min-width: 1240px) {
-		.hero {
-			grid-template-columns: 0.94fr 1.06fr;
-			gap: 1.7rem;
-		}
-
 		.hero-visual {
-			margin-right: -1.2rem;
-		}
-
-		.shot-stack {
-			min-height: 31rem;
-		}
-
-		.shot-base {
-			width: min(112%, 54rem);
-			max-width: none;
-		}
-
-		.shot-overlay {
-			width: 86%;
-			left: 49%;
-			right: auto;
-			top: 10%;
+			margin-top: 1.3rem;
 		}
 	}
 </style>
