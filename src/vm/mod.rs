@@ -34,7 +34,7 @@ use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -63,7 +63,7 @@ use crate::extensions::{
     PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1,
     PyrsModuleStateFreeV1, SharedLibraryHandle,
 };
-use crate::host::{NativeHost, VmHost};
+use crate::host::{HostCapability, NativeHost, VmHost};
 use crate::parser;
 use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
@@ -529,6 +529,56 @@ const ENV_VAR_PRESENCE_PROBES: &[&str] = &[
     "PYRS_TRACE_SUBSCRIPT_ERROR",
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EnvPresenceProbeSource {
+    Uninitialized = 0,
+    Native = 1,
+    Unsupported = 2,
+}
+
+impl EnvPresenceProbeSource {
+    fn from_raw(raw: u8) -> Self {
+        match raw {
+            1 => Self::Native,
+            2 => Self::Unsupported,
+            _ => Self::Uninitialized,
+        }
+    }
+
+    fn from_host(host: &dyn VmHost) -> Self {
+        if host.supports(HostCapability::EnvironmentRead) {
+            Self::Native
+        } else {
+            Self::Unsupported
+        }
+    }
+}
+
+static ENV_PRESENCE_PROBE_SOURCE: AtomicU8 =
+    AtomicU8::new(EnvPresenceProbeSource::Uninitialized as u8);
+
+#[inline]
+fn configure_env_presence_probe_source(host: &dyn VmHost) {
+    let source = EnvPresenceProbeSource::from_host(host);
+    ENV_PRESENCE_PROBE_SOURCE.store(source as u8, AtomicOrdering::Relaxed);
+}
+
+#[inline]
+fn env_probe_source() -> EnvPresenceProbeSource {
+    EnvPresenceProbeSource::from_raw(ENV_PRESENCE_PROBE_SOURCE.load(AtomicOrdering::Relaxed))
+}
+
+#[inline]
+fn host_env_var_present(name: &str) -> bool {
+    match env_probe_source() {
+        EnvPresenceProbeSource::Unsupported => false,
+        EnvPresenceProbeSource::Native | EnvPresenceProbeSource::Uninitialized => {
+            let host = NativeHost;
+            host.env_var_os(name).is_some()
+        }
+    }
+}
+
 #[inline]
 fn is_known_env_presence_probe(name: &'static str) -> bool {
     matches!(
@@ -563,7 +613,7 @@ fn is_known_env_presence_probe(name: &'static str) -> bool {
 
 #[inline]
 fn env_var_present_once(name: &'static str, slot: &'static OnceLock<bool>) -> bool {
-    *slot.get_or_init(|| std::env::var_os(name).is_some())
+    *slot.get_or_init(|| host_env_var_present(name))
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -622,7 +672,7 @@ fn env_var_present_cached(name: &'static str) -> bool {
     let any_probe_enabled = *ANY_PROBE_ENABLED.get_or_init(|| {
         ENV_VAR_PRESENCE_PROBES
             .iter()
-            .any(|probe| std::env::var_os(probe).is_some())
+            .any(|probe| host_env_var_present(probe))
     });
     if !any_probe_enabled && is_known_env_presence_probe(name) {
         return false;
@@ -728,7 +778,7 @@ fn env_var_present_cached(name: &'static str) -> bool {
             static SLOT: OnceLock<bool> = OnceLock::new();
             env_var_present_once(name, &SLOT)
         }
-        _ => std::env::var_os(name).is_some(),
+        _ => host_env_var_present(name),
     }
 }
 
@@ -1258,6 +1308,7 @@ impl Vm {
     }
 
     pub fn new_with_host(host: Arc<dyn VmHost>) -> Self {
+        configure_env_presence_probe_source(host.as_ref());
         let heap = Heap::new();
         let main_module = match heap.alloc_module(ModuleObject::new("__main__")) {
             Value::Module(obj) => obj,

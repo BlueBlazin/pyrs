@@ -27,14 +27,8 @@ class Hit:
 
 
 def allowlisted_reason(path: Path, snippet: str) -> str | None:
-    path_text = str(path)
-    if path_text.endswith("src/vm/mod.rs"):
-        if snippet == "*slot.get_or_init(|| std::env::var_os(name).is_some())":
-            return "central env-probe cache bootstrap"
-        if snippet == ".any(|probe| std::env::var_os(probe).is_some())":
-            return "central env-probe any-enabled fast-path"
-        if snippet == "_ => std::env::var_os(name).is_some(),":
-            return "central env-probe unknown-name fallback"
+    # No allowlisted direct env probes remain under src/vm.
+    _ = (path, snippet)
     return None
 
 
