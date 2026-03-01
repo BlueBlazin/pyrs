@@ -83,6 +83,7 @@ Unknown blocker keys return `None`.
 `wasm_worker_start()` currently returns:
 
 - `success = false`
+- `operation_id = worker_start_<n>`
 - `phase = "unsupported_worker_start"`
 - `state = "unwired"`
 - `blocker_key = "worker_runtime_unwired"`
@@ -91,6 +92,7 @@ Unknown blocker keys return `None`.
 `wasm_worker_terminate()` currently returns:
 
 - `success = false`
+- `operation_id = worker_terminate_<n>`
 - `phase = "unsupported_worker_terminate"`
 - `state = "unwired"`
 - `blocker_key = "worker_runtime_unwired"`
@@ -99,6 +101,7 @@ Unknown blocker keys return `None`.
 `wasm_worker_recycle()` currently returns:
 
 - `success = false`
+- `operation_id = worker_recycle_<n>`
 - `phase = "unsupported_worker_recycle"`
 - `state = "unwired"`
 - `blocker_key = "worker_runtime_unwired"`
@@ -106,6 +109,7 @@ Unknown blocker keys return `None`.
 
 `wasm_worker_set_timeout(timeout_ms)` currently returns:
 
+- `operation_id = worker_set_timeout_<n>`
 - `phase = "unsupported_worker_timeout_enforcement"` for in-range values
   (`50..=120000` ms),
 - `phase = "invalid_worker_timeout"` for out-of-range values.
@@ -127,6 +131,7 @@ enforcement remains unwired.
 - `executes_requested`
 - `timeout_updates_requested`
 - `last_timeout_ms_requested`
+- `last_operation_id`
 - `last_phase`
 - `last_error`
 

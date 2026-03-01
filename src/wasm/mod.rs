@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Once;
 
 use crate::host::{HostCapability, VmHost, WasmHost};
@@ -190,6 +191,12 @@ pub fn wasm_api_version() -> u32 {
 }
 
 static PANIC_HOOK_ONCE: Once = Once::new();
+static NEXT_WASM_WORKER_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_worker_operation_id(action: &str) -> String {
+    let id = NEXT_WASM_WORKER_OPERATION_ID.fetch_add(1, Ordering::Relaxed);
+    format!("worker_{action}_{id}")
+}
 
 /// Installs panic hook once so Rust panic payloads surface in browser console.
 #[wasm_bindgen]
@@ -251,6 +258,7 @@ pub struct WasmWorkerSession {
     executes_requested: usize,
     timeout_updates_requested: usize,
     last_timeout_ms_requested: Option<u32>,
+    last_operation_id: Option<String>,
     last_phase: Option<String>,
     last_error: Option<String>,
 }
@@ -312,6 +320,7 @@ pub struct WasmWorkerTimeoutPolicy {
 #[wasm_bindgen(getter_with_clone)]
 pub struct WasmWorkerTimeoutResult {
     success: bool,
+    operation_id: String,
     phase: String,
     state: String,
     timeout_ms: u32,
@@ -322,6 +331,7 @@ pub struct WasmWorkerTimeoutResult {
 #[wasm_bindgen(getter_with_clone)]
 pub struct WasmWorkerLifecycleResult {
     success: bool,
+    operation_id: String,
     phase: String,
     state: String,
     error: Option<String>,
@@ -549,6 +559,11 @@ impl WasmWorkerTimeoutResult {
     }
 
     #[wasm_bindgen(getter)]
+    pub fn operation_id(&self) -> String {
+        self.operation_id.clone()
+    }
+
+    #[wasm_bindgen(getter)]
     pub fn phase(&self) -> String {
         self.phase.clone()
     }
@@ -579,6 +594,11 @@ impl WasmWorkerLifecycleResult {
     #[wasm_bindgen(getter)]
     pub fn success(&self) -> bool {
         self.success
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn operation_id(&self) -> String {
+        self.operation_id.clone()
     }
 
     #[wasm_bindgen(getter)]
@@ -662,6 +682,7 @@ impl WasmWorkerSession {
             executes_requested: 0,
             timeout_updates_requested: 0,
             last_timeout_ms_requested: None,
+            last_operation_id: None,
             last_phase: None,
             last_error: None,
         }
@@ -674,6 +695,7 @@ impl WasmWorkerSession {
     pub fn start(&mut self) -> WasmWorkerLifecycleResult {
         let result = wasm_worker_start();
         self.starts_requested += 1;
+        self.last_operation_id = Some(result.operation_id.clone());
         self.last_phase = Some(result.phase.clone());
         self.last_error = result.error.clone();
         result
@@ -682,6 +704,7 @@ impl WasmWorkerSession {
     pub fn terminate(&mut self) -> WasmWorkerLifecycleResult {
         let result = wasm_worker_terminate();
         self.terminates_requested += 1;
+        self.last_operation_id = Some(result.operation_id.clone());
         self.last_phase = Some(result.phase.clone());
         self.last_error = result.error.clone();
         result
@@ -690,6 +713,7 @@ impl WasmWorkerSession {
     pub fn recycle(&mut self) -> WasmWorkerLifecycleResult {
         let result = wasm_worker_recycle();
         self.recycles_requested += 1;
+        self.last_operation_id = Some(result.operation_id.clone());
         self.last_phase = Some(result.phase.clone());
         self.last_error = result.error.clone();
         result
@@ -707,6 +731,7 @@ impl WasmWorkerSession {
         let result = wasm_worker_set_timeout(timeout_ms);
         self.timeout_updates_requested += 1;
         self.last_timeout_ms_requested = Some(timeout_ms);
+        self.last_operation_id = Some(result.operation_id.clone());
         self.last_phase = Some(result.phase.clone());
         self.last_error = result.error.clone();
         result
@@ -719,6 +744,7 @@ impl WasmWorkerSession {
         self.executes_requested = 0;
         self.timeout_updates_requested = 0;
         self.last_timeout_ms_requested = None;
+        self.last_operation_id = None;
         self.last_phase = None;
         self.last_error = None;
     }
@@ -751,6 +777,11 @@ impl WasmWorkerSession {
     #[wasm_bindgen(getter)]
     pub fn last_timeout_ms_requested(&self) -> Option<u32> {
         self.last_timeout_ms_requested
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_operation_id(&self) -> Option<String> {
+        self.last_operation_id.clone()
     }
 
     #[wasm_bindgen(getter)]
@@ -1040,6 +1071,7 @@ pub fn wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult {
     if !(WASM_WORKER_TIMEOUT_MIN_MS..=WASM_WORKER_TIMEOUT_MAX_MS).contains(&timeout_ms) {
         return WasmWorkerTimeoutResult {
             success: false,
+            operation_id: next_worker_operation_id("set_timeout"),
             phase: WasmWorkerTimeoutPhase::InvalidTimeout.key().to_string(),
             state: WasmWorkerState::Unwired.key().to_string(),
             timeout_ms,
@@ -1056,6 +1088,7 @@ pub fn wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult {
         .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
     WasmWorkerTimeoutResult {
         success: false,
+        operation_id: next_worker_operation_id("set_timeout"),
         phase: WasmWorkerTimeoutPhase::UnsupportedEnforcement
             .key()
             .to_string(),
@@ -1122,11 +1155,17 @@ pub fn wasm_worker_timeout_phase_keys() -> Array {
 }
 
 fn worker_unwired_result(phase: WasmWorkerLifecyclePhase) -> WasmWorkerLifecycleResult {
+    let action = match phase {
+        WasmWorkerLifecyclePhase::UnsupportedStart => "start",
+        WasmWorkerLifecyclePhase::UnsupportedTerminate => "terminate",
+        WasmWorkerLifecyclePhase::UnsupportedRecycle => "recycle",
+    };
     let blocker_key = WASM_WORKER_BLOCKER_RUNTIME_UNWIRED.to_string();
     let message = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
         .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
     WasmWorkerLifecycleResult {
         success: false,
+        operation_id: next_worker_operation_id(action),
         phase: phase.key().to_string(),
         state: WasmWorkerState::Unwired.key().to_string(),
         error: Some(message),

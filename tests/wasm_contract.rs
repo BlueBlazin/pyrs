@@ -96,6 +96,7 @@ fn wasm_worker_timeout_policy_contract_is_stable() {
 
 #[wasm_bindgen_test]
 fn wasm_worker_timeout_set_contract_is_stable() {
+    let mut operation_ids = HashSet::new();
     for fixture in WASM_WORKER_TIMEOUT_FIXTURES {
         let result = wasm_worker_set_timeout(fixture.timeout_ms);
         assert_eq!(
@@ -150,6 +151,17 @@ fn wasm_worker_timeout_set_contract_is_stable() {
                 fixture.name
             );
         }
+        let operation_id = result.operation_id();
+        assert!(
+            operation_id.starts_with("worker_set_timeout_"),
+            "worker timeout operation id prefix mismatch: {}",
+            fixture.name
+        );
+        assert!(
+            operation_ids.insert(operation_id),
+            "worker timeout operation ids should be unique: {}",
+            fixture.name
+        );
     }
 }
 
@@ -218,6 +230,7 @@ fn wasm_worker_enum_keys_are_stable() {
 
 #[wasm_bindgen_test]
 fn wasm_worker_lifecycle_stub_contract_is_stable() {
+    let mut operation_ids = HashSet::new();
     for fixture in WASM_WORKER_LIFECYCLE_FIXTURES {
         let result = match fixture.action {
             "start" => wasm_worker_start(),
@@ -258,6 +271,17 @@ fn wasm_worker_lifecycle_stub_contract_is_stable() {
         assert!(
             error.contains("not wired"),
             "worker lifecycle error mismatch: {}",
+            fixture.name
+        );
+        let operation_id = result.operation_id();
+        assert!(
+            operation_id.starts_with(&format!("worker_{}_", fixture.action)),
+            "worker lifecycle operation id prefix mismatch: {}",
+            fixture.name
+        );
+        assert!(
+            operation_ids.insert(operation_id),
+            "worker lifecycle operation ids should be unique: {}",
             fixture.name
         );
     }
@@ -316,6 +340,7 @@ fn wasm_worker_session_contract_is_stable() {
     assert_eq!(session.executes_requested(), 0);
     assert_eq!(session.timeout_updates_requested(), 0);
     assert!(session.last_timeout_ms_requested().is_none());
+    assert!(session.last_operation_id().is_none());
     assert!(session.last_phase().is_none());
     assert!(session.last_error().is_none());
 
@@ -326,6 +351,7 @@ fn wasm_worker_session_contract_is_stable() {
     let start = session.start();
     assert_eq!(start.phase(), "unsupported_worker_start");
     assert_eq!(session.starts_requested(), 1);
+    assert_eq!(session.last_operation_id(), Some(start.operation_id()));
     assert_eq!(
         session
             .last_phase()
@@ -336,6 +362,7 @@ fn wasm_worker_session_contract_is_stable() {
     let terminate = session.terminate();
     assert_eq!(terminate.phase(), "unsupported_worker_terminate");
     assert_eq!(session.terminates_requested(), 1);
+    assert_eq!(session.last_operation_id(), Some(terminate.operation_id()));
     assert_eq!(
         session
             .last_phase()
@@ -347,6 +374,7 @@ fn wasm_worker_session_contract_is_stable() {
     let recycle = session.recycle();
     assert_eq!(recycle.phase(), "unsupported_worker_recycle");
     assert_eq!(session.recycles_requested(), 1);
+    assert_eq!(session.last_operation_id(), Some(recycle.operation_id()));
     assert_eq!(
         session
             .last_phase()
@@ -374,6 +402,10 @@ fn wasm_worker_session_contract_is_stable() {
     assert_eq!(session.timeout_updates_requested(), 1);
     assert_eq!(session.last_timeout_ms_requested(), Some(0));
     assert_eq!(
+        session.last_operation_id(),
+        Some(invalid_timeout.operation_id())
+    );
+    assert_eq!(
         session
             .last_phase()
             .expect("last phase after worker timeout update should exist"),
@@ -388,6 +420,7 @@ fn wasm_worker_session_contract_is_stable() {
     );
     assert_eq!(session.timeout_updates_requested(), 2);
     assert_eq!(session.last_timeout_ms_requested(), Some(5_000));
+    assert_eq!(session.last_operation_id(), Some(timeout.operation_id()));
     assert_eq!(
         session
             .last_phase()
@@ -403,6 +436,7 @@ fn wasm_worker_session_contract_is_stable() {
     assert_eq!(session.executes_requested(), 0);
     assert_eq!(session.timeout_updates_requested(), 0);
     assert!(session.last_timeout_ms_requested().is_none());
+    assert!(session.last_operation_id().is_none());
     assert!(session.last_phase().is_none());
     assert!(session.last_error().is_none());
 }

@@ -115,6 +115,7 @@ This document defines the JS-facing contract currently exported by
 ## `WasmWorkerTimeoutResult`
 
 - `success: bool`
+- `operation_id: String` (shape: `worker_set_timeout_<n>`)
 - `phase: String` (`"unsupported_worker_timeout_enforcement"`, `"invalid_worker_timeout"`)
 - `state: String` (currently `"unwired"`)
 - `timeout_ms: u32`
@@ -124,6 +125,7 @@ This document defines the JS-facing contract currently exported by
 ## `WasmWorkerLifecycleResult`
 
 - `success: bool`
+- `operation_id: String` (shape: `worker_<action>_<n>`)
 - `phase: String` (`"unsupported_worker_start"`, `"unsupported_worker_terminate"`, `"unsupported_worker_recycle"`)
 - `state: String` (currently `"unwired"`)
 - `error: Option<String>`
@@ -232,6 +234,7 @@ This document defines the JS-facing contract currently exported by
 - `executes_requested: usize`
 - `timeout_updates_requested: usize`
 - `last_timeout_ms_requested: Option<u32>`
+- `last_operation_id: Option<String>`
 - `last_phase: Option<String>`
 - `last_error: Option<String>`
 

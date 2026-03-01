@@ -319,6 +319,8 @@ Completed on this branch:
   root-cause signaling alongside `execution_backend_unwired`.
 - latest: snippet preflight now exports canonical import roots via
   `wasm_snippet_import_roots(source)` for deterministic client dependency UI.
+- latest: worker lifecycle/timeout results now include monotonic operation IDs,
+  and `WasmWorkerSession` tracks `last_operation_id` for telemetry correlation.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
