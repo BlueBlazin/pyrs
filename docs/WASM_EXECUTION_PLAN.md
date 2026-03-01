@@ -230,6 +230,7 @@ Completed on this branch:
 - `c32b066`: wasm-target contract smoke harness + targeted wasm test compile lane.
 - `5c1664c`: `vm_execution` env/debug probes routed through host seam.
 - `5b75de5`: `vm_native_dispatch` env/debug probes routed through host seam.
+- `05a3bb8`: `vm_runtime_methods` env/debug probes routed through host seam.
 
 Remaining near-term focus:
 1. W3: expand `WasmHost` capability stubs and error contracts for unsupported features.
