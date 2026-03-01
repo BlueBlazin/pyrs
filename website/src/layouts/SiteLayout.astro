@@ -11,6 +11,7 @@ interface Props {
 }
 
 const { title, description, noindex = false } = Astro.props;
+const copyScriptSrc = `${import.meta.env.BASE_URL}scripts/copy-buttons.js`;
 ---
 
 <html lang="en">
@@ -26,7 +27,7 @@ const { title, description, noindex = false } = Astro.props;
 			</main>
 			<Footer variant="home" />
 		</div>
-		<script is:inline src="/scripts/copy-buttons.js"></script>
+		<script is:inline src={copyScriptSrc}></script>
 	</body>
 </html>
 

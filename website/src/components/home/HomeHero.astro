@@ -1,5 +1,7 @@
 ---
 import ButtonLink from "../ButtonLink.astro";
+
+const withBase = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, "")}`;
 ---
 
 <section class="hero">
@@ -33,14 +35,14 @@ import ButtonLink from "../ButtonLink.astro";
 		<div class="shot-stack" role="img" aria-label="PYRS REPL screenshots">
 			<img
 				class="shot shot-base"
-				src="/images/repl/repl1.png"
+				src={withBase("images/repl/repl1.png")}
 				alt="PYRS REPL screenshot showing syntax highlighting and dataclass usage"
 				loading="eager"
 				decoding="async"
 			/>
 			<img
 				class="shot shot-overlay"
-				src="/images/repl/repl2.png"
+				src={withBase("images/repl/repl2.png")}
 				alt="PYRS REPL screenshot showing refined syntax highlighting and output"
 				loading="eager"
 				decoding="async"

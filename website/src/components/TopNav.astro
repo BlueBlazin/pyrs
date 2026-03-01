@@ -6,15 +6,16 @@ interface Props {
 const { context = "home" } = Astro.props;
 const isHome = context === "home";
 const intrinsicLogoSize = 68;
+const withBase = (path = "") => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, "")}`;
 ---
 
 <header class="global-topbar" data-context={context}>
-	<a class="global-brand" href="/">
-		<img src="/images/pyrs-logo.png" alt="PYRS logo" width={intrinsicLogoSize} height={intrinsicLogoSize} />
+	<a class="global-brand" href={withBase("")}>
+		<img src={withBase("images/pyrs-logo.png")} alt="PYRS logo" width={intrinsicLogoSize} height={intrinsicLogoSize} />
 		<span>PYRS</span>
 	</a>
 	<nav class="global-topnav">
-		{context === "home" ? <a href="/docs/">Docs</a> : <a href="/">Home</a>}
+		{context === "home" ? <a href={withBase("docs/")}>Docs</a> : <a href={withBase("")}>Home</a>}
 		<a href="https://github.com/BlueBlazin/pyrs">GitHub</a>
 	</nav>
 </header>

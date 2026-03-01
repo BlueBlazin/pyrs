@@ -7,22 +7,24 @@ interface Props {
 	noindex?: boolean;
 }
 
-const { title, description, image = "/images/pyrs-logo.png", url, noindex = false } = Astro.props;
+const withBase = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, "")}`;
+const { title, description, image = "images/pyrs-logo.png", url, noindex = false } = Astro.props;
+const normalizedImage = image.startsWith("http://") || image.startsWith("https://") ? image : withBase(image);
 const absoluteImage = (() => {
 	if (!url) {
-		return image;
+		return normalizedImage;
 	}
 	try {
-		return new URL(image, url).toString();
+		return new URL(normalizedImage, url).toString();
 	} catch {
-		return image;
+		return normalizedImage;
 	}
 })();
 ---
 
 <meta charset="utf-8" />
-<link rel="icon" type="image/png" href="/images/pyrs-logo.png" />
-<link rel="manifest" href="/site.webmanifest" />
+<link rel="icon" type="image/png" href={withBase("images/pyrs-logo.png")} />
+<link rel="manifest" href={withBase("site.webmanifest")} />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="generator" content={Astro.generator} />
 <title>{title}</title>
