@@ -35,6 +35,7 @@ Use this file to find canonical ownership quickly.
 - `docs/VM_ERROR_MODEL_REFACTOR.md`: plan to replace string-based runtime error classification with typed exception transport.
 - `docs/STDLIB_MIGRATION_PLAN.md`: pure-stdlib-first migration policy.
 - `docs/ENGINEERING_GATES.md`: mandatory process and quality gates.
+- `docs/COVERAGE_GATE_POLICY.json`: policy source for coverage-gate floors, ignores, and targeted test bins.
 
 ## Performance and Optimization
 - `docs/OPTIMIZATION_PLAN.md`: optimization execution policy/workstreams.
@@ -52,3 +53,8 @@ Use this file to find canonical ownership quickly.
 - `docs/CLONE_AUDIT.md`, `docs/CLONE_BASELINE.txt`: clone pressure inventory.
 - `docs/MILESTONE_12_BACKLOG.md`: historical milestone-12 closure report.
 - `docs/DEVELOPER_TOOLING.md`: optional local dev tooling install and sanitizer runbook.
+
+## Testing Guidance Consolidation
+- Canonical local test-runner guidance (including `cargo nextest` defaults): `docs/DEVELOPER_TOOLING.md`.
+- Canonical CI/process gate definitions: `docs/ENGINEERING_GATES.md`.
+- Canonical coverage-gate policy inputs: `docs/COVERAGE_GATE_POLICY.json`.

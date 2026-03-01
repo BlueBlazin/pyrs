@@ -24,7 +24,7 @@ Status values:
 
 | Surface | Gap summary | Closure criteria | Required evidence | Status | Milestone |
 |---|---|---|---|---|---|
-| `pickle`/`pickletools`/`copyreg` | Deferred strict pickle harness lane still times out. | Deferred strict pickle harness lane is re-enabled, green, and allowlist is empty. | `PYRS_RUN_DEFERRED_PICKLE=1 cargo test -q --test cpython_harness runs_cpython_deferred_pickle_suite` | IN_PROGRESS | 13 |
+| `pickle`/`pickletools`/`copyreg` | Deferred strict pickle harness lane still times out. | Deferred strict pickle harness lane is re-enabled, green, and allowlist is empty. | `export PYRS_RUN_DEFERRED_PICKLE=1; cargo nextest run --test cpython_harness runs_cpython_deferred_pickle_suite` | IN_PROGRESS | 13 |
 | `_io` | Strict stdlib still depends on remaining `_io` edge semantics. | Remaining `_io`-dependent strict-harness-lane failures are closed. | strict harness pass + targeted `tests/vm.rs` regressions for each closed edge | IN_PROGRESS | 13 |
 | `json` | Common workflows are green; long-tail semantics/hardening/perf closure is open. | `json` pure + accelerator parity closed, malformed-input differential coverage closed, perf baseline recorded. | `test_json` parity + differential probes + benchmark artifact | IN_PROGRESS | 13 |
 | `_csv`/`csv` | Common workflows are green; long-tail dialect/error parity is open. | `test_csv` parity closed with malformed-input hardening and perf baseline. | `test_csv` parity + differential probes + benchmark artifact | IN_PROGRESS | 13 |

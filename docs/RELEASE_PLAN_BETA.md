@@ -34,12 +34,12 @@ The plan is intentionally parked until core blockers are reduced. Key blockers i
 
 Required green commands:
 
-1. `cargo test -q`
+1. `cargo nextest run`
 2. `./scripts/run_parity_gate.sh`
-3. `PYRS_RUN_STRICT_STDLIB=1 cargo test -q --test cpython_harness runs_cpython_strict_stdlib_suite`
-4. `PYRS_RUN_DEFERRED_PICKLE=1 cargo test -q --test cpython_harness runs_cpython_deferred_pickle_suite`
-5. `PYRS_COVERAGE_ENFORCE=1 PYRS_COVERAGE_POLICY_FILE=docs/COVERAGE_GATE_POLICY.json ./scripts/run_coverage_gate.sh`
-6. `cargo test -q --test repl_interactive` (plus opt-in PTY lane in trusted runners: `PYRS_RUN_PTY_REPL_TEST=1`)
+3. `export PYRS_RUN_STRICT_STDLIB=1; cargo nextest run --test cpython_harness runs_cpython_strict_stdlib_suite`
+4. `export PYRS_RUN_DEFERRED_PICKLE=1; cargo nextest run --test cpython_harness runs_cpython_deferred_pickle_suite`
+5. `export PYRS_COVERAGE_ENFORCE=1; export PYRS_COVERAGE_POLICY_FILE=docs/COVERAGE_GATE_POLICY.json; ./scripts/run_coverage_gate.sh`
+6. `cargo nextest run --test repl_interactive` (plus opt-in PTY lane in trusted runners: `export PYRS_RUN_PTY_REPL_TEST=1`)
 
 ## 2. Packaging and Legal
 
@@ -54,6 +54,7 @@ Required green commands:
 2. add release workflow (build matrix, checksum generation, signing, publish)
 3. publish signed binaries + checksum manifest to GitHub Releases
 4. publish crate to crates.io from release tag
+5. for Homebrew tap updates, configure repository secret `HOMEBREW_TAP_TOKEN` with push access to `BlueBlazin/homebrew-tap` (workflow now safely skips this lane when token is absent)
 
 ## 4. Release Documentation
 

@@ -73,4 +73,4 @@ Status:
 ## Notes
 - Active strict harness lane suite: `tests/cpython_suite_strict_stdlib.txt`
 - Deferred strict pickle harness lane suite: `tests/cpython_suite_deferred_pickle.txt`
-- Deferred strict pickle harness lane opt-in: `PYRS_RUN_DEFERRED_PICKLE=1 cargo test -q --test cpython_harness runs_cpython_deferred_pickle_suite`
+- Deferred strict pickle harness lane opt-in: `export PYRS_RUN_DEFERRED_PICKLE=1; cargo nextest run --test cpython_harness runs_cpython_deferred_pickle_suite`

@@ -130,12 +130,12 @@ Required evidence:
 
 Run this pipeline continuously during Milestone 13 and Milestone 14:
 
-1. `cargo test --quiet --lib` (module-local helper gates)
-2. `cargo test --quiet`
-3. curated CPython harness suites (`tests/cpython_harness.rs`)
-4. differential corpus tests (`tests/differential_cpython.rs`)
-5. fuzz/no-panic suites (`tests/fuzz_parser_vm.rs`)
-6. runtime leak regression lane (`tests/gc_regression.rs`)
+1. `cargo nextest run` (primary local full-suite gate)
+2. `cargo test --quiet --lib` (module-local helper gates)
+3. curated CPython harness suites (`cargo nextest run --test cpython_harness`)
+4. differential corpus tests (`cargo nextest run --test differential_cpython`)
+5. fuzz/no-panic suites (`cargo nextest run --test fuzz_parser_vm`)
+6. runtime leak regression lane (`cargo nextest run --test gc_regression`)
 7. targeted algorithmic audits from `docs/ALGO_AUDIT_BACKLOG.md`
 8. stub/no-op drift gate (`tests/noop_inventory.rs`)
 9. coverage gate summary (`scripts/run_coverage_gate.sh`; floors/test scope/ignore rules are policy-driven via `docs/COVERAGE_GATE_POLICY.json`, CI enforces the current ratchet when `PYRS_COVERAGE_ENFORCE=1`, local runs remain report-only by default)

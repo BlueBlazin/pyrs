@@ -64,8 +64,8 @@ Targets:
 ## Validation
 
 Minimum validation for builtin optimization checkpoints:
-1. `cargo test -q --test vm`
-2. `cargo test -q --test differential_cpython`
+1. `cargo nextest run --test vm`
+2. `cargo nextest run --test differential_cpython`
 3. `./scripts/run_builtin_parity_gate.sh`
 4. benchmark deltas:
    - `scripts/bench_fib_gate.sh 5`
