@@ -39,3 +39,13 @@ jobs:
 
       - name: Build and validate internal links
         run: pnpm build:check
+
+      - name: Generate size baseline report
+        run: pnpm report:size
+
+      - name: Upload website size report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: website-build-size-report
+          path: website/perf/build_size_latest.json
+          if-no-files-found: error
