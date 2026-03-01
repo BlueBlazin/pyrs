@@ -1,0 +1,23 @@
+---
+import InstallTerminal from "./InstallTerminal.astro";
+
+type InstallLine = string | { text: string; prompt?: boolean };
+
+interface Props {
+	title: string;
+	description: string;
+	lines: InstallLine[];
+	recommended?: boolean;
+}
+
+const { title, description, lines, recommended = false } = Astro.props;
+---
+
+<article class="install-method">
+	<div class="install-method-head">
+		<h3>{title}</h3>
+		{recommended && <span class="install-chip">Recommended</span>}
+	</div>
+	<p>{description}</p>
+	<InstallTerminal lines={lines} />
+</article>

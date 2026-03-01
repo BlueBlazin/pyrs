@@ -1,7 +1,101 @@
 ---
 import TopNav from "../components/TopNav.astro";
 import SiteHead from "../components/SiteHead.astro";
+import InstallMethod from "../components/home/InstallMethod.astro";
 import "../styles/global.css";
+
+type InstallLine = string | { text: string; prompt?: boolean };
+type InstallMethodData = {
+	title: string;
+	description: string;
+	recommended?: boolean;
+	lines: InstallLine[];
+};
+
+const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
+	macos: [
+		{
+			title: "Cargo install (GitHub)",
+			description: "Install pyrs into your cargo bin directory directly from GitHub.",
+			recommended: true,
+			lines: [
+				"cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs",
+				"pyrs --version",
+			],
+		},
+		{
+			title: "Cargo (source build)",
+			description: "Build directly from source with Rust stable.",
+			lines: [
+				"git clone https://github.com/BlueBlazin/pyrs.git",
+				"cd pyrs",
+				"cargo build --release",
+				"target/release/pyrs",
+			],
+		},
+		{
+			title: "Docker (nightly container)",
+			description: "Run the latest published nightly image from GHCR.",
+			lines: [
+				"docker pull ghcr.io/blueblazin/pyrs:nightly",
+				"docker run --rm -it ghcr.io/blueblazin/pyrs:nightly",
+			],
+		},
+		{
+			title: "Nightly archive",
+			description: "Download the latest MacOS nightly archive for your architecture.",
+			lines: [
+				"ARCH=\"$(uname -m)\"",
+				"case \"$ARCH\" in",
+				{ text: "  arm64) PKG=\"pyrs-nightly-aarch64-apple-darwin.tar.gz\" ;;", prompt: false },
+				{ text: "  *)     PKG=\"pyrs-nightly-x86_64-apple-darwin.tar.gz\" ;;", prompt: false },
+				{ text: "esac", prompt: false },
+				"curl -L \"https://github.com/BlueBlazin/pyrs/releases/download/nightly/$PKG\" -o \"$PKG\"",
+				"tar -xzf \"$PKG\"",
+				"./pyrs --version",
+			],
+		},
+	],
+	linux: [
+		{
+			title: "Cargo install (GitHub)",
+			description: "Install pyrs into your cargo bin directory directly from GitHub.",
+			recommended: true,
+			lines: [
+				"cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs",
+				"pyrs --version",
+			],
+		},
+		{
+			title: "Cargo (source build)",
+			description: "Build from source and run the release binary locally.",
+			lines: [
+				"git clone https://github.com/BlueBlazin/pyrs.git",
+				"cd pyrs",
+				"cargo build --release",
+				"target/release/pyrs",
+			],
+		},
+		{
+			title: "Docker (nightly container)",
+			description: "Use the nightly container as a fast runtime path.",
+			lines: [
+				"docker pull ghcr.io/blueblazin/pyrs:nightly",
+				"docker run --rm -it ghcr.io/blueblazin/pyrs:nightly",
+			],
+		},
+		{
+			title: "Nightly archive",
+			description: "Fetch the latest Linux nightly binary archive.",
+			lines: [
+				"PKG=\"pyrs-nightly-x86_64-unknown-linux-gnu.tar.gz\"",
+				"curl -L \"https://github.com/BlueBlazin/pyrs/releases/download/nightly/$PKG\" -o \"$PKG\"",
+				"tar -xzf \"$PKG\"",
+				"./pyrs --version",
+			],
+		},
+	],
+};
 ---
 
 <html lang="en">
@@ -111,169 +205,29 @@ import "../styles/global.css";
 						<div class="install-surface">
 							<div class="install-panels">
 								<div class="install-panel" id="install-panel-macos">
-									<article class="install-method">
-										<div class="install-method-head">
-											<h3>Cargo install (GitHub)</h3>
-											<span class="install-chip">Recommended</span>
-										</div>
-										<p>Install pyrs into your cargo bin directory directly from GitHub.</p>
-										<div class="terminal">
-											<div class="terminal-bar">
-												<div class="terminal-lights" aria-hidden="true">
-													<span class="term-light term-light-red"></span>
-													<span class="term-light term-light-amber"></span>
-													<span class="term-light term-light-green"></span>
-												</div>
-												<span class="terminal-title">shell</span>
-												<button class="cmd-copy" type="button">Copy</button>
-											</div>
-											<pre class="cmd-box"><code><span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">pyrs --version</span></span></code></pre>
-										</div>
-									</article>
-
-									<article class="install-method">
-										<h3>Cargo (source build)</h3>
-										<p>Build directly from source with Rust stable.</p>
-										<div class="terminal">
-											<div class="terminal-bar">
-												<div class="terminal-lights" aria-hidden="true">
-													<span class="term-light term-light-red"></span>
-													<span class="term-light term-light-amber"></span>
-													<span class="term-light term-light-green"></span>
-												</div>
-												<span class="terminal-title">shell</span>
-												<button class="cmd-copy" type="button">Copy</button>
-											</div>
-											<pre class="cmd-box"><code><span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">git clone https://github.com/BlueBlazin/pyrs.git</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">cd pyrs</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">cargo build --release</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">target/release/pyrs</span></span></code></pre>
-										</div>
-									</article>
-
-									<article class="install-method">
-										<h3>Docker (nightly container)</h3>
-										<p>Run the latest published nightly image from GHCR.</p>
-										<div class="terminal">
-											<div class="terminal-bar">
-												<div class="terminal-lights" aria-hidden="true">
-													<span class="term-light term-light-red"></span>
-													<span class="term-light term-light-amber"></span>
-													<span class="term-light term-light-green"></span>
-												</div>
-												<span class="terminal-title">shell</span>
-												<button class="cmd-copy" type="button">Copy</button>
-											</div>
-											<pre class="cmd-box"><code><span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">docker pull ghcr.io/blueblazin/pyrs:nightly</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">docker run --rm -it ghcr.io/blueblazin/pyrs:nightly</span></span></code></pre>
-										</div>
-									</article>
-
-									<article class="install-method">
-										<h3>Nightly archive</h3>
-										<p>Download the latest MacOS nightly archive for your architecture.</p>
-										<div class="terminal">
-											<div class="terminal-bar">
-												<div class="terminal-lights" aria-hidden="true">
-													<span class="term-light term-light-red"></span>
-													<span class="term-light term-light-amber"></span>
-													<span class="term-light term-light-green"></span>
-												</div>
-												<span class="terminal-title">shell</span>
-												<button class="cmd-copy" type="button">Copy</button>
-											</div>
-											<pre class="cmd-box"><code><span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">ARCH="$(uname -m)"</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">case "$ARCH" in</span></span>
-<span class="cmd-line"><span class="cmd-prompt cmd-prompt-empty" aria-hidden="true"></span><span class="cmd-text">  arm64) PKG="pyrs-nightly-aarch64-apple-darwin.tar.gz" ;;</span></span>
-<span class="cmd-line"><span class="cmd-prompt cmd-prompt-empty" aria-hidden="true"></span><span class="cmd-text">  *)     PKG="pyrs-nightly-x86_64-apple-darwin.tar.gz" ;;</span></span>
-<span class="cmd-line"><span class="cmd-prompt cmd-prompt-empty" aria-hidden="true"></span><span class="cmd-text">esac</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">curl -L "https://github.com/BlueBlazin/pyrs/releases/download/nightly/$PKG" -o "$PKG"</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">tar -xzf "$PKG"</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">./pyrs --version</span></span></code></pre>
-										</div>
-									</article>
+									{
+										installMethods.macos.map((method) => (
+											<InstallMethod
+												title={method.title}
+												description={method.description}
+												recommended={method.recommended}
+												lines={method.lines}
+											/>
+										))
+									}
 								</div>
 
 								<div class="install-panel" id="install-panel-linux">
-									<article class="install-method">
-										<div class="install-method-head">
-											<h3>Cargo install (GitHub)</h3>
-											<span class="install-chip">Recommended</span>
-										</div>
-										<p>Install pyrs into your cargo bin directory directly from GitHub.</p>
-										<div class="terminal">
-											<div class="terminal-bar">
-												<div class="terminal-lights" aria-hidden="true">
-													<span class="term-light term-light-red"></span>
-													<span class="term-light term-light-amber"></span>
-													<span class="term-light term-light-green"></span>
-												</div>
-												<span class="terminal-title">shell</span>
-												<button class="cmd-copy" type="button">Copy</button>
-											</div>
-											<pre class="cmd-box"><code><span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">pyrs --version</span></span></code></pre>
-										</div>
-									</article>
-
-									<article class="install-method">
-										<h3>Cargo (source build)</h3>
-										<p>Build from source and run the release binary locally.</p>
-										<div class="terminal">
-											<div class="terminal-bar">
-												<div class="terminal-lights" aria-hidden="true">
-													<span class="term-light term-light-red"></span>
-													<span class="term-light term-light-amber"></span>
-													<span class="term-light term-light-green"></span>
-												</div>
-												<span class="terminal-title">shell</span>
-												<button class="cmd-copy" type="button">Copy</button>
-											</div>
-											<pre class="cmd-box"><code><span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">git clone https://github.com/BlueBlazin/pyrs.git</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">cd pyrs</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">cargo build --release</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">target/release/pyrs</span></span></code></pre>
-										</div>
-									</article>
-
-									<article class="install-method">
-										<h3>Docker (nightly container)</h3>
-										<p>Use the nightly container as a fast runtime path.</p>
-										<div class="terminal">
-											<div class="terminal-bar">
-												<div class="terminal-lights" aria-hidden="true">
-													<span class="term-light term-light-red"></span>
-													<span class="term-light term-light-amber"></span>
-													<span class="term-light term-light-green"></span>
-												</div>
-												<span class="terminal-title">shell</span>
-												<button class="cmd-copy" type="button">Copy</button>
-											</div>
-											<pre class="cmd-box"><code><span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">docker pull ghcr.io/blueblazin/pyrs:nightly</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">docker run --rm -it ghcr.io/blueblazin/pyrs:nightly</span></span></code></pre>
-										</div>
-									</article>
-
-									<article class="install-method">
-										<h3>Nightly archive</h3>
-										<p>Fetch the latest Linux nightly binary archive.</p>
-										<div class="terminal">
-											<div class="terminal-bar">
-												<div class="terminal-lights" aria-hidden="true">
-													<span class="term-light term-light-red"></span>
-													<span class="term-light term-light-amber"></span>
-													<span class="term-light term-light-green"></span>
-												</div>
-												<span class="terminal-title">shell</span>
-												<button class="cmd-copy" type="button">Copy</button>
-											</div>
-											<pre class="cmd-box"><code><span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">PKG="pyrs-nightly-x86_64-unknown-linux-gnu.tar.gz"</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">curl -L "https://github.com/BlueBlazin/pyrs/releases/download/nightly/$PKG" -o "$PKG"</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">tar -xzf "$PKG"</span></span>
-<span class="cmd-line"><span class="cmd-prompt" aria-hidden="true">$</span><span class="cmd-text">./pyrs --version</span></span></code></pre>
-										</div>
-									</article>
+									{
+										installMethods.linux.map((method) => (
+											<InstallMethod
+												title={method.title}
+												description={method.description}
+												recommended={method.recommended}
+												lines={method.lines}
+											/>
+										))
+									}
 								</div>
 							</div>
 						</div>
@@ -282,38 +236,6 @@ import "../styles/global.css";
 
 			</main>
 		</div>
-		<script>
-			(() => {
-				const copyButtons = document.querySelectorAll(".cmd-copy");
-				for (const button of copyButtons) {
-					button.addEventListener("click", async () => {
-						const terminal = button.closest(".terminal");
-						if (!terminal) {
-							return;
-						}
-						const lines = terminal.querySelectorAll(".cmd-text");
-						const payload = Array.from(lines)
-							.map((line) => line.textContent ?? "")
-							.join("\n");
-						const reset = () => {
-							button.textContent = "Copy";
-							button.classList.remove("copied");
-							button.classList.remove("copy-failed");
-						};
-						try {
-							await navigator.clipboard.writeText(payload);
-							button.textContent = "Copied";
-							button.classList.add("copied");
-							window.setTimeout(reset, 1300);
-						} catch {
-							button.textContent = "Failed";
-							button.classList.add("copy-failed");
-							window.setTimeout(reset, 1500);
-						}
-					});
-				}
-			})();
-		</script>
 	</body>
 </html>
 

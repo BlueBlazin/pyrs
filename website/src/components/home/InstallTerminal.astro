@@ -1,0 +1,61 @@
+---
+type InstallLine = string | { text: string; prompt?: boolean };
+
+interface Props {
+	lines: InstallLine[];
+}
+
+const { lines } = Astro.props;
+const normalized = lines.map((line) =>
+	typeof line === "string"
+		? { text: line, prompt: true }
+		: { text: line.text, prompt: line.prompt ?? true },
+);
+const copyPayload = normalized.map((line) => line.text).join("\n");
+---
+
+<div class="terminal">
+	<div class="terminal-bar">
+		<div class="terminal-lights" aria-hidden="true">
+			<span class="term-light term-light-red"></span>
+			<span class="term-light term-light-amber"></span>
+			<span class="term-light term-light-green"></span>
+		</div>
+		<span class="terminal-title">shell</span>
+		<button class="cmd-copy" type="button" data-copy={copyPayload}>Copy</button>
+	</div>
+	<pre class="cmd-box"><code>{
+		normalized.map((line) => (
+			<span class="cmd-line">
+				<span class={line.prompt ? "cmd-prompt" : "cmd-prompt cmd-prompt-empty"} aria-hidden="true">$</span>
+				<span class="cmd-text">{line.text}</span>
+			</span>
+		))
+	}</code></pre>
+</div>
+
+<script>
+	const terminal = document.currentScript?.previousElementSibling;
+	const button = terminal?.querySelector(".cmd-copy");
+	if (button) {
+		let resetTimer;
+		button.addEventListener("click", async () => {
+			const payload = button.getAttribute("data-copy") || "";
+			const reset = () => {
+				button.textContent = "Copy";
+				button.classList.remove("copied");
+				button.classList.remove("copy-failed");
+			};
+			try {
+				await navigator.clipboard.writeText(payload);
+				button.textContent = "Copied";
+				button.classList.add("copied");
+			} catch {
+				button.textContent = "Failed";
+				button.classList.add("copy-failed");
+			}
+			clearTimeout(resetTimer);
+			resetTimer = window.setTimeout(reset, 1300);
+		});
+	}
+</script>
