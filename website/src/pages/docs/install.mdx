@@ -1,0 +1,85 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Installation
+description: Installation guide for PYRS on macOS and Linux.
+pageTitle: Installation
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import CommandBlock from "../../components/docs/CommandBlock.astro";
+
+<DocSection>
+	Use any of the supported install paths below based on your workflow.
+</DocSection>
+
+<DocSection title="Cargo Install from GitHub">
+	Recommended for quickly getting a global `pyrs` binary in your cargo bin directory.
+	<CommandBlock
+		commands={[
+			"cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs",
+			"pyrs --version",
+		]}
+	/>
+</DocSection>
+
+<DocSection title="Cargo Install (Repo Path)">
+	Install from a local repository checkout with a locked dependency graph.
+	<CommandBlock
+		commands={[
+			"git clone https://github.com/BlueBlazin/pyrs.git",
+			"cd pyrs",
+			"cargo install --locked --path .",
+			"pyrs --version",
+		]}
+	/>
+</DocSection>
+
+<DocSection title="Cargo Source Build">
+	Build and run directly from a local clone without installing into cargo bin.
+	<CommandBlock
+		commands={[
+			"git clone https://github.com/BlueBlazin/pyrs.git",
+			"cd pyrs",
+			"cargo build --release",
+			"target/release/pyrs --version",
+		]}
+	/>
+</DocSection>
+
+<DocSection title="Docker Nightly Container">
+	Use the nightly container published to GHCR.
+	<CommandBlock
+		commands={[
+			"docker pull ghcr.io/blueblazin/pyrs:nightly",
+			"docker run --rm -it ghcr.io/blueblazin/pyrs:nightly",
+		]}
+	/>
+</DocSection>
+
+<DocSection title="Nightly Archives">
+	Use GitHub nightly release archives for direct binary usage without a local Rust toolchain.
+
+	<h3 class="m-0 text-[1.02rem] font-semibold tracking-[-0.01em] text-docs-text">macOS</h3>
+	<CommandBlock
+		commands={[
+			"ARCH=\"$(uname -m)\"",
+			"case \"$ARCH\" in",
+			"  arm64) PKG=\"pyrs-nightly-aarch64-apple-darwin.tar.gz\" ;;",
+			"  *)     PKG=\"pyrs-nightly-x86_64-apple-darwin.tar.gz\" ;;",
+			"esac",
+			"curl -L \"https://github.com/BlueBlazin/pyrs/releases/download/nightly/$PKG\" -o \"$PKG\"",
+			"tar -xzf \"$PKG\"",
+			"./pyrs --version",
+		]}
+	/>
+
+	<h3 class="m-0 pt-2 text-[1.02rem] font-semibold tracking-[-0.01em] text-docs-text">Linux</h3>
+	<CommandBlock
+		commands={[
+			"PKG=\"pyrs-nightly-x86_64-unknown-linux-gnu.tar.gz\"",
+			"curl -L \"https://github.com/BlueBlazin/pyrs/releases/download/nightly/$PKG\" -o \"$PKG\"",
+			"tar -xzf \"$PKG\"",
+			"./pyrs --version",
+		]}
+	/>
+</DocSection>

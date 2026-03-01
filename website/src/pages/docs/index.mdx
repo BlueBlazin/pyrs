@@ -1,0 +1,54 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Getting Started
+description: Getting started guide for PYRS runtime usage and first execution flow.
+pageTitle: Getting Started
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import CommandBlock from "../../components/docs/CommandBlock.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	PYRS is a Python interpreter in Rust targeting CPython 3.14 compatibility. This page covers the
+	fastest way to install, verify, and run code.
+</DocSection>
+
+<DocSection title="Prerequisites">
+	<ul class="m-0 list-disc space-y-1.5 pl-5">
+		<li>Rust stable toolchain (`rustup`, `cargo`)</li>
+		<li>Git</li>
+		<li>macOS or Linux</li>
+	</ul>
+</DocSection>
+
+<DocSection title="Install and Verify">
+	Install the latest `pyrs` from GitHub and verify your binary is available.
+	<CommandBlock
+		commands={[
+			"cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs",
+			"pyrs --version",
+		]}
+	/>
+	<Callout title="Need more options">
+		For all install methods (Cargo source build, Docker, nightly archives), open the{" "}
+		<a class="font-medium text-[#b7c8eb] no-underline hover:text-[#d8e1f6]" href="/docs/install/">Installation page</a>.
+	</Callout>
+</DocSection>
+
+<DocSection title="Run Python">
+	Start with REPL, inline command mode, and source-file execution.
+	<CommandBlock
+		commands={["pyrs", "pyrs -c \"import sys; print(sys.version)\"", "pyrs path/to/script.py"]}
+	/>
+</DocSection>
+
+<DocSection title="Next Steps">
+	<ul class="m-0 list-disc space-y-1.5 pl-5">
+		<li>
+			Review <a class="font-medium text-[#b7c8eb] no-underline hover:text-[#d8e1f6]" href="/docs/reference/">CLI and Environment Reference</a>.
+		</li>
+		<li>Use `pyrs --help` to inspect runtime options directly from the binary.</li>
+		<li>Track release and compatibility progress in the project repository.</li>
+	</ul>
+</DocSection>
