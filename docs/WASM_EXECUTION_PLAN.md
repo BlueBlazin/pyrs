@@ -333,6 +333,8 @@ Completed on this branch:
   (`wasm_host_unsupported_message_matrix_matches_supports`) in branch/smoke scripts.
 - latest: worker operation-id prefix expectations are now fixture-driven across
   lifecycle/timeout/execute wasm contract tests.
+- latest: operation-id docs now explicitly scope guarantees to prefix shape +
+  per-process uniqueness (no cross-run ordering contract).
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
