@@ -197,7 +197,7 @@ impl Vm {
             {
                 return Err(err);
             }
-            if std::env::var_os("PYRS_TRACE_PROXY_CALL_FAIL").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_PROXY_CALL_FAIL") {
                 const MIN_VALID_PTR: usize = 0x1_0000_0000;
                 let valid_object_ptr = (raw_ptr as usize) >= MIN_VALID_PTR
                     && (raw_ptr as usize) % std::mem::align_of::<usize>() == 0;
@@ -307,7 +307,7 @@ impl Vm {
             return Err(RuntimeError::new(detail));
         }
         let converted = call_ctx.cpython_value_from_owned_ptr(result_ptr);
-        if converted.is_none() && std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
+        if converted.is_none() && super::super::env_var_present_cached("PYRS_TRACE_CPY_UNKNOWN_PTR") {
             let mut type_ptr: *mut CpythonTypeObject = std::ptr::null_mut();
             let mut type_name = "<invalid-ptr>".to_string();
             const MIN_VALID_PTR: usize = 0x1_0000_0000;
@@ -1024,7 +1024,7 @@ impl Vm {
                 .last_error
                 .clone()
                 .unwrap_or_else(|| "proxy getitem failed".to_string());
-            if std::env::var_os("PYRS_TRACE_PROXY_GETITEM").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_PROXY_GETITEM") {
                 eprintln!(
                     "[proxy-getitem] target={} key={} raw_ptr={:p} error={}",
                     format_repr(target),
@@ -1183,15 +1183,15 @@ impl Vm {
             None
         };
         let c_name = CString::new(attr_name).ok()?;
-        let trace_proxy_attr = std::env::var_os("PYRS_TRACE_PROXY_ATTR").is_some()
+        let trace_proxy_attr = super::super::env_var_present_cached("PYRS_TRACE_PROXY_ATTR")
             && matches!(
                 attr_name,
                 "base" | "identity" | "newbyteorder" | "__ge__" | "char"
             );
         let trace_proxy_max =
-            attr_name == "max" && std::env::var_os("PYRS_TRACE_PROXY_MAX").is_some();
+            attr_name == "max" && super::super::env_var_present_cached("PYRS_TRACE_PROXY_MAX");
         let trace_type_attr =
-            attr_name == "type" && std::env::var_os("PYRS_TRACE_PROXY_TYPE_ATTR").is_some();
+            attr_name == "type" && super::super::env_var_present_cached("PYRS_TRACE_PROXY_TYPE_ATTR");
         if trace_type_attr {
             let (raw_type, raw_type_name) = unsafe {
                 let raw_type = raw_ptr
@@ -1291,18 +1291,18 @@ impl Vm {
         );
         if !is_proxy_type_object
             && (slot_dunder_fastpath
-                || std::env::var_os("PYRS_ENABLE_PROXY_TP_DICT_FASTPATH").is_some())
+                || super::super::env_var_present_cached("PYRS_ENABLE_PROXY_TP_DICT_FASTPATH"))
             && let Some(attr_ptr) = call_ctx.lookup_type_attr_via_tp_dict(raw_ptr, attr_name)
             && !attr_ptr.is_null()
         {
-            if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_PROXY_ATTR_CALL") {
                 eprintln!(
                     "[proxy-attr-map] source=tp_dict target={:p} attr={} value_ptr={:p}",
                     raw_ptr, attr_name, attr_ptr
                 );
             }
             let mapped = call_ctx.cpython_value_from_borrowed_ptr(attr_ptr);
-            if mapped.is_none() && std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+            if mapped.is_none() && super::super::env_var_present_cached("PYRS_TRACE_PROXY_ATTR_CALL") {
                 let probable = ModuleCapiContext::is_probable_external_cpython_object_ptr(attr_ptr);
                 let owned = call_ctx.owns_cpython_allocation_ptr(attr_ptr);
                 let local_handle = call_ctx.cpython_handle_from_ptr(attr_ptr);
@@ -1419,7 +1419,7 @@ impl Vm {
                         attr_name, fallback_ptr
                     );
                 }
-                if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_PROXY_ATTR_CALL") {
                     eprintln!(
                         "[proxy-attr-map] source=tp_dict_fallback target={:p} attr={} value_ptr={:p}",
                         raw_ptr, attr_name, fallback_ptr
@@ -1453,7 +1453,7 @@ impl Vm {
                 attr_name, attr_ptr
             );
         }
-        if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_PROXY_ATTR_CALL") {
             let proxy_tag = cpython_value_debug_tag(proxy_value);
             let (attr_type_ptr, attr_type_name) = unsafe {
                 let type_ptr = attr_ptr
@@ -1480,7 +1480,7 @@ impl Vm {
             && let Some(fallback_ptr) = call_ctx.lookup_type_attr_via_tp_dict(raw_ptr, attr_name)
             && !fallback_ptr.is_null()
         {
-            if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_PROXY_ATTR_CALL") {
                 eprintln!(
                     "[proxy-attr-map] source=getattr_unmapped_tp_dict_fallback target={:p} attr={} value_ptr={:p}",
                     raw_ptr, attr_name, fallback_ptr
@@ -1498,7 +1498,7 @@ impl Vm {
                 raw_ptr, mapped_tag
             );
         }
-        if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_PROXY_ATTR_CALL") {
             let proxy_tag = cpython_value_debug_tag(proxy_value);
             let mapped_tag = mapped
                 .as_ref()
