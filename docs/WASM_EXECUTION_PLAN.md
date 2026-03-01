@@ -236,6 +236,10 @@ Completed on this branch:
 - `05a3bb8`: `vm_runtime_methods` env/debug probes routed through host seam.
 - `3fe94f6`: import pending trace probes routed through host seam.
 - `e3473a7`: locale/hostname env lookups routed through host seam.
+- `30d9c45`: `vm/ops` trace probes switched to shared env-probe helper.
+
+Latest host seam audit (local branch run):
+- `python3 scripts/audit_wasm_host_seam.py` => `total_hits=396`.
 
 Remaining near-term focus:
 1. W3: expand `WasmHost` capability stubs and error contracts for unsupported features.
