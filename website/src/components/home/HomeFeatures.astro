@@ -1,0 +1,206 @@
+---
+type FeatureItem = {
+	title: string;
+	summary: string;
+	labels: string[];
+};
+
+const features: FeatureItem[] = [
+	{
+		title: "CPython 3.14 Semantic Parity",
+		summary:
+			"Grammar behavior, bytecode execution, and runtime contracts are continuously aligned against CPython expectations.",
+		labels: ["Parser parity", "Differential gates", "Runtime contracts"],
+	},
+	{
+		title: "Bytecode + Source Execution Modes",
+		summary:
+			"Run Python from source files, stdin, REPL sessions, or compiled bytecode with consistent interpreter behavior.",
+		labels: ["Source mode", ".pyc support", "Interactive REPL"],
+	},
+	{
+		title: "Scientific-Stack Bring-Up",
+		summary:
+			"C-API closure is tracked as a first-class roadmap lane, focused on pragmatic extension compatibility for real workloads.",
+		labels: ["C-API closure", "NumPy gate", "ABI coverage"],
+	},
+	{
+		title: "Production-Focused Diagnostics",
+		summary:
+			"Tracebacks, syntax diagnostics, and location metadata are shaped for high signal when debugging parity and runtime issues.",
+		labels: ["Traceback fidelity", "Caret spans", "Location metadata"],
+	},
+];
+---
+
+<section class="home-features" id="features" aria-labelledby="home-features-title">
+	<p class="features-eyebrow">Features</p>
+	<div class="features-head">
+		<h2 id="home-features-title">Built for parity work, tuned for real execution.</h2>
+		<p>
+			PYRS pairs strict compatibility goals with implementation discipline so teams can move from local experimentation to
+			serious runtime validation.
+		</p>
+	</div>
+
+	<ol class="feature-list">
+		{
+			features.map((feature, index) => (
+				<li class="feature-row">
+					<span class="feature-index">#{String(index + 1).padStart(2, "0")}</span>
+					<div class="feature-copy">
+						<h3>{feature.title}</h3>
+						<p>{feature.summary}</p>
+						<div class="feature-labels" aria-label={`${feature.title} labels`}>
+							{feature.labels.map((label) => (
+								<span>{label}</span>
+							))}
+						</div>
+					</div>
+				</li>
+			))
+		}
+	</ol>
+</section>
+
+<style>
+	.home-features {
+		position: relative;
+		margin-top: 0.4rem;
+		padding: 0.4rem 0 0;
+	}
+
+	.home-features::before {
+		content: "";
+		position: absolute;
+		inset: -1.4rem 0 auto;
+		height: 16rem;
+		background: radial-gradient(50% 50% at 20% 0%, rgba(216, 149, 99, 0.14), transparent 72%);
+		pointer-events: none;
+	}
+
+	.features-eyebrow {
+		margin: 0 0 0.9rem;
+		color: var(--accent-2);
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		font-size: 0.78rem;
+		font-weight: 600;
+	}
+
+	.features-head {
+		display: grid;
+		grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+		gap: 1.4rem;
+		align-items: end;
+	}
+
+	.features-head h2 {
+		margin: 0;
+		font-size: clamp(1.92rem, 5.2vw, 3.15rem);
+		line-height: 1.04;
+		letter-spacing: -0.03em;
+		text-wrap: balance;
+	}
+
+	.features-head p {
+		margin: 0 0 0.22rem;
+		max-width: 42ch;
+		color: var(--text-muted);
+		font-size: 0.98rem;
+		line-height: 1.58;
+	}
+
+	.feature-list {
+		list-style: none;
+		margin: 1.55rem 0 0;
+		padding: 0;
+		border-top: 1px solid #4b3327;
+	}
+
+	.feature-row {
+		display: grid;
+		grid-template-columns: 4.35rem minmax(0, 1fr);
+		gap: 0.9rem;
+		padding: 1.05rem 0 1.15rem;
+		border-bottom: 1px solid #38241b;
+	}
+
+	.feature-index {
+		display: inline-flex;
+		padding-top: 0.2rem;
+		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.79rem;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		color: #d99a6c;
+	}
+
+	.feature-copy h3 {
+		margin: 0;
+		font-size: clamp(1.14rem, 2.7vw, 1.52rem);
+		line-height: 1.2;
+		letter-spacing: -0.01em;
+	}
+
+	.feature-copy p {
+		margin: 0.52rem 0 0;
+		max-width: 66ch;
+		color: var(--text-muted);
+		font-size: 0.93rem;
+		line-height: 1.56;
+	}
+
+	.feature-labels {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-top: 0.72rem;
+	}
+
+	.feature-labels span {
+		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.74rem;
+		letter-spacing: 0.03em;
+		text-transform: uppercase;
+		color: #c18a63;
+	}
+
+	.feature-labels span + span::before {
+		content: "•";
+		display: inline-block;
+		margin-right: 0.5rem;
+		color: #6a4634;
+	}
+
+	@media (max-width: 860px) {
+		.features-head {
+			grid-template-columns: 1fr;
+			gap: 0.88rem;
+		}
+
+		.features-head p {
+			margin: 0;
+		}
+
+		.feature-row {
+			grid-template-columns: 3.25rem minmax(0, 1fr);
+		}
+	}
+
+	@media (max-width: 560px) {
+		.feature-row {
+			grid-template-columns: 1fr;
+			gap: 0.36rem;
+			padding: 0.94rem 0 1rem;
+		}
+
+		.feature-index {
+			padding-top: 0;
+		}
+
+		.feature-copy p {
+			font-size: 0.9rem;
+		}
+	}
+</style>
