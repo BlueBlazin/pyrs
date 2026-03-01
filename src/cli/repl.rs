@@ -118,13 +118,13 @@ fn resolve_repl_theme_from_env() -> ReplThemeMode {
 fn repl_palette(theme: ResolvedReplTheme) -> ReplPalette {
     match theme {
         ResolvedReplTheme::Dark => ReplPalette {
-            keyword_style: Style::new().fg(AnsiColor::Fixed(45)).bold(),
+            keyword_style: Style::new().fg(AnsiColor::Fixed(25)).bold(),
             class_name_style: Style::new().fg(AnsiColor::Fixed(203)).bold(),
             function_name_style: Style::new().fg(AnsiColor::Fixed(214)).bold(),
             decorator_style: Style::new().fg(AnsiColor::Fixed(111)),
             type_name_style: Style::new().fg(AnsiColor::Fixed(220)),
-            number_style: Style::new().fg(AnsiColor::Fixed(207)),
-            string_style: Style::new().fg(AnsiColor::Fixed(49)),
+            number_style: Style::new().fg(AnsiColor::Fixed(204)),
+            string_style: Style::new().fg(AnsiColor::Fixed(42)),
             comment_style: Style::new().italic().fg(AnsiColor::Fixed(244)),
             hint_style: Style::new().italic().fg(AnsiColor::LightGray),
         },
@@ -134,8 +134,8 @@ fn repl_palette(theme: ResolvedReplTheme) -> ReplPalette {
             function_name_style: Style::new().fg(AnsiColor::Fixed(166)).bold(),
             decorator_style: Style::new().fg(AnsiColor::Fixed(61)),
             type_name_style: Style::new().fg(AnsiColor::Fixed(130)),
-            number_style: Style::new().fg(AnsiColor::Fixed(162)),
-            string_style: Style::new().fg(AnsiColor::Fixed(28)),
+            number_style: Style::new().fg(AnsiColor::Fixed(161)),
+            string_style: Style::new().fg(AnsiColor::Fixed(22)),
             comment_style: Style::new().italic().fg(AnsiColor::Fixed(102)),
             hint_style: Style::new().italic().fg(AnsiColor::DarkGray),
         },
