@@ -878,6 +878,13 @@ fn wasm_syntax_and_execute_contract() {
     assert_eq!(unsupported.line(), 0);
     assert_eq!(unsupported.column(), 0);
 
+    let blocked = execute("import socket\n");
+    assert!(!blocked.success());
+    assert_eq!(blocked.phase(), "unsupported_execution");
+    assert_eq!(blocked.blocker_key(), Some("network_sockets".to_string()));
+    assert!(blocked.error().is_some());
+    assert!(blocked.stderr().contains("network_sockets"));
+
     let compile_error = execute("return 1\n");
     assert!(!compile_error.success());
     assert_eq!(compile_error.phase(), "compile_error");

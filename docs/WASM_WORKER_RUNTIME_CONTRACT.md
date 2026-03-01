@@ -122,7 +122,11 @@ enforcement remains unwired.
 
 - `phase = "syntax_error"` when parse fails,
 - `phase = "compile_error"` when parse succeeds but compile fails,
-- `phase = "unsupported_worker_execution"` when parse+compile succeed but worker backend is unwired.
+- `phase = "unsupported_worker_execution"` when parse+compile succeed.
+  - `blocker_key = "<capability_key>"` when source imports known
+    wasm-blocked module capabilities (for example `network_sockets`).
+  - `blocker_key = "worker_runtime_unwired"` when no capability preflight
+    blocker applies and worker backend remains unwired.
 
 `wasm_worker_execute_with_operation(source)` mirrors
 `wasm_worker_execute(source)` and also returns:

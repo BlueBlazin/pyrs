@@ -119,6 +119,19 @@ def parse_source_worker_blocker_key(wasm_source: str) -> str:
     return match.group(1)
 
 
+def parse_source_module_policy_blocker_keys(wasm_source: str) -> list[str]:
+    match = re.search(
+        r"const\s+WASM_MODULE_BLOCKER_POLICY:[^=]*=\s*\[(.*?)\];",
+        wasm_source,
+        flags=re.DOTALL,
+    )
+    if not match:
+        raise ValueError("unable to parse WASM_MODULE_BLOCKER_POLICY from wasm source")
+    body = match.group(1)
+    rows = re.findall(r'\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*\)', body)
+    return unique(rows)
+
+
 def validate_non_empty(name: str, values: list[str], errors: list[str]) -> None:
     if not values:
         errors.append(f"{name} must not be empty")
@@ -208,6 +221,10 @@ def main() -> int:
     source_lifecycle_actions = parse_source_lifecycle_actions(wasm_source)
     source_operation_actions = parse_source_operation_actions(wasm_source)
     source_worker_blocker_key = parse_source_worker_blocker_key(wasm_source)
+    source_module_policy_blocker_keys = parse_source_module_policy_blocker_keys(wasm_source)
+    allowed_execute_unsupported_blocker_keys = sorted(
+        {source_worker_blocker_key, *source_module_policy_blocker_keys}
+    )
 
     expected_lifecycle_prefixes = unique(
         [f"worker_{action}_" for action in source_lifecycle_actions]
@@ -310,10 +327,10 @@ def main() -> int:
     else:
         for phase, blocker_key in zip(execute_fixture_phases, execute_blocker_keys, strict=True):
             if phase == "unsupported_worker_execution":
-                if blocker_key != source_worker_blocker_key:
+                if blocker_key not in allowed_execute_unsupported_blocker_keys:
                     errors.append(
-                        "worker execute unsupported phase must use source blocker key "
-                        f"'{source_worker_blocker_key}'"
+                        "worker execute unsupported phase must use an allowed blocker key "
+                        f"{allowed_execute_unsupported_blocker_keys}"
                     )
             elif blocker_key is not None:
                 errors.append(
@@ -353,6 +370,8 @@ def main() -> int:
             "timeout_phase": source_timeout_phase_keys,
         },
         "source_worker_blocker_key": source_worker_blocker_key,
+        "source_module_policy_blocker_keys": source_module_policy_blocker_keys,
+        "allowed_execute_unsupported_blocker_keys": allowed_execute_unsupported_blocker_keys,
         "operation_prefixes": {
             "lifecycle": unique(lifecycle_operation_prefixes),
             "execute": unique(execute_operation_prefixes),

@@ -136,10 +136,16 @@ def validate(
             )
 
         if fixture.expected_execute_phase == "unsupported_execution":
-            if fixture.expected_execute_blocker_key != source_backend_blocker_key:
+            if fixture.expected_support_phase == "blocked_capability":
+                if fixture.expected_execute_blocker_key != fixture.expected_first_blocker_key:
+                    errors.append(
+                        f"{fixture.name}: blocked_capability unsupported_execution must align "
+                        "expected_execute_blocker_key with expected_first_blocker_key"
+                    )
+            elif fixture.expected_execute_blocker_key != source_backend_blocker_key:
                 errors.append(
                     f"{fixture.name}: unsupported_execution must use expected_execute_blocker_key="
-                    f"'{source_backend_blocker_key}'"
+                    f"'{source_backend_blocker_key}' when support phase is not blocked_capability"
                 )
         elif fixture.expected_execute_blocker_key is not None:
             errors.append(

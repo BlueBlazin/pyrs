@@ -1343,30 +1343,37 @@ pub fn wasm_worker_recycle() -> WasmWorkerLifecycleResult {
 /// Current milestone behavior:
 /// - parse-invalid input returns `phase = "syntax_error"`,
 /// - parse-valid but compile-invalid input returns `phase = "compile_error"`,
-/// - parse+compile-valid input returns `phase = "unsupported_worker_execution"` until worker
-///   runtime execution is wired.
+/// - parse+compile-valid snippets that import known blocked modules return
+///   `phase = "unsupported_worker_execution"` with capability-specific blocker keys,
+/// - remaining parse+compile-valid input returns `phase = "unsupported_worker_execution"` until
+///   worker runtime execution is wired.
 #[wasm_bindgen]
 pub fn wasm_worker_execute(source: &str) -> WasmExecutionResult {
-    let compile = check_compile_result(source);
-    if !compile.ok {
-        let error = compile.error;
-        let phase = if compile.phase == "syntax_error" {
-            WasmWorkerExecutePhase::SyntaxError.key().to_string()
-        } else {
-            WasmWorkerExecutePhase::CompileError.key().to_string()
-        };
-        let stderr = error
-            .clone()
-            .unwrap_or_else(|| "worker parse/compile check failed".to_string());
+    let host = WasmHost;
+    let first_blocker = match first_snippet_capability_blocker(source, &host) {
+        Ok(blocker) => blocker,
+        Err(compile) => {
+            return compile_failure_to_execution_result(
+                compile,
+                WasmWorkerExecutePhase::SyntaxError.key(),
+                WasmWorkerExecutePhase::CompileError.key(),
+                "worker parse/compile check failed",
+            );
+        }
+    };
+
+    if let Some(blocker) = first_blocker {
         return WasmExecutionResult {
             success: false,
-            phase,
+            phase: WasmWorkerExecutePhase::UnsupportedExecution
+                .key()
+                .to_string(),
             stdout: String::new(),
-            stderr,
-            error,
-            blocker_key: None,
-            line: compile.line,
-            column: compile.column,
+            stderr: blocker.message.clone(),
+            error: Some(blocker.message),
+            blocker_key: Some(blocker.blocker_key),
+            line: 0,
+            column: 0,
         };
     }
 
@@ -1567,6 +1574,44 @@ fn parse_and_compile_module(source: &str) -> Result<crate::ast::Module, WasmComp
     }
 }
 
+fn compile_failure_to_execution_result(
+    compile: WasmCompileResult,
+    syntax_phase_key: &str,
+    compile_phase_key: &str,
+    fallback_error: &str,
+) -> WasmExecutionResult {
+    let error = compile.error;
+    let stderr = error
+        .clone()
+        .unwrap_or_else(|| fallback_error.to_string());
+    let phase = if compile.phase == "syntax_error" {
+        syntax_phase_key.to_string()
+    } else {
+        compile_phase_key.to_string()
+    };
+    WasmExecutionResult {
+        success: false,
+        phase,
+        stdout: String::new(),
+        stderr,
+        error,
+        blocker_key: None,
+        line: compile.line,
+        column: compile.column,
+    }
+}
+
+fn first_snippet_capability_blocker(
+    source: &str,
+    host: &dyn VmHost,
+) -> Result<Option<WasmSnippetBlocker>, WasmCompileResult> {
+    let module = parse_and_compile_module(source)?;
+    let import_roots = collect_import_roots(&module);
+    Ok(snippet_blockers_from_import_roots(&import_roots, host)
+        .into_iter()
+        .next())
+}
+
 fn snippet_blockers_from_import_roots(
     import_roots: &[String],
     host: &dyn VmHost,
@@ -1703,30 +1748,35 @@ pub fn wasm_execution_blocker_error(blocker_key: &str) -> Option<String> {
 /// Current milestone behavior:
 /// - parse-invalid input returns `phase = "syntax_error"`
 /// - parse-valid but compile-invalid input returns `phase = "compile_error"`
-/// - parse+compile-valid input returns `phase = "unsupported_execution"`
-///   until runtime execution is wired for wasm.
+/// - parse+compile-valid snippets that import known blocked modules return
+///   `phase = "unsupported_execution"` with capability-specific blocker keys,
+/// - remaining parse+compile-valid input returns `phase = "unsupported_execution"` until runtime
+///   execution is wired for wasm.
 #[wasm_bindgen]
 pub fn execute(source: &str) -> WasmExecutionResult {
-    let compile = check_compile_result(source);
-    if !compile.ok {
-        let error = compile.error;
-        let stderr = error
-            .clone()
-            .unwrap_or_else(|| "parse/compile check failed".to_string());
-        let phase = if compile.phase == "syntax_error" {
-            WasmExecutionPhase::SyntaxError.key().to_string()
-        } else {
-            WasmExecutionPhase::CompileError.key().to_string()
-        };
+    let host = WasmHost;
+    let first_blocker = match first_snippet_capability_blocker(source, &host) {
+        Ok(blocker) => blocker,
+        Err(compile) => {
+            return compile_failure_to_execution_result(
+                compile,
+                WasmExecutionPhase::SyntaxError.key(),
+                WasmExecutionPhase::CompileError.key(),
+                "parse/compile check failed",
+            );
+        }
+    };
+
+    if let Some(blocker) = first_blocker {
         return WasmExecutionResult {
             success: false,
-            phase,
+            phase: WasmExecutionPhase::UnsupportedExecution.key().to_string(),
             stdout: String::new(),
-            stderr,
-            error,
-            blocker_key: None,
-            line: compile.line,
-            column: compile.column,
+            stderr: blocker.message.clone(),
+            error: Some(blocker.message),
+            blocker_key: Some(blocker.blocker_key),
+            line: 0,
+            column: 0,
         };
     }
 
@@ -1873,6 +1923,13 @@ mod tests {
     }
 
     #[test]
+    fn wasm_execute_blocked_import_sets_capability_blocker_key() {
+        let result = execute("import socket\n");
+        assert_eq!(result.phase(), "unsupported_execution".to_string());
+        assert_eq!(result.blocker_key(), Some("network_sockets".to_string()));
+    }
+
+    #[test]
     fn wasm_execute_parse_compile_failures_have_no_blocker_key() {
         let compile_error = execute("return 1\n");
         assert_eq!(compile_error.phase(), "compile_error".to_string());
@@ -1902,5 +1959,15 @@ mod tests {
         let compile_error = wasm_worker_execute("return 1\n");
         assert_eq!(compile_error.phase(), "compile_error".to_string());
         assert!(compile_error.blocker_key().is_none());
+    }
+
+    #[test]
+    fn wasm_worker_execute_blocked_import_sets_capability_blocker_key() {
+        let blocked = wasm_worker_execute("import socket\n");
+        assert_eq!(
+            blocked.phase(),
+            "unsupported_worker_execution".to_string()
+        );
+        assert_eq!(blocked.blocker_key(), Some("network_sockets".to_string()));
     }
 }

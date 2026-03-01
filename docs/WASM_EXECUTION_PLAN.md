@@ -392,6 +392,14 @@ Completed on this branch:
 - latest: pointer-threshold guards now use a shared width-safe
   `MIN_VALID_PTR_THRESHOLD` across vm extension surfaces, removing wasm32
   `usize` overflow compile blockers from `0x1_0000_0000` literals.
+- latest: top-level `execute()` and `wasm_worker_execute()` now perform
+  capability preflight on parse+compile-valid snippets and return
+  capability-specific blocker keys for known blocked imports (falling back to
+  backend/worker-unwired blocker keys when no capability blocker applies).
+- latest: worker execute contract summary validation now accepts
+  module-policy-derived capability blocker keys in unsupported worker execute
+  fixtures (in addition to runtime-unwired key), preserving source/fixture
+  parity while capability preflight expands.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
@@ -406,8 +414,8 @@ Remaining near-term focus:
 Current `wasm-vm-probe` snapshot (non-gating, latest local run):
 - compile status: `scripts/probe_wasm_vm_compile.sh` now completes without
   compile errors.
-- current probe debt is warning-only (unused imports/locals and dead-code paths
-  in `builtins_os`/`vm/mod` under wasm-vm probe) and does not block compile.
+- current probe status is clean in the scripted probe lane (no active compile
+  blockers and no warning debt from the most recent local probe run).
 
 ## Risk Register
 

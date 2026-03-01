@@ -86,6 +86,15 @@ pub const WASM_WORKER_EXECUTE_FIXTURES: &[WasmWorkerExecuteFixture] = &[
         expect_error: true,
         expect_line_column: false,
     },
+    WasmWorkerExecuteFixture {
+        name: "worker_execute_blocked_socket",
+        expected_operation_prefix: "worker_execute_",
+        source: "import socket\n",
+        expected_phase: "unsupported_worker_execution",
+        expected_blocker_key: Some("network_sockets"),
+        expect_error: true,
+        expect_line_column: false,
+    },
 ];
 
 pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[

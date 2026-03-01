@@ -23,7 +23,7 @@ pub const WASM_CONTRACT_SNIPPET_FIXTURES: &[WasmContractSnippetFixture] = &[
         source: "import socket\n",
         expected_compile_phase: "ok",
         expected_execute_phase: "unsupported_execution",
-        expected_execute_blocker_key: Some("execution_backend_unwired"),
+        expected_execute_blocker_key: Some("network_sockets"),
         expected_support_phase: "blocked_capability",
         expected_first_blocker_key: Some("network_sockets"),
     },
