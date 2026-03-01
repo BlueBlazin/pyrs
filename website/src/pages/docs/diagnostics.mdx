@@ -1,0 +1,64 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Diagnostics and Tracebacks
+description: Syntax and runtime diagnostic behavior in PYRS tracebacks.
+pageTitle: Diagnostics and Tracebacks
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import CodeBlock from "../../components/docs/CodeBlock.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	PYRS emits CPython-shaped traceback output for syntax and runtime failures, including source context
+	and caret spans where source location data is available.
+</DocSection>
+
+<DocSection title="Runtime Traceback Shape">
+	<DataTable headers={["Element", "Behavior"]}>
+		<tr>
+			<td>Frame lines</td>
+			<td><code>File ... , line N, in ...</code> style output with ordered frame stack.</td>
+		</tr>
+		<tr>
+			<td>Source context</td>
+			<td>Source line and caret span render when location text is available.</td>
+		</tr>
+		<tr>
+			<td>Exception footer</td>
+			<td>Typed footer formatting follows CPython conventions (including key exception text behaviors).</td>
+		</tr>
+		<tr>
+			<td>Cause/context chain</td>
+			<td>Direct cause and context sections are emitted in CPython-style traceback chaining flow.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Syntax Diagnostics">
+	<CodeBlock
+		label="Example"
+		code={`>>> def broken(
+...     pass
+  File "<stdin>", line 2
+    pass
+    ^^^^
+SyntaxError: invalid syntax`}
+	/>
+	<p>
+		Parser and semantic syntax failures are surfaced as `SyntaxError`-style diagnostics with file/line
+		context and CPython-oriented message classes.
+	</p>
+</DocSection>
+
+<DocSection title="Error-Report Expectations">
+	<ul class="m-0 list-disc space-y-1.5 pl-5">
+		<li>Unhandled exceptions should preserve original exception type, not wrap traceback text in a new runtime error.</li>
+		<li>Re-raised exceptions should preserve traceback-chain fidelity for the original fault context.</li>
+		<li>Diff tests are used to keep traceback shape aligned with CPython behavior over time.</li>
+	</ul>
+	<Callout title="Troubleshooting">
+		When reporting a diagnostics mismatch, provide a minimal reproducer and both CPython + PYRS outputs.
+	</Callout>
+</DocSection>

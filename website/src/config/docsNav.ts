@@ -21,6 +21,7 @@ export const docsNavGroups: DocsNavGroup[] = [
 		label: "Reference",
 		items: [
 			{ href: "/docs/reference/", label: "CLI and Environment" },
+			{ href: "/docs/diagnostics/", label: "Diagnostics and Tracebacks" },
 			{ href: "/docs/import-paths/", label: "Import and Stdlib Paths" },
 			{ href: "/docs/compatibility/", label: "Compatibility Targets" },
 		],
