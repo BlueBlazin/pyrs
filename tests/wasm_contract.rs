@@ -751,9 +751,10 @@ fn wasm_execution_blocker_contract_is_stable() {
 #[wasm_bindgen_test]
 fn wasm_execution_blockers_match_capability_matrix() {
     let capabilities = wasm_capabilities();
-    let mut expected = HashSet::new();
-    expected.insert("execution_backend_unwired".to_string());
-    expected.insert("vm_runtime_unavailable".to_string());
+    let mut expected = vec![
+        "execution_backend_unwired".to_string(),
+        "vm_runtime_unavailable".to_string(),
+    ];
     for fixture in WASM_CAPABILITY_FIXTURES {
         let supported = capability_supported(&capabilities, fixture.key);
         assert_eq!(
@@ -762,22 +763,24 @@ fn wasm_execution_blockers_match_capability_matrix() {
             fixture.key
         );
         if !supported {
-            expected.insert(fixture.key.to_string());
+            expected.push(fixture.key.to_string());
         }
     }
 
     let keys = wasm_execution_blocker_keys();
-    let mut listed_keys = HashSet::new();
+    let mut listed_keys = Vec::new();
     for index in 0..keys.length() {
         let key = keys
             .get(index)
             .as_string()
             .expect("blocker key should be string");
-        listed_keys.insert(key);
+        listed_keys.push(key);
     }
     assert_eq!(listed_keys, expected);
+    let listed_key_set: HashSet<String> = listed_keys.iter().cloned().collect();
+    assert_eq!(listed_key_set.len(), expected.len());
 
-    for key in listed_keys {
+    for key in &listed_keys {
         let message = wasm_execution_blocker_error(&key)
             .unwrap_or_else(|| panic!("missing blocker error for key: {key}"));
         assert!(!message.trim().is_empty());
