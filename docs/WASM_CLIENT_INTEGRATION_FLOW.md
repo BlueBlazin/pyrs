@@ -69,6 +69,13 @@ pyrs.init_wasm_runtime();
 
 const runtime = pyrs.wasm_runtime_info();
 const worker = pyrs.wasm_worker_info();
+const timeoutPolicy = pyrs.wasm_worker_timeout_policy();
+
+const timeoutResult = pyrs.wasm_worker_set_timeout(timeoutPolicy.default_timeout_ms);
+if (timeoutResult.phase === "invalid_worker_timeout") {
+  showError(timeoutResult.error);
+  return;
+}
 
 const support = pyrs.wasm_snippet_support(code);
 if (support.phase === "syntax_error" || support.phase === "compile_error") {
@@ -80,10 +87,12 @@ if (support.phase === "blocked_capability") {
   showBlockers(blockers);
   return;
 }
+const importRoots = pyrs.wasm_snippet_import_roots(code);
+showImports(importRoots);
 
-const result = pyrs.execute(code);
-if (result.phase === "unsupported_execution") {
-  showInfo(result.error ?? "Execution backend not wired yet");
+const result = pyrs.wasm_worker_execute_with_operation(code);
+if (result.phase === "unsupported_worker_execution") {
+  showInfo(`${result.operation_id}: ${result.error ?? "Execution backend not wired yet"}`);
 }
 ```
 
