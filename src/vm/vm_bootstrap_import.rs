@@ -779,7 +779,7 @@ impl Vm {
     }
 
     pub(super) fn install_stdlib_modules(&mut self) {
-        let platform = match std::env::consts::OS {
+        let platform = match self.host.os_name() {
             "macos" => "darwin",
             other => other,
         };

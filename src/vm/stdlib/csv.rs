@@ -757,7 +757,7 @@ impl Vm {
         match active {
             Some(Value::Exception(exception)) => {
                 let exception = *exception;
-                let message = if std::env::var_os("PYRS_TRACE_ACTIVE_EXCEPTION_TRACEBACK").is_some()
+                let message = if super::super::env_var_present_cached("PYRS_TRACE_ACTIVE_EXCEPTION_TRACEBACK")
                 {
                     self.format_traceback(&[], &Value::Exception(Box::new(exception.clone())))
                 } else {

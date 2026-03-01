@@ -648,7 +648,7 @@ pub unsafe extern "C" fn PyMapping_GetItemString(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyMapping_Check(object: *mut c_void) -> i32 {
-    let trace_mapping_check = std::env::var_os("PYRS_TRACE_PYMAPPING_CHECK").is_some();
+    let trace_mapping_check = super::super::env_var_present_cached("PYRS_TRACE_PYMAPPING_CHECK");
     if object.is_null() {
         return 0;
     }

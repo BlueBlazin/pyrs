@@ -146,7 +146,7 @@ impl Vm {
         } else if cfg!(target_os = "linux") {
             "Linux".to_string()
         } else {
-            std::env::consts::OS.to_string()
+            self.host.os_name().to_string()
         };
         let nodename = self
             .host

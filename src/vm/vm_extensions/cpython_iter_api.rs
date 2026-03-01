@@ -80,7 +80,7 @@ fn cpython_iter_next_for_capi(vm: &mut Vm, iter: &Value) -> Result<Option<Value>
     if !cpython_value_is_iterator_for_capi(vm, iter)? {
         return Err(RuntimeError::new("expected an iterator"));
     }
-    let trace_iter_next = std::env::var_os("PYRS_TRACE_CPY_ITERNEXT").is_some();
+    let trace_iter_next = super::super::env_var_present_cached("PYRS_TRACE_CPY_ITERNEXT");
     if trace_iter_next {
         let tag = match iter {
             Value::Iterator(_) => "iterator",

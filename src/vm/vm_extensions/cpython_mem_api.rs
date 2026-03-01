@@ -54,12 +54,12 @@ pub unsafe extern "C" fn PyMem_RawFree(ptr: *mut c_void) {
         }
     }) {
         if suppress_free {
-            if std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_PTRS") {
                 eprintln!("[cpy-ptr] suppress free for compat ptr={:p}", ptr);
             }
             return;
         }
-        if deregistered_vm_pin && std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some() {
+        if deregistered_vm_pin && super::super::env_var_present_cached("PYRS_TRACE_CPY_PTRS") {
             eprintln!("[cpy-ptr] free deregistered pinned ptr={:p}", ptr);
         }
     }

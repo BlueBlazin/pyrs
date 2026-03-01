@@ -523,7 +523,7 @@ pub unsafe extern "C" fn PyBytes_AsString(object: *mut c_void) -> *mut c_char {
             if let Some(ptr) = foreign_bytes_payload(object) {
                 return ptr;
             }
-            if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() && !object.is_null() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") && !object.is_null() {
                 // SAFETY: candidate object pointer for diagnostics only.
                 let ty = unsafe { (*object.cast::<CpythonObjectHead>()).ob_type };
                 let ty_name = unsafe {
@@ -536,7 +536,7 @@ pub unsafe extern "C" fn PyBytes_AsString(object: *mut c_void) -> *mut c_char {
                     "[cpy-bytes] as_string mismatch object={:p} type={:p} type_name={}",
                     object, ty, ty_name
                 );
-                if std::env::var_os("PYRS_TRACE_PYBYTES_CALLER_BT").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_PYBYTES_CALLER_BT") {
                     let seen = PYBYTES_ASSTRING_MISMATCH_BT_COUNT.fetch_add(1, Ordering::Relaxed);
                     if seen < 8 {
                         eprintln!("[cpy-bytes] mismatch backtrace #{}:", seen + 1);
