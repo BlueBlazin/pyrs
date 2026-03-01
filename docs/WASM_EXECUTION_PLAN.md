@@ -505,6 +505,9 @@ Completed on this branch:
   support-phase mapping semantics: `supported` fixtures must resolve to
   `ok/runtime_error` in vm-probe mode while `blocked_capability` fixtures
   remain `unsupported_execution`.
+- latest: host seam now exposes `host::WebHost` as an explicit compatibility
+  alias over `WasmHost`, aligning code terminology with the W3 “web host”
+  milestone without changing runtime behavior.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

@@ -236,6 +236,9 @@ impl VmHost for WasmHost {
     }
 }
 
+/// Compatibility alias while wasm-facing docs/plan use `WebHost` terminology.
+pub type WebHost = WasmHost;
+
 #[cfg(test)]
 mod tests {
     use super::{HostCapability, NativeHost, VmHost, WasmHost};
