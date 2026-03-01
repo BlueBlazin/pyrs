@@ -13,6 +13,7 @@ const WASM_WORKER_TIMEOUT_DEFAULT_MS: u32 = 5_000;
 const WASM_WORKER_TIMEOUT_MIN_MS: u32 = 50;
 const WASM_WORKER_TIMEOUT_MAX_MS: u32 = 120_000;
 const WASM_WORKER_TIMEOUT_UNSUPPORTED_PHASE: &str = "unsupported_worker_timeout_enforcement";
+const WASM_WORKER_TIMEOUT_INVALID_PHASE: &str = "invalid_worker_timeout";
 const WASM_MODULE_BLOCKER_POLICY: [(&str, &str); 10] = [
     ("_ctypes", "dynamic_library_load"),
     ("ctypes", "dynamic_library_load"),
@@ -108,6 +109,26 @@ enum WasmWorkerExecutePhase {
     UnsupportedExecution,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WasmWorkerTimeoutPhase {
+    UnsupportedEnforcement,
+    InvalidTimeout,
+}
+
+impl WasmWorkerTimeoutPhase {
+    const ALL: [WasmWorkerTimeoutPhase; 2] = [
+        WasmWorkerTimeoutPhase::UnsupportedEnforcement,
+        WasmWorkerTimeoutPhase::InvalidTimeout,
+    ];
+
+    fn key(self) -> &'static str {
+        match self {
+            WasmWorkerTimeoutPhase::UnsupportedEnforcement => WASM_WORKER_TIMEOUT_UNSUPPORTED_PHASE,
+            WasmWorkerTimeoutPhase::InvalidTimeout => WASM_WORKER_TIMEOUT_INVALID_PHASE,
+        }
+    }
+}
+
 impl WasmWorkerExecutePhase {
     const ALL: [WasmWorkerExecutePhase; 3] = [
         WasmWorkerExecutePhase::SyntaxError,
@@ -140,6 +161,13 @@ fn worker_lifecycle_phase_keys() -> Vec<&'static str> {
 
 fn worker_execute_phase_keys() -> Vec<&'static str> {
     WasmWorkerExecutePhase::ALL
+        .iter()
+        .map(|phase| phase.key())
+        .collect()
+}
+
+fn worker_timeout_phase_keys() -> Vec<&'static str> {
+    WasmWorkerTimeoutPhase::ALL
         .iter()
         .map(|phase| phase.key())
         .collect()
@@ -217,6 +245,8 @@ pub struct WasmWorkerSession {
     terminates_requested: usize,
     recycles_requested: usize,
     executes_requested: usize,
+    timeout_updates_requested: usize,
+    last_timeout_ms_requested: Option<u32>,
     last_phase: Option<String>,
     last_error: Option<String>,
 }
@@ -273,6 +303,16 @@ pub struct WasmWorkerTimeoutPolicy {
     enforcement_supported: bool,
     unsupported_phase: String,
     unsupported_reason: Option<String>,
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmWorkerTimeoutResult {
+    success: bool,
+    phase: String,
+    state: String,
+    timeout_ms: u32,
+    error: Option<String>,
+    blocker_key: Option<String>,
 }
 
 #[wasm_bindgen(getter_with_clone)]
@@ -498,6 +538,39 @@ impl WasmWorkerTimeoutPolicy {
 }
 
 #[wasm_bindgen]
+impl WasmWorkerTimeoutResult {
+    #[wasm_bindgen(getter)]
+    pub fn success(&self) -> bool {
+        self.success
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn phase(&self) -> String {
+        self.phase.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn state(&self) -> String {
+        self.state.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn timeout_ms(&self) -> u32 {
+        self.timeout_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn error(&self) -> Option<String> {
+        self.error.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn blocker_key(&self) -> Option<String> {
+        self.blocker_key.clone()
+    }
+}
+
+#[wasm_bindgen]
 impl WasmWorkerLifecycleResult {
     #[wasm_bindgen(getter)]
     pub fn success(&self) -> bool {
@@ -583,6 +656,8 @@ impl WasmWorkerSession {
             terminates_requested: 0,
             recycles_requested: 0,
             executes_requested: 0,
+            timeout_updates_requested: 0,
+            last_timeout_ms_requested: None,
             last_phase: None,
             last_error: None,
         }
@@ -624,11 +699,22 @@ impl WasmWorkerSession {
         result
     }
 
+    pub fn set_timeout_ms(&mut self, timeout_ms: u32) -> WasmWorkerTimeoutResult {
+        let result = wasm_worker_set_timeout(timeout_ms);
+        self.timeout_updates_requested += 1;
+        self.last_timeout_ms_requested = Some(timeout_ms);
+        self.last_phase = Some(result.phase.clone());
+        self.last_error = result.error.clone();
+        result
+    }
+
     pub fn reset(&mut self) {
         self.starts_requested = 0;
         self.terminates_requested = 0;
         self.recycles_requested = 0;
         self.executes_requested = 0;
+        self.timeout_updates_requested = 0;
+        self.last_timeout_ms_requested = None;
         self.last_phase = None;
         self.last_error = None;
     }
@@ -651,6 +737,16 @@ impl WasmWorkerSession {
     #[wasm_bindgen(getter)]
     pub fn executes_requested(&self) -> usize {
         self.executes_requested
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn timeout_updates_requested(&self) -> usize {
+        self.timeout_updates_requested
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_timeout_ms_requested(&self) -> Option<u32> {
+        self.last_timeout_ms_requested
     }
 
     #[wasm_bindgen(getter)]
@@ -923,8 +1019,46 @@ pub fn wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy {
         max_timeout_ms: WASM_WORKER_TIMEOUT_MAX_MS,
         recycle_on_timeout: true,
         enforcement_supported: false,
-        unsupported_phase: WASM_WORKER_TIMEOUT_UNSUPPORTED_PHASE.to_string(),
+        unsupported_phase: WasmWorkerTimeoutPhase::UnsupportedEnforcement
+            .key()
+            .to_string(),
         unsupported_reason: Some(reason),
+    }
+}
+
+/// Applies a requested timeout policy update for worker execution.
+///
+/// Current milestone behavior:
+/// - in-range values report `unsupported_worker_timeout_enforcement`,
+/// - out-of-range values report `invalid_worker_timeout`.
+#[wasm_bindgen]
+pub fn wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult {
+    if !(WASM_WORKER_TIMEOUT_MIN_MS..=WASM_WORKER_TIMEOUT_MAX_MS).contains(&timeout_ms) {
+        return WasmWorkerTimeoutResult {
+            success: false,
+            phase: WasmWorkerTimeoutPhase::InvalidTimeout.key().to_string(),
+            state: WasmWorkerState::Unwired.key().to_string(),
+            timeout_ms,
+            error: Some(format!(
+                "worker timeout must be between {} and {} ms",
+                WASM_WORKER_TIMEOUT_MIN_MS, WASM_WORKER_TIMEOUT_MAX_MS
+            )),
+            blocker_key: None,
+        };
+    }
+
+    let blocker_key = WASM_WORKER_BLOCKER_RUNTIME_UNWIRED.to_string();
+    let message = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
+        .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
+    WasmWorkerTimeoutResult {
+        success: false,
+        phase: WasmWorkerTimeoutPhase::UnsupportedEnforcement
+            .key()
+            .to_string(),
+        state: WasmWorkerState::Unwired.key().to_string(),
+        timeout_ms,
+        error: Some(message),
+        blocker_key: Some(blocker_key),
     }
 }
 
@@ -968,6 +1102,16 @@ pub fn wasm_worker_lifecycle_phase_keys() -> Array {
 pub fn wasm_worker_execute_phase_keys() -> Array {
     let keys = Array::new();
     for key in worker_execute_phase_keys() {
+        keys.push(&JsValue::from_str(key));
+    }
+    keys
+}
+
+/// Returns canonical timeout phase keys for wasm worker timeout contracts.
+#[wasm_bindgen]
+pub fn wasm_worker_timeout_phase_keys() -> Array {
+    let keys = Array::new();
+    for key in worker_timeout_phase_keys() {
         keys.push(&JsValue::from_str(key));
     }
     keys

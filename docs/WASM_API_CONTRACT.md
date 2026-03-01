@@ -19,6 +19,8 @@ This document defines the JS-facing contract currently exported by
   - Returns worker-runtime contract status summary.
 - `wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy`
   - Returns timeout/recycle contract metadata for worker execution.
+- `wasm_worker_timeout_phase_keys() -> Array`
+  - Returns canonical timeout phase keys.
 - `wasm_worker_state_keys() -> Array`
   - Returns canonical worker runtime state keys.
 - `wasm_worker_lifecycle_phase_keys() -> Array`
@@ -31,6 +33,10 @@ This document defines the JS-facing contract currently exported by
   - Worker lifecycle terminate contract (currently unsupported/unwired).
 - `wasm_worker_recycle() -> WasmWorkerLifecycleResult`
   - Worker lifecycle recycle contract (currently unsupported/unwired).
+- `wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult`
+  - Worker timeout update contract with deterministic phases:
+    - `unsupported_worker_timeout_enforcement` (in-range while unwired)
+    - `invalid_worker_timeout` (out-of-range value)
 - `wasm_worker_execute(source: &str) -> WasmExecutionResult`
   - Worker execute contract with deterministic phases:
     - `syntax_error`
@@ -102,6 +108,15 @@ This document defines the JS-facing contract currently exported by
 - `enforcement_supported: bool` (currently `false`)
 - `unsupported_phase: String` (currently `"unsupported_worker_timeout_enforcement"`)
 - `unsupported_reason: Option<String>`
+
+## `WasmWorkerTimeoutResult`
+
+- `success: bool`
+- `phase: String` (`"unsupported_worker_timeout_enforcement"`, `"invalid_worker_timeout"`)
+- `state: String` (currently `"unwired"`)
+- `timeout_ms: u32`
+- `error: Option<String>`
+- `blocker_key: Option<String>`
 
 ## `WasmWorkerLifecycleResult`
 
@@ -205,12 +220,15 @@ This document defines the JS-facing contract currently exported by
 - `start() -> WasmWorkerLifecycleResult`
 - `terminate() -> WasmWorkerLifecycleResult`
 - `recycle() -> WasmWorkerLifecycleResult`
+- `set_timeout_ms(timeout_ms: u32) -> WasmWorkerTimeoutResult`
 - `execute(source: &str) -> WasmExecutionResult`
 - `reset()`
 - `starts_requested: usize`
 - `terminates_requested: usize`
 - `recycles_requested: usize`
 - `executes_requested: usize`
+- `timeout_updates_requested: usize`
+- `last_timeout_ms_requested: Option<u32>`
 - `last_phase: Option<String>`
 - `last_error: Option<String>`
 

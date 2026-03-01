@@ -311,6 +311,8 @@ Completed on this branch:
   (locked by host-level contract tests) instead of generic fallback text.
 - latest: `scripts/check_wasm_branch.sh` now runs
   `wasm_host_unsupported_messages_are_stable` as a required local guard.
+- latest: worker timeout updates now have explicit contract APIs
+  (`wasm_worker_set_timeout`, `wasm_worker_timeout_phase_keys`) with session telemetry.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

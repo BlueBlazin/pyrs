@@ -6,6 +6,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 
 - `wasm_worker_info()`
 - `wasm_worker_timeout_policy()`
+- `wasm_worker_timeout_phase_keys()`
 - `wasm_worker_state_keys()`
 - `wasm_worker_lifecycle_phase_keys()`
 - `wasm_worker_execute_phase_keys()`
@@ -15,6 +16,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `wasm_worker_start()`
 - `wasm_worker_terminate()`
 - `wasm_worker_recycle()`
+- `wasm_worker_set_timeout(timeout_ms)`
 - `wasm_worker_execute(source)`
 - `WasmWorkerSession` (stateful wrapper)
 
@@ -36,6 +38,11 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `enforcement_supported = false`
 - `unsupported_phase = "unsupported_worker_timeout_enforcement"`
 - `unsupported_reason = "wasm worker runtime is not wired yet"`
+
+`wasm_worker_timeout_phase_keys()` currently includes:
+
+- `unsupported_worker_timeout_enforcement`
+- `invalid_worker_timeout`
 
 `wasm_worker_state_keys()` currently includes:
 
@@ -97,6 +104,15 @@ Unknown blocker keys return `None`.
 - `blocker_key = "worker_runtime_unwired"`
 - `error = "wasm worker runtime is not wired yet"`
 
+`wasm_worker_set_timeout(timeout_ms)` currently returns:
+
+- `phase = "unsupported_worker_timeout_enforcement"` for in-range values
+  (`50..=120000` ms),
+- `phase = "invalid_worker_timeout"` for out-of-range values.
+
+For in-range values, `blocker_key = "worker_runtime_unwired"` while worker
+enforcement remains unwired.
+
 `wasm_worker_execute(source)` currently returns:
 
 - `phase = "syntax_error"` when parse fails,
@@ -109,6 +125,8 @@ Unknown blocker keys return `None`.
 - `terminates_requested`
 - `recycles_requested`
 - `executes_requested`
+- `timeout_updates_requested`
+- `last_timeout_ms_requested`
 - `last_phase`
 - `last_error`
 

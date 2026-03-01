@@ -8,7 +8,8 @@ mod wasm_worker_contract;
 use crate::wasm_contract_snippets::WASM_CONTRACT_SNIPPET_FIXTURES;
 use crate::wasm_worker_contract::{
     WASM_WORKER_EXECUTE_FIXTURES, WASM_WORKER_EXECUTE_PHASE_KEYS, WASM_WORKER_LIFECYCLE_FIXTURES,
-    WASM_WORKER_LIFECYCLE_PHASE_KEYS, WASM_WORKER_STATE_KEYS,
+    WASM_WORKER_LIFECYCLE_PHASE_KEYS, WASM_WORKER_STATE_KEYS, WASM_WORKER_TIMEOUT_FIXTURES,
+    WASM_WORKER_TIMEOUT_PHASE_KEYS,
 };
 use js_sys::Reflect;
 use pyrs::wasm::{
@@ -18,8 +19,9 @@ use pyrs::wasm::{
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_support,
     wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_blockers, wasm_worker_execute,
     wasm_worker_execute_phase_keys, wasm_worker_info, wasm_worker_lifecycle_phase_keys,
-    wasm_worker_recycle, wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate,
-    wasm_worker_timeout_policy, WasmSession, WasmWorkerSession,
+    wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start, wasm_worker_state_keys,
+    wasm_worker_terminate, wasm_worker_timeout_phase_keys, wasm_worker_timeout_policy, WasmSession,
+    WasmWorkerSession,
 };
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
@@ -93,6 +95,49 @@ fn wasm_worker_timeout_policy_contract_is_stable() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_worker_timeout_set_contract_is_stable() {
+    for fixture in WASM_WORKER_TIMEOUT_FIXTURES {
+        let result = wasm_worker_set_timeout(fixture.timeout_ms);
+        assert_eq!(
+            result.phase(),
+            fixture.expected_phase,
+            "worker timeout phase mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            result.state(),
+            fixture.expected_state,
+            "worker timeout state mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            result.success(),
+            fixture.expected_success,
+            "worker timeout success mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            result.timeout_ms(),
+            fixture.timeout_ms,
+            "worker timeout value mismatch: {}",
+            fixture.name
+        );
+        let expected_blocker_key = fixture.expected_blocker_key.map(str::to_string);
+        assert_eq!(
+            result.blocker_key(),
+            expected_blocker_key,
+            "worker timeout blocker key mismatch: {}",
+            fixture.name
+        );
+        assert!(
+            result.error().is_some(),
+            "worker timeout error should be populated: {}",
+            fixture.name
+        );
+    }
+}
+
+#[wasm_bindgen_test]
 fn wasm_worker_enum_keys_are_stable() {
     let state_keys = wasm_worker_state_keys();
     let mut states = HashSet::new();
@@ -138,6 +183,21 @@ fn wasm_worker_enum_keys_are_stable() {
         .map(|value| (*value).to_string())
         .collect();
     assert_eq!(execute_phases, expected_execute_phases);
+
+    let timeout_keys = wasm_worker_timeout_phase_keys();
+    let mut timeout_phases = HashSet::new();
+    for index in 0..timeout_keys.length() {
+        let phase = timeout_keys
+            .get(index)
+            .as_string()
+            .expect("worker timeout phase key should be string");
+        timeout_phases.insert(phase);
+    }
+    let expected_timeout_phases: HashSet<String> = WASM_WORKER_TIMEOUT_PHASE_KEYS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect();
+    assert_eq!(timeout_phases, expected_timeout_phases);
 }
 
 #[wasm_bindgen_test]
@@ -238,6 +298,8 @@ fn wasm_worker_session_contract_is_stable() {
     assert_eq!(session.terminates_requested(), 0);
     assert_eq!(session.recycles_requested(), 0);
     assert_eq!(session.executes_requested(), 0);
+    assert_eq!(session.timeout_updates_requested(), 0);
+    assert!(session.last_timeout_ms_requested().is_none());
     assert!(session.last_phase().is_none());
     assert!(session.last_error().is_none());
 
@@ -288,11 +350,28 @@ fn wasm_worker_session_contract_is_stable() {
     );
     assert!(session.last_error().is_some());
 
+    let timeout = session.set_timeout_ms(5_000);
+    assert_eq!(
+        timeout.phase(),
+        "unsupported_worker_timeout_enforcement".to_string()
+    );
+    assert_eq!(session.timeout_updates_requested(), 1);
+    assert_eq!(session.last_timeout_ms_requested(), Some(5_000));
+    assert_eq!(
+        session
+            .last_phase()
+            .expect("last phase after worker timeout update should exist"),
+        "unsupported_worker_timeout_enforcement".to_string()
+    );
+    assert!(session.last_error().is_some());
+
     session.reset();
     assert_eq!(session.starts_requested(), 0);
     assert_eq!(session.terminates_requested(), 0);
     assert_eq!(session.recycles_requested(), 0);
     assert_eq!(session.executes_requested(), 0);
+    assert_eq!(session.timeout_updates_requested(), 0);
+    assert!(session.last_timeout_ms_requested().is_none());
     assert!(session.last_phase().is_none());
     assert!(session.last_error().is_none());
 }

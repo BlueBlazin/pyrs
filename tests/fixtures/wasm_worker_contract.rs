@@ -15,6 +15,15 @@ pub struct WasmWorkerExecuteFixture {
     pub expect_line_column: bool,
 }
 
+pub struct WasmWorkerTimeoutFixture {
+    pub name: &'static str,
+    pub timeout_ms: u32,
+    pub expected_phase: &'static str,
+    pub expected_state: &'static str,
+    pub expected_success: bool,
+    pub expected_blocker_key: Option<&'static str>,
+}
+
 pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[
     WasmWorkerLifecycleFixture {
         name: "worker_start_unwired",
@@ -66,6 +75,25 @@ pub const WASM_WORKER_EXECUTE_FIXTURES: &[WasmWorkerExecuteFixture] = &[
     },
 ];
 
+pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[
+    WasmWorkerTimeoutFixture {
+        name: "worker_timeout_invalid_low",
+        timeout_ms: 0,
+        expected_phase: "invalid_worker_timeout",
+        expected_state: "unwired",
+        expected_success: false,
+        expected_blocker_key: None,
+    },
+    WasmWorkerTimeoutFixture {
+        name: "worker_timeout_unwired_valid_range",
+        timeout_ms: 5_000,
+        expected_phase: "unsupported_worker_timeout_enforcement",
+        expected_state: "unwired",
+        expected_success: false,
+        expected_blocker_key: Some("worker_runtime_unwired"),
+    },
+];
+
 pub const WASM_WORKER_STATE_KEYS: &[&str] = &[
     "unwired",
     "starting",
@@ -85,4 +113,9 @@ pub const WASM_WORKER_EXECUTE_PHASE_KEYS: &[&str] = &[
     "syntax_error",
     "compile_error",
     "unsupported_worker_execution",
+];
+
+pub const WASM_WORKER_TIMEOUT_PHASE_KEYS: &[&str] = &[
+    "unsupported_worker_timeout_enforcement",
+    "invalid_worker_timeout",
 ];
