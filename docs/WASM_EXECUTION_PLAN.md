@@ -129,6 +129,7 @@ Deliverables:
   - collect stdout/stderr,
   - execution status/errors.
 - Keep API versioned and small.
+- Track contract details in `docs/WASM_API_CONTRACT.md`.
 
 Exit criteria:
 - Programmatic execution works from JS harness tests.
