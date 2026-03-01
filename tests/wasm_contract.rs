@@ -217,11 +217,21 @@ fn wasm_syntax_and_execute_contract() {
     assert_eq!(unsupported.phase(), "unsupported_execution");
     assert!(unsupported.error().is_some());
     assert!(unsupported.stderr().contains("not wired"));
+    assert_eq!(unsupported.line(), 0);
+    assert_eq!(unsupported.column(), 0);
 
     let compile_error = execute("return 1\n");
     assert!(!compile_error.success());
     assert_eq!(compile_error.phase(), "compile_error");
     assert!(compile_error.stderr().contains("outside function"));
+    assert!(compile_error.line() > 0);
+    assert!(compile_error.column() > 0);
+
+    let syntax_error = execute("def broken(:\n");
+    assert!(!syntax_error.success());
+    assert_eq!(syntax_error.phase(), "syntax_error");
+    assert!(syntax_error.line() > 0);
+    assert!(syntax_error.column() > 0);
 }
 
 #[wasm_bindgen_test]

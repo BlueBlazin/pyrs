@@ -275,7 +275,8 @@ Completed on this branch:
   (`wasm_module_policy_entries`) for docs/UI parity.
 - `9161b33`: module preflight rationale is documented in
   `docs/WASM_MODULE_SUPPORT_POLICY.md` and linked from capability docs.
-- latest: `WasmRuntimeInfo` now exposes parse+compile support and blocker-count metadata.
+- `eaacf67`: `WasmRuntimeInfo` now exposes parse+compile support and blocker-count metadata.
+- latest: `WasmExecutionResult` now carries structured `line`/`column` diagnostics.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

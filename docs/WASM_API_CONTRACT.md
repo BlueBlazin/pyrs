@@ -69,6 +69,8 @@ This document defines the JS-facing contract currently exported by
 - `stdout: String`
 - `stderr: String`
 - `error: Option<String>`
+- `line: usize`
+- `column: usize`
 
 ## `WasmCompileResult`
 

@@ -108,6 +108,8 @@ pub struct WasmExecutionResult {
     stdout: String,
     stderr: String,
     error: Option<String>,
+    line: usize,
+    column: usize,
 }
 
 #[wasm_bindgen(getter_with_clone)]
@@ -145,6 +147,16 @@ impl WasmExecutionResult {
     #[wasm_bindgen(getter)]
     pub fn error(&self) -> Option<String> {
         self.error.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn column(&self) -> usize {
+        self.column
     }
 }
 
@@ -520,6 +532,8 @@ pub fn execute(source: &str) -> WasmExecutionResult {
             stdout: String::new(),
             stderr,
             error,
+            line: compile.line,
+            column: compile.column,
         };
     }
 
@@ -531,6 +545,8 @@ pub fn execute(source: &str) -> WasmExecutionResult {
         stdout: String::new(),
         stderr: message.clone(),
         error: Some(message),
+        line: 0,
+        column: 0,
     }
 }
 
