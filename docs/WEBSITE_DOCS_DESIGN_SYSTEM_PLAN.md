@@ -256,6 +256,77 @@ Deliverables:
 Exit criteria:
 - New pages follow component and style conventions with no drift.
 
+## Future Track: WASM REPL Integration (Deferred)
+Purpose:
+- Define how an in-browser PYRS REPL can be added later without rewriting the website architecture.
+
+Status:
+- Deferred until core docs/design-system milestones are stable.
+
+Scope for this track:
+- Browser-hosted REPL experience on the docs/landing site using WebAssembly.
+- Client-side execution sandbox boundaries and runtime loading strategy.
+- UX integration with docs examples (copy-to-REPL, quick-run snippets).
+
+Out of scope for initial WASM track:
+- Full parity with native runtime performance/features on day one.
+- Arbitrary host filesystem/network access from browser execution.
+- Replacing CLI/local runtime workflows.
+
+### WASM Milestone W1: Runtime Packaging Strategy
+Objective:
+- Produce a deterministic WASM build target for the interpreter suitable for browser loading.
+
+Deliverables:
+- Documented `wasm32` build pipeline and artifacts.
+- Versioned browser bundle contract (runtime wasm + loader JS + optional worker).
+- Clear feature matrix for browser mode vs native mode.
+
+Exit criteria:
+- Repeatable local build and smoke run in browser shell.
+
+### WASM Milestone W2: Web REPL Shell
+Objective:
+- Deliver a minimal production-quality web REPL UI integrated into the docs site.
+
+Deliverables:
+- Dedicated route (for example `/playground/`).
+- Editor/input, output console, clear/reset controls.
+- Execution lifecycle handling (busy/error states, cancel/reset semantics).
+
+Exit criteria:
+- Stable interactive session for core Python snippets in supported browser targets.
+
+### WASM Milestone W3: Isolation and Performance
+Objective:
+- Keep browser execution safe and responsive.
+
+Deliverables:
+- Worker-based isolation model (avoid blocking main UI thread).
+- Guardrails for long-running execution (timeouts/interrupt strategy where feasible).
+- Basic telemetry hooks for load/execute timing and failure diagnostics.
+
+Exit criteria:
+- No main-thread lockup in normal usage; bounded failure behavior under stress snippets.
+
+### WASM Milestone W4: Docs Integration
+Objective:
+- Connect documentation examples to the web REPL experience.
+
+Deliverables:
+- Reusable “Run in Browser REPL” action component.
+- Example compatibility annotations when browser mode differs from native mode.
+- Authoring guidelines for docs examples intended for browser execution.
+
+Exit criteria:
+- Docs examples can launch into REPL with predictable behavior and clear limitations.
+
+### WASM Constraints and Design Rules
+1. Keep REPL integration modular: no hard coupling that complicates non-WASM docs pages.
+2. Preserve static-first site behavior; load WASM/worker code only on REPL routes.
+3. Explicitly label browser limitations relative to native `pyrs`.
+4. Treat security and isolation as first-class requirements, not polish tasks.
+
 ## Quality Gates
 Every milestone closure should satisfy:
 1. `pnpm --dir website build` passes.
