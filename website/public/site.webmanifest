@@ -1,0 +1,23 @@
+{
+	"name": "PYRS",
+	"short_name": "PYRS",
+	"description": "Python interpreter in Rust focused on CPython semantic parity.",
+	"start_url": "/",
+	"display": "standalone",
+	"background_color": "#090b11",
+	"theme_color": "#090b11",
+	"icons": [
+		{
+			"src": "/images/logo/logo-180.png",
+			"sizes": "180x180",
+			"type": "image/png",
+			"purpose": "any"
+		},
+		{
+			"src": "/images/logo/logo-512.png",
+			"sizes": "512x512",
+			"type": "image/png",
+			"purpose": "any"
+		}
+	]
+}
