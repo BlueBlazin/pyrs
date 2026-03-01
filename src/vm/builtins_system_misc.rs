@@ -3213,10 +3213,10 @@ impl Vm {
             Value::None => Ok(current),
             Value::Str(text) => {
                 let normalized = if text.is_empty() {
-                    std::env::var("LC_ALL")
-                        .ok()
-                        .or_else(|| std::env::var("LC_CTYPE").ok())
-                        .or_else(|| std::env::var("LANG").ok())
+                    self.host
+                        .env_var("LC_ALL")
+                        .or_else(|| self.host.env_var("LC_CTYPE"))
+                        .or_else(|| self.host.env_var("LANG"))
                         .filter(|value| !value.is_empty())
                         .unwrap_or_else(|| "C".to_string())
                 } else {
@@ -3360,8 +3360,9 @@ impl Vm {
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new("gethostname() expects no arguments"));
         }
-        let hostname = std::env::var("HOSTNAME")
-            .ok()
+        let hostname = self
+            .host
+            .env_var("HOSTNAME")
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "localhost".to_string());
         Ok(Value::Str(hostname))
