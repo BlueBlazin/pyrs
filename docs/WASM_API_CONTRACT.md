@@ -192,6 +192,8 @@ This document defines the JS-facing contract currently exported by
 - `filesystem_write: bool`
 - `environment_read: bool`
 - `process_args: bool`
+- `clock_time: bool`
+- `thread_sleep: bool`
 - `process_spawn: bool`
 - `dynamic_library_load: bool`
 - `interactive_terminal: bool`

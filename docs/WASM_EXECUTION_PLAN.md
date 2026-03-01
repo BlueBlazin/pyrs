@@ -404,6 +404,9 @@ Completed on this branch:
   (`dynamic_library_load`, `network_sockets`, `process_spawn`,
   `interactive_terminal`) alongside `worker_runtime_unwired`, and
   `wasm_worker_blocker_error` resolves capability messages for those keys.
+- latest: host capability contracts now include `clock_time` (supported in wasm)
+  and `thread_sleep` (explicitly unsupported in wasm) with bridge/test/docs
+  parity across host + wasm capability exports.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

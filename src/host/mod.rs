@@ -7,6 +7,8 @@ pub enum HostCapability {
     FilesystemWrite,
     EnvironmentRead,
     ProcessArgs,
+    ClockTime,
+    ThreadSleep,
     ProcessSpawn,
     DynamicLibraryLoad,
     InteractiveTerminal,
@@ -14,11 +16,13 @@ pub enum HostCapability {
 }
 
 impl HostCapability {
-    pub const ALL: [HostCapability; 8] = [
+    pub const ALL: [HostCapability; 10] = [
         HostCapability::FilesystemRead,
         HostCapability::FilesystemWrite,
         HostCapability::EnvironmentRead,
         HostCapability::ProcessArgs,
+        HostCapability::ClockTime,
+        HostCapability::ThreadSleep,
         HostCapability::ProcessSpawn,
         HostCapability::DynamicLibraryLoad,
         HostCapability::InteractiveTerminal,
@@ -35,6 +39,8 @@ impl HostCapability {
             Self::FilesystemWrite => "filesystem_write",
             Self::EnvironmentRead => "environment_read",
             Self::ProcessArgs => "process_args",
+            Self::ClockTime => "clock_time",
+            Self::ThreadSleep => "thread_sleep",
             Self::ProcessSpawn => "process_spawn",
             Self::DynamicLibraryLoad => "dynamic_library_load",
             Self::InteractiveTerminal => "interactive_terminal",
@@ -48,6 +54,8 @@ impl HostCapability {
             Self::FilesystemWrite => "write host filesystem paths",
             Self::EnvironmentRead => "read process environment variables",
             Self::ProcessArgs => "read process argv metadata",
+            Self::ClockTime => "read host clock/time sources",
+            Self::ThreadSleep => "block/sleep the active thread",
             Self::ProcessSpawn => "spawn subprocesses",
             Self::DynamicLibraryLoad => "load dynamic libraries/extensions",
             Self::InteractiveTerminal => "interact with terminal/tty capabilities",
@@ -61,6 +69,8 @@ impl HostCapability {
             "filesystem_write" => Some(Self::FilesystemWrite),
             "environment_read" => Some(Self::EnvironmentRead),
             "process_args" => Some(Self::ProcessArgs),
+            "clock_time" => Some(Self::ClockTime),
+            "thread_sleep" => Some(Self::ThreadSleep),
             "process_spawn" => Some(Self::ProcessSpawn),
             "dynamic_library_load" => Some(Self::DynamicLibraryLoad),
             "interactive_terminal" => Some(Self::InteractiveTerminal),
@@ -188,7 +198,10 @@ impl VmHost for WasmHost {
     }
 
     fn supports(&self, capability: HostCapability) -> bool {
-        matches!(capability, HostCapability::ProcessArgs)
+        matches!(
+            capability,
+            HostCapability::ProcessArgs | HostCapability::ClockTime
+        )
     }
 
     fn unsupported_message(&self, capability: HostCapability) -> Option<String> {
@@ -203,6 +216,10 @@ impl VmHost for WasmHost {
                 "unsupported capability 'environment_read' in wasm host: browser mode has no process environment access".to_string(),
             ),
             HostCapability::ProcessArgs => None,
+            HostCapability::ClockTime => None,
+            HostCapability::ThreadSleep => Some(
+                "unsupported capability 'thread_sleep' in wasm host: browser mode cannot block the main thread for sleep semantics".to_string(),
+            ),
             HostCapability::ProcessSpawn => Some(
                 "unsupported capability 'process_spawn' in wasm host: browser mode cannot spawn subprocesses".to_string(),
             ),
@@ -253,6 +270,8 @@ mod tests {
         assert!(!host.supports(HostCapability::FilesystemRead));
         assert!(!host.supports(HostCapability::FilesystemWrite));
         assert!(!host.supports(HostCapability::EnvironmentRead));
+        assert!(host.supports(HostCapability::ClockTime));
+        assert!(!host.supports(HostCapability::ThreadSleep));
         assert!(!host.supports(HostCapability::ProcessSpawn));
         assert!(!host.supports(HostCapability::DynamicLibraryLoad));
         assert!(!host.supports(HostCapability::InteractiveTerminal));
@@ -266,6 +285,7 @@ mod tests {
             HostCapability::FilesystemRead,
             HostCapability::FilesystemWrite,
             HostCapability::EnvironmentRead,
+            HostCapability::ThreadSleep,
             HostCapability::ProcessSpawn,
             HostCapability::DynamicLibraryLoad,
             HostCapability::InteractiveTerminal,
@@ -288,6 +308,7 @@ mod tests {
             host.unsupported_message(HostCapability::ProcessArgs)
                 .is_none()
         );
+        assert!(host.unsupported_message(HostCapability::ClockTime).is_none());
     }
 
     #[test]

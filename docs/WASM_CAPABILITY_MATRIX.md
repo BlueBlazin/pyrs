@@ -13,6 +13,8 @@ branch. It is intentionally strict: unsupported behavior must fail explicitly.
 | `filesystem_write` | supported | unsupported | No host FS mutation from browser mode. |
 | `environment_read` | supported | unsupported | Browser mode does not read process env vars. |
 | `process_args` | supported | supported (stubbed) | Browser mode currently reports a synthetic argv baseline. |
+| `clock_time` | supported | supported | Browser mode exposes host clock/time sources. |
+| `thread_sleep` | supported | unsupported | Browser mode cannot block/sleep the active thread directly. |
 | `process_spawn` | supported | unsupported | No subprocess execution in browser mode. |
 | `dynamic_library_load` | supported | unsupported | Native extension loading is disabled in browser mode. |
 | `interactive_terminal` | supported | unsupported | Browser mode does not expose a terminal/TTY primitive. |
@@ -76,6 +78,8 @@ Accepted capability keys:
 - `filesystem_write`
 - `environment_read`
 - `process_args`
+- `clock_time`
+- `thread_sleep`
 - `process_spawn`
 - `dynamic_library_load`
 - `interactive_terminal`

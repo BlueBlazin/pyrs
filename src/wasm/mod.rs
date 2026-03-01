@@ -940,6 +940,8 @@ pub struct WasmCapabilityReport {
     filesystem_write: bool,
     environment_read: bool,
     process_args: bool,
+    clock_time: bool,
+    thread_sleep: bool,
     process_spawn: bool,
     dynamic_library_load: bool,
     interactive_terminal: bool,
@@ -999,6 +1001,16 @@ impl WasmCapabilityReport {
     #[wasm_bindgen(getter)]
     pub fn process_args(&self) -> bool {
         self.process_args
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn clock_time(&self) -> bool {
+        self.clock_time
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn thread_sleep(&self) -> bool {
+        self.thread_sleep
     }
 
     #[wasm_bindgen(getter)]
@@ -1111,6 +1123,8 @@ pub fn wasm_capabilities() -> WasmCapabilityReport {
         filesystem_write: host.supports(HostCapability::FilesystemWrite),
         environment_read: host.supports(HostCapability::EnvironmentRead),
         process_args: host.supports(HostCapability::ProcessArgs),
+        clock_time: host.supports(HostCapability::ClockTime),
+        thread_sleep: host.supports(HostCapability::ThreadSleep),
         process_spawn: host.supports(HostCapability::ProcessSpawn),
         dynamic_library_load: host.supports(HostCapability::DynamicLibraryLoad),
         interactive_terminal: host.supports(HostCapability::InteractiveTerminal),

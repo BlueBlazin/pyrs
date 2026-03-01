@@ -612,15 +612,22 @@ fn wasm_capability_contract_is_stable() {
     }
     assert!(listed_keys.contains(&"process_args".to_string()));
     assert!(listed_keys.contains(&"filesystem_read".to_string()));
+    assert!(listed_keys.contains(&"clock_time".to_string()));
+    assert!(listed_keys.contains(&"thread_sleep".to_string()));
 
     let capabilities = wasm_capabilities();
     assert!(capabilities.process_args());
+    assert!(capabilities.clock_time());
+    assert!(!capabilities.thread_sleep());
     assert!(!capabilities.filesystem_read());
     assert!(!capabilities.dynamic_library_load());
 
     assert!(wasm_capability_error("process_args").is_none());
+    assert!(wasm_capability_error("clock_time").is_none());
     let fs_error = wasm_capability_error("filesystem_read").expect("filesystem_read unsupported");
     assert!(fs_error.contains("filesystem_read"));
+    let sleep_error = wasm_capability_error("thread_sleep").expect("thread_sleep unsupported");
+    assert!(sleep_error.contains("thread_sleep"));
 }
 
 #[wasm_bindgen_test]
@@ -690,6 +697,12 @@ fn wasm_execution_blockers_match_capability_matrix() {
     }
     if !capabilities.process_args() {
         expected.insert("process_args".to_string());
+    }
+    if !capabilities.clock_time() {
+        expected.insert("clock_time".to_string());
+    }
+    if !capabilities.thread_sleep() {
+        expected.insert("thread_sleep".to_string());
     }
     if !capabilities.process_spawn() {
         expected.insert("process_spawn".to_string());
