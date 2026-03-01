@@ -445,6 +445,10 @@ Completed on this branch:
   scripts.
 - `276a82c`: execution blocker matrix test now enforces deterministic blocker
   ordering with uniqueness guard.
+- latest: stdlib native-link `extern` blocks now use target-aware
+  `cfg_attr(not(target_arch = "wasm32"), link(name = ...))` in
+  `bz2`/`lzma`/`sqlite3`/`zlib`, so `wasm-vm-probe` can compile and wasm
+  lib test link lanes no longer fail on missing `-lbz2/-llzma/-lsqlite3/-lz`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
@@ -460,9 +464,9 @@ Current `wasm-vm-probe` snapshot (non-gating, latest local run):
 - current probe status is clean in the scripted probe lane (no active compile
   blockers and no warning debt from the most recent local probe run).
 - link blocker status: `perf/wasm_vm_link_blockers_latest.json` tracks
-  native-link attributes currently present under `src/vm` (including known
-  stdlib-linked blockers such as `bz2`, `lzma`, `sqlite3`, and `z`) for
-  explicit closure planning before full wasm link/test promotion.
+  remaining source-level native-link attributes under `src/vm`; current
+  snapshot reports `known_stdlib_blockers=0` after wasm-safe target gating on
+  stdlib C-link modules.
 
 ## Risk Register
 

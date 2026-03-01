@@ -66,7 +66,7 @@ type SqliteTraceCallback =
 type SqliteCollationCallback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, *const c_void, c_int, *const c_void) -> c_int>;
 
-#[link(name = "sqlite3")]
+#[cfg_attr(not(target_arch = "wasm32"), link(name = "sqlite3"))]
 unsafe extern "C" {
     fn sqlite3_open_v2(
         filename: *const c_char,

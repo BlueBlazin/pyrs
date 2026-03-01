@@ -37,7 +37,7 @@ pub(in crate::vm) struct LzmaDecompressorState {
     check: i64,
 }
 
-#[link(name = "lzma")]
+#[cfg_attr(not(target_arch = "wasm32"), link(name = "lzma"))]
 unsafe extern "C" {
     fn lzma_easy_buffer_encode(
         preset: c_uint,

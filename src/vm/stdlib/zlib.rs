@@ -57,7 +57,7 @@ struct ZStream {
     reserved: c_ulong,
 }
 
-#[link(name = "z")]
+#[cfg_attr(not(target_arch = "wasm32"), link(name = "z"))]
 unsafe extern "C" {
     fn zlibVersion() -> *const c_char;
     fn deflateInit2_(
