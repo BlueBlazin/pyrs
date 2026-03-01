@@ -381,6 +381,9 @@ Completed on this branch:
 - latest: opt-in `wasm-vm-probe` feature + `scripts/probe_wasm_vm_compile.sh`
   landed to allow explicit wasm-target vm compile probing without changing
   default native/wasm build paths.
+- latest: `Py_Main`/`Py_BytesMain` now avoid hard `crate::cli` coupling under
+  wasm target (returning explicit unavailable status) so vm-probe progresses to
+  deeper wasm-specific blockers.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
@@ -393,8 +396,6 @@ Remaining near-term focus:
 3. Add wasm smoke harness (JS/wasm-bindgen-test or equivalent) without touching native CI gates yet.
 
 Current `wasm-vm-probe` snapshot (non-gating, latest local run):
-- unresolved `crate::cli` import in `src/vm/vm_extensions/cpython_runtime_misc_api.rs`
-  when compiling `vm` on wasm target.
 - unix-only fd/process imports (`AsRawFd`/`FromRawFd`/`IntoRawFd`/`ExitStatusExt`/`UnixStream`)
   leak into wasm-vm probe surfaces via `src/vm/builtins_io.rs` and
   `src/vm/builtins_os.rs`.
