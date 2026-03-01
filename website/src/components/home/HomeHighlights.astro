@@ -1,0 +1,88 @@
+---
+import { homeHighlights } from "../../config/homeHighlights";
+import ButtonLink from "../ButtonLink.astro";
+---
+
+<section class="highlights" aria-labelledby="release-highlights-title">
+	<div class="head">
+		<p class="eyebrow">Release Highlights</p>
+		<h2 id="release-highlights-title">Recent Launch-Focused Updates</h2>
+	</div>
+
+	<div class="grid">
+		{
+			homeHighlights.map((item) => (
+				<article class="card">
+					<h3>{item.title}</h3>
+					<p>{item.summary}</p>
+					<ButtonLink href={item.href} variant="secondary" class="link-btn">{item.linkLabel}</ButtonLink>
+				</article>
+			))
+		}
+	</div>
+</section>
+
+<style>
+	.highlights {
+		margin-top: 0;
+	}
+
+	.head h2 {
+		margin: 0;
+		font-size: clamp(1.34rem, 3vw, 1.78rem);
+		line-height: 1.18;
+		letter-spacing: -0.01em;
+	}
+
+	.eyebrow {
+		margin: 0 0 0.72rem;
+		color: var(--accent-2);
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		font-size: 0.78rem;
+		font-weight: 600;
+	}
+
+	.grid {
+		margin-top: 0.95rem;
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0.84rem;
+	}
+
+	.card {
+		background: rgba(24, 15, 11, 0.78);
+		border: 1px solid #4a3024;
+		border-radius: 0.9rem;
+		padding: 0.95rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.56rem;
+	}
+
+	.card h3 {
+		margin: 0;
+		font-size: 1rem;
+		line-height: 1.3;
+	}
+
+	.card p {
+		margin: 0;
+		font-size: 0.89rem;
+		line-height: 1.52;
+		color: var(--text-muted);
+	}
+
+	.link-btn {
+		margin-top: auto;
+		justify-self: start;
+		padding: 0.5rem 0.74rem;
+		font-size: 0.78rem;
+	}
+
+	@media (max-width: 920px) {
+		.grid {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>
