@@ -23,7 +23,13 @@ const isActive = (href: string) => {
 				<p class="group-label">{group.label}</p>
 				<nav class="group-links">
 					{group.items.map((item) => (
-						<a href={item.href} class={isActive(item.href) ? "active" : ""}>{item.label}</a>
+						<a
+							href={item.href}
+							class={isActive(item.href) ? "active" : ""}
+							aria-current={isActive(item.href) ? "page" : undefined}
+						>
+							{item.label}
+						</a>
 					))}
 				</nav>
 			</section>
