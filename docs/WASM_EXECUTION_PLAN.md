@@ -277,8 +277,10 @@ Completed on this branch:
   `docs/WASM_MODULE_SUPPORT_POLICY.md` and linked from capability docs.
 - `eaacf67`: `WasmRuntimeInfo` now exposes parse+compile support and blocker-count metadata.
 - `f412608`: `WasmExecutionResult` now carries structured `line`/`column` diagnostics.
-- latest: snippet preflight APIs landed (`wasm_snippet_support`/`wasm_snippet_blockers`) with
+- `f1abaed`: snippet preflight APIs landed (`wasm_snippet_support`/`wasm_snippet_blockers`) with
   structured import-capability blocker reporting.
+- latest: fixture-driven wasm contract snippet snapshots are tracked under
+  `tests/fixtures/wasm_contract_snippets.rs`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

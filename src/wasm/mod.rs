@@ -596,7 +596,11 @@ pub fn wasm_module_policy_entries() -> Array {
 
 fn root_module_name(raw: &str) -> Option<&str> {
     let root = raw.split('.').next()?.trim();
-    if root.is_empty() { None } else { Some(root) }
+    if root.is_empty() {
+        None
+    } else {
+        Some(root)
+    }
 }
 
 fn push_import_root(raw: &str, seen: &mut HashSet<String>, roots: &mut Vec<String>) {

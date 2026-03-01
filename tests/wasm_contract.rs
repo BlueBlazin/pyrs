@@ -1,11 +1,16 @@
 #![cfg(target_arch = "wasm32")]
 
+#[path = "fixtures/wasm_contract_snippets.rs"]
+mod wasm_contract_snippets;
+
+use crate::wasm_contract_snippets::WASM_CONTRACT_SNIPPET_FIXTURES;
 use js_sys::Reflect;
 use pyrs::wasm::{
-    WasmSession, check_compile_result, check_syntax_result, execute, wasm_api_version,
-    wasm_capabilities, wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
+    check_compile_result, check_syntax_result, execute, wasm_api_version, wasm_capabilities,
+    wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
     wasm_execution_blocker_keys, wasm_execution_blockers, wasm_module_policy_entries,
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_support,
+    WasmSession,
 };
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
@@ -336,4 +341,41 @@ fn wasm_session_execute_contract_is_stable() {
     assert_eq!(second.phase(), "unsupported_execution");
     assert_eq!(session.snippets_checked(), 1);
     assert!(session.last_error().is_some());
+}
+
+#[wasm_bindgen_test]
+fn wasm_contract_snippet_fixtures_are_current() {
+    for fixture in WASM_CONTRACT_SNIPPET_FIXTURES {
+        let compile = check_compile_result(fixture.source);
+        assert_eq!(
+            compile.phase(),
+            fixture.expected_compile_phase,
+            "fixture compile phase mismatch: {}",
+            fixture.name
+        );
+
+        let execution = execute(fixture.source);
+        assert_eq!(
+            execution.phase(),
+            fixture.expected_execute_phase,
+            "fixture execute phase mismatch: {}",
+            fixture.name
+        );
+
+        let support = wasm_snippet_support(fixture.source);
+        assert_eq!(
+            support.phase(),
+            fixture.expected_support_phase,
+            "fixture support phase mismatch: {}",
+            fixture.name
+        );
+
+        let blocker_key = support.first_blocker_key();
+        let expected_key = fixture.expected_first_blocker_key.map(str::to_string);
+        assert_eq!(
+            blocker_key, expected_key,
+            "fixture blocker key mismatch: {}",
+            fixture.name
+        );
+    }
 }
