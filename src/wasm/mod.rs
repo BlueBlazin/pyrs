@@ -3,10 +3,18 @@ use std::sync::Once;
 use crate::host::{HostCapability, VmHost, WasmHost};
 use wasm_bindgen::prelude::*;
 
+pub const WASM_API_VERSION: u32 = 1;
+
 /// Minimal WASM bridge surface used during compile-isolation bring-up.
 #[wasm_bindgen]
 pub fn pyrs_version() -> String {
     crate::VERSION.to_string()
+}
+
+/// Version of the wasm JS-facing API contract.
+#[wasm_bindgen]
+pub fn wasm_api_version() -> u32 {
+    WASM_API_VERSION
 }
 
 static PANIC_HOOK_ONCE: Once = Once::new();
