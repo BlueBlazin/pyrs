@@ -346,6 +346,7 @@ pub struct WasmWorkerSession {
     last_timeout_ms_requested: Option<u32>,
     last_operation_id: Option<String>,
     last_phase: Option<String>,
+    last_state: Option<String>,
     last_error: Option<String>,
 }
 
@@ -849,6 +850,7 @@ impl WasmWorkerSession {
             last_timeout_ms_requested: None,
             last_operation_id: None,
             last_phase: None,
+            last_state: None,
             last_error: None,
         }
     }
@@ -862,6 +864,7 @@ impl WasmWorkerSession {
         self.starts_requested += 1;
         self.last_operation_id = Some(result.operation_id.clone());
         self.last_phase = Some(result.phase.clone());
+        self.last_state = Some(result.state.clone());
         self.last_error = result.error.clone();
         result
     }
@@ -871,6 +874,7 @@ impl WasmWorkerSession {
         self.terminates_requested += 1;
         self.last_operation_id = Some(result.operation_id.clone());
         self.last_phase = Some(result.phase.clone());
+        self.last_state = Some(result.state.clone());
         self.last_error = result.error.clone();
         result
     }
@@ -880,6 +884,7 @@ impl WasmWorkerSession {
         self.recycles_requested += 1;
         self.last_operation_id = Some(result.operation_id.clone());
         self.last_phase = Some(result.phase.clone());
+        self.last_state = Some(result.state.clone());
         self.last_error = result.error.clone();
         result
     }
@@ -903,6 +908,7 @@ impl WasmWorkerSession {
         self.executes_requested += 1;
         self.last_operation_id = Some(result.operation_id.clone());
         self.last_phase = Some(result.phase.clone());
+        self.last_state = Some(wasm_worker_info().state);
         self.last_error = result.error.clone();
         result
     }
@@ -913,6 +919,7 @@ impl WasmWorkerSession {
         self.last_timeout_ms_requested = Some(timeout_ms);
         self.last_operation_id = Some(result.operation_id.clone());
         self.last_phase = Some(result.phase.clone());
+        self.last_state = Some(result.state.clone());
         self.last_error = result.error.clone();
         result
     }
@@ -926,6 +933,7 @@ impl WasmWorkerSession {
         self.last_timeout_ms_requested = None;
         self.last_operation_id = None;
         self.last_phase = None;
+        self.last_state = None;
         self.last_error = None;
     }
 
@@ -967,6 +975,11 @@ impl WasmWorkerSession {
     #[wasm_bindgen(getter)]
     pub fn last_phase(&self) -> Option<String> {
         self.last_phase.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_state(&self) -> Option<String> {
+        self.last_state.clone()
     }
 
     #[wasm_bindgen(getter)]

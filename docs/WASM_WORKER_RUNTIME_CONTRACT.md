@@ -157,6 +157,7 @@ enforcement remains unwired.
 - `last_timeout_ms_requested`
 - `last_operation_id`
 - `last_phase`
+- `last_state`
 - `last_error`
 
 ## State Model (Planned)

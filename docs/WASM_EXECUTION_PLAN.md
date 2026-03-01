@@ -537,6 +537,9 @@ Completed on this branch:
   `WASM_API_CONTRACT.md` top-level export listings and exported type field
   coverage against `src/wasm/mod.rs`, and is enforced in both local wasm gate
   scripts.
+- latest: `WasmWorkerSession` now tracks `last_state` telemetry alongside
+  operation/phase/error metadata, and wasm contract tests/docs were updated to
+  keep session-state reporting explicit for UI integration.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

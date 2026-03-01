@@ -606,6 +606,7 @@ fn wasm_worker_session_contract_is_stable() {
     assert!(session.last_timeout_ms_requested().is_none());
     assert!(session.last_operation_id().is_none());
     assert!(session.last_phase().is_none());
+    assert!(session.last_state().is_none());
     assert!(session.last_error().is_none());
 
     let info = session.info();
@@ -622,6 +623,7 @@ fn wasm_worker_session_contract_is_stable() {
             .expect("last phase after worker start should exist"),
         "unsupported_worker_start".to_string()
     );
+    assert_eq!(session.last_state(), Some("unwired".to_string()));
 
     let terminate = session.terminate();
     assert_eq!(terminate.phase(), "unsupported_worker_terminate");
@@ -633,6 +635,7 @@ fn wasm_worker_session_contract_is_stable() {
             .expect("last phase after worker terminate should exist"),
         "unsupported_worker_terminate".to_string()
     );
+    assert_eq!(session.last_state(), Some("unwired".to_string()));
     assert!(session.last_error().is_some());
 
     let recycle = session.recycle();
@@ -645,6 +648,7 @@ fn wasm_worker_session_contract_is_stable() {
             .expect("last phase after worker recycle should exist"),
         "unsupported_worker_recycle".to_string()
     );
+    assert_eq!(session.last_state(), Some("unwired".to_string()));
     assert!(session.last_error().is_some());
 
     let execute = session.execute("x = 1\n");
@@ -663,6 +667,7 @@ fn wasm_worker_session_contract_is_stable() {
         .last_operation_id()
         .expect("last operation id after worker execute should exist");
     assert!(execute_operation_id.starts_with("worker_execute_"));
+    assert_eq!(session.last_state(), Some("unwired".to_string()));
     if vm_probe_enabled() {
         assert_eq!(
             session
@@ -698,6 +703,7 @@ fn wasm_worker_session_contract_is_stable() {
             .expect("last phase after worker timeout update should exist"),
         "invalid_worker_timeout".to_string()
     );
+    assert_eq!(session.last_state(), Some("unwired".to_string()));
     assert!(session.last_error().is_some());
 
     let timeout = session.set_timeout_ms(5_000);
@@ -714,6 +720,7 @@ fn wasm_worker_session_contract_is_stable() {
             .expect("last phase after worker timeout update should exist"),
         "unsupported_worker_timeout_enforcement".to_string()
     );
+    assert_eq!(session.last_state(), Some("unwired".to_string()));
     assert!(session.last_error().is_some());
 
     session.reset();
@@ -725,6 +732,7 @@ fn wasm_worker_session_contract_is_stable() {
     assert!(session.last_timeout_ms_requested().is_none());
     assert!(session.last_operation_id().is_none());
     assert!(session.last_phase().is_none());
+    assert!(session.last_state().is_none());
     assert!(session.last_error().is_none());
 }
 
@@ -749,6 +757,7 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
     assert!(first_id.starts_with("worker_execute_"));
     assert_eq!(session.executes_requested(), 1);
     assert_eq!(session.last_operation_id(), Some(first_id.clone()));
+    assert_eq!(session.last_state(), Some("unwired".to_string()));
     if vm_probe_enabled() {
         assert_eq!(session.last_phase(), Some("ok".to_string()));
         assert!(first.blocker_key().is_none());
@@ -775,6 +784,7 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
     assert_eq!(session.executes_requested(), 2);
     assert_eq!(session.last_operation_id(), Some(second_id));
     assert_eq!(session.last_phase(), Some("syntax_error".to_string()));
+    assert_eq!(session.last_state(), Some("unwired".to_string()));
     assert!(second.blocker_key().is_none());
 }
 

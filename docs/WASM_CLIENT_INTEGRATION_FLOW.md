@@ -61,7 +61,7 @@ Use `operation_id` fields from lifecycle/timeout results (and from
 You can call lifecycle methods directly or via `WasmWorkerSession` for stateful
 UI telemetry (`starts_requested`, `terminates_requested`, `recycles_requested`,
 `executes_requested`, `timeout_updates_requested`, `last_timeout_ms_requested`,
-`last_operation_id`, `last_phase`, `last_error`).
+`last_operation_id`, `last_phase`, `last_state`, `last_error`).
 
 Prefer `wasm_worker_state_keys()`, `wasm_worker_lifecycle_phase_keys()`, and
 `wasm_worker_execute_phase_keys()`, and `wasm_worker_timeout_phase_keys()` for

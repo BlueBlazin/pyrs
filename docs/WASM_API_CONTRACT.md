@@ -294,6 +294,7 @@ This document defines the JS-facing contract currently exported by
 - `last_timeout_ms_requested: Option<u32>`
 - `last_operation_id: Option<String>`
 - `last_phase: Option<String>`
+- `last_state: Option<String>`
 - `last_error: Option<String>`
 
 ## Stability Rules
