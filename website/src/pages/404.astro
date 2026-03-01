@@ -1,0 +1,88 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+---
+
+<SiteLayout
+	title="PYRS | Page Not Found"
+	description="The page you requested could not be found."
+>
+	<section class="not-found">
+		<p class="eyebrow">404</p>
+		<h1>Page not found.</h1>
+		<p class="lede">
+			The requested route does not exist in the current site build.
+		</p>
+		<div class="actions">
+			<a class="btn btn-primary" href="/">Go Home</a>
+			<a class="btn btn-secondary" href="/docs/">Open Docs</a>
+		</div>
+	</section>
+</SiteLayout>
+
+<style>
+	.not-found {
+		padding: 3.6rem 0 2.2rem;
+		max-width: 56rem;
+	}
+
+	.eyebrow {
+		margin: 0 0 0.75rem;
+		color: var(--accent-2);
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		font-size: 0.78rem;
+		font-weight: 600;
+	}
+
+	h1 {
+		margin: 0;
+		font-size: clamp(2rem, 6vw, 3.1rem);
+		line-height: 1.05;
+		letter-spacing: -0.02em;
+	}
+
+	.lede {
+		margin: 0.9rem 0 0;
+		max-width: 45ch;
+		color: var(--text-muted);
+		font-size: 1rem;
+		line-height: 1.56;
+	}
+
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.72rem;
+		margin-top: 1.3rem;
+	}
+
+	.btn {
+		padding: 0.72rem 1rem;
+		border-radius: 0.72rem;
+		text-decoration: none;
+		font-weight: 600;
+		font-size: 0.91rem;
+		transition: transform 150ms ease, box-shadow 150ms ease;
+	}
+
+	.btn:hover {
+		transform: translateY(-1px);
+		box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
+	}
+
+	.btn:focus-visible {
+		outline: 2px solid rgba(255, 163, 105, 0.9);
+		outline-offset: 2px;
+	}
+
+	.btn-primary {
+		background: linear-gradient(135deg, #df8b5a 0%, #c76638 100%);
+		color: #231108;
+	}
+
+	.btn-secondary {
+		color: var(--text);
+		border: 1px solid var(--line);
+		background: rgba(255, 255, 255, 0.02);
+	}
+</style>
