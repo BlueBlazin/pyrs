@@ -129,7 +129,13 @@ def parse_source_module_policy_blocker_keys(wasm_source: str) -> list[str]:
         raise ValueError("unable to parse WASM_MODULE_BLOCKER_POLICY from wasm source")
     body = match.group(1)
     rows = re.findall(r'\(\s*"[^"]+"\s*,\s*"([^"]+)"\s*\)', body)
-    return unique(rows)
+    keys: list[str] = []
+    seen: set[str] = set()
+    for key in rows:
+        if key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return keys
 
 
 def validate_non_empty(name: str, values: list[str], errors: list[str]) -> None:
@@ -225,9 +231,10 @@ def main() -> int:
     source_operation_actions = parse_source_operation_actions(wasm_source)
     source_worker_blocker_key = parse_source_worker_blocker_key(wasm_source)
     source_module_policy_blocker_keys = parse_source_module_policy_blocker_keys(wasm_source)
-    source_expected_worker_blocker_keys = sorted(
-        {source_worker_blocker_key, *source_module_policy_blocker_keys}
-    )
+    source_expected_worker_blocker_keys = [
+        source_worker_blocker_key,
+        *source_module_policy_blocker_keys,
+    ]
     allowed_execute_unsupported_blocker_keys = sorted(
         {source_worker_blocker_key, *source_module_policy_blocker_keys}
     )
@@ -311,6 +318,11 @@ def main() -> int:
         errors.append(
             "worker blocker key set mismatch "
             f"fixtures={unique(worker_blocker_keys)} source={source_expected_worker_blocker_keys}"
+        )
+    if worker_blocker_keys != source_expected_worker_blocker_keys:
+        errors.append(
+            "worker blocker key order mismatch "
+            f"fixtures={worker_blocker_keys} source={source_expected_worker_blocker_keys}"
         )
 
     if unique(lifecycle_operation_prefixes) != expected_lifecycle_prefixes:

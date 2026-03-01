@@ -101,6 +101,16 @@ fn wasm_worker_contract_basics() {
 
     let keys = wasm_worker_blocker_keys();
     assert_eq!(keys.length(), info.blocker_count() as u32);
+    for (index, expected_key) in WASM_WORKER_BLOCKER_KEYS.iter().enumerate() {
+        let key = keys
+            .get(index as u32)
+            .as_string()
+            .expect("worker blocker key should be string");
+        assert_eq!(
+            key, *expected_key,
+            "worker blocker key order mismatch at index {index}"
+        );
+    }
     let mut key_set = HashSet::new();
     for index in 0..keys.length() {
         let key = keys
