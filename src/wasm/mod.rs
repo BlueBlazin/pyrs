@@ -8,9 +8,6 @@ use wasm_bindgen::prelude::*;
 pub const WASM_API_VERSION: u32 = 1;
 const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired";
 const WASM_WORKER_BLOCKER_RUNTIME_UNWIRED: &str = "worker_runtime_unwired";
-const WASM_WORKER_PHASE_UNSUPPORTED_START: &str = "unsupported_worker_start";
-const WASM_WORKER_PHASE_UNSUPPORTED_TERMINATE: &str = "unsupported_worker_terminate";
-const WASM_WORKER_STATE_UNWIRED: &str = "unwired";
 const WASM_WORKER_INTERRUPT_MODEL_RECYCLE: &str = "worker_recycle";
 const WASM_MODULE_BLOCKER_POLICY: [(&str, &str); 10] = [
     ("_ctypes", "dynamic_library_load"),
@@ -41,22 +38,70 @@ fn execution_blocker_keys(host: &dyn VmHost) -> Vec<&'static str> {
     keys
 }
 
-fn worker_state_keys() -> &'static [&'static str] {
-    &[
-        "unwired",
-        "starting",
-        "ready",
-        "busy",
-        "terminating",
-        "failed",
-    ]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WasmWorkerState {
+    Unwired,
+    Starting,
+    Ready,
+    Busy,
+    Terminating,
+    Failed,
 }
 
-fn worker_lifecycle_phase_keys() -> &'static [&'static str] {
-    &[
-        WASM_WORKER_PHASE_UNSUPPORTED_START,
-        WASM_WORKER_PHASE_UNSUPPORTED_TERMINATE,
-    ]
+impl WasmWorkerState {
+    const ALL: [WasmWorkerState; 6] = [
+        WasmWorkerState::Unwired,
+        WasmWorkerState::Starting,
+        WasmWorkerState::Ready,
+        WasmWorkerState::Busy,
+        WasmWorkerState::Terminating,
+        WasmWorkerState::Failed,
+    ];
+
+    fn key(self) -> &'static str {
+        match self {
+            WasmWorkerState::Unwired => "unwired",
+            WasmWorkerState::Starting => "starting",
+            WasmWorkerState::Ready => "ready",
+            WasmWorkerState::Busy => "busy",
+            WasmWorkerState::Terminating => "terminating",
+            WasmWorkerState::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WasmWorkerLifecyclePhase {
+    UnsupportedStart,
+    UnsupportedTerminate,
+}
+
+impl WasmWorkerLifecyclePhase {
+    const ALL: [WasmWorkerLifecyclePhase; 2] = [
+        WasmWorkerLifecyclePhase::UnsupportedStart,
+        WasmWorkerLifecyclePhase::UnsupportedTerminate,
+    ];
+
+    fn key(self) -> &'static str {
+        match self {
+            WasmWorkerLifecyclePhase::UnsupportedStart => "unsupported_worker_start",
+            WasmWorkerLifecyclePhase::UnsupportedTerminate => "unsupported_worker_terminate",
+        }
+    }
+}
+
+fn worker_state_keys() -> Vec<&'static str> {
+    WasmWorkerState::ALL
+        .iter()
+        .map(|state| state.key())
+        .collect()
+}
+
+fn worker_lifecycle_phase_keys() -> Vec<&'static str> {
+    WasmWorkerLifecyclePhase::ALL
+        .iter()
+        .map(|phase| phase.key())
+        .collect()
 }
 
 /// Minimal WASM bridge surface used during compile-isolation bring-up.
@@ -718,7 +763,7 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
     let blockers = wasm_worker_blocker_keys();
     WasmWorkerInfo {
         supported: false,
-        state: WASM_WORKER_STATE_UNWIRED.to_string(),
+        state: WasmWorkerState::Unwired.key().to_string(),
         interruption_model: WASM_WORKER_INTERRUPT_MODEL_RECYCLE.to_string(),
         blocker_count: blockers.length() as usize,
     }
@@ -744,14 +789,14 @@ pub fn wasm_worker_lifecycle_phase_keys() -> Array {
     keys
 }
 
-fn worker_unwired_result(phase: &'static str) -> WasmWorkerLifecycleResult {
+fn worker_unwired_result(phase: WasmWorkerLifecyclePhase) -> WasmWorkerLifecycleResult {
     let blocker_key = WASM_WORKER_BLOCKER_RUNTIME_UNWIRED.to_string();
     let message = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
         .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
     WasmWorkerLifecycleResult {
         success: false,
-        phase: phase.to_string(),
-        state: WASM_WORKER_STATE_UNWIRED.to_string(),
+        phase: phase.key().to_string(),
+        state: WasmWorkerState::Unwired.key().to_string(),
         error: Some(message),
         blocker_key: Some(blocker_key),
     }
@@ -763,7 +808,7 @@ fn worker_unwired_result(phase: &'static str) -> WasmWorkerLifecycleResult {
 /// - returns `phase = "unsupported_worker_start"` until worker backend is wired.
 #[wasm_bindgen]
 pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
-    worker_unwired_result(WASM_WORKER_PHASE_UNSUPPORTED_START)
+    worker_unwired_result(WasmWorkerLifecyclePhase::UnsupportedStart)
 }
 
 /// Terminates worker runtime execution.
@@ -772,7 +817,7 @@ pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
 /// - returns `phase = "unsupported_worker_terminate"` until worker backend is wired.
 #[wasm_bindgen]
 pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
-    worker_unwired_result(WASM_WORKER_PHASE_UNSUPPORTED_TERMINATE)
+    worker_unwired_result(WasmWorkerLifecyclePhase::UnsupportedTerminate)
 }
 
 /// Returns canonical blocker keys that currently prevent wasm execution.

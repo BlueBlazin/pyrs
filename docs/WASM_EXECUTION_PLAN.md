@@ -296,7 +296,8 @@ Completed on this branch:
 - `df03f8d`: canonical browser call order is documented in
   `docs/WASM_CLIENT_INTEGRATION_FLOW.md`.
 - `5c4514e`: `WasmWorkerSession` stateful wrapper API landed for lifecycle orchestration.
-- latest: worker state/lifecycle enum key exports were added for stable client branching.
+- `7988f5e`: worker state/lifecycle enum key exports were added for stable client branching.
+- latest: worker contract strings are now centralized through internal enum-backed sources.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

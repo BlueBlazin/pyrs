@@ -97,6 +97,7 @@ clients must treat worker execution as unsupported.
 2. New worker blocker keys may be added, but existing key semantics must not change.
 3. `wasm_worker_info().blocker_count` must always match blocker-key export length.
 4. Worker lifecycle stubs must keep stable `phase` identifiers until API version bump.
+5. Clients should branch on exported key lists, not hardcoded literals.
 
 ## Contract Fixtures
 
