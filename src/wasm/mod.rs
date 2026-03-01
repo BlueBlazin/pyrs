@@ -282,23 +282,24 @@ pub fn wasm_runtime_info() -> WasmRuntimeInfo {
 pub fn execute(source: &str) -> WasmExecutionResult {
     let syntax = check_syntax_result(source);
     if !syntax.ok {
+        let error = syntax.error;
+        let stderr = error.clone().unwrap_or_else(|| "syntax check failed".to_string());
         return WasmExecutionResult {
             success: false,
             phase: "syntax_error".to_string(),
             stdout: String::new(),
-            stderr: String::new(),
-            error: syntax.error,
+            stderr,
+            error,
         };
     }
 
+    let message = "wasm execution backend is not wired yet; syntax validation is available";
     WasmExecutionResult {
         success: false,
         phase: "unsupported_execution".to_string(),
         stdout: String::new(),
-        stderr: String::new(),
-        error: Some(
-            "wasm execution backend is not wired yet; syntax validation is available".to_string(),
-        ),
+        stderr: message.to_string(),
+        error: Some(message.to_string()),
     }
 }
 

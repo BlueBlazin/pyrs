@@ -23,6 +23,7 @@ This document defines the JS-facing contract currently exported by
   - Current behavior:
     - `phase = "syntax_error"` when parse fails.
     - `phase = "unsupported_execution"` for syntax-valid input.
+  - `stderr` is populated for both current failure phases.
 - `wasm_capabilities() -> WasmCapabilityReport`
   - Returns explicit browser capability matrix.
 - `wasm_capability_error(capability_key: &str) -> Option<String>`
