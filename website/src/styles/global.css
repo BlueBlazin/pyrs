@@ -16,4 +16,26 @@
 	*::after {
 		box-sizing: border-box;
 	}
+
+	.skip-link {
+		position: absolute;
+		left: 0.9rem;
+		top: -3rem;
+		z-index: 999;
+		padding: 0.42rem 0.62rem;
+		border-radius: 0.45rem;
+		font-size: 0.82rem;
+		font-weight: 600;
+		text-decoration: none;
+		background: #fff2e9;
+		color: #2b1207;
+		border: 1px solid #d37d4f;
+		transition: top 120ms ease;
+	}
+
+	.skip-link:focus {
+		top: 0.75rem;
+		outline: 2px solid #f4b38d;
+		outline-offset: 2px;
+	}
 }

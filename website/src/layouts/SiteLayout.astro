@@ -18,8 +18,9 @@ const { title, description } = Astro.props;
 	</head>
 	<body>
 		<div class="site-shell">
+			<a class="skip-link" href="#main-content">Skip to content</a>
 			<TopNav context="home" />
-			<main class="home-main">
+			<main class="home-main" id="main-content">
 				<slot />
 			</main>
 			<Footer variant="home" />

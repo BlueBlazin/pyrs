@@ -24,10 +24,11 @@ const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 	</head>
 	<body>
 		<div class="site-shell">
+			<a class="skip-link" href="#main-content">Skip to content</a>
 			<TopNav context="docs" />
 			<main class="docs-shell">
 				<DocsSidebar path={path} />
-				<section class="docs-content">
+				<section class="docs-content" id="main-content">
 					<DocsPageHeader title={pageTitle} description={description} />
 					<slot />
 					<DocsPager path={path} />
