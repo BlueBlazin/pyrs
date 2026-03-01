@@ -47,6 +47,41 @@ impl WasmSyntaxResult {
     }
 }
 
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmSession {
+    snippets_checked: usize,
+    last_error: Option<String>,
+}
+
+#[wasm_bindgen]
+impl WasmSession {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        init_wasm_runtime();
+        Self {
+            snippets_checked: 0,
+            last_error: None,
+        }
+    }
+
+    pub fn check_syntax(&mut self, source: &str) -> WasmSyntaxResult {
+        let result = check_syntax_result(source);
+        self.snippets_checked += 1;
+        self.last_error = result.error.clone();
+        result
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn snippets_checked(&self) -> usize {
+        self.snippets_checked
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_error(&self) -> Option<String> {
+        self.last_error.clone()
+    }
+}
+
 fn format_parse_error(err: &crate::parser::ParseError) -> String {
     format!("{} (line {}, column {})", err.message, err.line, err.column)
 }
