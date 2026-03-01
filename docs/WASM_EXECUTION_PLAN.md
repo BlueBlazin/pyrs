@@ -203,6 +203,9 @@ Branch helper:
 - worker-contract summary helper:
   `python3 scripts/generate_wasm_worker_contract_summary.py --out perf/wasm_worker_contract_summary_latest.json`
   for fixture + source parity on worker key sets/prefixes/blockers.
+- module-policy summary helper:
+  `python3 scripts/generate_wasm_module_policy_summary.py --out perf/wasm_module_policy_summary_latest.json`
+  for fixture + source parity on module blocker mappings.
 
 ## Merge Decision Rubric
 
@@ -361,6 +364,9 @@ Completed on this branch:
 - latest: execute-contract fixture summaries are now generated via
   `scripts/generate_wasm_execute_contract_summary.py` and enforced in
   branch/smoke scripts (`perf/wasm_execute_contract_summary_latest.json`).
+- latest: module-policy fixture summaries are now generated via
+  `scripts/generate_wasm_module_policy_summary.py` and enforced in
+  branch/smoke scripts (`perf/wasm_module_policy_summary_latest.json`).
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
