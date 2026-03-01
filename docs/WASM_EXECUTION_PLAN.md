@@ -467,9 +467,10 @@ Current `wasm-vm-probe` snapshot (non-gating, latest local run):
 - current probe status is clean in the scripted probe lane (no active compile
   blockers and no warning debt from the most recent local probe run).
 - link blocker status: `perf/wasm_vm_link_blockers_latest.json` tracks
-  remaining source-level native-link attributes under `src/vm`; current
-  snapshot reports `known_stdlib_blockers=0` after wasm-safe target gating on
-  stdlib C-link modules.
+  remaining source-level native-link attributes under `src/vm` plus
+  wasm-active filtering; current snapshot reports
+  `active_hits=0` and `known_stdlib_blockers=0` after wasm-safe target gating
+  on stdlib C-link modules.
 
 ## Risk Register
 
