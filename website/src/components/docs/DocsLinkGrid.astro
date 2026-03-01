@@ -1,0 +1,79 @@
+---
+import { cn } from "../../lib/cn";
+
+type LinkItem = {
+	title: string;
+	description: string;
+	href: string;
+};
+
+interface Props {
+	items: LinkItem[];
+	class?: string;
+}
+
+const { items, class: className } = Astro.props;
+---
+
+<div class={cn("docs-link-grid", className)}>
+	{
+		items.map((item) => (
+			<a class="docs-link-card" href={item.href}>
+				<h3>{item.title}</h3>
+				<p>{item.description}</p>
+			</a>
+		))
+	}
+</div>
+
+<style>
+	.docs-link-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.72rem;
+	}
+
+	.docs-link-card {
+		display: flex;
+		flex-direction: column;
+		gap: 0.36rem;
+		padding: 0.78rem 0.84rem;
+		border: 1px solid #2d3444;
+		border-radius: 0.72rem;
+		background: #0d121c;
+		text-decoration: none;
+		transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+	}
+
+	.docs-link-card h3 {
+		margin: 0;
+		color: #eff3ff;
+		font-size: 0.95rem;
+		line-height: 1.25;
+		letter-spacing: -0.01em;
+	}
+
+	.docs-link-card p {
+		margin: 0;
+		color: #9da7bf;
+		font-size: 0.85rem;
+		line-height: 1.48;
+	}
+
+	.docs-link-card:hover {
+		background: #10182a;
+		border-color: #3b4d6e;
+		transform: translateY(-1px);
+	}
+
+	.docs-link-card:focus-visible {
+		outline: 2px solid rgba(255, 186, 137, 0.92);
+		outline-offset: 2px;
+	}
+
+	@media (max-width: 780px) {
+		.docs-link-grid {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

@@ -8,6 +8,7 @@ pageTitle: Getting Started
 import DocSection from "../../components/docs/DocSection.astro";
 import CommandBlock from "../../components/docs/CommandBlock.astro";
 import Callout from "../../components/docs/Callout.astro";
+import DocsLinkGrid from "../../components/docs/DocsLinkGrid.astro";
 import { cargoInstallGitHubCommands, quickRunCommands } from "../../config/installCommands";
 
 <DocSection>
@@ -21,6 +22,33 @@ import { cargoInstallGitHubCommands, quickRunCommands } from "../../config/insta
 		<li>Git</li>
 		<li>macOS or Linux</li>
 	</ul>
+</DocSection>
+
+<DocSection title="Jump to Key Topics">
+	<DocsLinkGrid
+		items={[
+			{
+				title: "Installation",
+				description: "Cargo, source-build, Docker, and nightly archive install paths.",
+				href: "/docs/install/",
+			},
+			{
+				title: "REPL and Execution",
+				description: "Interactive and non-interactive execution modes with command examples.",
+				href: "/docs/repl/",
+			},
+			{
+				title: "Diagnostics and Tracebacks",
+				description: "Error output shape, syntax diagnostics, and traceback expectations.",
+				href: "/docs/diagnostics/",
+			},
+			{
+				title: "CLI and Environment",
+				description: "Invocation modes, supported flags, and runtime environment variables.",
+				href: "/docs/reference/",
+			},
+		]}
+	/>
 </DocSection>
 
 <DocSection title="Install and Verify">
