@@ -38,6 +38,10 @@ fn execution_blocker_keys(host: &dyn VmHost) -> Vec<&'static str> {
     keys
 }
 
+fn worker_blocker_keys() -> Vec<&'static str> {
+    vec![WASM_WORKER_BLOCKER_RUNTIME_UNWIRED]
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WasmWorkerState {
     Unwired,
@@ -607,6 +611,12 @@ pub struct WasmExecutionBlocker {
 }
 
 #[wasm_bindgen(getter_with_clone)]
+pub struct WasmWorkerBlocker {
+    key: String,
+    message: String,
+}
+
+#[wasm_bindgen(getter_with_clone)]
 pub struct WasmModuleSupport {
     module: String,
     supported: bool,
@@ -672,6 +682,19 @@ impl WasmCapabilityReport {
 
 #[wasm_bindgen]
 impl WasmExecutionBlocker {
+    #[wasm_bindgen(getter)]
+    pub fn key(&self) -> String {
+        self.key.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn message(&self) -> String {
+        self.message.clone()
+    }
+}
+
+#[wasm_bindgen]
+impl WasmWorkerBlocker {
     #[wasm_bindgen(getter)]
     pub fn key(&self) -> String {
         self.key.clone()
@@ -790,7 +813,9 @@ pub fn wasm_runtime_info() -> WasmRuntimeInfo {
 #[wasm_bindgen]
 pub fn wasm_worker_blocker_keys() -> Array {
     let keys = Array::new();
-    keys.push(&JsValue::from_str(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED));
+    for key in worker_blocker_keys() {
+        keys.push(&JsValue::from_str(key));
+    }
     keys
 }
 
@@ -806,13 +831,28 @@ pub fn wasm_worker_blocker_error(blocker_key: &str) -> Option<String> {
 /// Reports worker-runtime contract state for browser clients.
 #[wasm_bindgen]
 pub fn wasm_worker_info() -> WasmWorkerInfo {
-    let blockers = wasm_worker_blocker_keys();
+    let blockers = worker_blocker_keys();
     WasmWorkerInfo {
         supported: false,
         state: WasmWorkerState::Unwired.key().to_string(),
         interruption_model: WASM_WORKER_INTERRUPT_MODEL_RECYCLE.to_string(),
-        blocker_count: blockers.length() as usize,
+        blocker_count: blockers.len(),
     }
+}
+
+/// Returns key+message entries for known worker blockers.
+#[wasm_bindgen]
+pub fn wasm_worker_blockers() -> Array {
+    let blockers = Array::new();
+    for key in worker_blocker_keys() {
+        let message = wasm_worker_blocker_error(key)
+            .unwrap_or_else(|| "unknown wasm worker blocker".to_string());
+        blockers.push(&JsValue::from(WasmWorkerBlocker {
+            key: key.to_string(),
+            message,
+        }));
+    }
+    blockers
 }
 
 /// Returns canonical worker state keys for wasm worker runtime contracts.

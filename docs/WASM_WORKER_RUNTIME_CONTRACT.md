@@ -10,6 +10,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `wasm_worker_execute_phase_keys()`
 - `wasm_worker_blocker_keys()`
 - `wasm_worker_blocker_error(blocker_key)`
+- `wasm_worker_blockers()`
 - `wasm_worker_start()`
 - `wasm_worker_terminate()`
 - `wasm_worker_execute(source)`
@@ -53,6 +54,11 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `"wasm worker runtime is not wired yet"`
 
 Unknown blocker keys return `None`.
+
+`wasm_worker_blockers()` currently returns one structured row with:
+
+- `key = "worker_runtime_unwired"`
+- `message = "wasm worker runtime is not wired yet"`
 
 `wasm_worker_start()` currently returns:
 

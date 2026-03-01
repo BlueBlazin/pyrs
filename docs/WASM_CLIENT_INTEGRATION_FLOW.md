@@ -33,6 +33,9 @@ This guide defines the recommended browser call order for current wasm APIs.
 
 Use this to keep UI behavior deterministic before worker backend wiring.
 
+For worker-specific diagnostics UI, call `wasm_worker_blockers()` to get stable
+structured key/message rows without hardcoding blocker text.
+
 You can call lifecycle methods directly or via `WasmWorkerSession` for stateful
 UI telemetry (`starts_requested`, `terminates_requested`, `executes_requested`,
 `last_phase`, `last_error`).

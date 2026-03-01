@@ -16,7 +16,7 @@ use pyrs::wasm::{
     wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
     wasm_execution_blocker_keys, wasm_execution_blockers, wasm_module_policy_entries,
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_support,
-    wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_execute,
+    wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_blockers, wasm_worker_execute,
     wasm_worker_execute_phase_keys, wasm_worker_info, wasm_worker_lifecycle_phase_keys,
     wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate, WasmSession,
     WasmWorkerSession,
@@ -58,6 +58,20 @@ fn wasm_worker_contract_basics() {
     let message = wasm_worker_blocker_error("worker_runtime_unwired")
         .expect("worker runtime blocker message should exist");
     assert!(message.contains("not wired"));
+
+    let blockers = wasm_worker_blockers();
+    assert_eq!(blockers.length(), keys.length());
+    let first = blockers.get(0);
+    let first_key = Reflect::get(&first, &"key".into())
+        .expect("worker blocker.key")
+        .as_string()
+        .expect("worker blocker.key as string");
+    let first_message = Reflect::get(&first, &"message".into())
+        .expect("worker blocker.message")
+        .as_string()
+        .expect("worker blocker.message as string");
+    assert_eq!(first_key, "worker_runtime_unwired");
+    assert!(first_message.contains("not wired"));
 }
 
 #[wasm_bindgen_test]

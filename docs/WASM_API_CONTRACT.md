@@ -60,6 +60,8 @@ This document defines the JS-facing contract currently exported by
   - Returns canonical worker blocker keys.
 - `wasm_worker_blocker_error(blocker_key: &str) -> Option<String>`
   - Returns stable worker blocker message for known keys.
+- `wasm_worker_blockers() -> Array`
+  - Returns structured worker blocker entries (`key` + `message`).
 - `wasm_module_support(module_name: &str) -> WasmModuleSupport`
   - Returns module-level support/preflight status (`supported`, blocker key/message).
 - `wasm_module_policy_entries() -> Array`
@@ -132,6 +134,11 @@ This document defines the JS-facing contract currently exported by
 - `network_sockets: bool`
 
 ## `WasmExecutionBlocker`
+
+- `key: String`
+- `message: String`
+
+## `WasmWorkerBlocker`
 
 - `key: String`
 - `message: String`

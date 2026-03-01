@@ -301,6 +301,8 @@ Completed on this branch:
 - latest: worker enum contract tests now assert full set equality from fixture snapshots.
 - latest: worker execute contract now exports canonical execute phases and
   `wasm_worker_execute(source)`; `WasmWorkerSession` now tracks `executes_requested`.
+- latest: worker blocker contract now exports structured rows via
+  `wasm_worker_blockers()` for key/message UI integration.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
