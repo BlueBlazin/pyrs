@@ -26,6 +26,27 @@ branch. It is intentionally strict: unsupported behavior must fail explicitly.
   - `WasmHost::supports(...)`
 - Browser bridge export: `src/wasm/mod.rs` (`wasm_capabilities()`)
 
+## Browser API Surface
+
+Current wasm bridge exports for capability handling:
+
+- `wasm_capabilities()`:
+  returns the capability boolean matrix as a structured object.
+- `wasm_capability_error(capability_key)`:
+  returns a stable unsupported-capability message for known keys,
+  or `None` if the capability is supported.
+
+Accepted capability keys:
+
+- `filesystem_read`
+- `filesystem_write`
+- `environment_read`
+- `process_args`
+- `process_spawn`
+- `dynamic_library_load`
+- `interactive_terminal`
+- `network_sockets`
+
 ## Error-Surface Policy
 
 When a wasm-mode operation requires an unsupported capability:
