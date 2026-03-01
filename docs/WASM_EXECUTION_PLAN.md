@@ -521,6 +521,15 @@ Completed on this branch:
 - latest: `generate_wasm_docs_execution_matrix_summary.py` now validates the
   `WASM_API_CONTRACT.md` execution-mode matrix against source phase/blocker
   contracts, and is enforced in both local wasm gate scripts.
+- latest: `generate_wasm_worker_docs_contract_summary.py` now validates
+  `WASM_WORKER_RUNTIME_CONTRACT.md` against source keys/constants (worker
+  state/lifecycle/execute/timeout phases, interruption model, timeout bounds,
+  and worker/module-policy blocker keys), and is enforced in both local wasm
+  gate scripts.
+- latest: `generate_wasm_client_flow_summary.py` now validates
+  `WASM_CLIENT_INTEGRATION_FLOW.md` call-order guidance and function tokens
+  against source-exported wasm APIs, plus worker lifecycle/execute/vm-probe
+  phase and `WasmWorkerSession` telemetry-field parity.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
