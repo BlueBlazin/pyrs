@@ -94,7 +94,9 @@ const toneClass = (tone?: Tone) => {
 	}
 
 	.repl-code {
-		white-space: pre;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		word-break: break-word;
 		min-width: 0;
 		flex: 1;
 	}
@@ -148,12 +150,6 @@ const toneClass = (tone?: Tone) => {
 		.repl-prompt {
 			width: 1.2rem;
 			flex: 0 0 1.2rem;
-		}
-
-		.repl-code {
-			white-space: pre-wrap;
-			overflow-wrap: anywhere;
-			word-break: break-word;
 		}
 	}
 
