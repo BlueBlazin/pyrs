@@ -283,6 +283,19 @@ def validate(
                 f"{fixture.name}: non-unsupported execute phase must set expected_execute_blocker_key=None"
             )
 
+        if vm_probe_enabled and fixture.expected_support_phase == "supported":
+            if effective_execute_phase not in {"ok", "runtime_error"}:
+                errors.append(
+                    f"{fixture.name}: vm-probe supported fixture must map to ok/runtime_error, "
+                    f"got '{effective_execute_phase}'"
+                )
+        if vm_probe_enabled and fixture.expected_support_phase == "blocked_capability":
+            if effective_execute_phase != "unsupported_execution":
+                errors.append(
+                    f"{fixture.name}: vm-probe blocked_capability fixture must remain "
+                    "unsupported_execution"
+                )
+
         if fixture.expected_support_phase == "blocked_capability":
             if fixture.expected_first_blocker_key is None:
                 errors.append(

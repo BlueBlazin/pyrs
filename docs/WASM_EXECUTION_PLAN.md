@@ -501,6 +501,10 @@ Completed on this branch:
 - latest: `generate_wasm_worker_contract_summary.py` now validates effective
   worker execute contract semantics (success/error/line-column) per phase in
   both default and vm-probe modes, not just phase/blocker-key parity.
+- latest: `generate_wasm_execute_contract_summary.py` now enforces vm-probe
+  support-phase mapping semantics: `supported` fixtures must resolve to
+  `ok/runtime_error` in vm-probe mode while `blocked_capability` fixtures
+  remain `unsupported_execution`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
