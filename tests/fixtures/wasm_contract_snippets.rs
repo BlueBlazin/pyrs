@@ -8,6 +8,19 @@ pub struct WasmContractSnippetFixture {
     pub expected_first_blocker_key: Option<&'static str>,
 }
 
+pub const WASM_EXECUTION_PHASE_KEYS: &[&str] = &[
+    "syntax_error",
+    "compile_error",
+    "unsupported_execution",
+];
+
+pub const WASM_SUPPORT_PHASE_KEYS: &[&str] = &[
+    "supported",
+    "blocked_capability",
+    "syntax_error",
+    "compile_error",
+];
+
 pub const WASM_CONTRACT_SNIPPET_FIXTURES: &[WasmContractSnippetFixture] = &[
     WasmContractSnippetFixture {
         name: "supported_math_import",

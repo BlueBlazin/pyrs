@@ -10,7 +10,9 @@ mod wasm_capability_matrix;
 mod wasm_worker_contract;
 
 use crate::wasm_capability_matrix::WASM_CAPABILITY_FIXTURES;
-use crate::wasm_contract_snippets::WASM_CONTRACT_SNIPPET_FIXTURES;
+use crate::wasm_contract_snippets::{
+    WASM_CONTRACT_SNIPPET_FIXTURES, WASM_EXECUTION_PHASE_KEYS, WASM_SUPPORT_PHASE_KEYS,
+};
 use crate::wasm_module_policy::WASM_MODULE_POLICY_FIXTURES;
 use crate::wasm_worker_contract::{
     WASM_WORKER_EXECUTE_FIXTURES, WASM_WORKER_EXECUTE_PHASE_KEYS, WASM_WORKER_LIFECYCLE_FIXTURES,
@@ -70,25 +72,26 @@ fn wasm_runtime_contract_basics() {
 #[wasm_bindgen_test]
 fn wasm_execution_phase_keys_are_stable() {
     let keys = wasm_execution_phase_keys();
-    let mut phases = HashSet::new();
+    let mut phases = Vec::new();
     for index in 0..keys.length() {
         let phase = keys
             .get(index)
             .as_string()
             .expect("execution phase key should be string");
-        phases.insert(phase);
+        phases.push(phase);
     }
-    let expected: HashSet<String> = ["syntax_error", "compile_error", "unsupported_execution"]
+    let expected: Vec<String> = WASM_EXECUTION_PHASE_KEYS
         .iter()
         .map(|value| (*value).to_string())
         .collect();
     assert_eq!(phases, expected);
+    let phase_set: HashSet<String> = phases.iter().cloned().collect();
 
     let unsupported = execute("x = 1\n");
-    assert!(phases.contains(&unsupported.phase()));
+    assert!(phase_set.contains(&unsupported.phase()));
 
     let syntax = execute("def broken(:\n");
-    assert!(phases.contains(&syntax.phase()));
+    assert!(phase_set.contains(&syntax.phase()));
 }
 
 #[wasm_bindgen_test]
@@ -1024,7 +1027,16 @@ fn wasm_session_execute_contract_is_stable() {
 
 #[wasm_bindgen_test]
 fn wasm_contract_snippet_fixtures_are_current() {
+    let support_phase_keys: HashSet<String> = WASM_SUPPORT_PHASE_KEYS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect();
     for fixture in WASM_CONTRACT_SNIPPET_FIXTURES {
+        assert!(
+            support_phase_keys.contains(fixture.expected_support_phase),
+            "fixture support phase must be canonical: {}",
+            fixture.name
+        );
         let compile = check_compile_result(fixture.source);
         assert_eq!(
             compile.phase(),
@@ -1053,6 +1065,11 @@ fn wasm_contract_snippet_fixtures_are_current() {
             support.phase(),
             fixture.expected_support_phase,
             "fixture support phase mismatch: {}",
+            fixture.name
+        );
+        assert!(
+            support_phase_keys.contains(&support.phase()),
+            "runtime support phase must be canonical: {}",
             fixture.name
         );
 
