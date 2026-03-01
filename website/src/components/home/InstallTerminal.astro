@@ -59,3 +59,141 @@ const copyPayload = normalized.map((line) => line.text).join("\n");
 		});
 	}
 </script>
+
+<style>
+	.terminal {
+		margin-top: 0.74rem;
+		border: 1px solid #322117;
+		border-radius: 0.82rem;
+		background: #060505;
+		box-shadow: 0 12px 24px rgba(0, 0, 0, 0.24);
+		overflow: hidden;
+	}
+
+	.terminal-bar {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+		padding: 0.52rem 0.62rem;
+		border-bottom: 1px solid #261912;
+		background: linear-gradient(180deg, #130d0a 0%, #0d0907 100%);
+	}
+
+	.terminal-lights {
+		display: inline-flex;
+		gap: 0.28rem;
+	}
+
+	.term-light {
+		width: 0.53rem;
+		height: 0.53rem;
+		border-radius: 50%;
+		display: inline-block;
+	}
+
+	.term-light-red {
+		background: #ff6b62;
+	}
+
+	.term-light-amber {
+		background: #ffbe58;
+	}
+
+	.term-light-green {
+		background: #34c46a;
+	}
+
+	.terminal-title {
+		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.7rem;
+		color: #b69f91;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+	}
+
+	.cmd-copy {
+		margin-left: auto;
+		padding: 0.2rem 0.52rem;
+		border-radius: 0.42rem;
+		border: 1px solid #5f3d2d;
+		background: #21140f;
+		color: #e9d0c2;
+		font-family: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+		font-size: 0.72rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+	}
+
+	.cmd-copy:hover {
+		background: #2d1b14;
+		border-color: #714735;
+	}
+
+	.cmd-copy:focus-visible {
+		outline: 2px solid rgba(223, 150, 100, 0.88);
+		outline-offset: 2px;
+	}
+
+	.cmd-copy.copied {
+		background: #1d3a2d;
+		border-color: #2b6e51;
+		color: #e9fff3;
+	}
+
+	.cmd-copy.copy-failed {
+		background: #47201a;
+		border-color: #8a3d2e;
+		color: #ffe6df;
+	}
+
+	.cmd-box {
+		margin: 0;
+		overflow-x: auto;
+		padding: 0.84rem 0.92rem 0.88rem;
+		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.78rem;
+		line-height: 1.52;
+		color: #ecd9cd;
+		background: #070605;
+	}
+
+	.cmd-box code {
+		display: block;
+		white-space: normal;
+	}
+
+	.cmd-line {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.54rem;
+	}
+
+	.cmd-line + .cmd-line {
+		margin-top: 0;
+	}
+
+	.cmd-prompt {
+		display: inline-block;
+		width: 0.7rem;
+		user-select: none;
+		color: #dd9463;
+		font-weight: 600;
+		text-align: center;
+		flex: 0 0 0.7rem;
+	}
+
+	.cmd-prompt-empty {
+		color: transparent;
+	}
+
+	.cmd-text {
+		color: #ecd9cd;
+		white-space: pre;
+	}
+
+	.cmd-box ::selection {
+		background: rgba(201, 110, 66, 0.28);
+		color: #fff5ef;
+	}
+</style>

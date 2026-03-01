@@ -1,0 +1,48 @@
+<section class="pillars">
+	<article class="card">
+		<h2>Parser + VM Parity</h2>
+		<p>CPython-aligned grammar, bytecode execution, and strict differential behavior gates.</p>
+	</article>
+	<article class="card">
+		<h2>Extension Bring-Up</h2>
+		<p>Focused C-API closure for scientific-stack compatibility and ABI surface confidence.</p>
+	</article>
+	<article class="card">
+		<h2>Release Discipline</h2>
+		<p>Parity profiles, nextest checkpoints, and integrity audits drive launch readiness.</p>
+	</article>
+</section>
+
+<style>
+	.pillars {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 1rem;
+		margin-top: 0;
+	}
+
+	.card {
+		background: var(--bg-card);
+		border: 1px solid var(--line);
+		border-radius: 0.9rem;
+		padding: 1rem;
+	}
+
+	.card h2 {
+		margin: 0 0 0.55rem;
+		font-size: 1.05rem;
+	}
+
+	.card p {
+		margin: 0;
+		font-size: 0.92rem;
+		color: var(--text-muted);
+		line-height: 1.52;
+	}
+
+	@media (max-width: 760px) {
+		.pillars {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

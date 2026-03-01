@@ -21,3 +21,51 @@ const { title, description, lines, recommended = false } = Astro.props;
 	<p>{description}</p>
 	<InstallTerminal lines={lines} />
 </article>
+
+<style>
+	.install-method {
+		padding: 1rem 1.08rem 1.06rem;
+	}
+
+	.install-method + .install-method {
+		border-top: 1px solid rgba(83, 52, 39, 0.72);
+	}
+
+	.install-method-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.8rem;
+	}
+
+	.install-method h3 {
+		margin: 0;
+		font-size: 0.94rem;
+		letter-spacing: 0.01em;
+	}
+
+	.install-chip {
+		font-size: 0.67rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		font-weight: 700;
+		color: #241108;
+		background: linear-gradient(135deg, #dda06f 0%, #cb7647 100%);
+		border: 1px solid rgba(203, 118, 71, 0.42);
+		border-radius: 999px;
+		padding: 0.21rem 0.44rem;
+	}
+
+	.install-method p {
+		margin: 0.43rem 0 0;
+		color: var(--text-muted);
+		font-size: 0.86rem;
+		line-height: 1.52;
+	}
+
+	@media (max-width: 760px) {
+		.install-method {
+			padding: 0.9rem 0.86rem;
+		}
+	}
+</style>
