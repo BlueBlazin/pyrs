@@ -6,8 +6,8 @@ use super::class_name_for_instance;
 use super::containers::{dedup_hashable_values, dict_contains_key_checked, ensure_hashable};
 use super::{
     DICT_BACKING_STORAGE_ATTR, LIST_BACKING_STORAGE_ATTR, NumericValue, STR_BACKING_STORAGE_ATTR,
-    mod_float, numeric_as_complex, numeric_as_f64, numeric_pair, python_floor_div, python_mod,
-    value_to_int,
+    env_var_present_cached, mod_float, numeric_as_complex, numeric_as_f64, numeric_pair,
+    python_floor_div, python_mod, value_to_int,
 };
 use crate::runtime::{
     BigInt, BuiltinFunction, Heap, Object, RuntimeError, Value, format_repr, format_value,
@@ -319,7 +319,7 @@ pub(super) fn sub_values(left: Value, right: Value, heap: &Heap) -> Result<Value
         }
         Some((left, right)) => Ok(Value::Float(numeric_as_f64(left) - numeric_as_f64(right))),
         None => {
-            if std::env::var_os("PYRS_TRACE_SUB_OP").is_some() {
+            if env_var_present_cached("PYRS_TRACE_SUB_OP") {
                 eprintln!(
                     "[sub-op] unsupported '-' left_kind={} right_kind={} left_repr={} right_repr={}",
                     debug_value_kind(&left),
@@ -1198,7 +1198,7 @@ pub(super) fn or_values(left: Value, right: Value, heap: &Heap) -> Result<Value,
     let (left, right) = match integer_pair(&left, &right) {
         Some(pair) => pair,
         None => {
-            if std::env::var_os("PYRS_TRACE_TYPE_UNION").is_some() {
+            if env_var_present_cached("PYRS_TRACE_TYPE_UNION") {
                 eprintln!(
                     "[type-union] unsupported | left={} right={}",
                     format_repr(&left),
