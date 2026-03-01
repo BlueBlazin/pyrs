@@ -2,7 +2,7 @@
 
 use pyrs::wasm::{
     WasmSession, check_compile_result, check_syntax_result, execute, wasm_api_version,
-    wasm_capabilities, wasm_execution_blockers,
+    wasm_capabilities, wasm_execution_blockers, wasm_module_support,
     wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
     wasm_execution_blocker_keys, wasm_runtime_info,
 };
@@ -132,6 +132,38 @@ fn wasm_execution_blockers_match_capability_matrix() {
             .unwrap_or_else(|| panic!("missing blocker error for key: {key}"));
         assert!(!message.trim().is_empty());
     }
+}
+
+#[wasm_bindgen_test]
+fn wasm_module_support_contract_is_stable() {
+    let blocked_numpy = wasm_module_support("numpy");
+    assert_eq!(blocked_numpy.module(), "numpy");
+    assert!(!blocked_numpy.supported());
+    assert_eq!(
+        blocked_numpy
+            .blocker_key()
+            .expect("numpy should expose blocker key"),
+        "dynamic_library_load".to_string()
+    );
+    let numpy_message = blocked_numpy
+        .message()
+        .expect("numpy should expose blocker message");
+    assert!(numpy_message.contains("dynamic_library_load"));
+
+    let blocked_socket = wasm_module_support("socket");
+    assert!(!blocked_socket.supported());
+    assert_eq!(
+        blocked_socket
+            .blocker_key()
+            .expect("socket should expose blocker key"),
+        "network_sockets".to_string()
+    );
+
+    let neutral_math = wasm_module_support("math");
+    assert_eq!(neutral_math.module(), "math");
+    assert!(neutral_math.supported());
+    assert!(neutral_math.blocker_key().is_none());
+    assert!(neutral_math.message().is_none());
 }
 
 #[wasm_bindgen_test]

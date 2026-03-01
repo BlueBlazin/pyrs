@@ -7,6 +7,16 @@ use wasm_bindgen::prelude::*;
 pub const WASM_API_VERSION: u32 = 1;
 const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired";
 
+fn module_blocker_key(module_name: &str) -> Option<&'static str> {
+    match module_name {
+        "_ctypes" | "ctypes" | "numpy" | "scipy" => Some("dynamic_library_load"),
+        "_socket" | "socket" => Some("network_sockets"),
+        "_posixsubprocess" | "subprocess" | "multiprocessing" => Some("process_spawn"),
+        "readline" => Some("interactive_terminal"),
+        _ => None,
+    }
+}
+
 fn execution_blocker_keys(host: &dyn VmHost) -> Vec<&'static str> {
     let mut keys = vec![WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED];
     for capability in HostCapability::all() {
@@ -245,6 +255,14 @@ pub struct WasmExecutionBlocker {
     message: String,
 }
 
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmModuleSupport {
+    module: String,
+    supported: bool,
+    blocker_key: Option<String>,
+    message: Option<String>,
+}
+
 #[wasm_bindgen]
 impl WasmCapabilityReport {
     #[wasm_bindgen(getter)]
@@ -297,6 +315,29 @@ impl WasmExecutionBlocker {
 
     #[wasm_bindgen(getter)]
     pub fn message(&self) -> String {
+        self.message.clone()
+    }
+}
+
+#[wasm_bindgen]
+impl WasmModuleSupport {
+    #[wasm_bindgen(getter)]
+    pub fn module(&self) -> String {
+        self.module.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn supported(&self) -> bool {
+        self.supported
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn blocker_key(&self) -> Option<String> {
+        self.blocker_key.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn message(&self) -> Option<String> {
         self.message.clone()
     }
 }
@@ -371,6 +412,26 @@ pub fn wasm_execution_blockers() -> Array {
         }));
     }
     blockers
+}
+
+/// Reports whether a module is known to require an unsupported wasm capability.
+#[wasm_bindgen]
+pub fn wasm_module_support(module_name: &str) -> WasmModuleSupport {
+    let host = WasmHost;
+    let normalized = module_name.trim();
+    let blocker_key = module_blocker_key(normalized).and_then(|key| {
+        match HostCapability::from_key(key) {
+            Some(capability) if host.supports(capability) => None,
+            _ => Some(key),
+        }
+    });
+    let message = blocker_key.and_then(wasm_execution_blocker_error);
+    WasmModuleSupport {
+        module: normalized.to_string(),
+        supported: blocker_key.is_none(),
+        blocker_key: blocker_key.map(str::to_string),
+        message,
+    }
 }
 
 /// Returns a stable blocker message for wasm execution blockers.

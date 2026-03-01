@@ -268,7 +268,9 @@ Completed on this branch:
 - `f64f85b`: structured execution-blocker export (`wasm_execution_blockers`) now includes
   backend + unsupported capability blockers as key/message entries.
 - `16dee07`: `WasmSession` now exposes `check_compile()` for stateful parse+compile validation.
-- latest: wasm contract tests now enforce blocker-key parity with the capability matrix.
+- `656d0fd`: wasm contract tests now enforce blocker-key parity with the capability matrix.
+- latest: wasm module-level capability preflight API (`wasm_module_support`) exports
+  structured blocker mapping for known unsupported module families.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
