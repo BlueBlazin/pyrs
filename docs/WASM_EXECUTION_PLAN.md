@@ -335,6 +335,10 @@ Completed on this branch:
   lifecycle/timeout/execute wasm contract tests.
 - latest: operation-id docs now explicitly scope guarantees to prefix shape +
   per-process uniqueness (no cross-run ordering contract).
+- latest: fixture-driven worker contract summary snapshots are now emitted via
+  `scripts/generate_wasm_worker_contract_summary.py` to
+  `perf/wasm_worker_contract_summary_latest.json` and enforced in branch/smoke
+  gate scripts.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
