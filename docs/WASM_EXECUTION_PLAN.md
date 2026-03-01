@@ -289,8 +289,10 @@ Completed on this branch:
   (`wasm_worker_info`, `wasm_worker_blocker_keys`, `wasm_worker_blocker_error`).
 - `0affb9c`: local wasm contract smoke script added at
   `scripts/run_wasm_contract_smoke.sh`.
-- latest: worker runtime contract details are documented in
+- `07f2519`: worker runtime contract details are documented in
   `docs/WASM_WORKER_RUNTIME_CONTRACT.md`.
+- latest: worker lifecycle stubs (`wasm_worker_start`/`wasm_worker_terminate`) with
+  fixture-backed contract tests were added.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

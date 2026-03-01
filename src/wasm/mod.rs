@@ -8,6 +8,8 @@ use wasm_bindgen::prelude::*;
 pub const WASM_API_VERSION: u32 = 1;
 const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired";
 const WASM_WORKER_BLOCKER_RUNTIME_UNWIRED: &str = "worker_runtime_unwired";
+const WASM_WORKER_PHASE_UNSUPPORTED_START: &str = "unsupported_worker_start";
+const WASM_WORKER_PHASE_UNSUPPORTED_TERMINATE: &str = "unsupported_worker_terminate";
 const WASM_MODULE_BLOCKER_POLICY: [(&str, &str); 10] = [
     ("_ctypes", "dynamic_library_load"),
     ("ctypes", "dynamic_library_load"),
@@ -144,6 +146,15 @@ pub struct WasmWorkerInfo {
     state: String,
     interruption_model: String,
     blocker_count: usize,
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmWorkerLifecycleResult {
+    success: bool,
+    phase: String,
+    state: String,
+    error: Option<String>,
+    blocker_key: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -318,6 +329,34 @@ impl WasmWorkerInfo {
     #[wasm_bindgen(getter)]
     pub fn blocker_count(&self) -> usize {
         self.blocker_count
+    }
+}
+
+#[wasm_bindgen]
+impl WasmWorkerLifecycleResult {
+    #[wasm_bindgen(getter)]
+    pub fn success(&self) -> bool {
+        self.success
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn phase(&self) -> String {
+        self.phase.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn state(&self) -> String {
+        self.state.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn error(&self) -> Option<String> {
+        self.error.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn blocker_key(&self) -> Option<String> {
+        self.blocker_key.clone()
     }
 }
 
@@ -594,6 +633,37 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
         interruption_model: "worker_recycle".to_string(),
         blocker_count: blockers.length() as usize,
     }
+}
+
+fn worker_unwired_result(phase: &'static str) -> WasmWorkerLifecycleResult {
+    let blocker_key = WASM_WORKER_BLOCKER_RUNTIME_UNWIRED.to_string();
+    let message = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
+        .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
+    WasmWorkerLifecycleResult {
+        success: false,
+        phase: phase.to_string(),
+        state: "unwired".to_string(),
+        error: Some(message),
+        blocker_key: Some(blocker_key),
+    }
+}
+
+/// Starts worker runtime execution.
+///
+/// Current milestone behavior:
+/// - returns `phase = "unsupported_worker_start"` until worker backend is wired.
+#[wasm_bindgen]
+pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
+    worker_unwired_result(WASM_WORKER_PHASE_UNSUPPORTED_START)
+}
+
+/// Terminates worker runtime execution.
+///
+/// Current milestone behavior:
+/// - returns `phase = "unsupported_worker_terminate"` until worker backend is wired.
+#[wasm_bindgen]
+pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
+    worker_unwired_result(WASM_WORKER_PHASE_UNSUPPORTED_TERMINATE)
 }
 
 /// Returns canonical blocker keys that currently prevent wasm execution.

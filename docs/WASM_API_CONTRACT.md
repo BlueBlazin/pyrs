@@ -17,6 +17,10 @@ This document defines the JS-facing contract currently exported by
   - Returns bridge/runtime status summary.
 - `wasm_worker_info() -> WasmWorkerInfo`
   - Returns worker-runtime contract status summary.
+- `wasm_worker_start() -> WasmWorkerLifecycleResult`
+  - Worker lifecycle start contract (currently unsupported/unwired).
+- `wasm_worker_terminate() -> WasmWorkerLifecycleResult`
+  - Worker lifecycle terminate contract (currently unsupported/unwired).
 - `check_syntax(source: &str) -> Result<(), JsValue>`
   - Syntax validation entrypoint; `Err` includes parser message/line/column.
 - `check_syntax_result(source: &str) -> WasmSyntaxResult`
@@ -71,6 +75,14 @@ This document defines the JS-facing contract currently exported by
 - `state: String` (currently `"unwired"`)
 - `interruption_model: String` (currently `"worker_recycle"`)
 - `blocker_count: usize`
+
+## `WasmWorkerLifecycleResult`
+
+- `success: bool`
+- `phase: String` (`"unsupported_worker_start"`, `"unsupported_worker_terminate"`)
+- `state: String` (currently `"unwired"`)
+- `error: Option<String>`
+- `blocker_key: Option<String>`
 
 ## `WasmSyntaxResult`
 

@@ -7,6 +7,8 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `wasm_worker_info()`
 - `wasm_worker_blocker_keys()`
 - `wasm_worker_blocker_error(blocker_key)`
+- `wasm_worker_start()`
+- `wasm_worker_terminate()`
 
 ## Current Contract (Unwired Baseline)
 
@@ -26,6 +28,22 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `"wasm worker runtime is not wired yet"`
 
 Unknown blocker keys return `None`.
+
+`wasm_worker_start()` currently returns:
+
+- `success = false`
+- `phase = "unsupported_worker_start"`
+- `state = "unwired"`
+- `blocker_key = "worker_runtime_unwired"`
+- `error = "wasm worker runtime is not wired yet"`
+
+`wasm_worker_terminate()` currently returns:
+
+- `success = false`
+- `phase = "unsupported_worker_terminate"`
+- `state = "unwired"`
+- `blocker_key = "worker_runtime_unwired"`
+- `error = "wasm worker runtime is not wired yet"`
 
 ## State Model (Planned)
 
@@ -54,3 +72,11 @@ clients must treat worker execution as unsupported.
 1. Existing keys/values remain stable until API version bump.
 2. New worker blocker keys may be added, but existing key semantics must not change.
 3. `wasm_worker_info().blocker_count` must always match blocker-key export length.
+4. Worker lifecycle stubs must keep stable `phase` identifiers until API version bump.
+
+## Contract Fixtures
+
+Worker lifecycle contract snapshots are tracked in:
+
+- `tests/fixtures/wasm_worker_contract.rs`
+- `tests/wasm_contract.rs`

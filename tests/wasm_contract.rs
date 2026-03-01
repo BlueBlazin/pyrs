@@ -2,15 +2,19 @@
 
 #[path = "fixtures/wasm_contract_snippets.rs"]
 mod wasm_contract_snippets;
+#[path = "fixtures/wasm_worker_contract.rs"]
+mod wasm_worker_contract;
 
 use crate::wasm_contract_snippets::WASM_CONTRACT_SNIPPET_FIXTURES;
+use crate::wasm_worker_contract::WASM_WORKER_LIFECYCLE_FIXTURES;
 use js_sys::Reflect;
 use pyrs::wasm::{
     check_compile_result, check_syntax_result, execute, wasm_api_version, wasm_capabilities,
     wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
     wasm_execution_blocker_keys, wasm_execution_blockers, wasm_module_policy_entries,
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_support,
-    wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_info, WasmSession,
+    wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_info, wasm_worker_start,
+    wasm_worker_terminate, WasmSession,
 };
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
@@ -49,6 +53,52 @@ fn wasm_worker_contract_basics() {
     let message = wasm_worker_blocker_error("worker_runtime_unwired")
         .expect("worker runtime blocker message should exist");
     assert!(message.contains("not wired"));
+}
+
+#[wasm_bindgen_test]
+fn wasm_worker_lifecycle_stub_contract_is_stable() {
+    for fixture in WASM_WORKER_LIFECYCLE_FIXTURES {
+        let result = match fixture.action {
+            "start" => wasm_worker_start(),
+            "terminate" => wasm_worker_terminate(),
+            other => panic!("unknown worker fixture action: {other}"),
+        };
+
+        assert_eq!(
+            result.phase(),
+            fixture.expected_phase,
+            "worker lifecycle phase mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            result.state(),
+            fixture.expected_state,
+            "worker lifecycle state mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            result.success(),
+            fixture.expected_success,
+            "worker lifecycle success mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            result
+                .blocker_key()
+                .expect("worker lifecycle blocker key should be present"),
+            fixture.expected_blocker_key.to_string(),
+            "worker lifecycle blocker key mismatch: {}",
+            fixture.name
+        );
+        let error = result
+            .error()
+            .expect("worker lifecycle error should be present");
+        assert!(
+            error.contains("not wired"),
+            "worker lifecycle error mismatch: {}",
+            fixture.name
+        );
+    }
 }
 
 #[wasm_bindgen_test]
