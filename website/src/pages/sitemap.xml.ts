@@ -1,6 +1,8 @@
 import type { APIRoute } from "astro";
+import { docsNavGroups } from "../config/docsNav";
 
-const routes = ["/", "/docs/", "/docs/install/", "/docs/reference/", "/docs/style-guide/"];
+const docsRoutes = docsNavGroups.flatMap((group) => group.items.map((item) => item.href));
+const routes = ["/", "/reference/", ...new Set(docsRoutes)];
 
 const normalizeBase = (value: string) => {
 	if (value === "/") {
