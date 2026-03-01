@@ -1,6 +1,8 @@
-use std::ffi::{CString, c_char, c_void};
+use std::ffi::{c_char, c_void};
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
+use std::ffi::CString;
 
 pub const PYRS_EXTENSION_MANIFEST_SUFFIX: &str = ".pyrs-ext";
 pub const PYRS_EXTENSION_ABI_TAG: &str = "pyrs314";
