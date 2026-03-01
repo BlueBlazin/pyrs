@@ -1,0 +1,146 @@
+---
+interface Props {
+	title: string;
+	description: string;
+	active?: "home" | "docs" | "reference";
+}
+
+const { title, description, active = "docs" } = Astro.props;
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/png" sizes="64x64" href="/images/logo/logo-64.png" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="generator" content={Astro.generator} />
+		<title>{title}</title>
+		<meta name="description" content={description} />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+			rel="stylesheet"
+		/>
+	</head>
+	<body>
+		<div class="site-shell">
+			<header class="topbar">
+				<a class="brand" href="/">
+					<img src="/images/logo/logo-64.png" alt="PYRS logo" width="36" height="36" />
+					<span>PYRS</span>
+				</a>
+				<nav class="topnav">
+					<a class={active === "home" ? "active" : ""} href="/">Home</a>
+					<a class={active === "docs" ? "active" : ""} href="/docs/">Docs</a>
+					<a class={active === "reference" ? "active" : ""} href="/reference/">Reference</a>
+					<a href="https://github.com/BlueBlazin/pyrs">GitHub</a>
+				</nav>
+			</header>
+			<main>
+				<slot />
+			</main>
+		</div>
+	</body>
+</html>
+
+<style>
+	:root {
+		--bg: #0f0907;
+		--bg-card: #17100e;
+		--line: #432d22;
+		--text: #f7eee8;
+		--text-muted: #beaa9f;
+		--accent: #e97d46;
+		--accent-2: #d89563;
+	}
+
+	* {
+		box-sizing: border-box;
+	}
+
+	body {
+		margin: 0;
+		min-height: 100vh;
+		font-family: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+		color: var(--text);
+		background:
+			radial-gradient(62rem 34rem at 84% -10%, rgba(233, 125, 70, 0.12), transparent),
+			radial-gradient(54rem 30rem at -4% 8%, rgba(216, 149, 99, 0.08), transparent),
+			linear-gradient(180deg, #090504 0%, var(--bg) 38%, #060404 100%);
+	}
+
+	.site-shell {
+		width: min(1200px, calc(100% - 2.2rem));
+		margin: 0 auto;
+		padding-bottom: 3rem;
+	}
+
+	.topbar {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 1.3rem 0;
+	}
+
+	.brand {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.65rem;
+		text-decoration: none;
+		color: var(--text);
+		font-size: 1.12rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	.brand img {
+		border-radius: 0.52rem;
+		border: 1px solid rgba(255, 255, 255, 0.14);
+	}
+
+	.topnav {
+		display: inline-flex;
+		gap: 0.35rem;
+		flex-wrap: wrap;
+	}
+
+	.topnav a {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.3rem 0.56rem;
+		border-radius: 0.48rem;
+		text-decoration: none;
+		font-size: 0.9rem;
+		color: var(--text-muted);
+		transition: color 130ms ease, background-color 130ms ease;
+	}
+
+	.topnav a:hover {
+		color: var(--text);
+		background: rgba(255, 255, 255, 0.06);
+	}
+
+	.topnav a.active {
+		color: #221109;
+		background: linear-gradient(135deg, #de9768 0%, #c66a3d 100%);
+		border: 1px solid rgba(198, 106, 61, 0.52);
+	}
+
+	main {
+		padding-top: 0.3rem;
+	}
+
+	@media (max-width: 760px) {
+		.site-shell {
+			width: min(1200px, calc(100% - 1.2rem));
+		}
+
+		.topbar {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.65rem;
+		}
+	}
+</style>
