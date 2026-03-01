@@ -6,6 +6,7 @@ pub mod bytecode;
 pub mod cli;
 pub mod compiler;
 pub mod extensions;
+pub mod host;
 pub mod parser;
 pub mod runtime;
 #[cfg(not(target_arch = "wasm32"))]

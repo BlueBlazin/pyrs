@@ -40,7 +40,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -69,6 +69,7 @@ use crate::extensions::{
     PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1,
     PyrsModuleStateFreeV1, SharedLibraryHandle,
 };
+use crate::host::{NativeHost, VmHost};
 use crate::parser;
 use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
@@ -504,26 +505,6 @@ pub(super) fn vm_current_thread_ident() -> i64 {
     VM_THREAD_IDENT_OVERRIDE
         .with(|slot| slot.get())
         .unwrap_or_else(vm_os_thread_ident)
-}
-
-fn env_flag_enabled(name: &str) -> bool {
-    let Ok(raw) = std::env::var(name) else {
-        return false;
-    };
-    let normalized = raw.trim().to_ascii_lowercase();
-    matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
-}
-
-fn env_flag_enabled_or_default(name: &str, default: bool) -> bool {
-    let Ok(raw) = std::env::var(name) else {
-        return default;
-    };
-    let normalized = raw.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "1" | "true" | "yes" | "on" => true,
-        "0" | "false" | "no" | "off" => false,
-        _ => default,
-    }
 }
 
 const ENV_VAR_PRESENCE_PROBES: &[&str] = &[
@@ -1028,6 +1009,7 @@ impl Frame {
 /// shims. Changes to caches or registries here must preserve CPython-visible
 /// behavior first; performance fast paths are secondary.
 pub struct Vm {
+    host: Arc<dyn VmHost>,
     frames: Vec<Box<Frame>>,
     frame_pool: Vec<Box<Frame>>,
     simple_frame_pool: Vec<Box<Frame>>,
@@ -1276,6 +1258,10 @@ impl Default for Vm {
 
 impl Vm {
     pub fn new() -> Self {
+        Self::new_with_host(Arc::new(NativeHost))
+    }
+
+    pub fn new_with_host(host: Arc<dyn VmHost>) -> Self {
         let heap = Heap::new();
         let main_module = match heap.alloc_module(ModuleObject::new("__main__")) {
             Value::Module(obj) => obj,
@@ -1298,10 +1284,11 @@ impl Vm {
         let mut modules = HashMap::new();
         modules.insert("__main__".to_string(), main_module.clone());
 
-        let module_paths = vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))];
+        let module_paths = vec![host.current_dir().unwrap_or_else(|_| PathBuf::from("."))];
         let trace_flags = VmTraceFlags::from_env();
 
         let mut vm = Self {
+            host: host.clone(),
             frames: Vec::with_capacity(128),
             frame_pool: Vec::with_capacity(128),
             simple_frame_pool: Vec::with_capacity(128),
@@ -1323,7 +1310,7 @@ impl Vm {
             import_path_hooks_signature: 0,
             import_meta_path_has_default_finder: true,
             import_path_hooks_has_default_hook: true,
-            import_perf_enabled: env_flag_enabled("PYRS_IMPORT_PERF"),
+            import_perf_enabled: host.env_flag_enabled("PYRS_IMPORT_PERF"),
             trace_flags,
             import_perf_counters: ImportPerfCounters::default(),
             heap,
@@ -1399,13 +1386,13 @@ impl Vm {
             next_extension_callable_id: 1,
             // Shim fallback is restricted by LOCAL_SHIM_MODULES (`_ctypes`) and only used when
             // normal path resolution fails, so keep it enabled by default (allow explicit opt-out).
-            local_shim_fallback_enabled: !env_flag_enabled("PYRS_DISABLE_LOCAL_SHIMS"),
+            local_shim_fallback_enabled: !host.env_flag_enabled("PYRS_DISABLE_LOCAL_SHIMS"),
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
             prefer_pure_re_when_available: true,
             // CPython-default behavior: prefer validated source-bound pyc when available.
             // `PYRS_IMPORT_PREFER_PYC` can still explicitly override this.
-            prefer_pyc_when_source_available: env_flag_enabled_or_default(
+            prefer_pyc_when_source_available: host.env_flag_enabled_or_default(
                 "PYRS_IMPORT_PREFER_PYC",
                 true,
             ),
@@ -1440,8 +1427,8 @@ impl Vm {
             warnings_bless_my_loader_depth: 0,
             fast_local_unbound_marker,
             traceback_caret_enabled: true,
-            instruction_step_limit: std::env::var("PYRS_STEP_LIMIT")
-                .ok()
+            instruction_step_limit: host
+                .env_var("PYRS_STEP_LIMIT")
                 .and_then(|value| value.parse::<u64>().ok())
                 .filter(|limit| *limit > 0),
             instruction_steps: 0,
@@ -3821,7 +3808,7 @@ impl Vm {
     }
 
     fn detect_cpython_stdlib_root(&self) -> Option<PathBuf> {
-        if let Ok(path) = std::env::var("PYRS_CPYTHON_LIB") {
+        if let Some(path) = self.host.env_var("PYRS_CPYTHON_LIB") {
             let path = PathBuf::from(path);
             if path.is_dir() {
                 return Some(path);
