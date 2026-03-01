@@ -1246,7 +1246,7 @@ pub unsafe extern "C" fn PyMember_GetOne(
     match member_def.member_type {
         PY_MEMBER_T_BOOL => {
             let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<c_char>()) };
-            unsafe { PyBool_FromLong((raw != 0) as c_long) }
+            unsafe { PyBool_FromLong((raw != 0) as i64) }
         }
         PY_MEMBER_T_BYTE => {
             let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<i8>()) };

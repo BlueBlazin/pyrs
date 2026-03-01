@@ -384,6 +384,8 @@ Completed on this branch:
 - latest: `Py_Main`/`Py_BytesMain` now avoid hard `crate::cli` coupling under
   wasm target (returning explicit unavailable status) so vm-probe progresses to
   deeper wasm-specific blockers.
+- latest: `PyMember_GetOne` bool conversion now matches `PyBool_FromLong(i64)`
+  signature, removing the previous wasm-vm-probe numeric-type blocker.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
@@ -399,8 +401,6 @@ Current `wasm-vm-probe` snapshot (non-gating, latest local run):
 - unix-only fd/process imports (`AsRawFd`/`FromRawFd`/`IntoRawFd`/`ExitStatusExt`/`UnixStream`)
   leak into wasm-vm probe surfaces via `src/vm/builtins_io.rs` and
   `src/vm/builtins_os.rs`.
-- one numeric type mismatch in `src/vm/vm_extensions/cpython_descriptor_method_api.rs`
-  (`PyBool_FromLong` expects `i64`; callsite currently casts to `c_long`).
 
 ## Risk Register
 
