@@ -171,3 +171,9 @@ This document defines the JS-facing contract currently exported by
 1. Any breaking contract change must bump `wasm_api_version()`.
 2. Unsupported behavior must remain explicit and structured.
 3. Capability key set must stay aligned with `docs/WASM_CAPABILITY_MATRIX.md`.
+
+## Related Docs
+
+- `docs/WASM_CLIENT_INTEGRATION_FLOW.md`
+- `docs/WASM_MODULE_SUPPORT_POLICY.md`
+- `docs/WASM_WORKER_RUNTIME_CONTRACT.md`

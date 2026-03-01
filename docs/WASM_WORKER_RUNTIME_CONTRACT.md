@@ -80,3 +80,7 @@ Worker lifecycle contract snapshots are tracked in:
 
 - `tests/fixtures/wasm_worker_contract.rs`
 - `tests/wasm_contract.rs`
+
+Client orchestration guidance:
+
+- `docs/WASM_CLIENT_INTEGRATION_FLOW.md`

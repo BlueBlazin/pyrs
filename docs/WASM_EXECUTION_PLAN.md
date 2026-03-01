@@ -291,8 +291,10 @@ Completed on this branch:
   `scripts/run_wasm_contract_smoke.sh`.
 - `07f2519`: worker runtime contract details are documented in
   `docs/WASM_WORKER_RUNTIME_CONTRACT.md`.
-- latest: worker lifecycle stubs (`wasm_worker_start`/`wasm_worker_terminate`) with
+- `d5691f0`: worker lifecycle stubs (`wasm_worker_start`/`wasm_worker_terminate`) with
   fixture-backed contract tests were added.
+- latest: canonical browser call order is documented in
+  `docs/WASM_CLIENT_INTEGRATION_FLOW.md`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

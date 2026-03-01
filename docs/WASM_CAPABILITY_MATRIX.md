@@ -58,6 +58,8 @@ Current wasm bridge exports for capability handling:
 - `wasm_worker_start()` / `wasm_worker_terminate()`:
   expose stable lifecycle stub phases while worker backend is unwired.
 
+See `docs/WASM_CLIENT_INTEGRATION_FLOW.md` for end-to-end browser call sequencing.
+
 Accepted capability keys:
 
 - `filesystem_read`
