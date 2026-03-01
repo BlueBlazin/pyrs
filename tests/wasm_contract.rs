@@ -7,7 +7,8 @@ mod wasm_worker_contract;
 
 use crate::wasm_contract_snippets::WASM_CONTRACT_SNIPPET_FIXTURES;
 use crate::wasm_worker_contract::{
-    WASM_WORKER_LIFECYCLE_FIXTURES, WASM_WORKER_LIFECYCLE_PHASE_KEYS, WASM_WORKER_STATE_KEYS,
+    WASM_WORKER_EXECUTE_FIXTURES, WASM_WORKER_EXECUTE_PHASE_KEYS, WASM_WORKER_LIFECYCLE_FIXTURES,
+    WASM_WORKER_LIFECYCLE_PHASE_KEYS, WASM_WORKER_STATE_KEYS,
 };
 use js_sys::Reflect;
 use pyrs::wasm::{
@@ -15,9 +16,10 @@ use pyrs::wasm::{
     wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
     wasm_execution_blocker_keys, wasm_execution_blockers, wasm_module_policy_entries,
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_support,
-    wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_info,
-    wasm_worker_lifecycle_phase_keys, wasm_worker_start, wasm_worker_state_keys,
-    wasm_worker_terminate, WasmSession, WasmWorkerSession,
+    wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_execute,
+    wasm_worker_execute_phase_keys, wasm_worker_info, wasm_worker_lifecycle_phase_keys,
+    wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate, WasmSession,
+    WasmWorkerSession,
 };
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
@@ -89,6 +91,21 @@ fn wasm_worker_enum_keys_are_stable() {
         .map(|value| (*value).to_string())
         .collect();
     assert_eq!(lifecycle_phases, expected_phases);
+
+    let execute_keys = wasm_worker_execute_phase_keys();
+    let mut execute_phases = HashSet::new();
+    for index in 0..execute_keys.length() {
+        let phase = execute_keys
+            .get(index)
+            .as_string()
+            .expect("worker execute phase key should be string");
+        execute_phases.insert(phase);
+    }
+    let expected_execute_phases: HashSet<String> = WASM_WORKER_EXECUTE_PHASE_KEYS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect();
+    assert_eq!(execute_phases, expected_execute_phases);
 }
 
 #[wasm_bindgen_test]
@@ -138,10 +155,55 @@ fn wasm_worker_lifecycle_stub_contract_is_stable() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_worker_execute_stub_contract_is_stable() {
+    for fixture in WASM_WORKER_EXECUTE_FIXTURES {
+        let result = wasm_worker_execute(fixture.source);
+        assert_eq!(
+            result.phase(),
+            fixture.expected_phase,
+            "worker execute phase mismatch: {}",
+            fixture.name
+        );
+        assert!(
+            !result.success(),
+            "worker execute success mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            result.error().is_some(),
+            fixture.expect_error,
+            "worker execute error mismatch: {}",
+            fixture.name
+        );
+        if fixture.expect_line_column {
+            assert!(
+                result.line() > 0 && result.column() > 0,
+                "worker execute line/column mismatch: {}",
+                fixture.name
+            );
+        } else {
+            assert_eq!(
+                result.line(),
+                0,
+                "worker execute line mismatch: {}",
+                fixture.name
+            );
+            assert_eq!(
+                result.column(),
+                0,
+                "worker execute column mismatch: {}",
+                fixture.name
+            );
+        }
+    }
+}
+
+#[wasm_bindgen_test]
 fn wasm_worker_session_contract_is_stable() {
     let mut session = WasmWorkerSession::new();
     assert_eq!(session.starts_requested(), 0);
     assert_eq!(session.terminates_requested(), 0);
+    assert_eq!(session.executes_requested(), 0);
     assert!(session.last_phase().is_none());
     assert!(session.last_error().is_none());
 
@@ -170,9 +232,21 @@ fn wasm_worker_session_contract_is_stable() {
     );
     assert!(session.last_error().is_some());
 
+    let execute = session.execute("x = 1\n");
+    assert_eq!(execute.phase(), "unsupported_worker_execution");
+    assert_eq!(session.executes_requested(), 1);
+    assert_eq!(
+        session
+            .last_phase()
+            .expect("last phase after worker execute should exist"),
+        "unsupported_worker_execution".to_string()
+    );
+    assert!(session.last_error().is_some());
+
     session.reset();
     assert_eq!(session.starts_requested(), 0);
     assert_eq!(session.terminates_requested(), 0);
+    assert_eq!(session.executes_requested(), 0);
     assert!(session.last_phase().is_none());
     assert!(session.last_error().is_none());
 }

@@ -90,6 +90,29 @@ impl WasmWorkerLifecyclePhase {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WasmWorkerExecutePhase {
+    SyntaxError,
+    CompileError,
+    UnsupportedExecution,
+}
+
+impl WasmWorkerExecutePhase {
+    const ALL: [WasmWorkerExecutePhase; 3] = [
+        WasmWorkerExecutePhase::SyntaxError,
+        WasmWorkerExecutePhase::CompileError,
+        WasmWorkerExecutePhase::UnsupportedExecution,
+    ];
+
+    fn key(self) -> &'static str {
+        match self {
+            WasmWorkerExecutePhase::SyntaxError => "syntax_error",
+            WasmWorkerExecutePhase::CompileError => "compile_error",
+            WasmWorkerExecutePhase::UnsupportedExecution => "unsupported_worker_execution",
+        }
+    }
+}
+
 fn worker_state_keys() -> Vec<&'static str> {
     WasmWorkerState::ALL
         .iter()
@@ -99,6 +122,13 @@ fn worker_state_keys() -> Vec<&'static str> {
 
 fn worker_lifecycle_phase_keys() -> Vec<&'static str> {
     WasmWorkerLifecyclePhase::ALL
+        .iter()
+        .map(|phase| phase.key())
+        .collect()
+}
+
+fn worker_execute_phase_keys() -> Vec<&'static str> {
+    WasmWorkerExecutePhase::ALL
         .iter()
         .map(|phase| phase.key())
         .collect()
@@ -174,6 +204,7 @@ pub struct WasmSession {
 pub struct WasmWorkerSession {
     starts_requested: usize,
     terminates_requested: usize,
+    executes_requested: usize,
     last_phase: Option<String>,
     last_error: Option<String>,
 }
@@ -489,6 +520,7 @@ impl WasmWorkerSession {
         Self {
             starts_requested: 0,
             terminates_requested: 0,
+            executes_requested: 0,
             last_phase: None,
             last_error: None,
         }
@@ -514,9 +546,18 @@ impl WasmWorkerSession {
         result
     }
 
+    pub fn execute(&mut self, source: &str) -> WasmExecutionResult {
+        let result = wasm_worker_execute(source);
+        self.executes_requested += 1;
+        self.last_phase = Some(result.phase.clone());
+        self.last_error = result.error.clone();
+        result
+    }
+
     pub fn reset(&mut self) {
         self.starts_requested = 0;
         self.terminates_requested = 0;
+        self.executes_requested = 0;
         self.last_phase = None;
         self.last_error = None;
     }
@@ -529,6 +570,11 @@ impl WasmWorkerSession {
     #[wasm_bindgen(getter)]
     pub fn terminates_requested(&self) -> usize {
         self.terminates_requested
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn executes_requested(&self) -> usize {
+        self.executes_requested
     }
 
     #[wasm_bindgen(getter)]
@@ -789,6 +835,16 @@ pub fn wasm_worker_lifecycle_phase_keys() -> Array {
     keys
 }
 
+/// Returns canonical execute phase keys for wasm worker runtime contracts.
+#[wasm_bindgen]
+pub fn wasm_worker_execute_phase_keys() -> Array {
+    let keys = Array::new();
+    for key in worker_execute_phase_keys() {
+        keys.push(&JsValue::from_str(key));
+    }
+    keys
+}
+
 fn worker_unwired_result(phase: WasmWorkerLifecyclePhase) -> WasmWorkerLifecycleResult {
     let blocker_key = WASM_WORKER_BLOCKER_RUNTIME_UNWIRED.to_string();
     let message = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
@@ -818,6 +874,52 @@ pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
 #[wasm_bindgen]
 pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
     worker_unwired_result(WasmWorkerLifecyclePhase::UnsupportedTerminate)
+}
+
+/// Executes a snippet through the wasm worker contract.
+///
+/// Current milestone behavior:
+/// - parse-invalid input returns `phase = "syntax_error"`,
+/// - parse-valid but compile-invalid input returns `phase = "compile_error"`,
+/// - parse+compile-valid input returns `phase = "unsupported_worker_execution"` until worker
+///   runtime execution is wired.
+#[wasm_bindgen]
+pub fn wasm_worker_execute(source: &str) -> WasmExecutionResult {
+    let compile = check_compile_result(source);
+    if !compile.ok {
+        let error = compile.error;
+        let phase = if compile.phase == "syntax_error" {
+            WasmWorkerExecutePhase::SyntaxError.key().to_string()
+        } else {
+            WasmWorkerExecutePhase::CompileError.key().to_string()
+        };
+        let stderr = error
+            .clone()
+            .unwrap_or_else(|| "worker parse/compile check failed".to_string());
+        return WasmExecutionResult {
+            success: false,
+            phase,
+            stdout: String::new(),
+            stderr,
+            error,
+            line: compile.line,
+            column: compile.column,
+        };
+    }
+
+    let message = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
+        .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
+    WasmExecutionResult {
+        success: false,
+        phase: WasmWorkerExecutePhase::UnsupportedExecution
+            .key()
+            .to_string(),
+        stdout: String::new(),
+        stderr: message.clone(),
+        error: Some(message),
+        line: 0,
+        column: 0,
+    }
 }
 
 /// Returns canonical blocker keys that currently prevent wasm execution.

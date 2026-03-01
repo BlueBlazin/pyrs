@@ -26,14 +26,20 @@ This guide defines the recommended browser call order for current wasm APIs.
 - `wasm_worker_start()` -> `phase = "unsupported_worker_start"`
 - `wasm_worker_terminate()` -> `phase = "unsupported_worker_terminate"`
 - both return `blocker_key = "worker_runtime_unwired"`
+- `wasm_worker_execute(source)` -> `phase` in:
+  - `syntax_error`
+  - `compile_error`
+  - `unsupported_worker_execution`
 
 Use this to keep UI behavior deterministic before worker backend wiring.
 
 You can call lifecycle methods directly or via `WasmWorkerSession` for stateful
-UI telemetry (`starts_requested`, `terminates_requested`, `last_phase`, `last_error`).
+UI telemetry (`starts_requested`, `terminates_requested`, `executes_requested`,
+`last_phase`, `last_error`).
 
-Prefer `wasm_worker_state_keys()` and `wasm_worker_lifecycle_phase_keys()` for
-UI branching enums instead of hardcoding string literals.
+Prefer `wasm_worker_state_keys()`, `wasm_worker_lifecycle_phase_keys()`, and
+`wasm_worker_execute_phase_keys()` for UI branching enums instead of hardcoding
+string literals.
 
 ## Minimal Browser Pseudocode
 

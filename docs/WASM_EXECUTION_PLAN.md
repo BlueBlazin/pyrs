@@ -299,6 +299,8 @@ Completed on this branch:
 - `7988f5e`: worker state/lifecycle enum key exports were added for stable client branching.
 - `c9fc0c1`: worker contract strings are now centralized through internal enum-backed sources.
 - latest: worker enum contract tests now assert full set equality from fixture snapshots.
+- latest: worker execute contract now exports canonical execute phases and
+  `wasm_worker_execute(source)`; `WasmWorkerSession` now tracks `executes_requested`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

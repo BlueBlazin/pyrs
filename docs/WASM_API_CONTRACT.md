@@ -21,10 +21,17 @@ This document defines the JS-facing contract currently exported by
   - Returns canonical worker runtime state keys.
 - `wasm_worker_lifecycle_phase_keys() -> Array`
   - Returns canonical worker lifecycle phase keys.
+- `wasm_worker_execute_phase_keys() -> Array`
+  - Returns canonical worker execute phase keys.
 - `wasm_worker_start() -> WasmWorkerLifecycleResult`
   - Worker lifecycle start contract (currently unsupported/unwired).
 - `wasm_worker_terminate() -> WasmWorkerLifecycleResult`
   - Worker lifecycle terminate contract (currently unsupported/unwired).
+- `wasm_worker_execute(source: &str) -> WasmExecutionResult`
+  - Worker execute contract with deterministic phases:
+    - `syntax_error`
+    - `compile_error`
+    - `unsupported_worker_execution`
 - `check_syntax(source: &str) -> Result<(), JsValue>`
   - Syntax validation entrypoint; `Err` includes parser message/line/column.
 - `check_syntax_result(source: &str) -> WasmSyntaxResult`
@@ -176,9 +183,11 @@ This document defines the JS-facing contract currently exported by
 - `info() -> WasmWorkerInfo`
 - `start() -> WasmWorkerLifecycleResult`
 - `terminate() -> WasmWorkerLifecycleResult`
+- `execute(source: &str) -> WasmExecutionResult`
 - `reset()`
 - `starts_requested: usize`
 - `terminates_requested: usize`
+- `executes_requested: usize`
 - `last_phase: Option<String>`
 - `last_error: Option<String>`
 
