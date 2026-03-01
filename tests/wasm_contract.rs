@@ -18,10 +18,11 @@ use pyrs::wasm::{
     wasm_execution_blocker_keys, wasm_execution_blockers, wasm_module_policy_entries,
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_import_roots,
     wasm_snippet_support, wasm_worker_blocker_error, wasm_worker_blocker_keys,
-    wasm_worker_blockers, wasm_worker_execute, wasm_worker_execute_phase_keys, wasm_worker_info,
-    wasm_worker_lifecycle_phase_keys, wasm_worker_recycle, wasm_worker_set_timeout,
-    wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate,
-    wasm_worker_timeout_phase_keys, wasm_worker_timeout_policy, WasmSession, WasmWorkerSession,
+    wasm_worker_blockers, wasm_worker_execute, wasm_worker_execute_phase_keys,
+    wasm_worker_execute_with_operation, wasm_worker_info, wasm_worker_lifecycle_phase_keys,
+    wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start, wasm_worker_state_keys,
+    wasm_worker_terminate, wasm_worker_timeout_phase_keys, wasm_worker_timeout_policy, WasmSession,
+    WasmWorkerSession,
 };
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
@@ -332,6 +333,31 @@ fn wasm_worker_execute_stub_contract_is_stable() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_worker_execute_with_operation_contract_is_stable() {
+    let mut operation_ids = HashSet::new();
+    for fixture in WASM_WORKER_EXECUTE_FIXTURES {
+        let result = wasm_worker_execute_with_operation(fixture.source);
+        assert_eq!(
+            result.phase(),
+            fixture.expected_phase,
+            "worker execute-with-operation phase mismatch: {}",
+            fixture.name
+        );
+        let operation_id = result.operation_id();
+        assert!(
+            operation_id.starts_with("worker_execute_"),
+            "worker execute operation id prefix mismatch: {}",
+            fixture.name
+        );
+        assert!(
+            operation_ids.insert(operation_id),
+            "worker execute operation ids should be unique: {}",
+            fixture.name
+        );
+    }
+}
+
+#[wasm_bindgen_test]
 fn wasm_worker_session_contract_is_stable() {
     let mut session = WasmWorkerSession::new();
     assert_eq!(session.starts_requested(), 0);
@@ -386,6 +412,10 @@ fn wasm_worker_session_contract_is_stable() {
     let execute = session.execute("x = 1\n");
     assert_eq!(execute.phase(), "unsupported_worker_execution");
     assert_eq!(session.executes_requested(), 1);
+    let execute_operation_id = session
+        .last_operation_id()
+        .expect("last operation id after worker execute should exist");
+    assert!(execute_operation_id.starts_with("worker_execute_"));
     assert_eq!(
         session
             .last_phase()

@@ -275,6 +275,18 @@ pub struct WasmExecutionResult {
 }
 
 #[wasm_bindgen(getter_with_clone)]
+pub struct WasmWorkerExecutionResult {
+    operation_id: String,
+    success: bool,
+    phase: String,
+    stdout: String,
+    stderr: String,
+    error: Option<String>,
+    line: usize,
+    column: usize,
+}
+
+#[wasm_bindgen(getter_with_clone)]
 pub struct WasmRuntimeInfo {
     api_version: u32,
     pyrs_version: String,
@@ -340,6 +352,49 @@ pub struct WasmWorkerLifecycleResult {
 
 #[wasm_bindgen]
 impl WasmExecutionResult {
+    #[wasm_bindgen(getter)]
+    pub fn success(&self) -> bool {
+        self.success
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn phase(&self) -> String {
+        self.phase.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn stdout(&self) -> String {
+        self.stdout.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn stderr(&self) -> String {
+        self.stderr.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn error(&self) -> Option<String> {
+        self.error.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn column(&self) -> usize {
+        self.column
+    }
+}
+
+#[wasm_bindgen]
+impl WasmWorkerExecutionResult {
+    #[wasm_bindgen(getter)]
+    pub fn operation_id(&self) -> String {
+        self.operation_id.clone()
+    }
+
     #[wasm_bindgen(getter)]
     pub fn success(&self) -> bool {
         self.success
@@ -720,8 +775,22 @@ impl WasmWorkerSession {
     }
 
     pub fn execute(&mut self, source: &str) -> WasmExecutionResult {
-        let result = wasm_worker_execute(source);
+        let result = self.execute_with_operation(source);
+        WasmExecutionResult {
+            success: result.success,
+            phase: result.phase,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            error: result.error,
+            line: result.line,
+            column: result.column,
+        }
+    }
+
+    pub fn execute_with_operation(&mut self, source: &str) -> WasmWorkerExecutionResult {
+        let result = wasm_worker_execute_with_operation(source);
         self.executes_requested += 1;
+        self.last_operation_id = Some(result.operation_id.clone());
         self.last_phase = Some(result.phase.clone());
         self.last_error = result.error.clone();
         result
@@ -1243,6 +1312,22 @@ pub fn wasm_worker_execute(source: &str) -> WasmExecutionResult {
         error: Some(message),
         line: 0,
         column: 0,
+    }
+}
+
+/// Executes a snippet through the worker contract with an operation correlation id.
+#[wasm_bindgen]
+pub fn wasm_worker_execute_with_operation(source: &str) -> WasmWorkerExecutionResult {
+    let result = wasm_worker_execute(source);
+    WasmWorkerExecutionResult {
+        operation_id: next_worker_operation_id("execute"),
+        success: result.success,
+        phase: result.phase,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        error: result.error,
+        line: result.line,
+        column: result.column,
     }
 }
 

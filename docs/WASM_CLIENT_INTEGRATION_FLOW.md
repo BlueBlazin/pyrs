@@ -35,6 +35,8 @@ are currently explicit stubs.
   - `syntax_error`
   - `compile_error`
   - `unsupported_worker_execution`
+- `wasm_worker_execute_with_operation(source)` -> same phases plus
+  `operation_id = worker_execute_<n>`
 
 Use this to keep UI behavior deterministic before worker backend wiring.
 
@@ -44,8 +46,8 @@ Use `wasm_worker_timeout_policy()` to keep timeout controls aligned with the
 current worker recycle model and unsupported timeout-enforcement phase.
 Use `wasm_worker_timeout_phase_keys()` to branch timeout UI on canonical phase
 enums instead of string literals.
-Use `operation_id` fields from lifecycle/timeout results for request correlation
-in UI logs and diagnostics.
+Use `operation_id` fields from lifecycle/timeout results (and from
+`wasm_worker_execute_with_operation`) for request correlation in UI logs and diagnostics.
 
 You can call lifecycle methods directly or via `WasmWorkerSession` for stateful
 UI telemetry (`starts_requested`, `terminates_requested`, `recycles_requested`,

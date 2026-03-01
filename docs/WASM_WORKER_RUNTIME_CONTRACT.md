@@ -18,6 +18,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `wasm_worker_recycle()`
 - `wasm_worker_set_timeout(timeout_ms)`
 - `wasm_worker_execute(source)`
+- `wasm_worker_execute_with_operation(source)`
 - `WasmWorkerSession` (stateful wrapper)
 
 ## Current Contract (Unwired Baseline)
@@ -122,6 +123,11 @@ enforcement remains unwired.
 - `phase = "syntax_error"` when parse fails,
 - `phase = "compile_error"` when parse succeeds but compile fails,
 - `phase = "unsupported_worker_execution"` when parse+compile succeed but worker backend is unwired.
+
+`wasm_worker_execute_with_operation(source)` mirrors
+`wasm_worker_execute(source)` and also returns:
+
+- `operation_id = worker_execute_<n>`
 
 `WasmWorkerSession` currently wraps lifecycle calls and tracks:
 

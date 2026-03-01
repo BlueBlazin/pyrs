@@ -42,6 +42,8 @@ This document defines the JS-facing contract currently exported by
     - `syntax_error`
     - `compile_error`
     - `unsupported_worker_execution`
+- `wasm_worker_execute_with_operation(source: &str) -> WasmWorkerExecutionResult`
+  - Worker execute contract with deterministic phases plus `operation_id`.
 - `check_syntax(source: &str) -> Result<(), JsValue>`
   - Syntax validation entrypoint; `Err` includes parser message/line/column.
 - `check_syntax_result(source: &str) -> WasmSyntaxResult`
@@ -121,6 +123,17 @@ This document defines the JS-facing contract currently exported by
 - `timeout_ms: u32`
 - `error: Option<String>`
 - `blocker_key: Option<String>`
+
+## `WasmWorkerExecutionResult`
+
+- `operation_id: String` (shape: `worker_execute_<n>`)
+- `success: bool`
+- `phase: String`
+- `stdout: String`
+- `stderr: String`
+- `error: Option<String>`
+- `line: usize`
+- `column: usize`
 
 ## `WasmWorkerLifecycleResult`
 
@@ -227,6 +240,7 @@ This document defines the JS-facing contract currently exported by
 - `recycle() -> WasmWorkerLifecycleResult`
 - `set_timeout_ms(timeout_ms: u32) -> WasmWorkerTimeoutResult`
 - `execute(source: &str) -> WasmExecutionResult`
+- `execute_with_operation(source: &str) -> WasmWorkerExecutionResult`
 - `reset()`
 - `starts_requested: usize`
 - `terminates_requested: usize`
