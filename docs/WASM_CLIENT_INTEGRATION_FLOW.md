@@ -100,12 +100,18 @@ const importRoots = pyrs.wasm_snippet_import_roots(code);
 showImports(importRoots);
 
 const result = pyrs.wasm_worker_execute_with_operation(code);
-if (result.phase === "unsupported_worker_execution") {
+if (result.phase === "syntax_error" || result.phase === "compile_error") {
+  showDiagnostic(result.error, result.line, result.column);
+} else if (result.phase === "runtime_error") {
+  showRuntimeError(result.error, result.line, result.column);
+} else if (result.phase === "unsupported_worker_execution") {
   showInfo(
     `${result.operation_id}: ${result.blocker_key ?? "worker_runtime_unwired"}: ${
       result.error ?? "Execution backend not wired yet"
     }`
   );
+} else if (result.phase === "ok") {
+  showResult(result.stdout);
 }
 ```
 

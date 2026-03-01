@@ -21,7 +21,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `wasm_worker_execute_with_operation(source)`
 - `WasmWorkerSession` (stateful wrapper)
 
-## Current Contract (Unwired Baseline)
+## Current Contract (Default + vm-probe Modes)
 
 `wasm_worker_info()` returns:
 
@@ -62,9 +62,14 @@ This document defines the browser worker-runtime contract currently exposed by:
 
 `wasm_worker_execute_phase_keys()` currently includes:
 
-- `syntax_error`
-- `compile_error`
-- `unsupported_worker_execution`
+- default build:
+  - `syntax_error`
+  - `compile_error`
+  - `unsupported_worker_execution`
+- `wasm-vm-probe` build:
+  - all default keys, plus:
+  - `ok`
+  - `runtime_error`
 
 `wasm_worker_blocker_keys()` currently returns:
 
@@ -125,11 +130,17 @@ enforcement remains unwired.
 
 - `phase = "syntax_error"` when parse fails,
 - `phase = "compile_error"` when parse succeeds but compile fails,
-- `phase = "unsupported_worker_execution"` when parse+compile succeed.
-  - `blocker_key = "<capability_key>"` when source imports known
-    wasm-blocked module capabilities (for example `network_sockets`).
-  - `blocker_key = "worker_runtime_unwired"` when no capability preflight
-    blocker applies and worker backend remains unwired.
+- parse+compile-valid snippets with known blocked imports:
+  - `phase = "unsupported_worker_execution"`
+  - `blocker_key = "<capability_key>"` (for example `network_sockets`)
+- parse+compile-valid snippets without blocked imports:
+  - default build:
+    - `phase = "unsupported_worker_execution"`
+    - `blocker_key = "worker_runtime_unwired"`
+  - `wasm-vm-probe` build:
+    - `phase = "ok"` on VM success
+    - `phase = "runtime_error"` on VM runtime failure
+    - `blocker_key = None`
 
 `wasm_worker_execute_with_operation(source)` mirrors
 `wasm_worker_execute(source)` and also returns:
@@ -160,7 +171,8 @@ Future states should evolve without breaking existing consumers:
 6. `failed`
 
 The transition from `unwired` to later states is a future milestone; current
-clients must treat worker execution as unsupported.
+clients should branch on `wasm_worker_execute_phase_keys()` and handle both
+default unsupported execution and vm-probe runtime phases.
 
 ## Interruption Model
 
