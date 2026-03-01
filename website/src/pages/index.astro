@@ -370,4 +370,30 @@
 			right: 0;
 		}
 	}
+
+	@media (min-width: 1240px) {
+		.hero {
+			grid-template-columns: 0.9fr 1.1fr;
+			gap: 1.9rem;
+		}
+
+		.hero-visual {
+			margin-right: -2rem;
+		}
+
+		.shot-stack {
+			min-height: 30rem;
+		}
+
+		.shot-base {
+			width: min(118%, 56rem);
+			max-width: none;
+		}
+
+		.shot-overlay {
+			width: 70%;
+			right: -9%;
+			top: 8%;
+		}
+	}
 </style>
