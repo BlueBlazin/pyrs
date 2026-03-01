@@ -596,27 +596,27 @@ struct VmTraceFlags {
 }
 
 impl VmTraceFlags {
-    fn from_env() -> Self {
+    fn from_host(host: &dyn VmHost) -> Self {
         Self {
-            import_perf_verbose: env_var_present_cached("PYRS_IMPORT_PERF_VERBOSE"),
-            assert_raise: env_var_present_cached("PYRS_TRACE_ASSERT_RAISE"),
-            build_class: env_var_present_cached("PYRS_TRACE_BUILD_CLASS"),
-            check_exc: env_var_present_cached("PYRS_TRACE_CHECK_EXC"),
-            class_base: env_var_present_cached("PYRS_TRACE_CLASS_BASE"),
-            delete_attr: env_var_present_cached("PYRS_TRACE_DELETE_ATTR"),
-            dict_merge: env_var_present_cached("PYRS_TRACE_DICT_MERGE"),
-            exception_table: env_var_present_cached("PYRS_TRACE_EXCEPTION_TABLE"),
-            fast_cell: env_var_present_cached("PYRS_TRACE_FAST_CELL"),
-            fast_local_unbound: env_var_present_cached("PYRS_TRACE_FAST_LOCAL_UNBOUND"),
-            for_iter_fail: env_var_present_cached("PYRS_TRACE_FOR_ITER_FAIL"),
-            import_pending: env_var_present_cached("PYRS_TRACE_IMPORT_PENDING"),
-            init_subclass: env_var_present_cached("PYRS_TRACE_INIT_SUBCLASS"),
-            numpy_core_importfrom: env_var_present_cached("PYRS_TRACE_NUMPY_CORE_IMPORTFROM"),
-            startswith_attr: env_var_present_cached("PYRS_TRACE_STARTSWITH_ATTR"),
-            store_attr: env_var_present_cached("PYRS_TRACE_STORE_ATTR"),
-            store_subscript: env_var_present_cached("PYRS_TRACE_STORE_SUBSCRIPT"),
-            subscript: env_var_present_cached("PYRS_TRACE_SUBSCRIPT"),
-            subscript_error: env_var_present_cached("PYRS_TRACE_SUBSCRIPT_ERROR"),
+            import_perf_verbose: host.env_var_os("PYRS_IMPORT_PERF_VERBOSE").is_some(),
+            assert_raise: host.env_var_os("PYRS_TRACE_ASSERT_RAISE").is_some(),
+            build_class: host.env_var_os("PYRS_TRACE_BUILD_CLASS").is_some(),
+            check_exc: host.env_var_os("PYRS_TRACE_CHECK_EXC").is_some(),
+            class_base: host.env_var_os("PYRS_TRACE_CLASS_BASE").is_some(),
+            delete_attr: host.env_var_os("PYRS_TRACE_DELETE_ATTR").is_some(),
+            dict_merge: host.env_var_os("PYRS_TRACE_DICT_MERGE").is_some(),
+            exception_table: host.env_var_os("PYRS_TRACE_EXCEPTION_TABLE").is_some(),
+            fast_cell: host.env_var_os("PYRS_TRACE_FAST_CELL").is_some(),
+            fast_local_unbound: host.env_var_os("PYRS_TRACE_FAST_LOCAL_UNBOUND").is_some(),
+            for_iter_fail: host.env_var_os("PYRS_TRACE_FOR_ITER_FAIL").is_some(),
+            import_pending: host.env_var_os("PYRS_TRACE_IMPORT_PENDING").is_some(),
+            init_subclass: host.env_var_os("PYRS_TRACE_INIT_SUBCLASS").is_some(),
+            numpy_core_importfrom: host.env_var_os("PYRS_TRACE_NUMPY_CORE_IMPORTFROM").is_some(),
+            startswith_attr: host.env_var_os("PYRS_TRACE_STARTSWITH_ATTR").is_some(),
+            store_attr: host.env_var_os("PYRS_TRACE_STORE_ATTR").is_some(),
+            store_subscript: host.env_var_os("PYRS_TRACE_STORE_SUBSCRIPT").is_some(),
+            subscript: host.env_var_os("PYRS_TRACE_SUBSCRIPT").is_some(),
+            subscript_error: host.env_var_os("PYRS_TRACE_SUBSCRIPT_ERROR").is_some(),
         }
     }
 }
@@ -1285,7 +1285,7 @@ impl Vm {
         modules.insert("__main__".to_string(), main_module.clone());
 
         let module_paths = vec![host.current_dir().unwrap_or_else(|_| PathBuf::from("."))];
-        let trace_flags = VmTraceFlags::from_env();
+        let trace_flags = VmTraceFlags::from_host(host.as_ref());
 
         let mut vm = Self {
             host: host.clone(),
