@@ -259,12 +259,13 @@ Completed on this branch:
 - `50c5fac`: `cpython_context_runtime` probes switched to cached env helper.
 - `d6201a6`: `cpython_list_api` probes switched to cached env helper.
 - `c8310f7`: `cpython_contextvar_api`/`cpython_module_api`/`cpython_tuple_api` probes switched to cached env helper.
-- latest: multi-file host-seam cleanup across stdlib/import/C-API runtime helpers.
-- latest+1: host-routed depth-limit config in `vm_builtin_metadata` and host-adapter profile env reads in `pickle`.
+- `cf08545`: multi-file host-seam cleanup across stdlib/import/C-API runtime helpers.
+- `5811498`: host-routed depth-limit config in `vm_builtin_metadata` and host-adapter profile env reads in `pickle`.
+- latest: audit script now reports actionable-vs-allowlisted hits for central seam internals.
 
 Latest host seam audit (local branch run):
-- `python3 scripts/audit_wasm_host_seam.py` => `total_hits=3`.
-- residual hits are currently only in:
+- `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
+- allowlisted entries are intentionally scoped to:
   - `src/vm/mod.rs` cached env-probe core (`env_var_present_cached` internals).
 
 Remaining near-term focus:
