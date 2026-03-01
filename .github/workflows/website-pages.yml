@@ -3,7 +3,6 @@ name: website-pages
 on:
   push:
     branches:
-      - master
       - main
     paths:
       - "website/**"
@@ -56,6 +55,9 @@ jobs:
 
       - name: Build and validate website
         run: pnpm --dir website build:check
+
+      - name: Verify deploy root contains index.html
+        run: test -f website/dist/index.html
 
       - name: Publish dist to gh-pages branch root
         uses: peaceiris/actions-gh-pages@v4

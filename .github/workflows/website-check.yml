@@ -7,7 +7,7 @@ on:
       - ".github/workflows/website-check.yml"
   push:
     branches:
-      - master
+      - main
     paths:
       - "website/**"
       - ".github/workflows/website-check.yml"
