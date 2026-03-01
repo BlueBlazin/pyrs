@@ -182,6 +182,9 @@ Required after each meaningful checkpoint:
 4. WASM compile/smoke checks for new interfaces.
 5. Commit checkpoint with doc updates in same commit.
 
+Branch helper:
+- `scripts/check_wasm_branch.sh` runs the current minimum checkpoint validation set.
+
 ## Merge Decision Rubric
 
 WASM branch may be considered for merge only if all are true:
