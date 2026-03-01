@@ -13,7 +13,6 @@ interface TocConfig {
 	subheadings?: "all" | "active" | "none";
 	include?: string[];
 	exclude?: string[];
-	backToTop?: boolean;
 }
 
 interface Props {
@@ -29,7 +28,6 @@ const defaultConfig: Required<TocConfig> = {
 	subheadings: "active",
 	include: [],
 	exclude: [],
-	backToTop: true,
 };
 
 const normalizeToken = (value: string): string => value.trim().toLowerCase();
@@ -84,7 +82,6 @@ const tocEnabled = mergedConfig.enabled !== false;
 			data-toc-subheadings={mergedConfig.subheadings}
 			data-toc-include={mergedConfig.include.join(",")}
 			data-toc-exclude={mergedConfig.exclude.join(",")}
-			data-toc-back-to-top={mergedConfig.backToTop ? "1" : "0"}
 		>
 			<p class="toc-title">On this page</p>
 			<nav class="toc-nav" data-toc-nav="1">
@@ -94,11 +91,6 @@ const tocEnabled = mergedConfig.enabled !== false;
 					</a>
 				))}
 			</nav>
-			{mergedConfig.backToTop && (
-				<button type="button" class="toc-top" data-toc-top>
-					Back to top
-				</button>
-			)}
 		</aside>
 	)
 }
@@ -106,15 +98,30 @@ const tocEnabled = mergedConfig.enabled !== false;
 <style>
 	.docs-toc {
 		position: sticky;
-		top: 5.25rem;
-		max-height: calc(100vh - 6.2rem);
+		top: 5rem;
+		max-height: calc(100vh - 5.8rem);
 		align-self: start;
+		overflow: hidden;
+		padding: 0.95rem 0.76rem 0.88rem;
+		border-radius: 0.9rem;
+		border: 1px solid rgba(128, 152, 188, 0.24);
+		background:
+			radial-gradient(18rem 16rem at 100% -15%, rgba(109, 133, 173, 0.2), transparent 65%),
+			linear-gradient(180deg, rgba(19, 25, 37, 0.96) 0%, rgba(12, 17, 27, 0.97) 100%);
+		box-shadow: 0 16px 34px rgba(4, 6, 10, 0.46), inset 0 1px 0 rgba(240, 246, 255, 0.05);
 		visibility: hidden;
-		padding: 0;
-		border: 0 !important;
-		border-radius: 0 !important;
-		background: transparent !important;
-		box-shadow: none !important;
+	}
+
+	.docs-toc::before {
+		content: "";
+		position: absolute;
+		left: 0.9rem;
+		right: 0.9rem;
+		top: 0;
+		height: 1px;
+		background: linear-gradient(90deg, transparent 0%, rgba(186, 208, 244, 0.62) 50%, transparent 100%);
+		opacity: 0.85;
+		pointer-events: none;
 	}
 
 	.docs-toc.is-ready {
@@ -126,79 +133,112 @@ const tocEnabled = mergedConfig.enabled !== false;
 	}
 
 	.toc-title {
-		margin: 0 0 0.74rem;
+		display: flex;
+		align-items: center;
+		gap: 0.38rem;
+		margin: 0 0 0.66rem;
 		font-size: 0.67rem;
-		font-weight: 600;
+		font-weight: 640;
 		line-height: 1.14;
-		letter-spacing: 0.1em;
+		letter-spacing: 0.095em;
 		text-transform: uppercase;
-		color: #8290a8;
+		color: #a4b4ce;
+	}
+
+	.toc-title::before {
+		content: "";
+		width: 0.46rem;
+		height: 0.46rem;
+		border-radius: 999px;
+		background: linear-gradient(160deg, #b6d3fb 0%, #7697cf 100%);
+		box-shadow: 0 0 0 2px rgba(113, 145, 196, 0.22);
 	}
 
 	.toc-nav {
 		display: flex;
 		flex-direction: column;
-		gap: 0.06rem;
-		max-height: calc(100vh - 10.4rem);
+		gap: 0.22rem;
+		max-height: calc(100vh - 8.95rem);
 		overflow: auto;
-		padding: 0 0.18rem 0 0.88rem;
-		border-left: 1px solid #273957;
+		padding: 0.16rem 0.18rem;
+		margin: 0 -0.22rem -0.14rem;
 		scrollbar-width: thin;
-		scrollbar-color: #314766 transparent;
+		scrollbar-color: #495f84 transparent;
 	}
 
 	.toc-nav::-webkit-scrollbar {
-		width: 4px;
+		width: 5px;
 	}
 
 	.toc-nav::-webkit-scrollbar-thumb {
-		background: #314766;
+		background: #495f84;
 		border-radius: 999px;
 	}
 
 	.toc-nav a {
 		position: relative;
 		display: block;
-		margin-left: -0.88rem;
-		padding: 0.24rem 0.24rem 0.24rem 0.88rem;
-		color: #9ba7bf;
+		padding: 0.36rem 0.5rem 0.36rem 0.76rem;
+		border-radius: 0.58rem;
+		border: 1px solid transparent;
+		color: #a4b2cb;
 		font-size: 0.79rem;
-		font-weight: 470;
-		line-height: 1.3;
+		font-weight: 520;
+		line-height: 1.31;
 		text-decoration: none;
 		text-wrap: pretty;
-		transition: color 110ms ease;
+		transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
 	}
 
 	.toc-nav a.is-sub {
-		padding-left: 1.2rem;
+		padding-left: 1.05rem;
 		font-size: 0.75rem;
-		color: #8492ab;
+		color: #8f9fb8;
 	}
 
 	.toc-nav a:hover {
-		color: #d6dff0;
+		color: #eef4ff;
+		background: rgba(109, 131, 172, 0.15);
+		border-color: rgba(109, 131, 172, 0.33);
+		transform: translateX(1px);
 	}
 
 	.toc-nav a::before {
 		content: "";
 		position: absolute;
-		left: 0;
-		top: 0.3rem;
-		bottom: 0.3rem;
+		left: 0.35rem;
+		top: 0.42rem;
+		bottom: 0.42rem;
 		width: 2px;
 		border-radius: 999px;
-		background: transparent;
-		transition: background-color 110ms ease;
+		background: rgba(152, 183, 232, 0.34);
+		opacity: 0.28;
+		transform: scaleY(0.45);
+		transition: background-color 120ms ease, opacity 120ms ease, transform 120ms ease;
+	}
+
+	.toc-nav a.is-sub::before {
+		left: 0.62rem;
+		width: 1.5px;
+		opacity: 0.24;
+	}
+
+	.toc-nav a:hover::before {
+		opacity: 0.68;
+		transform: scaleY(1);
 	}
 
 	.toc-nav a.active {
-		color: #eef4ff;
-		font-weight: 600;
+		color: #f8fbff;
+		background: linear-gradient(90deg, rgba(104, 136, 187, 0.29) 0%, rgba(63, 84, 117, 0.21) 100%);
+		border-color: rgba(141, 172, 221, 0.42);
+		font-weight: 620;
 	}
 
 	.toc-nav a.active::before {
-		background: #90afe4;
+		background: #a5c5f6;
+		opacity: 1;
+		transform: scaleY(1);
 	}
 
 	.toc-nav a.is-collapsed,
@@ -206,26 +246,9 @@ const tocEnabled = mergedConfig.enabled !== false;
 		display: none;
 	}
 
-	.toc-nav a:focus-visible,
-	.toc-top:focus-visible {
+	.toc-nav a:focus-visible {
 		outline: 2px solid rgba(255, 186, 137, 0.92);
 		outline-offset: 2px;
-	}
-
-	.toc-top {
-		margin-top: 0.72rem;
-		padding: 0;
-		border: 0;
-		background: transparent;
-		color: #93a6cb;
-		font-size: 0.72rem;
-		font-weight: 550;
-		letter-spacing: 0.01em;
-		cursor: pointer;
-	}
-
-	.toc-top:hover {
-		color: #d6e1f7;
 	}
 
 	@media (max-width: 1080px) {
@@ -249,7 +272,6 @@ const tocEnabled = mergedConfig.enabled !== false;
 			return;
 		}
 
-		const topButton = toc.querySelector("[data-toc-top]");
 		const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 		const toInt = (raw, fallback) => {
 			const parsed = Number.parseInt(raw || "", 10);
@@ -270,7 +292,6 @@ const tocEnabled = mergedConfig.enabled !== false;
 			: "active";
 		const includeSet = new Set(parseTokens(toc.dataset.tocInclude));
 		const excludeSet = new Set(parseTokens(toc.dataset.tocExclude));
-		const backToTopEnabled = toc.dataset.tocBackToTop !== "0";
 
 		const slugify = (value) =>
 			value
@@ -430,9 +451,6 @@ const tocEnabled = mergedConfig.enabled !== false;
 				for (const item of items) {
 					item.link.classList.remove("is-hidden");
 				}
-				if (topButton instanceof HTMLButtonElement) {
-					topButton.classList.remove("toc-overflow-toggle");
-				}
 				return;
 			}
 
@@ -500,15 +518,6 @@ const tocEnabled = mergedConfig.enabled !== false;
 			syncHash(activeId);
 			followActiveLink(activeId);
 		};
-
-		if (topButton instanceof HTMLButtonElement && backToTopEnabled) {
-			topButton.addEventListener("click", () => {
-				const main = document.getElementById("main-content");
-				const targetY = main ? Math.max(main.getBoundingClientRect().top + window.scrollY - 98, 0) : 0;
-				window.scrollTo({ top: targetY, behavior: prefersReducedMotion ? "auto" : "smooth" });
-				history.pushState(history.state, "", `${window.location.pathname}${window.location.search}`);
-			});
-		}
 
 		nav.addEventListener("click", (event) => {
 			const target = event.target;
