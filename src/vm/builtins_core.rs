@@ -1843,7 +1843,7 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        let mut setting = std::env::var("PYTHONBREAKPOINT").unwrap_or_default();
+        let mut setting = self.host.env_var("PYTHONBREAKPOINT").unwrap_or_default();
         if setting.is_empty() {
             setting = "pdb.set_trace".to_string();
         } else if setting == "0" {
@@ -7332,7 +7332,7 @@ impl Vm {
         }
         let value = args.remove(0);
         let callable = self.is_callable_value(&value);
-        if !callable && std::env::var_os("PYRS_TRACE_CALLABLE_FALSE").is_some() {
+        if !callable && self.host.env_var_os("PYRS_TRACE_CALLABLE_FALSE").is_some() {
             eprintln!(
                 "[callable-false] type={} repr={}",
                 self.value_type_name_for_error(&value),
@@ -9485,7 +9485,7 @@ impl Vm {
                 _ => false,
             };
             if !allow_extra {
-                if std::env::var_os("PYRS_TRACE_OBJECT_INIT").is_some() {
+                if self.host.env_var_os("PYRS_TRACE_OBJECT_INIT").is_some() {
                     let class_name = match &args[0] {
                         Value::Instance(instance) => match &*instance.kind() {
                             Object::Instance(instance_data) => match &*instance_data.class.kind() {
@@ -9896,7 +9896,7 @@ impl Vm {
             .extension_cpython_ptr_by_object_id
             .contains_key(&class.id())
         {
-            if std::env::var_os("PYRS_TRACE_OBJECT_INIT_CLASS").is_some()
+            if self.host.env_var_os("PYRS_TRACE_OBJECT_INIT_CLASS").is_some()
                 && let Object::Class(class_data) = &*class.kind()
             {
                 eprintln!(
@@ -9907,7 +9907,7 @@ impl Vm {
             }
             return true;
         }
-        if std::env::var_os("PYRS_TRACE_OBJECT_INIT_CLASS").is_some()
+        if self.host.env_var_os("PYRS_TRACE_OBJECT_INIT_CLASS").is_some()
             && let Object::Class(class_data) = &*class.kind()
         {
             eprintln!(
@@ -10013,7 +10013,11 @@ impl Vm {
             }
             Value::Cell(cell) => self.store_attr_cell(&cell, &name, value)?,
             other => {
-                if std::env::var_os("PYRS_TRACE_SETATTR_UNSUPPORTED").is_some() {
+                if self
+                    .host
+                    .env_var_os("PYRS_TRACE_SETATTR_UNSUPPORTED")
+                    .is_some()
+                {
                     eprintln!(
                         "[object-setattr-unsupported] target={} name={}",
                         format_repr(&other),
@@ -11917,7 +11921,7 @@ impl Vm {
     ) -> Result<Option<Ordering>, RuntimeError> {
         const PY_LT: i32 = 0;
         const PY_GT: i32 = 4;
-        if std::env::var_os("PYRS_TRACE_COMPARE_ORDER").is_some() {
+        if self.host.env_var_os("PYRS_TRACE_COMPARE_ORDER").is_some() {
             eprintln!(
                 "[cmp-order] left_type={} right_type={} left_proxy={:p} right_proxy={:p}",
                 self.value_type_name_for_error(&left),
@@ -12422,7 +12426,7 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = std::env::var_os("PYRS_TRACE_BINARY_DIV_RUNTIME").is_some();
+        let trace = self.host.env_var_os("PYRS_TRACE_BINARY_DIV_RUNTIME").is_some();
         match div_values(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err)
@@ -12533,7 +12537,7 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = std::env::var_os("PYRS_TRACE_BINARY_MUL_RUNTIME").is_some();
+        let trace = self.host.env_var_os("PYRS_TRACE_BINARY_MUL_RUNTIME").is_some();
         match mul_values(left.clone(), right.clone(), &self.heap) {
             Ok(value) => Ok(value),
             Err(err)
@@ -12630,7 +12634,7 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = std::env::var_os("PYRS_TRACE_BINARY_SUB_RUNTIME").is_some();
+        let trace = self.host.env_var_os("PYRS_TRACE_BINARY_SUB_RUNTIME").is_some();
         match sub_values(left.clone(), right.clone(), &self.heap) {
             Ok(value) => Ok(value),
             Err(err)
@@ -12693,7 +12697,7 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = std::env::var_os("PYRS_TRACE_BINARY_OR_RUNTIME").is_some();
+        let trace = self.host.env_var_os("PYRS_TRACE_BINARY_OR_RUNTIME").is_some();
         match or_values(left.clone(), right.clone(), &self.heap) {
             Ok(value) => {
                 if matches!(value, Value::Tuple(_))
@@ -12768,7 +12772,7 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = std::env::var_os("PYRS_TRACE_BINARY_XOR_RUNTIME").is_some();
+        let trace = self.host.env_var_os("PYRS_TRACE_BINARY_XOR_RUNTIME").is_some();
         match xor_values(left.clone(), right.clone(), &self.heap) {
             Ok(value) => Ok(value),
             Err(err)
@@ -13952,7 +13956,9 @@ impl Vm {
                     if matches!(value, Value::ExceptionType(_)) {
                         return Ok(matches!(class_data.name.as_str(), "type" | "object"));
                     }
-                    let trace_seed_instance = std::env::var_os("PYRS_TRACE_ISINSTANCE_CLASS")
+                    let trace_seed_instance = self
+                        .host
+                        .env_var_os("PYRS_TRACE_ISINSTANCE_CLASS")
                         .is_some()
                         && matches!(value, Value::None)
                         && (class_data.name.contains("SeedSequence")
@@ -15737,7 +15743,10 @@ impl Vm {
             return self.load_dunder_class_attr(&target);
         }
         if name == "generate_state"
-            && std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE").is_some()
+            && self
+                .host
+                .env_var_os("PYRS_TRACE_GETATTR_GENERATE_STATE")
+                .is_some()
         {
             let target_tag = match &target {
                 Value::None => "None".to_string(),
@@ -16120,7 +16129,11 @@ impl Vm {
             }
             Value::Builtin(builtin) => self.store_attr_builtin(builtin, &name, value)?,
             other => {
-                if std::env::var_os("PYRS_TRACE_SETATTR_UNSUPPORTED").is_some() {
+                if self
+                    .host
+                    .env_var_os("PYRS_TRACE_SETATTR_UNSUPPORTED")
+                    .is_some()
+                {
                     eprintln!(
                         "[setattr-unsupported] target={} name={}",
                         format_repr(&other),
@@ -16320,7 +16333,7 @@ impl Vm {
             } else {
                 inferred
             };
-            if std::env::var_os("PYRS_TRACE_SUPER_DTYPE").is_some() {
+            if self.host.env_var_os("PYRS_TRACE_SUPER_DTYPE").is_some() {
                 let class_name = |class: &ObjRef| match &*class.kind() {
                     Object::Class(class_data) => class_data.name.clone(),
                     _ => "<non-class>".to_string(),
