@@ -529,6 +529,9 @@ Completed on this branch:
   state/lifecycle/execute/timeout phases, interruption model, timeout bounds,
   and worker/module-policy blocker keys), and is enforced in both local wasm
   gate scripts.
+- latest: worker-docs summary validation now also enforces operation-id prefix
+  coverage (`worker_<action>_`) and default worker execute-operation state
+  shape (`state = "unwired"`).
 - latest: `generate_wasm_client_flow_summary.py` now validates
   `WASM_CLIENT_INTEGRATION_FLOW.md` call-order guidance and function tokens
   against source-exported wasm APIs, plus worker lifecycle/execute/vm-probe

@@ -88,6 +88,12 @@ def parse_source_module_policy_blocker_keys(wasm_source: str) -> list[str]:
     return ordered_unique(rows)
 
 
+def parse_source_worker_operation_prefixes(wasm_source: str) -> list[str]:
+    actions = re.findall(r'next_worker_operation_id\("([^"]+)"\)', wasm_source)
+    prefixes = [f"worker_{action}_" for action in ordered_unique(actions)]
+    return ordered_unique(prefixes)
+
+
 def validate_contains_all(
     docs_source: str, values: list[str], label: str, errors: list[str]
 ) -> None:
@@ -145,6 +151,11 @@ def main() -> int:
     timeout_min_ms = parse_source_const_u32(wasm_source, "WASM_WORKER_TIMEOUT_MIN_MS")
     timeout_max_ms = parse_source_const_u32(wasm_source, "WASM_WORKER_TIMEOUT_MAX_MS")
     module_policy_blocker_keys = parse_source_module_policy_blocker_keys(wasm_source)
+    worker_operation_prefixes = parse_source_worker_operation_prefixes(wasm_source)
+    worker_default_state = next(
+        (key for key in worker_state_keys if key == "unwired"),
+        worker_state_keys[0] if worker_state_keys else "unwired",
+    )
 
     errors: list[str] = []
     validate_contains_all(docs_source, worker_state_keys, "worker state key", errors)
@@ -155,6 +166,9 @@ def main() -> int:
     validate_contains_all(docs_source, worker_timeout_phases, "worker timeout phase key", errors)
     validate_contains_all(
         docs_source, module_policy_blocker_keys, "worker module-policy blocker key", errors
+    )
+    validate_contains_all(
+        docs_source, worker_operation_prefixes, "worker operation-id prefix", errors
     )
 
     if worker_unwired_blocker not in docs_source:
@@ -169,6 +183,11 @@ def main() -> int:
         errors.append(f"docs missing timeout min value '{timeout_min_ms}'")
     if str(timeout_max_ms) not in docs_source:
         errors.append(f"docs missing timeout max value '{timeout_max_ms}'")
+    if f'state = "{worker_default_state}"' not in docs_source:
+        errors.append(
+            "docs missing worker execute-with-operation/default state shape "
+            f"'state = \"{worker_default_state}\"'"
+        )
     if "wasm-vm-probe" not in docs_source:
         errors.append("docs missing wasm-vm-probe mention for worker execute contract")
     if vm_probe_ok_phase not in docs_source:
@@ -195,6 +214,8 @@ def main() -> int:
         "worker_unwired_blocker_key": worker_unwired_blocker,
         "worker_interruption_model": worker_interruption_model,
         "worker_module_policy_blocker_keys": module_policy_blocker_keys,
+        "worker_operation_prefixes": worker_operation_prefixes,
+        "worker_default_state": worker_default_state,
         "worker_timeout_ms": {
             "default": timeout_default_ms,
             "min": timeout_min_ms,
