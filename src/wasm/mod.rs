@@ -1,6 +1,7 @@
 use std::sync::Once;
 
 use crate::host::{HostCapability, VmHost, WasmHost};
+use js_sys::Array;
 use wasm_bindgen::prelude::*;
 
 pub const WASM_API_VERSION: u32 = 1;
@@ -248,6 +249,16 @@ pub fn wasm_capability_error(capability_key: &str) -> Option<String> {
     let host = WasmHost;
     let capability = HostCapability::from_key(capability_key)?;
     host.unsupported_message(capability)
+}
+
+/// Returns the canonical capability keys exported by the wasm bridge.
+#[wasm_bindgen]
+pub fn wasm_capability_keys() -> Array {
+    let keys = Array::new();
+    for capability in HostCapability::all() {
+        keys.push(&JsValue::from_str(capability.key()));
+    }
+    keys
 }
 
 /// Reports runtime contract status for browser clients.

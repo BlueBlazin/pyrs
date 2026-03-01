@@ -14,6 +14,21 @@ pub enum HostCapability {
 }
 
 impl HostCapability {
+    pub const ALL: [HostCapability; 8] = [
+        HostCapability::FilesystemRead,
+        HostCapability::FilesystemWrite,
+        HostCapability::EnvironmentRead,
+        HostCapability::ProcessArgs,
+        HostCapability::ProcessSpawn,
+        HostCapability::DynamicLibraryLoad,
+        HostCapability::InteractiveTerminal,
+        HostCapability::NetworkSockets,
+    ];
+
+    pub fn all() -> &'static [HostCapability] {
+        &Self::ALL
+    }
+
     pub fn key(self) -> &'static str {
         match self {
             Self::FilesystemRead => "filesystem_read",
@@ -219,19 +234,9 @@ mod tests {
 
     #[test]
     fn capability_key_roundtrip_is_stable() {
-        let expected = [
-            HostCapability::FilesystemRead,
-            HostCapability::FilesystemWrite,
-            HostCapability::EnvironmentRead,
-            HostCapability::ProcessArgs,
-            HostCapability::ProcessSpawn,
-            HostCapability::DynamicLibraryLoad,
-            HostCapability::InteractiveTerminal,
-            HostCapability::NetworkSockets,
-        ];
-        for capability in expected {
+        for capability in HostCapability::all() {
             let key = capability.key();
-            assert_eq!(HostCapability::from_key(key), Some(capability));
+            assert_eq!(HostCapability::from_key(key), Some(*capability));
         }
         assert_eq!(HostCapability::from_key("unknown_capability"), None);
     }
