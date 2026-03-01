@@ -184,6 +184,9 @@ Required after each meaningful checkpoint:
 
 Branch helper:
 - `scripts/check_wasm_branch.sh` runs the current minimum checkpoint validation set.
+- `scripts/run_wasm_contract_smoke.sh` runs local wasm contract smoke checks
+  (compile-only by default; set `PYRS_WASM_RUN_BROWSER_SMOKE=1` for optional
+  browser run via `wasm-pack`).
 - wasm harness note: use targeted wasm contract compile lane
   (`cargo check --target wasm32-unknown-unknown --test wasm_contract`)
   instead of all-tests wasm compile.
@@ -281,8 +284,10 @@ Completed on this branch:
   structured import-capability blocker reporting.
 - `438d249`: fixture-driven wasm contract snippet snapshots are tracked under
   `tests/fixtures/wasm_contract_snippets.rs`.
-- latest: initial worker runtime contract introspection landed
+- `9db8e10`: initial worker runtime contract introspection landed
   (`wasm_worker_info`, `wasm_worker_blocker_keys`, `wasm_worker_blocker_error`).
+- latest: local wasm contract smoke script added at
+  `scripts/run_wasm_contract_smoke.sh`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
