@@ -53,14 +53,50 @@ fn capability_supported(report: &WasmCapabilityReport, key: &str) -> bool {
     }
 }
 
+fn vm_probe_enabled() -> bool {
+    cfg!(feature = "wasm-vm-probe")
+}
+
+fn expected_execution_phase_keys() -> Vec<String> {
+    let mut expected: Vec<String> = WASM_EXECUTION_PHASE_KEYS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect();
+    if vm_probe_enabled() {
+        expected.push("ok".to_string());
+        expected.push("runtime_error".to_string());
+    }
+    expected
+}
+
+fn expected_execution_blocker_keys(capabilities: &WasmCapabilityReport) -> Vec<String> {
+    let mut expected = Vec::new();
+    if !vm_probe_enabled() {
+        expected.push("execution_backend_unwired".to_string());
+        expected.push("vm_runtime_unavailable".to_string());
+    }
+    for fixture in WASM_CAPABILITY_FIXTURES {
+        if !capability_supported(capabilities, fixture.key) {
+            expected.push(fixture.key.to_string());
+        }
+    }
+    expected
+}
+
 #[wasm_bindgen_test]
 fn wasm_runtime_contract_basics() {
     let runtime = wasm_runtime_info();
     assert_eq!(runtime.api_version(), wasm_api_version());
     assert!(runtime.supports_parse_compile());
-    assert_eq!(runtime.execution_backend(), "unwired".to_string());
-    assert_eq!(runtime.execution_status(), "syntax_compile_only");
-    assert!(!runtime.supports_execution());
+    if vm_probe_enabled() {
+        assert_eq!(runtime.execution_backend(), "vm_probe".to_string());
+        assert_eq!(runtime.execution_status(), "runtime_probe");
+        assert!(runtime.supports_execution());
+    } else {
+        assert_eq!(runtime.execution_backend(), "unwired".to_string());
+        assert_eq!(runtime.execution_status(), "syntax_compile_only");
+        assert!(!runtime.supports_execution());
+    }
     let blocker_keys = wasm_execution_blocker_keys();
     assert_eq!(
         runtime.execution_blocker_count(),
@@ -80,10 +116,7 @@ fn wasm_execution_phase_keys_are_stable() {
             .expect("execution phase key should be string");
         phases.push(phase);
     }
-    let expected: Vec<String> = WASM_EXECUTION_PHASE_KEYS
-        .iter()
-        .map(|value| (*value).to_string())
-        .collect();
+    let expected = expected_execution_phase_keys();
     assert_eq!(phases, expected);
     let phase_set: HashSet<String> = phases.iter().cloned().collect();
 
@@ -288,10 +321,14 @@ fn wasm_worker_enum_keys_are_stable() {
             .expect("worker execute phase key should be string");
         execute_phases.push(phase);
     }
-    let expected_execute_phases: Vec<String> = WASM_WORKER_EXECUTE_PHASE_KEYS
+    let mut expected_execute_phases: Vec<String> = WASM_WORKER_EXECUTE_PHASE_KEYS
         .iter()
         .map(|value| (*value).to_string())
         .collect();
+    if vm_probe_enabled() {
+        expected_execute_phases.push("ok".to_string());
+        expected_execute_phases.push("runtime_error".to_string());
+    }
     assert_eq!(execute_phases, expected_execute_phases);
     let execute_phase_set: HashSet<String> = execute_phases.iter().cloned().collect();
     assert_eq!(execute_phase_set.len(), expected_execute_phases.len());
@@ -701,29 +738,23 @@ fn wasm_execution_blocker_contract_is_stable() {
             .expect("blocker key should be string");
         listed_keys.push(key);
     }
-    let mut expected_keys = vec![
-        "execution_backend_unwired".to_string(),
-        "vm_runtime_unavailable".to_string(),
-    ];
-    expected_keys.extend(
-        WASM_CAPABILITY_FIXTURES
-            .iter()
-            .filter(|fixture| !fixture.wasm_supported)
-            .map(|fixture| fixture.key.to_string()),
-    );
+    let capabilities = wasm_capabilities();
+    let expected_keys = expected_execution_blocker_keys(&capabilities);
     assert_eq!(listed_keys, expected_keys);
-    let err = wasm_execution_blocker_error("execution_backend_unwired")
-        .expect("backend blocker should have error");
-    assert!(err.contains("not wired"));
-    let vm_err = wasm_execution_blocker_error("vm_runtime_unavailable")
-        .expect("vm runtime blocker should have error");
-    assert!(vm_err.contains("not available"));
+    if !vm_probe_enabled() {
+        let err = wasm_execution_blocker_error("execution_backend_unwired")
+            .expect("backend blocker should have error");
+        assert!(err.contains("not wired"));
+        let vm_err = wasm_execution_blocker_error("vm_runtime_unavailable")
+            .expect("vm runtime blocker should have error");
+        assert!(vm_err.contains("not available"));
+    }
     let fs_err =
         wasm_execution_blocker_error("filesystem_read").expect("filesystem_read should be blocked");
     assert!(fs_err.contains("filesystem_read"));
 
     let blockers = wasm_execution_blockers();
-    assert!(blockers.length() >= 3);
+    assert_eq!(blockers.length() as usize, expected_keys.len());
     let mut saw_backend = false;
     let mut saw_vm_runtime = false;
     for index in 0..blockers.length() {
@@ -744,17 +775,19 @@ fn wasm_execution_blocker_contract_is_stable() {
             saw_vm_runtime = true;
         }
     }
-    assert!(saw_backend);
-    assert!(saw_vm_runtime);
+    if vm_probe_enabled() {
+        assert!(!saw_backend);
+        assert!(!saw_vm_runtime);
+    } else {
+        assert!(saw_backend);
+        assert!(saw_vm_runtime);
+    }
 }
 
 #[wasm_bindgen_test]
 fn wasm_execution_blockers_match_capability_matrix() {
     let capabilities = wasm_capabilities();
-    let mut expected = vec![
-        "execution_backend_unwired".to_string(),
-        "vm_runtime_unavailable".to_string(),
-    ];
+    let expected = expected_execution_blocker_keys(&capabilities);
     for fixture in WASM_CAPABILITY_FIXTURES {
         let supported = capability_supported(&capabilities, fixture.key);
         assert_eq!(
@@ -762,9 +795,6 @@ fn wasm_execution_blockers_match_capability_matrix() {
             "capability fixture/report mismatch for {}",
             fixture.key
         );
-        if !supported {
-            expected.push(fixture.key.to_string());
-        }
     }
 
     let keys = wasm_execution_blocker_keys();
@@ -950,16 +980,23 @@ fn wasm_syntax_and_execute_contract() {
     assert!(semantic_error.contains("outside function"));
 
     let unsupported = execute("value = 1\n");
-    assert!(!unsupported.success());
-    assert_eq!(unsupported.phase(), "unsupported_execution");
-    assert!(unsupported.error().is_some());
-    assert_eq!(
-        unsupported.blocker_key(),
-        Some("execution_backend_unwired".to_string())
-    );
-    assert!(unsupported.stderr().contains("not wired"));
-    assert_eq!(unsupported.line(), 0);
-    assert_eq!(unsupported.column(), 0);
+    if vm_probe_enabled() {
+        assert!(unsupported.success());
+        assert_eq!(unsupported.phase(), "ok");
+        assert!(unsupported.error().is_none());
+        assert!(unsupported.blocker_key().is_none());
+    } else {
+        assert!(!unsupported.success());
+        assert_eq!(unsupported.phase(), "unsupported_execution");
+        assert!(unsupported.error().is_some());
+        assert_eq!(
+            unsupported.blocker_key(),
+            Some("execution_backend_unwired".to_string())
+        );
+        assert!(unsupported.stderr().contains("not wired"));
+        assert_eq!(unsupported.line(), 0);
+        assert_eq!(unsupported.column(), 0);
+    }
 
     let blocked = execute("import socket\n");
     assert!(!blocked.success());
@@ -1000,13 +1037,22 @@ fn wasm_session_tracks_and_resets_state() {
     assert_eq!(session.snippets_checked(), 2);
 
     let third = session.execute("x = 1\n");
-    assert_eq!(third.phase(), "unsupported_execution");
-    assert_eq!(
-        third.blocker_key(),
-        Some("execution_backend_unwired".to_string())
-    );
+    if vm_probe_enabled() {
+        assert_eq!(third.phase(), "ok");
+        assert!(third.blocker_key().is_none());
+    } else {
+        assert_eq!(third.phase(), "unsupported_execution");
+        assert_eq!(
+            third.blocker_key(),
+            Some("execution_backend_unwired".to_string())
+        );
+    }
     assert_eq!(session.snippets_checked(), 3);
-    assert!(session.last_error().is_some());
+    if vm_probe_enabled() {
+        assert!(session.last_error().is_none());
+    } else {
+        assert!(session.last_error().is_some());
+    }
 
     let fourth = session.check_compile("return 1\n");
     assert!(!fourth.ok());
@@ -1014,13 +1060,22 @@ fn wasm_session_tracks_and_resets_state() {
     assert_eq!(session.snippets_checked(), 4);
 
     let fifth = session.execute("x = 1\n");
-    assert_eq!(fifth.phase(), "unsupported_execution");
-    assert_eq!(
-        fifth.blocker_key(),
-        Some("execution_backend_unwired".to_string())
-    );
+    if vm_probe_enabled() {
+        assert_eq!(fifth.phase(), "ok");
+        assert!(fifth.blocker_key().is_none());
+    } else {
+        assert_eq!(fifth.phase(), "unsupported_execution");
+        assert_eq!(
+            fifth.blocker_key(),
+            Some("execution_backend_unwired".to_string())
+        );
+    }
     assert_eq!(session.snippets_checked(), 5);
-    assert!(session.last_error().is_some());
+    if vm_probe_enabled() {
+        assert!(session.last_error().is_none());
+    } else {
+        assert!(session.last_error().is_some());
+    }
 
     session.reset();
     assert_eq!(session.snippets_checked(), 0);
@@ -1031,13 +1086,22 @@ fn wasm_session_tracks_and_resets_state() {
 fn wasm_session_execute_contract_is_stable() {
     let mut session = WasmSession::new();
     let second = session.execute("x = 1\n");
-    assert_eq!(second.phase(), "unsupported_execution");
-    assert_eq!(
-        second.blocker_key(),
-        Some("execution_backend_unwired".to_string())
-    );
+    if vm_probe_enabled() {
+        assert_eq!(second.phase(), "ok");
+        assert!(second.blocker_key().is_none());
+    } else {
+        assert_eq!(second.phase(), "unsupported_execution");
+        assert_eq!(
+            second.blocker_key(),
+            Some("execution_backend_unwired".to_string())
+        );
+    }
     assert_eq!(session.snippets_checked(), 1);
-    assert!(session.last_error().is_some());
+    if vm_probe_enabled() {
+        assert!(session.last_error().is_none());
+    } else {
+        assert!(session.last_error().is_some());
+    }
 }
 
 #[wasm_bindgen_test]
@@ -1061,19 +1125,36 @@ fn wasm_contract_snippet_fixtures_are_current() {
         );
 
         let execution = execute(fixture.source);
-        assert_eq!(
-            execution.phase(),
-            fixture.expected_execute_phase,
-            "fixture execute phase mismatch: {}",
-            fixture.name
-        );
-        let expected_execute_blocker_key = fixture.expected_execute_blocker_key.map(str::to_string);
-        assert_eq!(
-            execution.blocker_key(),
-            expected_execute_blocker_key,
-            "fixture execute blocker key mismatch: {}",
-            fixture.name
-        );
+        if vm_probe_enabled()
+            && fixture.expected_execute_phase == "unsupported_execution"
+            && fixture.expected_execute_blocker_key == Some("execution_backend_unwired")
+        {
+            assert_eq!(
+                execution.phase(),
+                "ok",
+                "vm-probe execute phase mismatch: {}",
+                fixture.name
+            );
+            assert!(
+                execution.blocker_key().is_none(),
+                "vm-probe execute blocker should be none: {}",
+                fixture.name
+            );
+        } else {
+            assert_eq!(
+                execution.phase(),
+                fixture.expected_execute_phase,
+                "fixture execute phase mismatch: {}",
+                fixture.name
+            );
+            let expected_execute_blocker_key = fixture.expected_execute_blocker_key.map(str::to_string);
+            assert_eq!(
+                execution.blocker_key(),
+                expected_execute_blocker_key,
+                "fixture execute blocker key mismatch: {}",
+                fixture.name
+            );
+        }
 
         let support = wasm_snippet_support(fixture.source);
         assert_eq!(
@@ -1096,4 +1177,20 @@ fn wasm_contract_snippet_fixtures_are_current() {
             fixture.name
         );
     }
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+#[wasm_bindgen_test]
+fn wasm_vm_probe_runtime_error_phase_is_reported() {
+    let runtime_error = execute("1 / 0\n");
+    assert!(!runtime_error.success());
+    assert_eq!(runtime_error.phase(), "runtime_error");
+    assert!(runtime_error.error().is_some());
+    assert!(runtime_error.blocker_key().is_none());
+
+    let worker_runtime_error = wasm_worker_execute("1 / 0\n");
+    assert!(!worker_runtime_error.success());
+    assert_eq!(worker_runtime_error.phase(), "runtime_error");
+    assert!(worker_runtime_error.error().is_some());
+    assert!(worker_runtime_error.blocker_key().is_none());
 }
