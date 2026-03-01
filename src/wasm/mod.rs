@@ -114,8 +114,10 @@ pub struct WasmExecutionResult {
 pub struct WasmRuntimeInfo {
     api_version: u32,
     pyrs_version: String,
+    supports_parse_compile: bool,
     supports_execution: bool,
     execution_status: String,
+    execution_blocker_count: usize,
 }
 
 #[wasm_bindgen]
@@ -192,8 +194,18 @@ impl WasmRuntimeInfo {
     }
 
     #[wasm_bindgen(getter)]
+    pub fn supports_parse_compile(&self) -> bool {
+        self.supports_parse_compile
+    }
+
+    #[wasm_bindgen(getter)]
     pub fn execution_status(&self) -> String {
         self.execution_status.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn execution_blocker_count(&self) -> usize {
+        self.execution_blocker_count
     }
 }
 
@@ -406,11 +418,15 @@ pub fn wasm_capability_keys() -> Array {
 /// Reports runtime contract status for browser clients.
 #[wasm_bindgen]
 pub fn wasm_runtime_info() -> WasmRuntimeInfo {
+    let host = WasmHost;
+    let blocker_count = execution_blocker_keys(&host).len();
     WasmRuntimeInfo {
         api_version: wasm_api_version(),
         pyrs_version: pyrs_version(),
+        supports_parse_compile: true,
         supports_execution: false,
         execution_status: "syntax_compile_only".to_string(),
+        execution_blocker_count: blocker_count,
     }
 }
 
