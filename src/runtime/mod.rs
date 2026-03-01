@@ -4991,35 +4991,22 @@ impl BuiltinFunction {
                     other => {
                         let mut entries = Vec::new();
                         for item in iterable_values(other.clone())? {
-                            match item {
-                                Value::Tuple(pair) => match &*pair.kind() {
-                                    Object::Tuple(parts) if parts.len() == 2 => {
-                                        ensure_hashable_key(&parts[0])?;
-                                        entries.push((parts[0].clone(), parts[1].clone()));
-                                    }
-                                    _ => {
-                                        return Err(RuntimeError::value_error(
-                                            "dict() sequence elements must be length 2",
-                                        ));
-                                    }
-                                },
-                                Value::List(pair) => match &*pair.kind() {
-                                    Object::List(parts) if parts.len() == 2 => {
-                                        ensure_hashable_key(&parts[0])?;
-                                        entries.push((parts[0].clone(), parts[1].clone()));
-                                    }
-                                    _ => {
-                                        return Err(RuntimeError::value_error(
-                                            "dict() sequence elements must be length 2",
-                                        ));
-                                    }
-                                },
-                                _ => {
+                            let parts = match iterable_values(item) {
+                                Ok(values) => values,
+                                Err(err) if err.exception_name() == Some("TypeError") => {
                                     return Err(RuntimeError::type_error(
                                         "dict() argument must be a mapping or iterable of pairs",
                                     ));
                                 }
+                                Err(err) => return Err(err),
+                            };
+                            if parts.len() != 2 {
+                                return Err(RuntimeError::value_error(
+                                    "dict() sequence elements must be length 2",
+                                ));
                             }
+                            ensure_hashable_key(&parts[0])?;
+                            entries.push((parts[0].clone(), parts[1].clone()));
                         }
                         Ok(heap.alloc_dict(entries))
                     }

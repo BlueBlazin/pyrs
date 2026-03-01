@@ -10396,33 +10396,21 @@ impl Vm {
         source: Value,
     ) -> Result<(), RuntimeError> {
         for item in self.collect_iterable_values(source)? {
-            match item {
-                Value::Tuple(pair) => match &*pair.kind() {
-                    Object::Tuple(parts) if parts.len() == 2 => {
-                        dict_set_value_checked(dict_obj, parts[0].clone(), parts[1].clone())?;
-                    }
-                    _ => {
-                        return Err(RuntimeError::new(
-                            "dict() sequence elements must be length 2",
-                        ));
-                    }
-                },
-                Value::List(pair) => match &*pair.kind() {
-                    Object::List(parts) if parts.len() == 2 => {
-                        dict_set_value_checked(dict_obj, parts[0].clone(), parts[1].clone())?;
-                    }
-                    _ => {
-                        return Err(RuntimeError::new(
-                            "dict() sequence elements must be length 2",
-                        ));
-                    }
-                },
-                _ => {
+            let parts = match self.collect_iterable_values(item) {
+                Ok(values) => values,
+                Err(err) if runtime_error_matches_exception(&err, "TypeError") => {
                     return Err(RuntimeError::new(
                         "dict() argument must be a mapping or iterable of pairs",
                     ));
                 }
+                Err(err) => return Err(err),
+            };
+            if parts.len() != 2 {
+                return Err(RuntimeError::new(
+                    "dict() sequence elements must be length 2",
+                ));
             }
+            dict_set_value_checked(dict_obj, parts[0].clone(), parts[1].clone())?;
         }
         Ok(())
     }

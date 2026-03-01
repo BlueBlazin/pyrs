@@ -10113,6 +10113,16 @@ fn executes_tuple_and_dict() {
 }
 
 #[test]
+fn dict_constructor_accepts_iterable_pair_items_from_map_iterators() {
+    let source = "items = map(lambda x: map(lambda y: y, x), [('a', 1), ('b', 2)])\nd = dict(items)\nok = (d == {'a': 1, 'b': 2})\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_string_indexing() {
     let source = "x = 'cat'\ny = x[1]\nz = x[-1]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
