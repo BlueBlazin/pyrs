@@ -1,0 +1,84 @@
+---
+layout: ../../../layouts/DocsLayout.astro
+title: PYRS Docs | Contributing Validation
+description: Required local validation flow and engineering quality gates for contributor changes.
+pageTitle: "Contributing: Validation"
+---
+
+import DocSection from "../../../components/docs/DocSection.astro";
+import CommandBlock from "../../../components/docs/CommandBlock.astro";
+import DataTable from "../../../components/docs/DataTable.astro";
+import Callout from "../../../components/docs/Callout.astro";
+
+<DocSection>
+	Contributor changes are expected to follow gate-driven validation with targeted tests first, then
+	broader suite checks.
+</DocSection>
+
+<DocSection title="Default Local Runner Policy">
+	<DataTable headers={["Context", "Recommended command"]}>
+		<tr>
+			<td>Full local suite</td>
+			<td><code>cargo nextest run</code></td>
+		</tr>
+		<tr>
+			<td>Targeted integration lane</td>
+			<td><code>cargo nextest run --test vm</code> (or relevant target)</td>
+		</tr>
+		<tr>
+			<td>When <code>cargo test</code> is needed</td>
+			<td>Use only when behavior depends on <code>cargo test</code> semantics.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Core Validation Pipeline">
+	<CommandBlock
+		commands={[
+			"cargo nextest run",
+			"cargo nextest run --test cpython_harness",
+			"cargo nextest run --test differential_cpython",
+			"cargo nextest run --test fuzz_parser_vm",
+			"scripts/run_builtin_parity_gate.sh",
+			"scripts/run_coverage_gate.sh",
+		]}
+	/>
+</DocSection>
+
+<DocSection title="Gate Expectations">
+	<DataTable headers={["Gate", "Expectation"]}>
+		<tr>
+			<td>Semantic parity</td>
+			<td>Tests must encode CPython behavior, not current PYRS quirks.</td>
+		</tr>
+		<tr>
+			<td>No quick-fix substitution</td>
+			<td>Root-cause fixes are required for core interpreter/runtime paths.</td>
+		</tr>
+		<tr>
+			<td>Temporary workaround tracking</td>
+			<td>Any temporary path must be tracked in <code>docs/STUB_ACCOUNTING.md</code> or <code>docs/ALGO_AUDIT_BACKLOG.md</code>.</td>
+		</tr>
+		<tr>
+			<td>Checkpoint discipline</td>
+			<td>Keep changes in small, focused commits with tests/docs updated together.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Optional Tooling">
+	<CommandBlock commands={["./scripts/bootstrap_dev_tools.sh"]} />
+	<Callout title="Sanitizer and Advanced Lanes">
+		See <code>docs/DEVELOPER_TOOLING.md</code> for AddressSanitizer patterns and extension-smoke runtime controls.
+	</Callout>
+</DocSection>
+
+<DocSection title="Canonical Internal References">
+	<ul class="docs-list">
+		<li><code>docs/ENGINEERING_GATES.md</code></li>
+		<li><code>docs/DEVELOPER_TOOLING.md</code></li>
+		<li><code>docs/COVERAGE_GATE_POLICY.json</code></li>
+		<li><code>docs/STUB_ACCOUNTING.md</code></li>
+		<li><code>docs/ALGO_AUDIT_BACKLOG.md</code></li>
+	</ul>
+</DocSection>

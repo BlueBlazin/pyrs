@@ -1,0 +1,82 @@
+---
+layout: ../../../layouts/DocsLayout.astro
+title: PYRS Docs | Contributing Architecture
+description: High-level architecture map for contributors working on parser, compiler, VM, and extension runtime.
+pageTitle: "Contributing: Architecture"
+---
+
+import DocSection from "../../../components/docs/DocSection.astro";
+import DataTable from "../../../components/docs/DataTable.astro";
+import Callout from "../../../components/docs/Callout.astro";
+
+<DocSection>
+	This page summarizes where major interpreter responsibilities live so contributors can place changes
+	in the right subsystem.
+</DocSection>
+
+<DocSection title="Top-Level Flow">
+	<DataTable headers={["Stage", "Primary modules"]}>
+		<tr>
+			<td>Parsing</td>
+			<td><code>src/parser/*</code> (packrat parser entry points and lexer/token handling)</td>
+		</tr>
+		<tr>
+			<td>Compilation</td>
+			<td><code>src/compiler/*</code> (AST-to-bytecode lowering and scope analysis)</td>
+		</tr>
+		<tr>
+			<td>Runtime/VM</td>
+			<td><code>src/vm/*</code> (execution loop, builtins, import substrate, object-model behavior)</td>
+		</tr>
+		<tr>
+			<td>CLI and REPL</td>
+			<td><code>src/cli/mod.rs</code>, <code>src/cli/repl.rs</code></td>
+		</tr>
+		<tr>
+			<td>Native extensions</td>
+			<td><code>src/vm/vm_extensions/*</code> and <code>include/pyrs_capi.h</code></td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="VM Ownership Rules (Contributor View)">
+	<DataTable headers={["Area", "Where to change behavior"]}>
+		<tr>
+			<td>Bytecode execution flow</td>
+			<td><code>src/vm/vm_execution.rs</code></td>
+		</tr>
+		<tr>
+			<td>Builtin dispatch mapping</td>
+			<td><code>src/vm/vm_native_dispatch.rs</code></td>
+		</tr>
+		<tr>
+			<td>Import/bootstrap wiring</td>
+			<td><code>src/vm/vm_bootstrap_import.rs</code>, <code>src/vm/builtins_import.rs</code></td>
+		</tr>
+		<tr>
+			<td>Core runtime helpers</td>
+			<td><code>src/vm/vm_runtime_methods.rs</code></td>
+		</tr>
+		<tr>
+			<td>Native stdlib substrates</td>
+			<td><code>src/vm/stdlib/*</code></td>
+		</tr>
+		<tr>
+			<td>C-API/extension runtime</td>
+			<td><code>src/vm/vm_extensions/*</code> (split by API surface family)</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Placement Discipline">
+	<ul class="docs-list">
+		<li>Do not put new domain logic into monolithic orchestrator files when a focused module exists.</li>
+		<li>Keep behavior in the owning subsystem (parser/compiler/vm/extensions) with minimal cross-leakage.</li>
+		<li>Ship behavior changes with tests in the same commit.</li>
+		<li>For CPython-visible behavior, treat CPython semantics as the sole target.</li>
+	</ul>
+	<Callout title="Canonical Map">
+		For full ownership boundaries and placement rules, use
+		<code> docs/VM_ARCHITECTURE_MAP.md</code> as the source of truth.
+	</Callout>
+</DocSection>

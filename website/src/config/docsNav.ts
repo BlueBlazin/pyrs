@@ -49,4 +49,11 @@ export const docsNavGroups: DocsNavGroup[] = [
 		label: "Project",
 		items: [{ href: "/docs/roadmap-and-milestones/", label: "Roadmap and Milestones" }],
 	},
+	{
+		label: "Contributing",
+		items: [
+			{ href: "/docs/contributing/architecture/", label: "Architecture" },
+			{ href: "/docs/contributing/validation/", label: "Validation and Gates" },
+		],
+	},
 ];
