@@ -452,6 +452,15 @@ Completed on this branch:
 - latest: both local wasm gate entrypoints (`check_wasm_branch.sh` and
   `run_wasm_contract_smoke.sh`) now execute `probe_wasm_vm_compile.sh`, so
   wasm vm-probe compile + lib-test link lanes are always exercised.
+- latest: top-level `execute()` now has a feature-gated runtime probe path:
+  when built with `wasm-vm-probe`, parse+compile-valid and capability-allowed
+  snippets execute via `Vm::new_with_host(WasmHost)` and return
+  `phase = \"ok\"` or `phase = \"runtime_error\"`; default wasm builds keep the
+  existing unsupported-execution contract.
+- latest: runtime metadata/blocker exports are now feature-aware for wasm
+  vm-probe builds (`wasm_runtime_info.supports_execution = true`,
+  `execution_backend = \"vm_probe\"`, and unwired execution blocker keys are
+  omitted when the probe runtime is enabled).
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

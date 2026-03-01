@@ -17,7 +17,9 @@ This guide defines the recommended browser call order for current wasm APIs.
 7. Optional: `wasm_snippet_import_roots(source)` to display dependency roots.
 8. If `phase == "supported"`:
    - call `check_compile_result(source)` (optional if you already used snippet preflight),
-   - call `execute(source)` (currently returns `unsupported_execution` by contract).
+   - call `execute(source)`.
+   - default build: parse+compile-valid calls return `unsupported_execution`.
+   - `wasm-vm-probe` build: capability-allowed snippets can return `ok` or `runtime_error`.
    - when phase is unsupported, use `result.blocker_key` for deterministic UI branching.
    - optional: use `wasm_execution_phase_keys()` for execute-phase enum hydration.
 9. If `phase == "blocked_capability"`:

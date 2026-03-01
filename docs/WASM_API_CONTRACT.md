@@ -58,23 +58,29 @@ This document defines the JS-facing contract currently exported by
 - `check_compile_result(source: &str) -> WasmCompileResult`
   - Structured parse+compile validation result.
 - `execute(source: &str) -> WasmExecutionResult`
-  - Current behavior:
+  - Default wasm build behavior:
     - `phase = "syntax_error"` when parse fails.
     - `phase = "compile_error"` when parse passes but compilation fails.
     - `phase = "unsupported_execution"` for parse+compile-valid input.
     - `blocker_key` for unsupported execution is:
       - capability-specific (for known blocked imports),
       - otherwise `execution_backend_unwired`.
+  - `wasm-vm-probe` feature behavior:
+    - parse/compile/capability-preflight behavior is unchanged,
+    - capability-allowed snippets execute via VM and return
+      `phase = "ok"` (success) or `phase = "runtime_error"` (VM raised runtime error).
   - `stderr` is populated for both current failure phases.
 - `wasm_execution_phase_keys() -> Array`
   - Returns canonical top-level execute phase keys.
+  - Includes `ok` + `runtime_error` only when built with `wasm-vm-probe`.
 - `wasm_capabilities() -> WasmCapabilityReport`
   - Returns explicit browser capability matrix.
 - `wasm_capability_error(capability_key: &str) -> Option<String>`
   - Returns unsupported-capability message for known keys.
 - `wasm_execution_blocker_keys() -> Array`
   - Returns canonical blocker keys for execution in browser mode
-    (includes `execution_backend_unwired` and `vm_runtime_unavailable`).
+    (default build includes `execution_backend_unwired` and `vm_runtime_unavailable`).
+  - In `wasm-vm-probe` builds, unwired runtime blocker keys are omitted.
 - `wasm_execution_blocker_error(blocker_key: &str) -> Option<String>`
   - Returns stable blocker message for known execution blockers.
 - `wasm_execution_blockers() -> Array`
@@ -106,8 +112,8 @@ This document defines the JS-facing contract currently exported by
 - `pyrs_version: String`
 - `supports_parse_compile: bool`
 - `supports_execution: bool`
-- `execution_backend: String` (currently `"unwired"`)
-- `execution_status: String` (currently `"syntax_compile_only"`)
+- `execution_backend: String` (default `"unwired"`, `wasm-vm-probe` => `"vm_probe"`)
+- `execution_status: String` (default `"syntax_compile_only"`, `wasm-vm-probe` => `"runtime_probe"`)
 - `execution_blocker_count: usize`
 
 ## `WasmWorkerInfo`
@@ -169,7 +175,9 @@ This document defines the JS-facing contract currently exported by
 ## `WasmExecutionResult`
 
 - `success: bool`
-- `phase: String` (`"syntax_error"`, `"compile_error"`, `"unsupported_execution"`)
+- `phase: String`
+  - default: `"syntax_error"`, `"compile_error"`, `"unsupported_execution"`
+  - `wasm-vm-probe`: also `"ok"`, `"runtime_error"`
 - `stdout: String`
 - `stderr: String`
 - `error: Option<String>`

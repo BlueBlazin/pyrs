@@ -1,15 +1,25 @@
 use std::collections::HashSet;
+#[cfg(feature = "wasm-vm-probe")]
+use std::sync::Arc;
 use std::sync::Once;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::host::{HostCapability, VmHost, WasmHost};
+#[cfg(feature = "wasm-vm-probe")]
+use crate::vm::Vm;
 use js_sys::Array;
 use wasm_bindgen::prelude::*;
 
 pub const WASM_API_VERSION: u32 = 1;
 const WASM_EXECUTION_BACKEND_UNWIRED: &str = "unwired";
+#[cfg(feature = "wasm-vm-probe")]
+const WASM_EXECUTION_BACKEND_VM_PROBE: &str = "vm_probe";
 const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired";
 const WASM_EXECUTION_BLOCKER_VM_RUNTIME_UNAVAILABLE: &str = "vm_runtime_unavailable";
+#[cfg(feature = "wasm-vm-probe")]
+const WASM_EXECUTION_PHASE_OK: &str = "ok";
+#[cfg(feature = "wasm-vm-probe")]
+const WASM_EXECUTION_PHASE_RUNTIME_ERROR: &str = "runtime_error";
 const WASM_WORKER_BLOCKER_RUNTIME_UNWIRED: &str = "worker_runtime_unwired";
 const WASM_WORKER_INTERRUPT_MODEL_RECYCLE: &str = "worker_recycle";
 const WASM_WORKER_BACKEND_UNWIRED: &str = "unwired";
@@ -49,16 +59,21 @@ fn module_policy_blocker_keys() -> Vec<&'static str> {
 }
 
 fn execution_blocker_keys(host: &dyn VmHost) -> Vec<&'static str> {
-    let mut keys = vec![
-        WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED,
-        WASM_EXECUTION_BLOCKER_VM_RUNTIME_UNAVAILABLE,
-    ];
+    let mut keys = Vec::new();
+    if !wasm_vm_runtime_enabled() {
+        keys.push(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED);
+        keys.push(WASM_EXECUTION_BLOCKER_VM_RUNTIME_UNAVAILABLE);
+    }
     for capability in HostCapability::all() {
         if !host.supports(*capability) {
             keys.push(capability.key());
         }
     }
     keys
+}
+
+fn wasm_vm_runtime_enabled() -> bool {
+    cfg!(feature = "wasm-vm-probe")
 }
 
 fn worker_blocker_keys() -> Vec<&'static str> {
@@ -189,10 +204,23 @@ impl WasmExecutionPhase {
 }
 
 fn execution_phase_keys() -> Vec<&'static str> {
-    WasmExecutionPhase::ALL
-        .iter()
-        .map(|phase| phase.key())
-        .collect()
+    #[cfg(feature = "wasm-vm-probe")]
+    {
+        let mut keys: Vec<&'static str> = WasmExecutionPhase::ALL
+            .iter()
+            .map(|phase| phase.key())
+            .collect();
+        keys.push(WASM_EXECUTION_PHASE_OK);
+        keys.push(WASM_EXECUTION_PHASE_RUNTIME_ERROR);
+        keys
+    }
+    #[cfg(not(feature = "wasm-vm-probe"))]
+    {
+        WasmExecutionPhase::ALL
+            .iter()
+            .map(|phase| phase.key())
+            .collect()
+    }
 }
 
 fn worker_state_keys() -> Vec<&'static str> {
@@ -1165,13 +1193,31 @@ pub fn wasm_execution_phase_keys() -> Array {
 pub fn wasm_runtime_info() -> WasmRuntimeInfo {
     let host = WasmHost;
     let blocker_count = execution_blocker_keys(&host).len();
+    let supports_execution = wasm_vm_runtime_enabled();
+    let execution_backend = if supports_execution {
+        #[cfg(feature = "wasm-vm-probe")]
+        {
+            WASM_EXECUTION_BACKEND_VM_PROBE.to_string()
+        }
+        #[cfg(not(feature = "wasm-vm-probe"))]
+        {
+            WASM_EXECUTION_BACKEND_UNWIRED.to_string()
+        }
+    } else {
+        WASM_EXECUTION_BACKEND_UNWIRED.to_string()
+    };
+    let execution_status = if supports_execution {
+        "runtime_probe".to_string()
+    } else {
+        "syntax_compile_only".to_string()
+    };
     WasmRuntimeInfo {
         api_version: wasm_api_version(),
         pyrs_version: pyrs_version(),
         supports_parse_compile: true,
-        supports_execution: false,
-        execution_backend: WASM_EXECUTION_BACKEND_UNWIRED.to_string(),
-        execution_status: "syntax_compile_only".to_string(),
+        supports_execution,
+        execution_backend,
+        execution_status,
         execution_blocker_count: blocker_count,
     }
 }
@@ -1572,7 +1618,13 @@ fn collect_import_roots(module: &crate::ast::Module) -> Vec<String> {
     roots
 }
 
-fn parse_and_compile_module(source: &str) -> Result<crate::ast::Module, WasmCompileResult> {
+struct ParsedCompiledSnippet {
+    module: crate::ast::Module,
+    #[cfg(feature = "wasm-vm-probe")]
+    code: crate::bytecode::CodeObject,
+}
+
+fn parse_and_compile_snippet(source: &str) -> Result<ParsedCompiledSnippet, WasmCompileResult> {
     let module = match crate::parser::parse_module(source) {
         Ok(module) => module,
         Err(err) => {
@@ -1587,7 +1639,17 @@ fn parse_and_compile_module(source: &str) -> Result<crate::ast::Module, WasmComp
     };
 
     match crate::compiler::compile_module_with_filename(&module, "<wasm>") {
-        Ok(_) => Ok(module),
+        Ok(code) => {
+            #[cfg(feature = "wasm-vm-probe")]
+            {
+                Ok(ParsedCompiledSnippet { module, code })
+            }
+            #[cfg(not(feature = "wasm-vm-probe"))]
+            {
+                let _ = code;
+                Ok(ParsedCompiledSnippet { module })
+            }
+        }
         Err(err) => {
             let (message, line, column) = format_compile_error(&err);
             Err(WasmCompileResult {
@@ -1632,8 +1694,8 @@ fn first_snippet_capability_blocker(
     source: &str,
     host: &dyn VmHost,
 ) -> Result<Option<WasmSnippetBlocker>, WasmCompileResult> {
-    let module = parse_and_compile_module(source)?;
-    let import_roots = collect_import_roots(&module);
+    let parsed = parse_and_compile_snippet(source)?;
+    let import_roots = collect_import_roots(&parsed.module);
     Ok(snippet_blockers_from_import_roots(&import_roots, host)
         .into_iter()
         .next())
@@ -1675,8 +1737,8 @@ fn snippet_blockers_from_import_roots(
 pub fn wasm_snippet_support(source: &str) -> WasmSnippetSupport {
     init_wasm_runtime();
     let host = WasmHost;
-    let module = match parse_and_compile_module(source) {
-        Ok(module) => module,
+    let parsed = match parse_and_compile_snippet(source) {
+        Ok(parsed) => parsed,
         Err(result) => {
             return WasmSnippetSupport {
                 supported: false,
@@ -1692,7 +1754,7 @@ pub fn wasm_snippet_support(source: &str) -> WasmSnippetSupport {
             };
         }
     };
-    let import_roots = collect_import_roots(&module);
+    let import_roots = collect_import_roots(&parsed.module);
     let blockers = snippet_blockers_from_import_roots(&import_roots, &host);
     let first = blockers.first();
     if let Some(first) = first {
@@ -1731,10 +1793,10 @@ pub fn wasm_snippet_support(source: &str) -> WasmSnippetSupport {
 pub fn wasm_snippet_blockers(source: &str) -> Array {
     init_wasm_runtime();
     let host = WasmHost;
-    let Ok(module) = parse_and_compile_module(source) else {
+    let Ok(parsed) = parse_and_compile_snippet(source) else {
         return Array::new();
     };
-    let import_roots = collect_import_roots(&module);
+    let import_roots = collect_import_roots(&parsed.module);
     let blockers = snippet_blockers_from_import_roots(&import_roots, &host);
     let result = Array::new();
     for blocker in blockers {
@@ -1747,10 +1809,10 @@ pub fn wasm_snippet_blockers(source: &str) -> Array {
 #[wasm_bindgen]
 pub fn wasm_snippet_import_roots(source: &str) -> Array {
     init_wasm_runtime();
-    let Ok(module) = parse_and_compile_module(source) else {
+    let Ok(parsed) = parse_and_compile_snippet(source) else {
         return Array::new();
     };
-    let roots = collect_import_roots(&module);
+    let roots = collect_import_roots(&parsed.module);
     let result = Array::new();
     for root in roots {
         result.push(&JsValue::from_str(&root));
@@ -1770,6 +1832,33 @@ pub fn wasm_execution_blocker_error(blocker_key: &str) -> Option<String> {
     wasm_capability_error(blocker_key)
 }
 
+#[cfg(feature = "wasm-vm-probe")]
+fn execute_compiled_snippet_with_vm(code: &crate::bytecode::CodeObject) -> WasmExecutionResult {
+    let mut vm = Vm::new_with_host(Arc::new(WasmHost));
+    match vm.execute(code) {
+        Ok(_) => WasmExecutionResult {
+            success: true,
+            phase: WASM_EXECUTION_PHASE_OK.to_string(),
+            stdout: String::new(),
+            stderr: String::new(),
+            error: None,
+            blocker_key: None,
+            line: 0,
+            column: 0,
+        },
+        Err(err) => WasmExecutionResult {
+            success: false,
+            phase: WASM_EXECUTION_PHASE_RUNTIME_ERROR.to_string(),
+            stdout: String::new(),
+            stderr: err.message.clone(),
+            error: Some(err.message),
+            blocker_key: None,
+            line: 0,
+            column: 0,
+        },
+    }
+}
+
 /// Executes a snippet using the current wasm bridge contract.
 ///
 /// Current milestone behavior:
@@ -1777,13 +1866,15 @@ pub fn wasm_execution_blocker_error(blocker_key: &str) -> Option<String> {
 /// - parse-valid but compile-invalid input returns `phase = "compile_error"`
 /// - parse+compile-valid snippets that import known blocked modules return
 ///   `phase = "unsupported_execution"` with capability-specific blocker keys,
-/// - remaining parse+compile-valid input returns `phase = "unsupported_execution"` until runtime
-///   execution is wired for wasm.
+/// - default wasm builds return `phase = "unsupported_execution"` for remaining
+///   parse+compile-valid snippets,
+/// - `wasm-vm-probe` builds execute remaining snippets through VM and return
+///   `phase = "ok"` or `phase = "runtime_error"`.
 #[wasm_bindgen]
 pub fn execute(source: &str) -> WasmExecutionResult {
     let host = WasmHost;
-    let first_blocker = match first_snippet_capability_blocker(source, &host) {
-        Ok(blocker) => blocker,
+    let parsed = match parse_and_compile_snippet(source) {
+        Ok(parsed) => parsed,
         Err(compile) => {
             return compile_failure_to_execution_result(
                 compile,
@@ -1794,6 +1885,10 @@ pub fn execute(source: &str) -> WasmExecutionResult {
         }
     };
 
+    let import_roots = collect_import_roots(&parsed.module);
+    let first_blocker = snippet_blockers_from_import_roots(&import_roots, &host)
+        .into_iter()
+        .next();
     if let Some(blocker) = first_blocker {
         return WasmExecutionResult {
             success: false,
@@ -1805,6 +1900,13 @@ pub fn execute(source: &str) -> WasmExecutionResult {
             line: 0,
             column: 0,
         };
+    }
+
+    if wasm_vm_runtime_enabled() {
+        #[cfg(feature = "wasm-vm-probe")]
+        {
+            return execute_compiled_snippet_with_vm(&parsed.code);
+        }
     }
 
     let message = wasm_execution_blocker_error(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED)
@@ -1878,7 +1980,7 @@ pub fn check_syntax(source: &str) -> Result<(), JsValue> {
 #[wasm_bindgen]
 pub fn check_compile_result(source: &str) -> WasmCompileResult {
     init_wasm_runtime();
-    match parse_and_compile_module(source) {
+    match parse_and_compile_snippet(source) {
         Ok(_) => WasmCompileResult {
             ok: true,
             phase: "ok".to_string(),
