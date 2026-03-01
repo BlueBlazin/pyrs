@@ -1,231 +1,190 @@
-# pyrs
+<p align="center">
+  <img src="website/public/images/pyrs-logo.png" alt="PYRS logo" width="124" />
+</p>
 
-`pyrs` is a Python interpreter in Rust, targeting CPython 3.14 source and bytecode compatibility.
+<h1 align="center">PYRS</h1>
 
-## Status
+<p align="center"><strong>A Python interpreter in Rust targeting CPython 3.14 semantics.</strong></p>
 
-`pyrs` is in active alpha development.
+<p align="center">
+  <a href="#quick-start">Quick Start</a>
+  ·
+  <a href="#installation">Installation</a>
+  ·
+  <a href="#usage">Usage</a>
+  ·
+  <a href="#status">Status</a>
+  ·
+  <a href="#docs">Docs</a>
+  ·
+  <a href="#contributing">Contributing</a>
+</p>
 
-- Milestones `0-12` are complete.
-- Milestones `13-16` remain.
-- Active execution lock is Milestone `15` (native extension ecosystem compatibility and scientific-stack bring-up).
-- Optimization phase-1 checkpoint is complete; remaining throughput gaps are tracked in `docs/OPTIMIZATION_BACKLOG.md`.
+## At a Glance
 
-## What Works Today
+| Area | Current State |
+| --- | --- |
+| Compatibility target | CPython 3.14 |
+| Core execution paths | Source (`.py`), bytecode (`.pyc`), interactive REPL |
+| Platform priority | macOS + Linux (`x86_64`, `aarch64`) |
+| C-extension support | In progress (scientific stack bring-up underway) |
+| Local test runner | `cargo nextest run` |
 
-- Substantial pure-Python execution: modules/packages, classes, closures, generators, comprehensions, core async flows.
-- CPython `.pyc` execution for a supported subset, including sourceless import fallback paths and exception-table `try`/`except`/`with` baseline semantics.
-- Broad stdlib foundation (`sys`, import foundations, `os`/`pathlib`, `json`, `re`, `math`, `datetime`, `random`, `sqlite3` baseline, core `asyncio`/`threading`/`signal`).
-- Interactive REPL via `pyrs` with syntax highlighting, history, multiline input, repr-style expression echo, and banner `RSPYTHON`.
-- Curated CPython harness suites and project test suite are green.
+## REPL Preview
 
-## Current Limits
-
-- Not full CPython 3.14 parity yet (remaining long-tail language/runtime and stdlib edge semantics).
-- C-extension compatibility is partial/in progress:
-  - direct-mode `import numpy` and ndarray baseline smoke are working,
-  - NumPy random stack and broader scipy/pandas/matplotlib closure remain open.
-- Performance/hardening milestones are still ahead.
-
-## Performance Snapshot
-
-Canonical benchmark suite:
-
-```bash
-scripts/bench_fib_gate.sh 5
-scripts/bench_dispatch_hotpath.sh 5
-scripts/bench_dict_backend.sh 5
-```
-
-Latest local snapshot (`2026-02-11`):
-
-- `fib(29)x5`: `pyrs ~0.56s` user vs `python3.10 ~0.49s` user (`~1.15x`)
-- dispatch hotpath: `pyrs ~0.44-0.50s` vs `python3.10 ~0.054-0.056s` (`~7.9-9.3x`)
-- dict microbench: `pyrs ~0.24s` vs `python3.10 ~0.02s`
-- pickle hotspot: `pyrs ~5.01s` vs `python3.10 ~0.43s` (`~11.7x`)
-
-## Native Stdlib Layout
-
-- VM-native stdlib handlers are being split out of `src/vm/mod.rs` into `src/vm/stdlib/`.
-- Current extracted modules: `src/vm/stdlib/json.rs`, `src/vm/stdlib/re.rs`, `src/vm/stdlib/csv.rs`, `src/vm/stdlib/sqlite3.rs`.
-- Direction: prefer CPython official pure-Python stdlib implementations whenever feasible; keep native handlers only where required and track remaining native/stub parity gaps in `docs/STUB_ACCOUNTING.md`.
+<p align="center">
+  <img src="website/public/images/repl/repl1.png" alt="PYRS REPL screenshot 1" width="48.5%" />
+  <img src="website/public/images/repl/repl2.png" alt="PYRS REPL screenshot 2" width="48.5%" />
+</p>
 
 ## Quick Start
 
-Requirements:
-- Rust toolchain (`cargo`)
-
-Install (beta channels, ordered by recommended path):
+Install from GitHub with Cargo:
 
 ```bash
-# rolling nightly from master
-cargo install --git https://github.com/BlueBlazin/pyrs --branch master --locked
-
-# reproducible tagged beta
-cargo install --git https://github.com/BlueBlazin/pyrs --tag v0.1.0-beta.1 --locked
+cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs
+pyrs --version
 ```
 
-Alternative distribution channels:
+Run interactive REPL:
 
 ```bash
-# Homebrew (tap)
+pyrs
+```
+
+Run inline Python:
+
+```bash
+pyrs -c "import platform; print(platform.python_version())"
+```
+
+Run a script:
+
+```bash
+pyrs path/to/script.py
+```
+
+## Installation
+
+### Cargo (recommended)
+
+```bash
+cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs
+```
+
+### Cargo install from local repo path
+
+```bash
+git clone https://github.com/BlueBlazin/pyrs.git
+cd pyrs
+cargo install --locked --path .
+```
+
+### Build from source (no install)
+
+```bash
+git clone https://github.com/BlueBlazin/pyrs.git
+cd pyrs
+cargo build --release
+./target/release/pyrs --version
+```
+
+### Homebrew (tap)
+
+```bash
 brew install blueblazin/tap/pyrs
-
-# Docker (nightly tag from GHCR)
-docker run --rm -it ghcr.io/blueblazin/pyrs:nightly pyrs -V
 ```
 
-Direct binary downloads are published on GitHub Releases when tags are cut.
-
-Build:
+### Docker nightly
 
 ```bash
-cargo build
+docker pull ghcr.io/blueblazin/pyrs:nightly
+docker run --rm -it ghcr.io/blueblazin/pyrs:nightly
 ```
 
-Run source:
+### Nightly archives
+
+Nightly binary archives are published at:
+
+- [GitHub Releases (nightly tag)](https://github.com/BlueBlazin/pyrs/releases/tag/nightly)
+
+## Usage
+
+### CLI execution modes
 
 ```bash
-cargo run -- path/to/script.py
+pyrs                         # REPL (or stdin when piped)
+pyrs path/to/script.py       # source file
+pyrs path/to/module.pyc      # CPython bytecode file
+pyrs -c "print('hello')"     # inline source
 ```
 
-Run interactive REPL (default with no args):
+### Useful flags
 
 ```bash
-cargo run --
+pyrs --help
+pyrs --version
+pyrs -S path/to/script.py
+pyrs --ast path/to/script.py
+pyrs --bytecode path/to/script.py
 ```
 
-REPL commands:
+### REPL shortcuts
 
 ```text
-:help   :clear   :paste   :timing   :reset   :exit/:quit
-%time <expr-or-stmt>
-%timeit [-n N] [-r R] <expr-or-stmt>
+:help   :clear   :paste   :timing   :reset   :quit
 ```
 
-REPL keys:
+### Environment knobs
 
 ```text
-Tab                     insert 4 spaces
-Shift-Tab / Ctrl-Space  open completion menu
-Esc                     dismiss active suggestion/menu
+PYRS_CPYTHON_LIB   explicit CPython stdlib root
+PYRS_REPL_THEME    auto | dark | light
+PYTHONPATH         additional import search paths
 ```
 
-REPL startup script:
+## Status
 
-```text
-default: ~/.pyrsrc
-override: PYRS_REPL_INIT=/path/to/init.py
-disable: PYRS_REPL_INIT=""
-```
+PYRS is an active pre-release project with CPython 3.14 parity as the correctness target.
 
-REPL theme:
+### What works today
 
-```text
-auto detect (default): PYRS_REPL_THEME=auto
-force dark palette:    PYRS_REPL_THEME=dark
-force light palette:   PYRS_REPL_THEME=light
-```
+- Broad pure-Python runtime surface (modules/packages, classes, comprehensions, generators, core async/threading flows).
+- CPython bytecode execution for supported `.pyc` surfaces.
+- Interactive REPL with multiline input, history, syntax highlighting, and command utilities.
+- Large and growing stdlib support coverage.
 
-CLI error coloring (tracebacks/syntax diagnostics):
+### In progress
 
-```text
-auto (TTY-aware):      default
-force on:              FORCE_COLOR=1  (or PYTHON_COLORS=1)
-force off:             NO_COLOR=1     (or PYTHON_COLORS=0)
-```
+- Long-tail CPython parity closure across stdlib/runtime edge behavior.
+- Broader C-extension compatibility closure (NumPy/scientific-stack parity work).
+- Additional performance and hardening milestones.
 
-`pyrs` auto-tunes traceback colors for dark/light terminals using `COLORFGBG` when available.
+## Testing
 
-Run from piped stdin (non-interactive mode):
-
-```bash
-echo "print(40 + 2)" | cargo run --
-```
-
-Run bytecode:
-
-```bash
-cargo run -- path/to/module.pyc
-```
-
-Disable startup `site` import:
-
-```bash
-cargo run -- -S path/to/script.py
-```
-
-Inspect AST:
-
-```bash
-cargo run -- --ast path/to/script.py
-```
-
-Inspect bytecode:
-
-```bash
-cargo run -- --bytecode path/to/script.py
-```
-
-Run tests:
+Run the local suite with `nextest`:
 
 ```bash
 cargo nextest run
 ```
 
-Fallback (when you explicitly need `cargo test` semantics):
+Use `cargo test` only when you specifically need `cargo test` semantics:
 
 ```bash
 cargo test
 ```
 
-Install optional developer tools:
+## Docs
 
-```bash
-./scripts/bootstrap_dev_tools.sh
-```
+- Website/docs source: [`website/`](website/)
+- Project roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md)
+- Compatibility tracker: [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md)
+- Production readiness tracker: [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md)
+- Stub/partial parity ledger: [`docs/STUB_ACCOUNTING.md`](docs/STUB_ACCOUNTING.md)
 
-Run parity profile:
+## Contributing
 
-```bash
-./scripts/run_parity_gate.sh
-```
+PRs and focused bug reports are welcome.
 
-## Using Real CPython Stdlib (Pure-Python Parts)
-
-You can run against a real CPython 3.14 `Lib/` directory now.
-
-Recommended (pinned local CPython tree):
-
-```bash
-PYRS_CPYTHON_LIB=.local/Python-3.14.3/Lib cargo run -- path/to/script.py
-```
-
-How stdlib loading works in `pyrs`:
-
-- `pyrs` resolves stdlib roots from `PYRS_CPYTHON_LIB`, `PYTHONPATH`, `PYTHONHOME`, and known default paths.
-- Those directories are added to VM module search paths (`sys.path`-backed resolution).
-- Imports are resolved with `PathFinder` + loader contracts:
-  - `pyrs.SourceFileLoader` for `.py`
-  - `pyrs.SourcelessFileLoader` for supported `.pyc`
-  - `pyrs.NamespaceLoader` for namespace packages
-- Pure-Python stdlib modules are interpreted by `pyrs` (not linked to CPython runtime internals).
-
-Do we keep a local copy in this repo?
-
-- Yes (recommended): keep an untracked local CPython checkout at `.local/Python-3.14.3`.
-- We currently use `.local/Python-3.14.3/Lib` for stdlib/import probes and `.local/Python-3.14.3` for source/doc references.
-- `/.local/` is git-ignored to prevent accidental commits.
-
-## Safety Note for Parity Runs
-
-Curated smoke/parity tests run subprocesses in a constrained mode (`env_clear`, isolated temp cwd/home, timeouts). For stronger isolation, run parity in an OS/container sandbox.
-
-## Key Docs
-
-- Roadmap: `docs/ROADMAP.md`
-- Compatibility tracker: `docs/COMPATIBILITY.md`
-- Production readiness accounting: `docs/PRODUCTION_READINESS.md`
-- Stub/partial ledger: `docs/STUB_ACCOUNTING.md`
-- Developer tooling + sanitizer runbook: `docs/DEVELOPER_TOOLING.md`
-- Project context for agent workflows: `AGENTS.md`
+- For CPython parity mismatches, include a minimal reproducer and both CPython + PYRS output.
+- For implementation workflow expectations in this repo, see [`AGENTS.md`](AGENTS.md).
