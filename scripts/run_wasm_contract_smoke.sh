@@ -33,6 +33,10 @@ echo "[wasm-contract] wasm worker docs contract summary snapshot"
 python3 scripts/generate_wasm_worker_docs_contract_summary.py \
   --out perf/wasm_worker_docs_contract_summary_latest.json
 
+echo "[wasm-contract] wasm client-flow docs summary snapshot"
+python3 scripts/generate_wasm_client_flow_summary.py \
+  --out perf/wasm_client_flow_summary_latest.json
+
 echo "[wasm-contract] wasm module policy summary snapshot"
 python3 scripts/generate_wasm_module_policy_summary.py \
   --out perf/wasm_module_policy_summary_latest.json

@@ -203,6 +203,9 @@ Branch helper:
 - worker-docs summary helper:
   `python3 scripts/generate_wasm_worker_docs_contract_summary.py --out perf/wasm_worker_docs_contract_summary_latest.json`
   for source/doc parity on worker state/lifecycle/execute/timeout keys, interruption model, timeout bounds, and blocker keys.
+- client-flow docs summary helper:
+  `python3 scripts/generate_wasm_client_flow_summary.py --out perf/wasm_client_flow_summary_latest.json`
+  for source/doc parity on browser call-order guidance, worker phase enums, and `WasmWorkerSession` telemetry fields.
 - worker-contract summary helper:
   `python3 scripts/generate_wasm_worker_contract_summary.py --out perf/wasm_worker_contract_summary_latest.json`
   for fixture + source parity on worker key sets/prefixes/blockers.
