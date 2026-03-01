@@ -190,6 +190,33 @@ impl VmHost for WasmHost {
     fn supports(&self, capability: HostCapability) -> bool {
         matches!(capability, HostCapability::ProcessArgs)
     }
+
+    fn unsupported_message(&self, capability: HostCapability) -> Option<String> {
+        match capability {
+            HostCapability::FilesystemRead => Some(
+                "unsupported capability 'filesystem_read' in wasm host: browser sandbox blocks direct host filesystem reads".to_string(),
+            ),
+            HostCapability::FilesystemWrite => Some(
+                "unsupported capability 'filesystem_write' in wasm host: browser sandbox blocks direct host filesystem writes".to_string(),
+            ),
+            HostCapability::EnvironmentRead => Some(
+                "unsupported capability 'environment_read' in wasm host: browser mode has no process environment access".to_string(),
+            ),
+            HostCapability::ProcessArgs => None,
+            HostCapability::ProcessSpawn => Some(
+                "unsupported capability 'process_spawn' in wasm host: browser mode cannot spawn subprocesses".to_string(),
+            ),
+            HostCapability::DynamicLibraryLoad => Some(
+                "unsupported capability 'dynamic_library_load' in wasm host: browser mode cannot dlopen native extensions".to_string(),
+            ),
+            HostCapability::InteractiveTerminal => Some(
+                "unsupported capability 'interactive_terminal' in wasm host: browser mode does not expose a TTY".to_string(),
+            ),
+            HostCapability::NetworkSockets => Some(
+                "unsupported capability 'network_sockets' in wasm host: raw socket APIs are unavailable in browser mode".to_string(),
+            ),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -230,6 +257,36 @@ mod tests {
         assert!(!host.supports(HostCapability::DynamicLibraryLoad));
         assert!(!host.supports(HostCapability::InteractiveTerminal));
         assert!(!host.supports(HostCapability::NetworkSockets));
+    }
+
+    #[test]
+    fn wasm_host_unsupported_messages_are_stable() {
+        let host = WasmHost;
+        let cases = [
+            HostCapability::FilesystemRead,
+            HostCapability::FilesystemWrite,
+            HostCapability::EnvironmentRead,
+            HostCapability::ProcessSpawn,
+            HostCapability::DynamicLibraryLoad,
+            HostCapability::InteractiveTerminal,
+            HostCapability::NetworkSockets,
+        ];
+        for capability in cases {
+            let message = host
+                .unsupported_message(capability)
+                .unwrap_or_else(|| panic!("missing unsupported message for {}", capability.key()));
+            assert!(
+                message.contains(capability.key()),
+                "unsupported message should include capability key"
+            );
+            assert!(
+                message.contains("wasm host") || message.contains("browser mode"),
+                "unsupported message should identify wasm/browser context"
+            );
+        }
+        assert!(host
+            .unsupported_message(HostCapability::ProcessArgs)
+            .is_none());
     }
 
     #[test]

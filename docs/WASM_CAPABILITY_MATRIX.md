@@ -36,7 +36,7 @@ Current wasm bridge exports for capability handling:
 - `wasm_capability_keys()`:
   returns the canonical key list used by the bridge.
 - `wasm_capability_error(capability_key)`:
-  returns a stable unsupported-capability message for known keys,
+  returns a stable wasm-host-specific unsupported-capability message for known keys,
   or `None` if the capability is supported.
 - `wasm_execution_blocker_keys()`:
   returns canonical execution-blocker keys (`execution_backend_unwired` plus
