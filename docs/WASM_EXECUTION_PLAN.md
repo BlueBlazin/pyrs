@@ -263,6 +263,10 @@ Completed on this branch:
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=7`.
+- residual hits are currently concentrated in:
+  - `src/vm/mod.rs` cached env-probe core (`env_var_present_cached` internals),
+  - `src/vm/stdlib/pickle.rs` profile-only env toggles,
+  - `src/vm/vm_builtin_metadata.rs` debug depth-limit numeric env controls.
 
 Remaining near-term focus:
 1. W3: expand `WasmHost` capability stubs and error contracts for unsupported features.
