@@ -147,6 +147,13 @@ def main() -> int:
     vm_probe_runtime_error_phase = parse_source_const_string(
         wasm_source, "WASM_EXECUTION_PHASE_RUNTIME_ERROR"
     )
+    worker_backend_default = parse_source_const_string(
+        wasm_source, "WASM_WORKER_BACKEND_UNWIRED"
+    )
+    worker_backend_vm_probe = const_map.get(
+        "WASM_WORKER_BACKEND_VM_PROBE",
+        worker_backend_default,
+    )
     timeout_default_ms = parse_source_const_u32(wasm_source, "WASM_WORKER_TIMEOUT_DEFAULT_MS")
     timeout_min_ms = parse_source_const_u32(wasm_source, "WASM_WORKER_TIMEOUT_MIN_MS")
     timeout_max_ms = parse_source_const_u32(wasm_source, "WASM_WORKER_TIMEOUT_MAX_MS")
@@ -183,6 +190,22 @@ def main() -> int:
         errors.append(f"docs missing timeout min value '{timeout_min_ms}'")
     if str(timeout_max_ms) not in docs_source:
         errors.append(f"docs missing timeout max value '{timeout_max_ms}'")
+    if worker_backend_default not in docs_source:
+        errors.append(
+            f"docs missing worker backend default key '{worker_backend_default}'"
+        )
+    if worker_backend_vm_probe not in docs_source:
+        errors.append(
+            f"docs missing worker backend vm-probe key '{worker_backend_vm_probe}'"
+        )
+    if not re.search(r"execution_probe_enabled\s*=\s*false", docs_source):
+        errors.append(
+            "docs missing default worker info execution_probe_enabled=false shape"
+        )
+    if not re.search(r"execution_probe_enabled[^\n]*true", docs_source):
+        errors.append(
+            "docs missing vm-probe worker info execution_probe_enabled=true shape"
+        )
     if f'state = "{worker_default_state}"' not in docs_source:
         errors.append(
             "docs missing worker execute-with-operation/default state shape "
@@ -213,6 +236,10 @@ def main() -> int:
         "worker_timeout_phases": worker_timeout_phases,
         "worker_unwired_blocker_key": worker_unwired_blocker,
         "worker_interruption_model": worker_interruption_model,
+        "worker_backend": {
+            "default": worker_backend_default,
+            "vm_probe": worker_backend_vm_probe,
+        },
         "worker_module_policy_blocker_keys": module_policy_blocker_keys,
         "worker_operation_prefixes": worker_operation_prefixes,
         "worker_default_state": worker_default_state,

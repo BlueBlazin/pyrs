@@ -205,7 +205,7 @@ Branch helper:
   for source/doc parity on top-level wasm exports and exported type field coverage.
 - worker-docs summary helper:
   `python3 scripts/generate_wasm_worker_docs_contract_summary.py --out perf/wasm_worker_docs_contract_summary_latest.json`
-  for source/doc parity on worker state/lifecycle/execute/timeout keys, interruption model, timeout bounds, and blocker keys.
+  for source/doc parity on worker state/lifecycle/execute/timeout keys, worker info backend/probe-flag shapes, interruption model, timeout bounds, and blocker keys.
 - client-flow docs summary helper:
   `python3 scripts/generate_wasm_client_flow_summary.py --out perf/wasm_client_flow_summary_latest.json`
   for source/doc parity on browser call-order guidance, worker phase enums, and `WasmWorkerSession` telemetry fields.
@@ -564,6 +564,9 @@ Completed on this branch:
   wasm contract tests consume those fixtures for `wasm_worker_info()`/session
   info assertions, and `generate_wasm_worker_contract_summary.py` enforces
   fixture-vs-source parity for worker-info mode semantics.
+- latest: `generate_wasm_worker_docs_contract_summary.py` now also enforces
+  worker-info docs parity for backend mode keys (`"unwired"`/`"vm_probe"`) and
+  `execution_probe_enabled` default/vm-probe shape coverage.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
