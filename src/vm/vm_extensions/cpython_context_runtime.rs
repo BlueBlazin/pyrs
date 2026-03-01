@@ -162,7 +162,7 @@ pub(in crate::vm::vm_extensions) fn cpython_trace_flag_enabled(name: &'static st
     {
         return *value;
     }
-    let enabled = std::env::var_os(name).is_some();
+    let enabled = super::super::env_var_present_cached(name);
     if let Ok(mut guard) = cache.lock() {
         guard.insert(name, enabled);
     }
@@ -229,7 +229,7 @@ pub(in crate::vm::vm_extensions) fn cpython_set_typed_error(
     message: impl Into<String>,
 ) {
     let message = message.into();
-    if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+    if cpython_trace_flag_enabled("PYRS_TRACE_CPY_ERRORS") {
         let caller = std::panic::Location::caller();
         eprintln!(
             "[cpy-typed-err-src] {} (at {}:{})",
@@ -238,7 +238,7 @@ pub(in crate::vm::vm_extensions) fn cpython_set_typed_error(
             caller.line()
         );
     }
-    if std::env::var_os("PYRS_TRACE_TZINFO_ERROR_BT").is_some() && message.contains("tzinfo") {
+    if cpython_trace_flag_enabled("PYRS_TRACE_TZINFO_ERROR_BT") && message.contains("tzinfo") {
         let caller = std::panic::Location::caller();
         eprintln!(
             "[cpy-typed-err-bt] {} (at {}:{}) bt={}",
@@ -272,7 +272,7 @@ pub(in crate::vm::vm_extensions) fn cpython_value_from_ptr(
     let resolved =
         with_active_cpython_context_mut(|context| context.cpython_value_from_borrowed_ptr(object))
             .map_err(|err| err.to_string())?;
-    if resolved.is_none() && std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
+    if resolved.is_none() && cpython_trace_flag_enabled("PYRS_TRACE_UNKNOWN_PTR") {
         eprintln!(
             "[cpy-unknown-ptr] cpython_value_from_ptr object={:p}",
             object
@@ -290,7 +290,7 @@ pub(in crate::vm::vm_extensions) fn cpython_value_from_ptr_or_proxy(
     let resolved =
         with_active_cpython_context_mut(|context| context.cpython_value_from_borrowed_ptr(object))
             .map_err(|err| err.to_string())?;
-    if resolved.is_none() && std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
+    if resolved.is_none() && cpython_trace_flag_enabled("PYRS_TRACE_UNKNOWN_PTR") {
         eprintln!(
             "[cpy-unknown-ptr] cpython_value_from_ptr_or_proxy object={:p}",
             object
