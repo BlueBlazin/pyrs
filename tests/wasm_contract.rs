@@ -200,7 +200,11 @@ fn wasm_execution_phase_keys_are_stable() {
 fn wasm_worker_contract_basics() {
     let info = wasm_worker_info();
     assert!(!info.supported());
-    assert_eq!(info.backend(), "unwired".to_string());
+    if vm_probe_enabled() {
+        assert_eq!(info.backend(), "vm_probe".to_string());
+    } else {
+        assert_eq!(info.backend(), "unwired".to_string());
+    }
     assert_eq!(info.state(), "unwired");
     assert_eq!(info.interruption_model(), "worker_recycle");
     assert_eq!(info.execution_probe_enabled(), vm_probe_enabled());
@@ -629,6 +633,11 @@ fn wasm_worker_session_contract_is_stable() {
 
     let info = session.info();
     assert!(!info.supported());
+    if vm_probe_enabled() {
+        assert_eq!(info.backend(), "vm_probe".to_string());
+    } else {
+        assert_eq!(info.backend(), "unwired".to_string());
+    }
     assert_eq!(info.state(), "unwired");
     assert_eq!(info.execution_probe_enabled(), vm_probe_enabled());
 

@@ -134,7 +134,7 @@ This document defines the JS-facing contract currently exported by
 ## `WasmWorkerInfo`
 
 - `supported: bool`
-- `backend: String` (currently `"unwired"`)
+- `backend: String` (default `"unwired"`, `wasm-vm-probe` => `"vm_probe"`)
 - `state: String` (currently `"unwired"`)
 - `interruption_model: String` (currently `"worker_recycle"`)
 - `execution_probe_enabled: bool` (`true` only in `wasm-vm-probe` builds)

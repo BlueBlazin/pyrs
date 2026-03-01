@@ -23,6 +23,8 @@ const WASM_EXECUTION_PHASE_RUNTIME_ERROR: &str = "runtime_error";
 const WASM_WORKER_BLOCKER_RUNTIME_UNWIRED: &str = "worker_runtime_unwired";
 const WASM_WORKER_INTERRUPT_MODEL_RECYCLE: &str = "worker_recycle";
 const WASM_WORKER_BACKEND_UNWIRED: &str = "unwired";
+#[cfg(feature = "wasm-vm-probe")]
+const WASM_WORKER_BACKEND_VM_PROBE: &str = "vm_probe";
 const WASM_WORKER_TIMEOUT_DEFAULT_MS: u32 = 5_000;
 const WASM_WORKER_TIMEOUT_MIN_MS: u32 = 50;
 const WASM_WORKER_TIMEOUT_MAX_MS: u32 = 120_000;
@@ -1375,9 +1377,21 @@ pub fn wasm_worker_blocker_error(blocker_key: &str) -> Option<String> {
 #[wasm_bindgen]
 pub fn wasm_worker_info() -> WasmWorkerInfo {
     let blockers = worker_blocker_keys();
+    let backend = if wasm_vm_runtime_enabled() {
+        #[cfg(feature = "wasm-vm-probe")]
+        {
+            WASM_WORKER_BACKEND_VM_PROBE.to_string()
+        }
+        #[cfg(not(feature = "wasm-vm-probe"))]
+        {
+            WASM_WORKER_BACKEND_UNWIRED.to_string()
+        }
+    } else {
+        WASM_WORKER_BACKEND_UNWIRED.to_string()
+    };
     WasmWorkerInfo {
         supported: false,
-        backend: WASM_WORKER_BACKEND_UNWIRED.to_string(),
+        backend,
         state: current_worker_state_key(),
         interruption_model: WASM_WORKER_INTERRUPT_MODEL_RECYCLE.to_string(),
         execution_probe_enabled: wasm_vm_runtime_enabled(),

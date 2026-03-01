@@ -557,6 +557,9 @@ Completed on this branch:
 - latest: `WasmWorkerInfo` now exposes `execution_probe_enabled` so browser
   clients can detect `wasm-vm-probe` runtime availability without changing
   `supported` semantics for unwired worker lifecycle APIs.
+- latest: `WasmWorkerInfo.backend` is now mode-aware (`"unwired"` default,
+  `"vm_probe"` with `wasm-vm-probe`) while worker lifecycle APIs remain
+  explicitly unsupported.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
