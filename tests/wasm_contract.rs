@@ -37,6 +37,7 @@ fn wasm_runtime_contract_basics() {
     let runtime = wasm_runtime_info();
     assert_eq!(runtime.api_version(), wasm_api_version());
     assert!(runtime.supports_parse_compile());
+    assert_eq!(runtime.execution_backend(), "unwired".to_string());
     assert_eq!(runtime.execution_status(), "syntax_compile_only");
     assert!(!runtime.supports_execution());
     let blocker_keys = wasm_execution_blocker_keys();

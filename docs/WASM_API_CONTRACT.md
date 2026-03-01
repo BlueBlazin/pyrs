@@ -99,6 +99,7 @@ This document defines the JS-facing contract currently exported by
 - `pyrs_version: String`
 - `supports_parse_compile: bool`
 - `supports_execution: bool`
+- `execution_backend: String` (currently `"unwired"`)
 - `execution_status: String` (currently `"syntax_compile_only"`)
 - `execution_blocker_count: usize`
 

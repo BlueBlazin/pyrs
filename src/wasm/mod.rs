@@ -7,6 +7,7 @@ use js_sys::Array;
 use wasm_bindgen::prelude::*;
 
 pub const WASM_API_VERSION: u32 = 1;
+const WASM_EXECUTION_BACKEND_UNWIRED: &str = "unwired";
 const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired";
 const WASM_EXECUTION_BLOCKER_VM_RUNTIME_UNAVAILABLE: &str = "vm_runtime_unavailable";
 const WASM_WORKER_BLOCKER_RUNTIME_UNWIRED: &str = "worker_runtime_unwired";
@@ -324,6 +325,7 @@ pub struct WasmRuntimeInfo {
     pyrs_version: String,
     supports_parse_compile: bool,
     supports_execution: bool,
+    execution_backend: String,
     execution_status: String,
     execution_blocker_count: usize,
 }
@@ -521,6 +523,11 @@ impl WasmRuntimeInfo {
     #[wasm_bindgen(getter)]
     pub fn supports_parse_compile(&self) -> bool {
         self.supports_parse_compile
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn execution_backend(&self) -> String {
+        self.execution_backend.clone()
     }
 
     #[wasm_bindgen(getter)]
@@ -1129,6 +1136,7 @@ pub fn wasm_runtime_info() -> WasmRuntimeInfo {
         pyrs_version: pyrs_version(),
         supports_parse_compile: true,
         supports_execution: false,
+        execution_backend: WASM_EXECUTION_BACKEND_UNWIRED.to_string(),
         execution_status: "syntax_compile_only".to_string(),
         execution_blocker_count: blocker_count,
     }

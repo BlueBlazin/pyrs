@@ -368,6 +368,8 @@ Completed on this branch:
   `scripts/generate_wasm_module_policy_summary.py` and enforced in
   branch/smoke scripts (`perf/wasm_module_policy_summary_latest.json`) with
   source+fixture+docs row-set validation.
+- latest: `WasmRuntimeInfo` now includes explicit `execution_backend`
+  (`\"unwired\"`) so clients can branch on backend readiness without message parsing.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
