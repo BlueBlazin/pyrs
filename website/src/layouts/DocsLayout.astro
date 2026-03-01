@@ -11,16 +11,24 @@ interface Props {
 	title: string;
 	description: string;
 	pageTitle: string;
+	frontmatter?: {
+		title?: string;
+		description?: string;
+		pageTitle?: string;
+	};
 }
 
-const { title, description, pageTitle } = Astro.props;
+const frontmatter = Astro.props.frontmatter ?? {};
+const title = Astro.props.title ?? frontmatter.title ?? "PYRS Docs";
+const description = Astro.props.description ?? frontmatter.description ?? "PYRS documentation.";
+const pageTitle = Astro.props.pageTitle ?? frontmatter.pageTitle ?? "Docs";
 const rawPath = Astro.url.pathname;
 const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 ---
 
 <html lang="en">
 	<head>
-		<SiteHead title={title} description={description} />
+		<SiteHead title={title} description={description} url={Astro.url.toString()} />
 	</head>
 	<body>
 		<div class="site-shell">

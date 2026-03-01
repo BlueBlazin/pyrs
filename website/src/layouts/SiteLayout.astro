@@ -14,7 +14,7 @@ const { title, description } = Astro.props;
 
 <html lang="en">
 	<head>
-		<SiteHead title={title} description={description} />
+		<SiteHead title={title} description={description} url={Astro.url.toString()} />
 	</head>
 	<body>
 		<div class="site-shell">
