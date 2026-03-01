@@ -1094,7 +1094,13 @@ impl Vm {
             "__getformat__" if builtin == BuiltinFunction::Float => {
                 Ok(Value::Builtin(BuiltinFunction::FloatGetFormat))
             }
-            "as_integer_ratio" if builtin == BuiltinFunction::Float => {
+            "as_integer_ratio" | "is_integer" | "conjugate" if builtin == BuiltinFunction::Float => {
+                let kind = match attr_name {
+                    "as_integer_ratio" => NativeMethodKind::FloatAsIntegerRatioMethod,
+                    "is_integer" => NativeMethodKind::FloatIsIntegerMethod,
+                    "conjugate" => NativeMethodKind::FloatConjugateMethod,
+                    _ => unreachable!(),
+                };
                 let receiver = match self
                     .heap
                     .alloc_module(ModuleObject::new("__float_unbound_method__".to_string()))
@@ -1107,10 +1113,7 @@ impl Vm {
                         .globals
                         .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Float));
                 }
-                Ok(self.alloc_native_bound_method(
-                    NativeMethodKind::FloatAsIntegerRatioMethod,
-                    receiver,
-                ))
+                Ok(self.alloc_native_bound_method(kind, receiver))
             }
             "from_iterable" if builtin == BuiltinFunction::ItertoolsChain => {
                 Ok(Value::Builtin(BuiltinFunction::ItertoolsChainFromIterable))
@@ -2176,7 +2179,7 @@ impl Vm {
         value: f64,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
-        match attr_name {
+        let kind = match attr_name {
             "real" => return Ok(Value::Float(value)),
             "imag" => return Ok(Value::Float(0.0)),
             "__format__" => {
@@ -2192,14 +2195,16 @@ impl Vm {
                 }
                 return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Format, receiver));
             }
-            "as_integer_ratio" => {}
+            "as_integer_ratio" => NativeMethodKind::FloatAsIntegerRatioMethod,
+            "is_integer" => NativeMethodKind::FloatIsIntegerMethod,
+            "conjugate" => NativeMethodKind::FloatConjugateMethod,
             _ => {
                 return Err(RuntimeError::attribute_error(format!(
                     "'float' object has no attribute '{}'",
                     attr_name
                 )));
             }
-        }
+        };
 
         let receiver = match self
             .heap
@@ -2211,10 +2216,7 @@ impl Vm {
         if let Object::Module(module_data) = &mut *receiver.kind_mut() {
             module_data.globals.insert("value".to_string(), Value::Float(value));
         }
-        Ok(self.alloc_native_bound_method(
-            NativeMethodKind::FloatAsIntegerRatioMethod,
-            receiver,
-        ))
+        Ok(self.alloc_native_bound_method(kind, receiver))
     }
 
     pub(super) fn load_attr_str_method(

@@ -105,6 +105,49 @@ fn c_contiguous_strides_for_shape(
 }
 
 impl Vm {
+    fn extract_float_receiver_value_for_method_call(
+        &self,
+        receiver: &ObjRef,
+        args: &mut Vec<Value>,
+        method_name: &str,
+    ) -> Result<f64, RuntimeError> {
+        match &*receiver.kind() {
+            Object::Module(module_data) if module_data.name == "__float_method__" => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new(format!(
+                        "{method_name}() expects no arguments"
+                    )));
+                }
+                match module_data.globals.get("value") {
+                    Some(Value::Float(value)) => Ok(*value),
+                    _ => Err(RuntimeError::type_error("float receiver is invalid")),
+                }
+            }
+            Object::Module(module_data) if module_data.name == "__float_unbound_method__" => {
+                if args.is_empty() {
+                    return Err(RuntimeError::type_error(format!(
+                        "unbound method float.{method_name}() needs an argument"
+                    )));
+                }
+                let receiver_value = args.remove(0);
+                let Value::Float(value) = receiver_value else {
+                    return Err(RuntimeError::type_error(format!(
+                        "descriptor '{}' for 'float' objects doesn't apply to a '{}' object",
+                        method_name,
+                        self.value_type_name_for_error(&receiver_value)
+                    )));
+                };
+                if !args.is_empty() {
+                    return Err(RuntimeError::new(format!(
+                        "{method_name}() expects no arguments"
+                    )));
+                }
+                Ok(value)
+            }
+            _ => Err(RuntimeError::type_error("float receiver is invalid")),
+        }
+    }
+
     pub(super) fn stop_iteration_runtime_error(&mut self, value: Value) -> RuntimeError {
         let message = if matches!(value, Value::None) {
             None
@@ -2291,36 +2334,8 @@ impl Vm {
                 Ok(NativeCallResult::Value(value))
             }
             NativeMethodKind::FloatAsIntegerRatioMethod => {
-                let value = match &*receiver.kind() {
-                    Object::Module(module_data) if module_data.name == "__float_method__" => {
-                        if !args.is_empty() {
-                            return Err(RuntimeError::new("as_integer_ratio() expects no arguments"));
-                        }
-                        match module_data.globals.get("value") {
-                            Some(Value::Float(value)) => *value,
-                            _ => return Err(RuntimeError::type_error("float receiver is invalid")),
-                        }
-                    }
-                    Object::Module(module_data) if module_data.name == "__float_unbound_method__" => {
-                        if args.is_empty() {
-                            return Err(RuntimeError::type_error(
-                                "descriptor for 'float' objects doesn't apply to a 'NoneType' object",
-                            ));
-                        }
-                        let receiver_value = args.remove(0);
-                        let Value::Float(value) = receiver_value else {
-                            return Err(RuntimeError::type_error(format!(
-                                "descriptor for 'float' objects doesn't apply to a '{}' object",
-                                self.value_type_name_for_error(&receiver_value)
-                            )));
-                        };
-                        if !args.is_empty() {
-                            return Err(RuntimeError::new("as_integer_ratio() expects no arguments"));
-                        }
-                        value
-                    }
-                    _ => return Err(RuntimeError::type_error("float receiver is invalid")),
-                };
+                let value =
+                    self.extract_float_receiver_value_for_method_call(&receiver, &mut args, "as_integer_ratio")?;
 
                 if value.is_nan() {
                     return Err(RuntimeError::value_error(
@@ -2375,6 +2390,18 @@ impl Vm {
                     value_from_bigint(numerator),
                     value_from_bigint(denominator),
                 ])))
+            }
+            NativeMethodKind::FloatIsIntegerMethod => {
+                let value =
+                    self.extract_float_receiver_value_for_method_call(&receiver, &mut args, "is_integer")?;
+                Ok(NativeCallResult::Value(Value::Bool(
+                    value.is_finite() && value.fract() == 0.0,
+                )))
+            }
+            NativeMethodKind::FloatConjugateMethod => {
+                let value =
+                    self.extract_float_receiver_value_for_method_call(&receiver, &mut args, "conjugate")?;
+                Ok(NativeCallResult::Value(Value::Float(value)))
             }
             NativeMethodKind::StrStartsWith | NativeMethodKind::StrEndsWith => {
                 let method_name = if matches!(kind, NativeMethodKind::StrStartsWith) {

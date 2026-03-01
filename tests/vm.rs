@@ -18153,6 +18153,44 @@ ok = (
 }
 
 #[test]
+fn float_is_integer_and_conjugate_match_cpython_behavior() {
+    let source = r#"is_int_true = (3.0).is_integer()
+is_int_false = (3.5).is_integer()
+is_int_inf = float('inf').is_integer()
+is_int_nan = float('nan').is_integer()
+conj_instance = (3.5).conjugate()
+conj_class = float.conjugate(3.5)
+has_methods = (hasattr(float, 'is_integer') and hasattr(float, 'conjugate'))
+noarg_msg = ''
+try:
+    float.is_integer()
+except TypeError as exc:
+    noarg_msg = str(exc)
+bad_type_msg = ''
+try:
+    float.conjugate('x')
+except TypeError as exc:
+    bad_type_msg = str(exc)
+ok = (
+    is_int_true is True
+    and is_int_false is False
+    and is_int_inf is False
+    and is_int_nan is False
+    and conj_instance == 3.5
+    and conj_class == 3.5
+    and has_methods
+    and ("needs an argument" in noarg_msg)
+    and ("doesn't apply to a 'str' object" in bad_type_msg)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn subprocess_completedprocess_constructor_is_available() {
     let source = r#"import subprocess
 cp = subprocess.CompletedProcess(["echo", "ok"], 0)
