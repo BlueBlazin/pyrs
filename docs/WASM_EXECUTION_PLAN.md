@@ -1,0 +1,200 @@
+# WASM Execution Plan (Isolated Branch)
+
+Status: planned, isolated spike branch only.
+
+Branch policy:
+- All WASM work lives on `codex/wasm` (or descendant branches from it).
+- `master` remains untouched until explicit go/no-go approval.
+- It is acceptable for this track to remain unmerged indefinitely.
+
+## Why This Is Isolated
+
+Current runtime architecture is strongly native-host oriented (filesystem/process/network/terminal/dynamic-loader assumptions). Direct in-place changes on `master` would create unacceptable regression risk for Linux/macOS release targets.
+
+This plan enforces an opt-in, non-invasive track with hard safeguards.
+
+## Non-Negotiable Safety Rules
+
+1. No direct WASM commits on `master`.
+2. Every WASM milestone must preserve native behavior and keep native tests green.
+3. WASM codepaths must be behind explicit compile-time gating (target/features).
+4. No hidden behavior changes in existing native codepaths.
+5. If any milestone causes native instability, stop and revert that milestone on `codex/wasm`.
+
+## Scope
+
+In scope:
+- Browser-hosted PYRS execution prototype via WebAssembly.
+- Website route integration for a web REPL/playground.
+- Strict capability matrix for browser mode.
+
+Out of scope (initial track):
+- CPython extension loading in browser (`dlopen`, `PyInit_*`).
+- Full stdlib parity in web mode.
+- Any regression in native Linux/macOS interpreter behavior.
+
+## Core Design Direction
+
+## 1. Two-Lane Architecture
+
+- Lane N (Native): existing behavior for CLI/runtime/extension subsystem.
+- Lane W (Web): sandboxed execution mode with explicit capability restrictions.
+
+No lane-crossing behavior changes without explicit gate review.
+
+## 2. Host Abstraction Layer
+
+Introduce a host boundary between VM core and platform services:
+- filesystem access
+- environment variables
+- process/subprocess
+- networking/sockets
+- terminal/TTY streams
+- clock/timer/sleep
+- dynamic library loading
+
+Native host implementation preserves current behavior.
+Web host implementation provides sandboxed/unsupported semantics as documented.
+
+## 3. Capability Matrix
+
+Each subsystem is mapped to capabilities:
+- `fs.read`, `fs.write`, `env.read`, `process.spawn`, `net.socket`, `terminal.interactive`, `native_ext.load`, etc.
+
+In web mode, unsupported capabilities must fail explicitly and deterministically (CPython-shaped error surface where practical), never silently.
+
+## Milestone Plan
+
+## Milestone W0: Safety Scaffolding (No Behavior Change)
+
+Deliverables:
+- Add this plan and branch policy.
+- Add a WASM track checklist doc section to release/engineering gates.
+- Define initial capability matrix document.
+
+Exit criteria:
+- Native test baseline unchanged.
+- No runtime behavior differences.
+
+## Milestone W1: Compile/Dependency Isolation
+
+Deliverables:
+- Target-gate native-only dependencies and build steps:
+  - terminal REPL crates,
+  - C build glue (`build.rs` C compilation),
+  - native extension dynamic loader path.
+- Ensure crate can compile for `wasm32-unknown-unknown` in principle.
+
+Exit criteria:
+- Native targets compile as before.
+- WASM target reaches at least compile-check stage without native-only linkage paths.
+
+## Milestone W2: VM Host Interface Extraction
+
+Deliverables:
+- Introduce host traits/interfaces and a `NativeHost` implementation.
+- `Vm::new()` preserves current behavior via native host defaults.
+- Add `Vm::new_with_host(...)` for alternate hosts.
+
+Exit criteria:
+- No native semantic drift in touched test lanes.
+- Host-coupled APIs route through the interface layer.
+
+## Milestone W3: Web Host Baseline
+
+Deliverables:
+- `WebHost` implementation with explicit unsupported-capability errors.
+- Browser-mode import/runtime policy for unavailable modules/features.
+- In-memory source execution path suitable for browser input.
+
+Exit criteria:
+- Deterministic behavior for supported snippets.
+- Deterministic error behavior for unsupported operations.
+
+## Milestone W4: WASM Binding Surface
+
+Deliverables:
+- Expose a minimal host API for browser integration:
+  - init runtime,
+  - execute code,
+  - reset session,
+  - collect stdout/stderr,
+  - execution status/errors.
+- Keep API versioned and small.
+
+Exit criteria:
+- Programmatic execution works from JS harness tests.
+
+## Milestone W5: Worker Runtime + Interruption Model
+
+Deliverables:
+- Run interpreter in a Web Worker.
+- Define timeout/reset semantics (worker recycle for hard-stop).
+- Prevent main-thread blocking.
+
+Exit criteria:
+- Long-running snippets do not freeze site UI.
+
+## Milestone W6: Website Integration
+
+Deliverables:
+- Add `/playground` route in Astro.
+- Lazy-load WASM bundle only on playground routes.
+- Add clear compatibility notes on page.
+
+Exit criteria:
+- Website remains static-first for non-playground routes.
+- Playground UX stable for supported examples.
+
+## Milestone W7: CI and Promotion Decision
+
+Deliverables:
+- Add WASM-specific CI lanes (compile + smoke + browser harness where feasible).
+- Keep native lanes mandatory and unchanged.
+- Add explicit go/no-go rubric for merge candidacy.
+
+Exit criteria:
+- Native reliability unaffected.
+- WASM lane reliability and maintenance cost understood.
+
+## Validation Gates Per Milestone
+
+Required after each meaningful checkpoint:
+
+1. Targeted native tests for touched surfaces via `cargo nextest run`.
+2. Native build check on Linux/macOS targets remains clean.
+3. No unexpected changes in extension/native loader behavior.
+4. WASM compile/smoke checks for new interfaces.
+5. Commit checkpoint with doc updates in same commit.
+
+## Merge Decision Rubric
+
+WASM branch may be considered for merge only if all are true:
+- Native behavior remains stable across required gates.
+- WASM codepaths are fully gated and do not alter default native execution.
+- Browser capability limitations are clearly documented.
+- CI cost/flake profile is acceptable.
+
+If any are not true:
+- keep `codex/wasm` as an experimental long-lived branch,
+- do not merge to `master`.
+
+## Immediate Execution Order
+
+1. Implement W1 compile/dependency isolation first.
+2. Implement W2 host interface extraction with strict no-drift policy.
+3. Add W3 web host + capability errors.
+4. Add W4 bindings and local JS harness.
+5. Add W5 worker runtime and timeout/reset behavior.
+6. Integrate W6 website playground only after runtime stability.
+
+## Risk Register
+
+1. Hidden native coupling discovered late.
+   - Mitigation: compile isolation and host-interface extraction before feature work.
+2. Native regressions from shared refactor.
+   - Mitigation: mandatory targeted native test gates per checkpoint.
+3. Browser-mode expectation mismatch.
+   - Mitigation: explicit capability matrix and hard unsupported errors.
+4. Build/CI complexity growth.
+   - Mitigation: staged CI enablement and strict ownership.
