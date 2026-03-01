@@ -20,7 +20,7 @@ const tocItems = headings.filter((heading) => heading.depth >= 2 && heading.dept
 				<p class="toc-title">On this page</p>
 				<nav class="toc-nav">
 					{tocItems.map((item) => (
-						<a href={`#${item.slug}`} class={item.depth === 3 ? "is-sub" : undefined}>
+						<a href={`#${item.slug}`} class={item.depth === 3 ? "is-sub" : undefined} data-toc-link>
 							{item.text}
 						</a>
 					))}
@@ -79,6 +79,11 @@ const tocItems = headings.filter((heading) => heading.depth >= 2 && heading.dept
 		background: rgba(255, 255, 255, 0.05);
 	}
 
+	.toc-nav a.active {
+		color: #f8e6d7;
+		background: rgba(233, 125, 70, 0.12);
+	}
+
 	.toc-nav a:focus-visible {
 		outline: 2px solid rgba(255, 186, 137, 0.92);
 		outline-offset: 2px;
@@ -90,3 +95,49 @@ const tocItems = headings.filter((heading) => heading.depth >= 2 && heading.dept
 		}
 	}
 </style>
+
+<script>
+	const toc = document.querySelector(".docs-toc");
+	if (toc && toc instanceof HTMLElement && toc.dataset.bound !== "1") {
+		toc.dataset.bound = "1";
+		const links = Array.from(toc.querySelectorAll("a[data-toc-link][href^='#']"));
+		const items = links
+			.map((link) => {
+				if (!(link instanceof HTMLAnchorElement)) {
+					return null;
+				}
+				const id = decodeURIComponent(link.hash.slice(1));
+				const heading = id ? document.getElementById(id) : null;
+				if (!heading) {
+					return null;
+				}
+				return { id, heading, link };
+			})
+			.filter((item) => item !== null);
+
+		if (items.length > 0) {
+			const setActive = (id) => {
+				for (const item of items) {
+					item.link.classList.toggle("active", item.id === id);
+				}
+			};
+
+			const refresh = () => {
+				let activeId = items[0].id;
+				for (const item of items) {
+					const top = item.heading.getBoundingClientRect().top;
+					if (top <= 140) {
+						activeId = item.id;
+						continue;
+					}
+					break;
+				}
+				setActive(activeId);
+			};
+
+			window.addEventListener("scroll", refresh, { passive: true });
+			window.addEventListener("hashchange", refresh);
+			refresh();
+		}
+	}
+</script>
