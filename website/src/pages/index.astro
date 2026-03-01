@@ -98,48 +98,6 @@
 					</article>
 				</section>
 
-				<section class="focus">
-					<div class="focus-head">
-						<p class="eyebrow">Current Focus</p>
-						<h2>Roadmap driven by compatibility evidence, not guesswork.</h2>
-						<p class="focus-lede">
-							PYRS tracks progress through strict parity gates and CPython-referenced implementation
-							work, with Linux and macOS release readiness as the immediate target.
-						</p>
-					</div>
-					<div class="lane-grid">
-						<article class="lane-card">
-							<span class="lane-tag">Lane A</span>
-							<h3>Language + Parser</h3>
-							<p>
-								Source semantics, syntax diagnostics, and traceback behavior aligned to CPython
-								3.14 expectations.
-							</p>
-						</article>
-						<article class="lane-card">
-							<span class="lane-tag">Lane B</span>
-							<h3>Stdlib + Runtime</h3>
-							<p>
-								High-priority stdlib modules are closed with focused tests to support real-world
-								Python workloads.
-							</p>
-						</article>
-						<article class="lane-card">
-							<span class="lane-tag">Lane C</span>
-							<h3>C-API + Extensions</h3>
-							<p>
-								Native extension compatibility is hardened for scientific-stack bring-up and ABI
-								confidence.
-							</p>
-						</article>
-					</div>
-					<div class="quickstart">
-						<p class="quickstart-label">Try PYRS locally</p>
-						<pre><code>cargo build --release
-target/release/pyrs
-target/release/pyrs -c "import sys; print(sys.version)"</code></pre>
-					</div>
-				</section>
 			</main>
 		</div>
 	</body>
@@ -371,95 +329,6 @@ target/release/pyrs -c "import sys; print(sys.version)"</code></pre>
 		line-height: 1.52;
 	}
 
-	.focus {
-		margin-top: 2.6rem;
-		padding: 1.2rem 1.2rem 1.35rem;
-		border: 1px solid var(--line);
-		border-radius: 1rem;
-		background:
-			linear-gradient(180deg, rgba(255, 138, 76, 0.08) 0%, rgba(255, 138, 76, 0.01) 100%),
-			rgba(27, 17, 15, 0.78);
-	}
-
-	.focus-head h2 {
-		margin: 0;
-		font-size: clamp(1.45rem, 3.3vw, 2rem);
-		line-height: 1.2;
-		letter-spacing: -0.01em;
-	}
-
-	.focus-lede {
-		margin: 0.75rem 0 0;
-		max-width: 66ch;
-		color: var(--text-muted);
-		font-size: 0.94rem;
-		line-height: 1.6;
-	}
-
-	.lane-grid {
-		margin-top: 1.15rem;
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 0.78rem;
-	}
-
-	.lane-card {
-		background: rgba(20, 12, 10, 0.92);
-		border: 1px solid #68402d;
-		border-radius: 0.85rem;
-		padding: 0.85rem 0.9rem;
-	}
-
-	.lane-tag {
-		display: inline-block;
-		font-size: 0.68rem;
-		font-weight: 700;
-		letter-spacing: 0.07em;
-		text-transform: uppercase;
-		padding: 0.24rem 0.45rem;
-		border-radius: 999px;
-		background: rgba(255, 138, 76, 0.17);
-		color: #ffd1b4;
-	}
-
-	.lane-card h3 {
-		margin: 0.6rem 0 0.45rem;
-		font-size: 0.98rem;
-	}
-
-	.lane-card p {
-		margin: 0;
-		color: var(--text-muted);
-		font-size: 0.88rem;
-		line-height: 1.5;
-	}
-
-	.quickstart {
-		margin-top: 1rem;
-		border: 1px solid #674232;
-		border-radius: 0.8rem;
-		background: #130d0b;
-		padding: 0.75rem 0.9rem 0.85rem;
-	}
-
-	.quickstart-label {
-		margin: 0 0 0.6rem;
-		font-size: 0.79rem;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		color: #f0b997;
-		font-weight: 600;
-	}
-
-	.quickstart pre {
-		margin: 0;
-		overflow-x: auto;
-		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.81rem;
-		line-height: 1.52;
-		color: #f5ddcf;
-	}
-
 	@media (max-width: 1024px) {
 		.shot-stack {
 			grid-template-columns: 1fr 1fr;
@@ -468,10 +337,6 @@ target/release/pyrs -c "import sys; print(sys.version)"</code></pre>
 
 		.shot-overlay {
 			margin-left: -1.35rem;
-		}
-
-		.lane-grid {
-			grid-template-columns: 1fr;
 		}
 	}
 
