@@ -11,30 +11,41 @@ interface Props {
 
 const { headings = [] } = Astro.props;
 const tocItems = headings.filter((heading) => heading.depth >= 2 && heading.depth <= 3 && heading.slug);
+const hasInitialItems = tocItems.length > 0;
 ---
 
-{
-	tocItems.length > 0 && (
-		<aside class="docs-toc" aria-label="On this page">
-			<div class="toc-inner">
-				<p class="toc-title">On this page</p>
-				<nav class="toc-nav">
-					{tocItems.map((item) => (
-						<a href={`#${item.slug}`} class={item.depth === 3 ? "is-sub" : undefined} data-toc-link>
-							{item.text}
-						</a>
-					))}
-				</nav>
-			</div>
-		</aside>
-	)
-}
+<aside
+	class={`docs-toc ${hasInitialItems ? "is-ready" : ""}`}
+	aria-label="On this page"
+	data-toc-root="1"
+	data-has-initial={hasInitialItems ? "1" : "0"}
+>
+	<div class="toc-inner">
+		<p class="toc-title">On this page</p>
+		<nav class="toc-nav" data-toc-nav="1">
+			{tocItems.map((item) => (
+				<a href={`#${item.slug}`} class={item.depth === 3 ? "is-sub" : undefined} data-toc-link>
+					{item.text}
+				</a>
+			))}
+		</nav>
+	</div>
+</aside>
 
 <style>
 	.docs-toc {
 		position: sticky;
 		top: 1rem;
 		max-height: calc(100vh - 1.5rem);
+		visibility: hidden;
+	}
+
+	.docs-toc.is-ready {
+		visibility: visible;
+	}
+
+	.docs-toc.is-empty {
+		display: none;
 	}
 
 	.toc-inner {
@@ -119,47 +130,120 @@ const tocItems = headings.filter((heading) => heading.depth >= 2 && heading.dept
 </style>
 
 <script>
-	const toc = document.querySelector(".docs-toc");
-	if (toc && toc instanceof HTMLElement && toc.dataset.bound !== "1") {
-		toc.dataset.bound = "1";
-		const links = Array.from(toc.querySelectorAll("a[data-toc-link][href^='#']"));
-		const items = links
-			.map((link) => {
-				if (!(link instanceof HTMLAnchorElement)) {
-					return null;
-				}
-				const id = decodeURIComponent(link.hash.slice(1));
-				const heading = id ? document.getElementById(id) : null;
-				if (!heading) {
-					return null;
-				}
-				return { id, heading, link };
-			})
-			.filter((item) => item !== null);
-
-		if (items.length > 0) {
-			const setActive = (id) => {
-				for (const item of items) {
-					item.link.classList.toggle("active", item.id === id);
-				}
-			};
-
-			const refresh = () => {
-				let activeId = items[0].id;
-				for (const item of items) {
-					const top = item.heading.getBoundingClientRect().top;
-					if (top <= 140) {
-						activeId = item.id;
-						continue;
-					}
-					break;
-				}
-				setActive(activeId);
-			};
-
-			window.addEventListener("scroll", refresh, { passive: true });
-			window.addEventListener("hashchange", refresh);
-			refresh();
+	(() => {
+		const toc = document.querySelector(".docs-toc[data-toc-root='1']");
+		if (!(toc instanceof HTMLElement) || toc.dataset.bound === "1") {
+			return;
 		}
-	}
+		toc.dataset.bound = "1";
+		const nav = toc.querySelector("[data-toc-nav='1']");
+		if (!(nav instanceof HTMLElement)) {
+			toc.classList.add("is-empty");
+			return;
+		}
+
+		const slugify = (value) =>
+			value
+				.toLowerCase()
+				.trim()
+				.replace(/[`"'.,!?():]/g, "")
+				.replace(/[^a-z0-9]+/g, "-")
+				.replace(/^-+|-+$/g, "");
+
+		const usedIds = new Set(Array.from(document.querySelectorAll("[id]")).map((node) => node.id));
+		const ensureId = (heading) => {
+			if (!(heading instanceof HTMLElement)) {
+				return null;
+			}
+			if (heading.id) {
+				usedIds.add(heading.id);
+				return heading.id;
+			}
+			const base = slugify(heading.textContent || "");
+			if (!base) {
+				return null;
+			}
+			let nextId = base;
+			let counter = 2;
+			while (usedIds.has(nextId)) {
+				nextId = `${base}-${counter}`;
+				counter += 1;
+			}
+			heading.id = nextId;
+			usedIds.add(nextId);
+			return nextId;
+		};
+
+		const collectItems = () => {
+			const links = Array.from(nav.querySelectorAll("a[data-toc-link][href^='#']"));
+			return links
+				.map((link) => {
+					if (!(link instanceof HTMLAnchorElement)) {
+						return null;
+					}
+					const id = decodeURIComponent(link.hash.slice(1));
+					const heading = id ? document.getElementById(id) : null;
+					if (!heading) {
+						return null;
+					}
+					return { id, heading, link };
+				})
+				.filter((item) => item !== null);
+		};
+
+		let items = collectItems();
+
+		if (items.length === 0) {
+			const renderedHeadings = Array.from(document.querySelectorAll(".docs-content h2, .docs-content h3")).filter(
+				(node) =>
+					node instanceof HTMLHeadingElement &&
+					!node.closest(".docs-page-header") &&
+					Boolean(node.textContent?.trim()),
+			);
+			for (const heading of renderedHeadings) {
+				const id = ensureId(heading);
+				if (!id) {
+					continue;
+				}
+				const link = document.createElement("a");
+				link.href = `#${id}`;
+				if (heading.tagName === "H3") {
+					link.classList.add("is-sub");
+				}
+				link.setAttribute("data-toc-link", "1");
+				link.textContent = heading.textContent?.trim() ?? id;
+				nav.append(link);
+			}
+			items = collectItems();
+		}
+
+		if (items.length === 0) {
+			toc.classList.add("is-empty");
+			return;
+		}
+
+		const setActive = (id) => {
+			for (const item of items) {
+				item.link.classList.toggle("active", item.id === id);
+			}
+		};
+
+		const refresh = () => {
+			let activeId = items[0].id;
+			for (const item of items) {
+				const top = item.heading.getBoundingClientRect().top;
+				if (top <= 140) {
+					activeId = item.id;
+					continue;
+				}
+				break;
+			}
+			setActive(activeId);
+		};
+
+		window.addEventListener("scroll", refresh, { passive: true });
+		window.addEventListener("hashchange", refresh);
+		toc.classList.add("is-ready");
+		refresh();
+	})();
 </script>

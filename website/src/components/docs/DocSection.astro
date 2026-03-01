@@ -8,10 +8,22 @@ interface Props {
 }
 
 const { title, id, class: className } = Astro.props;
+const slugify = (value: string): string =>
+	value
+		.toLowerCase()
+		.trim()
+		.replace(/[`"'.,!?():]/g, "")
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+const resolvedHeadingId = id ?? (title ? slugify(title) : undefined);
 ---
 
-<section id={id} class={cn("doc-section mt-10 first:mt-0", className)}>
-	{title && <h2 class="m-0 text-[1.15rem] font-semibold tracking-[-0.01em] text-docs-text">{title}</h2>}
+<section id={title ? undefined : id} class={cn("doc-section mt-10 first:mt-0", className)}>
+	{title && (
+		<h2 id={resolvedHeadingId} class="m-0 text-[1.15rem] font-semibold tracking-[-0.01em] text-docs-text">
+			{title}
+		</h2>
+	)}
 	<div class={cn(title ? "mt-4" : "", "doc-section-body text-[0.97rem] leading-7 text-docs-muted")}>
 		<slot />
 	</div>
