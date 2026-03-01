@@ -36,7 +36,7 @@ unsafe extern "C" fn cpython_dict_mp_subscript_slot(
     dict: *mut c_void,
     key: *mut c_void,
 ) -> *mut c_void {
-    let trace_slot = std::env::var_os("PYRS_TRACE_DICT_SLOT").is_some();
+    let trace_slot = super::super::env_var_present_cached("PYRS_TRACE_DICT_SLOT");
     with_active_cpython_context_mut(|context| {
         let Some(dict_value) = context.cpython_value_from_ptr_or_proxy(dict) else {
             if trace_slot {
@@ -108,7 +108,7 @@ unsafe extern "C" fn cpython_dict_mp_ass_subscript_slot(
     key: *mut c_void,
     value: *mut c_void,
 ) -> c_int {
-    let trace_slot = std::env::var_os("PYRS_TRACE_DICT_SLOT").is_some();
+    let trace_slot = super::super::env_var_present_cached("PYRS_TRACE_DICT_SLOT");
     with_active_cpython_context_mut(|context| {
         let module_target = context.module_dict_module_for_ptr(dict);
         let Some(dict_value) = context.cpython_value_from_ptr_or_proxy(dict) else {
@@ -284,7 +284,7 @@ pub unsafe extern "C" fn PyDict_SetItem(
 ) -> i32 {
     with_active_cpython_context_mut(|context| {
         let module_target = context.module_dict_module_for_ptr(dict);
-        if value.is_null() && std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+        if value.is_null() && super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") {
             eprintln!(
                 "[cpy-err] PyDict_SetItem null value pointer dict={:p} key={:p}",
                 dict, key
@@ -333,7 +333,7 @@ pub unsafe extern "C" fn PyDict_SetItem(
                     cpython_value_debug_tag(&item_value)
                 );
             }
-            if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_DICT") {
                 eprintln!(
                     "[cpy-dict-set] dict={:p} module={} key_ptr={:p} key={} value_ptr={:p} value_tag={}",
                     dict,
@@ -355,7 +355,7 @@ pub unsafe extern "C" fn PyDict_SetItem(
                     0
                 }
                 Err(err) => {
-                    if std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+                    if super::super::env_var_present_cached("PYRS_TRACE_PYDICT_ERRORS") {
                         eprintln!(
                             "[cpy-dict-err] PyDict_SetItem internal dict={:p} key_ptr={:p} key={} err={}",
                             dict,
@@ -423,7 +423,7 @@ pub unsafe extern "C" fn PyDict_SetItem(
         // SAFETY: foreign dict and key/value pointers are handed to native mapping slot.
         let status = unsafe { subscript(dict, key, value) };
         if status < 0 && unsafe { PyErr_Occurred() }.is_null() {
-            if std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_PYDICT_ERRORS") {
                 eprintln!(
                     "[cpy-dict-err] PyDict_SetItem external dict={:p} key={:p} value={:p} err=no-exception",
                     dict, key, value
@@ -432,7 +432,7 @@ pub unsafe extern "C" fn PyDict_SetItem(
             context.set_error("PyDict_SetItem mapping slot failed without setting an exception");
             return -1;
         }
-        if status < 0 && std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+        if status < 0 && super::super::env_var_present_cached("PYRS_TRACE_PYDICT_ERRORS") {
             eprintln!(
                 "[cpy-dict-err] PyDict_SetItem external dict={:p} key={:p} value={:p} err=with-exception",
                 dict, key, value
@@ -476,7 +476,7 @@ pub unsafe extern "C" fn PyDict_SetDefault(
             return context.alloc_cpython_ptr_for_value(existing);
         }
         let Some(default_item) = context.cpython_value_from_ptr_or_proxy(default_value) else {
-            if std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_PYDICT_ERRORS") {
                 let ty = cpython_safe_object_type_name(default_value)
                     .unwrap_or_else(|| "<unknown-type>".to_string());
                 let probable = ModuleCapiContext::is_probable_external_cpython_object_ptr(
@@ -558,7 +558,7 @@ pub unsafe extern "C" fn PyDict_SetDefaultRef(
             return 1;
         }
         let Some(default_item) = context.cpython_value_from_ptr_or_proxy(default_value) else {
-            if std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_PYDICT_ERRORS") {
                 let ty = cpython_safe_object_type_name(default_value)
                     .unwrap_or_else(|| "<unknown-type>".to_string());
                 let probable = ModuleCapiContext::is_probable_external_cpython_object_ptr(
@@ -648,13 +648,13 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                     context.first_error = saved_first_error.clone();
                     return std::ptr::null_mut();
                 };
-                let trace_typedict_lookup = std::env::var_os("PYRS_TRACE_NUMPY_TYPEDICT").is_some()
+                let trace_typedict_lookup = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_TYPEDICT")
                     && TRACE_NUMPY_TYPEDICT_PTR.load(Ordering::Relaxed) == dict as usize
                     && matches!(
                         &key_value,
                         Value::Str(name) if name == "int8" || name == "bool" || name == "float64"
                     );
-                if std::env::var_os("PYRS_TRACE_NUMPY_BOOL_LOOKUP").is_some()
+                if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_BOOL_LOOKUP")
                     && matches!(&key_value, Value::Str(name) if name == "bool")
                 {
                     eprintln!(
@@ -670,7 +670,7 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                         cpython_debug_compare_value(&key_value)
                     );
                 }
-                if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_CPY_DICT") {
                     eprintln!(
                         "[cpy-dict-get] dict={:p} module={} key_ptr={:p} key={}",
                         dict,
@@ -695,7 +695,7 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                             cpython_debug_compare_value(&key_value)
                         );
                     }
-                    if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
+                    if super::super::env_var_present_cached("PYRS_TRACE_CPY_DICT") {
                         eprintln!("[cpy-dict-get] dict={:p} miss", dict);
                     }
                     return std::ptr::null_mut();
@@ -707,7 +707,7 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                         cpython_value_debug_tag(&value)
                     );
                 }
-                if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_CPY_DICT") {
                     eprintln!(
                         "[cpy-dict-get] dict={:p} hit value_tag={}",
                         dict,
@@ -719,7 +719,7 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                 context.first_error = saved_first_error.clone();
                 return context.alloc_cpython_ptr_for_value(value);
             }
-            if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_DICT") {
                 eprintln!(
                     "[cpy-dict-get] non-dict pointer={:p} tag={}",
                     dict,
@@ -740,7 +740,7 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
             || (dict as usize) < MIN_VALID_PTR
             || (dict as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
         {
-            if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_DICT") {
                 eprintln!(
                     "[cpy-dict-get] unknown-precheck dict={:p} key={:p}\n{:?}",
                     dict,
@@ -764,7 +764,7 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
             || (type_ptr as usize) < MIN_VALID_PTR
             || (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0
         {
-            if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_DICT") {
                 eprintln!(
                     "[cpy-dict-get] unknown-type dict={:p} key={:p} type_ptr={:p}\n{:?}",
                     dict,
@@ -802,7 +802,7 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
             unsafe { std::mem::transmute(mp_subscript) };
         // SAFETY: foreign dict and key pointers are handed to native mapping slot.
         let value_ptr = unsafe { subscript(dict, key) };
-        if std::env::var_os("PYRS_TRACE_NUMPY_BOOL_LOOKUP").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_BOOL_LOOKUP") {
             let key_is_bool = context
                 .cpython_value_from_ptr_or_proxy(key)
                 .is_some_and(|value| matches!(value, Value::Str(ref text) if text == "bool"));
@@ -914,7 +914,7 @@ pub unsafe extern "C" fn PyDict_SetItemString(
     key: *const c_char,
     value: *mut c_void,
 ) -> i32 {
-    if value.is_null() && std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+    if value.is_null() && super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") {
         let key_name = unsafe { c_name_to_string(key) }.unwrap_or_else(|_| "<invalid>".to_string());
         eprintln!("[cpy-err] PyDict_SetItemString null value key={key_name}");
     }
@@ -924,13 +924,13 @@ pub unsafe extern "C" fn PyDict_SetItemString(
     }
     let key_name = unsafe { c_name_to_string(key) }.unwrap_or_else(|_| "<invalid>".to_string());
     let result = unsafe { PyDict_SetItem(dict, key_obj, value) };
-    if std::env::var_os("PYRS_TRACE_PYBIND11_ATTRS").is_some() && key_name.contains("__pybind11") {
+    if super::super::env_var_present_cached("PYRS_TRACE_PYBIND11_ATTRS") && key_name.contains("__pybind11") {
         eprintln!(
             "[pybind11-dict] set key={} dict={:p} value={:p} result={}",
             key_name, dict, value, result
         );
     }
-    if std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some()
+    if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_INIT")
         && matches!(
             key_name.as_str(),
             "_ARRAY_API" | "_UFUNC_API" | "False_" | "True_"
@@ -956,7 +956,7 @@ pub unsafe extern "C" fn PyDict_GetItemString(
     );
     let key_obj = unsafe { PyUnicode_FromString(key) };
     if key_obj.is_null() {
-        if std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some() && trace_key {
+        if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_INIT") && trace_key {
             eprintln!(
                 "[numpy-init] PyDict_GetItemString key={} key_obj=<null> dict={:p}",
                 key_name, dict
@@ -967,13 +967,13 @@ pub unsafe extern "C" fn PyDict_GetItemString(
     let result = unsafe { PyDict_GetItem(dict, key_obj) };
     // SAFETY: `key_obj` is a temporary strong reference created above.
     unsafe { Py_DecRef(key_obj) };
-    if std::env::var_os("PYRS_TRACE_PYBIND11_ATTRS").is_some() && key_name.contains("__pybind11") {
+    if super::super::env_var_present_cached("PYRS_TRACE_PYBIND11_ATTRS") && key_name.contains("__pybind11") {
         eprintln!(
             "[pybind11-dict] get key={} dict={:p} result={:p}",
             key_name, dict, result
         );
     }
-    if std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some() && trace_key {
+    if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_INIT") && trace_key {
         eprintln!(
             "[numpy-init] PyDict_GetItemString key={} dict={:p} result={:p}",
             key_name, dict, result
@@ -1035,7 +1035,7 @@ pub unsafe extern "C" fn PyDict_GetItemStringRef(
     // SAFETY: caller provided writable pointer.
     unsafe { *out = value };
     let status = if value.is_null() { 0 } else { 1 };
-    if std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some() && trace_key {
+    if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_INIT") && trace_key {
         eprintln!(
             "[numpy-init] PyDict_GetItemStringRef key={} dict={:p} value={:p} status={}",
             key_name, dict, value, status
@@ -1196,7 +1196,7 @@ pub unsafe extern "C" fn PyDict_DelItem(dict: *mut c_void, key: *mut c_void) -> 
                 }
                 return 0;
             }
-            if std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_PYDICT_ERRORS") {
                 eprintln!(
                     "[cpy-dict-err] PyDict_DelItem internal dict={:p} key_ptr={:p} key={} err=key-not-found",
                     dict,
@@ -1257,7 +1257,7 @@ pub unsafe extern "C" fn PyDict_DelItem(dict: *mut c_void, key: *mut c_void) -> 
         let subscript: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> c_int =
             // SAFETY: `mp_ass_subscript` follows CPython mapping ABI.
             unsafe { std::mem::transmute(mp_ass_subscript) };
-        if std::env::var_os("PYRS_TRACE_PYDICT_DEL_EXTERNAL").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_PYDICT_DEL_EXTERNAL") {
             eprintln!(
                 "[cpy-dict-del-external] dict={:p} key={:p} type_ptr={:p} mapping={:p} mp_ass_subscript={:p}",
                 dict, key, type_ptr, mapping, mp_ass_subscript
@@ -1265,14 +1265,14 @@ pub unsafe extern "C" fn PyDict_DelItem(dict: *mut c_void, key: *mut c_void) -> 
         }
         // SAFETY: deletion uses `value=NULL` in CPython mapping slot convention.
         let status = unsafe { subscript(dict, key, std::ptr::null_mut()) };
-        if std::env::var_os("PYRS_TRACE_PYDICT_DEL_EXTERNAL").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_PYDICT_DEL_EXTERNAL") {
             eprintln!(
                 "[cpy-dict-del-external] status={} dict={:p} key={:p}",
                 status, dict, key
             );
         }
         if status < 0 && unsafe { PyErr_Occurred() }.is_null() {
-            if std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_PYDICT_ERRORS") {
                 eprintln!(
                     "[cpy-dict-err] PyDict_DelItem external dict={:p} key={:p} err=no-exception",
                     dict, key
@@ -1281,7 +1281,7 @@ pub unsafe extern "C" fn PyDict_DelItem(dict: *mut c_void, key: *mut c_void) -> 
             context.set_error("PyDict_DelItem mapping slot failed without setting an exception");
             return -1;
         }
-        if status < 0 && std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+        if status < 0 && super::super::env_var_present_cached("PYRS_TRACE_PYDICT_ERRORS") {
             eprintln!(
                 "[cpy-dict-err] PyDict_DelItem external dict={:p} key={:p} err=with-exception",
                 dict, key
