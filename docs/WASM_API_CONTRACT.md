@@ -81,6 +81,8 @@ This document defines the JS-facing contract currently exported by
   - Parse+compile + import-capability preflight summary for snippet viability.
 - `wasm_snippet_blockers(source: &str) -> Array`
   - Structured module blocker rows for parse+compile-valid snippets.
+- `wasm_snippet_import_roots(source: &str) -> Array`
+  - Canonical root imports detected from parse+compile-valid snippets.
 
 ## Exported Types
 

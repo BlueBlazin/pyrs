@@ -1479,6 +1479,21 @@ pub fn wasm_snippet_blockers(source: &str) -> Array {
     result
 }
 
+/// Returns canonical root imports detected from parse+compile-valid snippet source.
+#[wasm_bindgen]
+pub fn wasm_snippet_import_roots(source: &str) -> Array {
+    init_wasm_runtime();
+    let Ok(module) = parse_and_compile_module(source) else {
+        return Array::new();
+    };
+    let roots = collect_import_roots(&module);
+    let result = Array::new();
+    for root in roots {
+        result.push(&JsValue::from_str(&root));
+    }
+    result
+}
+
 /// Returns a stable blocker message for wasm execution blockers.
 #[wasm_bindgen]
 pub fn wasm_execution_blocker_error(blocker_key: &str) -> Option<String> {

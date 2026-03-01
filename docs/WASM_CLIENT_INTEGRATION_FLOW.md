@@ -12,13 +12,14 @@ This guide defines the recommended browser call order for current wasm APIs.
 4. `wasm_worker_timeout_policy()`
 5. Optional: `wasm_worker_set_timeout(timeout_ms)` for UI timeout controls.
 6. `wasm_snippet_support(source)`
-7. If `phase == "supported"`:
+7. Optional: `wasm_snippet_import_roots(source)` to display dependency roots.
+8. If `phase == "supported"`:
    - call `check_compile_result(source)` (optional if you already used snippet preflight),
    - call `execute(source)` (currently returns `unsupported_execution` by contract).
-8. If `phase == "blocked_capability"`:
+9. If `phase == "blocked_capability"`:
    - call `wasm_snippet_blockers(source)` for full blocker rows,
    - render module/capability-specific guidance.
-9. If `phase == "syntax_error"` or `phase == "compile_error"`:
+10. If `phase == "syntax_error"` or `phase == "compile_error"`:
    - use `line`/`column` + `error` for diagnostics UI.
 
 ## Worker Branch (Current)

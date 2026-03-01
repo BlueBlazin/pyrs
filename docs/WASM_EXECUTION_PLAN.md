@@ -317,6 +317,8 @@ Completed on this branch:
   capability/message nextest checks in the compile-only smoke path.
 - latest: execution blockers now include explicit `vm_runtime_unavailable`
   root-cause signaling alongside `execution_backend_unwired`.
+- latest: snippet preflight now exports canonical import roots via
+  `wasm_snippet_import_roots(source)` for deterministic client dependency UI.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

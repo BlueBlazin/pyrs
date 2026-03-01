@@ -16,12 +16,12 @@ use pyrs::wasm::{
     check_compile_result, check_syntax_result, execute, wasm_api_version, wasm_capabilities,
     wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
     wasm_execution_blocker_keys, wasm_execution_blockers, wasm_module_policy_entries,
-    wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_support,
-    wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_blockers, wasm_worker_execute,
-    wasm_worker_execute_phase_keys, wasm_worker_info, wasm_worker_lifecycle_phase_keys,
-    wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start, wasm_worker_state_keys,
-    wasm_worker_terminate, wasm_worker_timeout_phase_keys, wasm_worker_timeout_policy, WasmSession,
-    WasmWorkerSession,
+    wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_import_roots,
+    wasm_snippet_support, wasm_worker_blocker_error, wasm_worker_blocker_keys,
+    wasm_worker_blockers, wasm_worker_execute, wasm_worker_execute_phase_keys, wasm_worker_info,
+    wasm_worker_lifecycle_phase_keys, wasm_worker_recycle, wasm_worker_set_timeout,
+    wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate,
+    wasm_worker_timeout_phase_keys, wasm_worker_timeout_policy, WasmSession, WasmWorkerSession,
 };
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
@@ -611,6 +611,32 @@ fn wasm_snippet_blockers_contract_is_stable() {
 
     let none = wasm_snippet_blockers("def broken(:\n");
     assert_eq!(none.length(), 0);
+}
+
+#[wasm_bindgen_test]
+fn wasm_snippet_import_roots_contract_is_stable() {
+    let roots = wasm_snippet_import_roots(
+        "import socket\nfrom math import sin\nimport socket\nfrom numpy.linalg import norm\n",
+    );
+    let mut values = Vec::new();
+    for index in 0..roots.length() {
+        let root = roots
+            .get(index)
+            .as_string()
+            .expect("snippet import root should be string");
+        values.push(root);
+    }
+    assert_eq!(
+        values,
+        vec![
+            "socket".to_string(),
+            "math".to_string(),
+            "numpy".to_string()
+        ]
+    );
+
+    let invalid = wasm_snippet_import_roots("def broken(:\n");
+    assert_eq!(invalid.length(), 0);
 }
 
 #[wasm_bindgen_test]
