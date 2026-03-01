@@ -297,7 +297,8 @@ Completed on this branch:
   `docs/WASM_CLIENT_INTEGRATION_FLOW.md`.
 - `5c4514e`: `WasmWorkerSession` stateful wrapper API landed for lifecycle orchestration.
 - `7988f5e`: worker state/lifecycle enum key exports were added for stable client branching.
-- latest: worker contract strings are now centralized through internal enum-backed sources.
+- `c9fc0c1`: worker contract strings are now centralized through internal enum-backed sources.
+- latest: worker enum contract tests now assert full set equality from fixture snapshots.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

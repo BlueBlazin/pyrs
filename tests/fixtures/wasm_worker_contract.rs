@@ -25,3 +25,15 @@ pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[
         expected_blocker_key: "worker_runtime_unwired",
     },
 ];
+
+pub const WASM_WORKER_STATE_KEYS: &[&str] = &[
+    "unwired",
+    "starting",
+    "ready",
+    "busy",
+    "terminating",
+    "failed",
+];
+
+pub const WASM_WORKER_LIFECYCLE_PHASE_KEYS: &[&str] =
+    &["unsupported_worker_start", "unsupported_worker_terminate"];

@@ -6,7 +6,9 @@ mod wasm_contract_snippets;
 mod wasm_worker_contract;
 
 use crate::wasm_contract_snippets::WASM_CONTRACT_SNIPPET_FIXTURES;
-use crate::wasm_worker_contract::WASM_WORKER_LIFECYCLE_FIXTURES;
+use crate::wasm_worker_contract::{
+    WASM_WORKER_LIFECYCLE_FIXTURES, WASM_WORKER_LIFECYCLE_PHASE_KEYS, WASM_WORKER_STATE_KEYS,
+};
 use js_sys::Reflect;
 use pyrs::wasm::{
     check_compile_result, check_syntax_result, execute, wasm_api_version, wasm_capabilities,
@@ -59,29 +61,34 @@ fn wasm_worker_contract_basics() {
 #[wasm_bindgen_test]
 fn wasm_worker_enum_keys_are_stable() {
     let state_keys = wasm_worker_state_keys();
-    let mut states = Vec::new();
+    let mut states = HashSet::new();
     for index in 0..state_keys.length() {
         let state = state_keys
             .get(index)
             .as_string()
             .expect("worker state key should be string");
-        states.push(state);
+        states.insert(state);
     }
-    assert!(states.contains(&"unwired".to_string()));
-    assert!(states.contains(&"ready".to_string()));
-    assert!(states.contains(&"failed".to_string()));
+    let expected_states: HashSet<String> = WASM_WORKER_STATE_KEYS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect();
+    assert_eq!(states, expected_states);
 
     let lifecycle_keys = wasm_worker_lifecycle_phase_keys();
-    let mut lifecycle_phases = Vec::new();
+    let mut lifecycle_phases = HashSet::new();
     for index in 0..lifecycle_keys.length() {
         let phase = lifecycle_keys
             .get(index)
             .as_string()
             .expect("worker lifecycle phase key should be string");
-        lifecycle_phases.push(phase);
+        lifecycle_phases.insert(phase);
     }
-    assert!(lifecycle_phases.contains(&"unsupported_worker_start".to_string()));
-    assert!(lifecycle_phases.contains(&"unsupported_worker_terminate".to_string()));
+    let expected_phases: HashSet<String> = WASM_WORKER_LIFECYCLE_PHASE_KEYS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect();
+    assert_eq!(lifecycle_phases, expected_phases);
 }
 
 #[wasm_bindgen_test]
