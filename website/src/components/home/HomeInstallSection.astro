@@ -78,8 +78,8 @@ const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 		<input class="install-tab-input" type="radio" name="install-platform" id="install-tab-linux" />
 
 		<div class="install-tab-list" role="tablist" aria-label="Installation platform">
-			<label class="install-tab-btn" for="install-tab-macos">MacOS</label>
-			<label class="install-tab-btn" for="install-tab-linux">Linux</label>
+			<label class="install-tab-btn" for="install-tab-macos" role="tab" tabindex="0">MacOS</label>
+			<label class="install-tab-btn" for="install-tab-linux" role="tab" tabindex="0">Linux</label>
 		</div>
 
 		<div class="install-surface">
@@ -113,6 +113,26 @@ const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 		</div>
 	</div>
 </section>
+
+<script>
+	const tabLabels = document.querySelectorAll(".install-tab-btn[for]");
+	for (const label of tabLabels) {
+		label.addEventListener("keydown", (event) => {
+			if (event.key !== "Enter" && event.key !== " ") {
+				return;
+			}
+			event.preventDefault();
+			const forId = label.getAttribute("for");
+			if (!forId) {
+				return;
+			}
+			const target = document.getElementById(forId);
+			if (target instanceof HTMLInputElement) {
+				target.checked = true;
+			}
+		});
+	}
+</script>
 
 <style>
 	.eyebrow {
@@ -177,6 +197,11 @@ const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 
 	.install-tab-btn:hover {
 		color: #e4c8b8;
+	}
+
+	.install-tab-btn:focus-visible {
+		outline: 2px solid rgba(255, 186, 137, 0.9);
+		outline-offset: 2px;
 	}
 
 	#install-tab-macos:checked ~ .install-tab-list label[for="install-tab-macos"],

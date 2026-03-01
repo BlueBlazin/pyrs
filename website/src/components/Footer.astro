@@ -45,6 +45,12 @@ const year = new Date().getFullYear();
 		transition: color 130ms ease;
 	}
 
+	.site-footer a:focus-visible {
+		outline: 2px solid;
+		outline-offset: 2px;
+		border-radius: 0.32rem;
+	}
+
 	.site-footer.home {
 		border-color: rgba(106, 70, 50, 0.72);
 	}
@@ -61,6 +67,10 @@ const year = new Date().getFullYear();
 		color: #f7eee8;
 	}
 
+	.site-footer.home a:focus-visible {
+		outline-color: rgba(255, 186, 137, 0.9);
+	}
+
 	.site-footer.docs {
 		border-color: rgba(48, 56, 74, 0.78);
 	}
@@ -75,6 +85,10 @@ const year = new Date().getFullYear();
 
 	.site-footer.docs a:hover {
 		color: #f3f6fb;
+	}
+
+	.site-footer.docs a:focus-visible {
+		outline-color: rgba(176, 199, 241, 0.9);
 	}
 
 	@media (max-width: 560px) {

@@ -42,6 +42,12 @@ const { context = "home" } = Astro.props;
 		border: 1px solid rgba(255, 255, 255, 0.14);
 	}
 
+	.global-brand:focus-visible {
+		outline: 2px solid rgba(255, 186, 137, 0.92);
+		outline-offset: 3px;
+		border-radius: 0.52rem;
+	}
+
 	.global-topnav {
 		display: inline-flex;
 		gap: 0.95rem;
@@ -56,6 +62,12 @@ const { context = "home" } = Astro.props;
 
 	.global-topnav a:hover {
 		color: #f7eee8;
+	}
+
+	.global-topnav a:focus-visible {
+		outline: 2px solid rgba(255, 186, 137, 0.92);
+		outline-offset: 2px;
+		border-radius: 0.36rem;
 	}
 
 	@media (max-width: 760px) {
