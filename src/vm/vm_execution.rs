@@ -50,15 +50,17 @@ struct DebugDepthGuard {
 }
 
 impl DebugDepthGuard {
-    fn enter(
+    fn enter_for_vm(
+        vm: &Vm,
         key: &'static std::thread::LocalKey<Cell<usize>>,
         label: &'static str,
     ) -> Option<Self> {
-        if std::env::var_os("PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH").is_none() {
+        if vm.host.env_var_os("PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH").is_none() {
             return None;
         }
-        let limit = std::env::var("PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH_LIMIT")
-            .ok()
+        let limit = vm
+            .host
+            .env_var("PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH_LIMIT")
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(256);
         let depth = key.with(|cell| {
@@ -518,7 +520,7 @@ impl Vm {
         receiver: &Value,
         method_name: &str,
     ) -> Result<Option<Value>, RuntimeError> {
-        let trace = std::env::var_os("PYRS_TRACE_LOAD_SPECIAL").is_some();
+        let trace = self.host.env_var_os("PYRS_TRACE_LOAD_SPECIAL").is_some();
         if trace && method_name == "__exit__" {
             eprintln!(
                 "[load-special] start receiver_type={}",
@@ -874,7 +876,7 @@ impl Vm {
             };
 
             if should_return {
-                if let Some(filter) = std::env::var_os("PYRS_TRACE_MODULE_RETURN_IP")
+                if let Some(filter) = self.host.env_var_os("PYRS_TRACE_MODULE_RETURN_IP")
                     && let Some(filter) = filter.to_str()
                     && let Some(frame) = self.frames.last()
                     && frame.is_module
@@ -984,7 +986,11 @@ impl Vm {
                 self.maybe_gc_collect_automatic();
             }
             if !self.pending_del_instances.is_empty() || !self.weakref_finalizers.is_empty() {
-                if std::env::var_os("PYRS_DISABLE_PENDING_FINALIZERS").is_some() {
+                if self
+                    .host
+                    .env_var_os("PYRS_DISABLE_PENDING_FINALIZERS")
+                    .is_some()
+                {
                     continue;
                 }
                 // Keep __del__ suppressed only while an active exception is being processed.
@@ -1005,7 +1011,7 @@ impl Vm {
     #[inline]
     fn execute_instruction(&mut self, instr: Instruction) -> Result<Option<Value>, RuntimeError> {
         let _debug_depth_guard =
-            DebugDepthGuard::enter(&DEBUG_EXEC_INSTR_DEPTH, "execute_instruction");
+            DebugDepthGuard::enter_for_vm(self, &DEBUG_EXEC_INSTR_DEPTH, "execute_instruction");
         match instr.opcode {
             Opcode::Nop => {}
             Opcode::MakeCell => {
@@ -5176,7 +5182,7 @@ impl Vm {
                         Err(err) => return Err(err),
                     };
                     if let Some(prepare_callable) = prepare_callable {
-                        if std::env::var_os("PYRS_TRACE_PREPARE_CALL").is_some() {
+                        if self.host.env_var_os("PYRS_TRACE_PREPARE_CALL").is_some() {
                             let callable_type = self.value_type_name_for_error(&prepare_callable);
                             let callable_repr = format_repr(&prepare_callable);
                             let meta_name = match &meta {
@@ -5480,7 +5486,9 @@ impl Vm {
                                         match value {
                                             Value::Cell(cell) => cells.push(cell.clone()),
                                             _ => {
-                                                if std::env::var_os("PYRS_TRACE_CLOSURE_SHAPE")
+                                                if self
+                                                    .host
+                                                    .env_var_os("PYRS_TRACE_CLOSURE_SHAPE")
                                                     .is_some()
                                                 {
                                                     if let Some(frame) = self.frames.last() {
@@ -7879,7 +7887,7 @@ impl Vm {
                     frame.stack.pop().unwrap_or(Value::None)
                 };
                 let mut frame = self.frames.pop().expect("frame exists");
-                if let Some(filter) = std::env::var_os("PYRS_TRACE_MODULE_RETURN_IP")
+                if let Some(filter) = self.host.env_var_os("PYRS_TRACE_MODULE_RETURN_IP")
                     && let Some(filter) = filter.to_str()
                     && frame.is_module
                     && frame.code.filename.contains(filter)
@@ -7965,7 +7973,8 @@ impl Vm {
     }
 
     pub(super) fn raise_exception(&mut self, value: Value) -> Result<(), RuntimeError> {
-        let _debug_depth_guard = DebugDepthGuard::enter(&DEBUG_RAISE_DEPTH, "raise_exception");
+        let _debug_depth_guard =
+            DebugDepthGuard::enter_for_vm(self, &DEBUG_RAISE_DEPTH, "raise_exception");
         self.raise_exception_with_cause(value, None)
     }
 
@@ -8409,7 +8418,8 @@ impl Vm {
         mut exc: Value,
         preserve_existing_traceback: bool,
     ) -> Result<(), RuntimeError> {
-        let _debug_depth_guard = DebugDepthGuard::enter(&DEBUG_UNWIND_DEPTH, "unwind_exception");
+        let _debug_depth_guard =
+            DebugDepthGuard::enter_for_vm(self, &DEBUG_UNWIND_DEPTH, "unwind_exception");
         let mut traceback = Self::existing_traceback_frames(&exc);
         let mut skip_current_frame_trace = preserve_existing_traceback && !traceback.is_empty();
         loop {
@@ -8445,7 +8455,7 @@ impl Vm {
             }
 
             if let Some(block) = frame.blocks.pop() {
-                if let Some(filter) = std::env::var_os("PYRS_TRACE_UNWIND")
+                if let Some(filter) = self.host.env_var_os("PYRS_TRACE_UNWIND")
                     && let Some(filter) = filter.to_str()
                     && frame.code.filename.contains(filter)
                 {
@@ -8636,7 +8646,7 @@ impl Vm {
     /// reused; otherwise a `RuntimeError` instance is synthesized.
     pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
         let _debug_depth_guard =
-            DebugDepthGuard::enter(&DEBUG_HANDLE_RUNTIME_DEPTH, "handle_runtime_error");
+            DebugDepthGuard::enter_for_vm(self, &DEBUG_HANDLE_RUNTIME_DEPTH, "handle_runtime_error");
         if self.frames.is_empty() {
             return Err(err);
         }
@@ -10823,6 +10833,8 @@ impl Vm {
     }
 
     pub(super) fn class_mro_entries(&self, class: &ObjRef) -> Vec<ObjRef> {
+        let trace_debug_mro_depth = self.host.env_var_os("PYRS_DEBUG_MRO_DEPTH").is_some();
+
         fn seen_insert_class(class: &ObjRef, seen: &mut HashSet<u64>) -> bool {
             if !seen.insert(class.id()) {
                 return false;
@@ -10853,8 +10865,9 @@ impl Vm {
             class: &ObjRef,
             seen: &mut HashSet<u64>,
             depth: usize,
+            trace_debug_mro_depth: bool,
         ) -> Vec<ObjRef> {
-            if std::env::var_os("PYRS_DEBUG_MRO_DEPTH").is_some() && depth > 256 {
+            if trace_debug_mro_depth && depth > 256 {
                 let class_name = match &*class.kind() {
                     Object::Class(class_data) => class_data.name.clone(),
                     _ => "<non-class>".to_string(),
@@ -10882,7 +10895,12 @@ impl Vm {
             }
             let mut entries = vec![class.clone()];
             for base in &class_data.bases {
-                for candidate in collect_mro_entries(base, seen, depth.saturating_add(1)) {
+                for candidate in collect_mro_entries(
+                    base,
+                    seen,
+                    depth.saturating_add(1),
+                    trace_debug_mro_depth,
+                ) {
                     let duplicate = entries.iter().any(|entry| {
                         entry.id() == candidate.id()
                             || (Vm::cpython_proxy_raw_ptr_from_value(&Value::Class(entry.clone()))
@@ -10900,7 +10918,7 @@ impl Vm {
         }
 
         let mut seen: HashSet<u64> = HashSet::new();
-        let mut entries = collect_mro_entries(class, &mut seen, 0);
+        let mut entries = collect_mro_entries(class, &mut seen, 0, trace_debug_mro_depth);
         if let Some(object_idx) = entries.iter().position(|entry| {
             matches!(&*entry.kind(), Object::Class(class_data) if class_data.name == "object")
         })
@@ -12609,7 +12627,7 @@ impl Vm {
                 callable_type_name.as_str(),
                 "builtin_function_or_method" | "method"
             ) || callable_has_bound_self);
-        if std::env::var_os("PYRS_TRACE_PROXY_BOUND_CALL").is_some() {
+        if self.host.env_var_os("PYRS_TRACE_PROXY_BOUND_CALL").is_some() {
             eprintln!(
                 "[proxy-bound-call] helper callable_type={} callable_is_proxy={} receiver_is_proxy={} has_bound_self={} already_bound={} args={} kwargs={}",
                 callable_type_name,
@@ -13717,7 +13735,7 @@ impl Vm {
             match bind_arguments(func_data, &self.heap, args, kwargs, kwargs_order) {
                 Ok(bindings) => bindings,
                 Err(err) => {
-                    if std::env::var_os("PYRS_TRACE_BIND_ARGS_STACK").is_some()
+                    if self.host.env_var_os("PYRS_TRACE_BIND_ARGS_STACK").is_some()
                         && err.message.contains("argument count mismatch")
                     {
                         let stack = self
@@ -13744,7 +13762,7 @@ impl Vm {
                             "[bind-args-stack] failing_fn={} file={} stack={}",
                             func_data.code.name, func_data.code.filename, stack
                         );
-                        if std::env::var_os("PYRS_TRACE_BIND_ARGS_BT").is_some() {
+                        if self.host.env_var_os("PYRS_TRACE_BIND_ARGS_BT").is_some() {
                             eprintln!(
                                 "[bind-args-bt] failing_fn={} bt={}",
                                 func_data.code.name,
