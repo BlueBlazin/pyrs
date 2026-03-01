@@ -260,13 +260,12 @@ Completed on this branch:
 - `d6201a6`: `cpython_list_api` probes switched to cached env helper.
 - `c8310f7`: `cpython_contextvar_api`/`cpython_module_api`/`cpython_tuple_api` probes switched to cached env helper.
 - latest: multi-file host-seam cleanup across stdlib/import/C-API runtime helpers.
+- latest+1: host-routed depth-limit config in `vm_builtin_metadata` and host-adapter profile env reads in `pickle`.
 
 Latest host seam audit (local branch run):
-- `python3 scripts/audit_wasm_host_seam.py` => `total_hits=7`.
-- residual hits are currently concentrated in:
-  - `src/vm/mod.rs` cached env-probe core (`env_var_present_cached` internals),
-  - `src/vm/stdlib/pickle.rs` profile-only env toggles,
-  - `src/vm/vm_builtin_metadata.rs` debug depth-limit numeric env controls.
+- `python3 scripts/audit_wasm_host_seam.py` => `total_hits=3`.
+- residual hits are currently only in:
+  - `src/vm/mod.rs` cached env-probe core (`env_var_present_cached` internals).
 
 Remaining near-term focus:
 1. W3: expand `WasmHost` capability stubs and error contracts for unsupported features.

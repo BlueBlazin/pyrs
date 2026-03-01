@@ -45,10 +45,11 @@ impl Drop for CallInternalDepthGuard {
 struct LoadAttrSuperDepthGuard;
 
 impl LoadAttrSuperDepthGuard {
-    fn enter() -> Option<(Self, usize)> {
+    fn enter(vm: &Vm) -> Option<(Self, usize)> {
         let trace_enabled = env_var_present_cached("PYRS_TRACE_LOAD_ATTR_SUPER");
-        let limit = std::env::var("PYRS_DEBUG_LOAD_ATTR_SUPER_DEPTH_LIMIT")
-            .ok()
+        let limit = vm
+            .host
+            .env_var("PYRS_DEBUG_LOAD_ATTR_SUPER_DEPTH_LIMIT")
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|limit| *limit > 0)?;
         let depth = LOAD_ATTR_SUPER_DEPTH.with(|counter| {
@@ -4483,8 +4484,9 @@ impl Vm {
                 "internal call requires an active execution frame",
             ));
         }
-        let hard_limit = std::env::var("PYRS_DEBUG_CALL_DEPTH_HARD_LIMIT")
-            .ok()
+        let hard_limit = self
+            .host
+            .env_var("PYRS_DEBUG_CALL_DEPTH_HARD_LIMIT")
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|limit| *limit > 0)
             .unwrap_or_else(|| self.recursion_limit.max(1) as usize * 4);
@@ -7535,7 +7537,7 @@ impl Vm {
         super_ref: &ObjRef,
         attr_name: &str,
     ) -> Result<AttrAccessOutcome, RuntimeError> {
-        let _super_depth_guard = LoadAttrSuperDepthGuard::enter();
+        let _super_depth_guard = LoadAttrSuperDepthGuard::enter(self);
         let super_depth = LOAD_ATTR_SUPER_DEPTH.with(|counter| counter.get());
         let (start_class, receiver, object_type) = match &*super_ref.kind() {
             Object::Super(data) => (
