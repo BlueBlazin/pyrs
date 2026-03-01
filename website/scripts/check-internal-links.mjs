@@ -125,6 +125,27 @@ const parseInternalLinks = (html) => {
 	return results;
 };
 
+const parseHeadChecks = (html) => {
+	const issues = [];
+
+	const titleMatch = html.match(/<title>([\s\S]*?)<\/title>/i);
+	if (!titleMatch || !titleMatch[1] || titleMatch[1].trim().length === 0) {
+		issues.push("missing or empty <title>");
+	}
+
+	const metaDescriptionTag = html.match(/<meta[^>]*name=["']description["'][^>]*>/i);
+	if (!metaDescriptionTag) {
+		issues.push("missing meta description");
+	} else {
+		const contentMatch = metaDescriptionTag[0].match(/content=["']([^"']*)["']/i);
+		if (!contentMatch || contentMatch[1].trim().length === 0) {
+			issues.push("empty meta description content");
+		}
+	}
+
+	return issues;
+};
+
 const main = async () => {
 	if (!(await exists(distDir))) {
 		console.error(`[link-check] missing dist directory: ${distDir}`);
@@ -137,6 +158,16 @@ const main = async () => {
 
 	for (const htmlFile of htmlFiles) {
 		const html = await fs.readFile(htmlFile, "utf8");
+		const headIssues = parseHeadChecks(html);
+		for (const issue of headIssues) {
+			failures.push({
+				source: path.relative(distDir, htmlFile),
+				link: "",
+				pathname: "",
+				issue,
+			});
+		}
+
 		const links = parseInternalLinks(html);
 		for (const link of links) {
 			if (isExternal(link) || link.startsWith("#")) {
@@ -159,15 +190,20 @@ const main = async () => {
 					source: path.relative(distDir, htmlFile),
 					link,
 					pathname,
+					issue: "broken internal link",
 				});
 			}
 		}
 	}
 
 	if (failures.length > 0) {
-		console.error("[link-check] broken internal links found:");
+		console.error("[link-check] validation failures found:");
 		for (const failure of failures) {
-			console.error(`- ${failure.source}: ${failure.link} -> ${failure.pathname}`);
+			if (failure.issue === "broken internal link") {
+				console.error(`- ${failure.source}: ${failure.link} -> ${failure.pathname}`);
+			} else {
+				console.error(`- ${failure.source}: ${failure.issue}`);
+			}
 		}
 		process.exit(1);
 	}
