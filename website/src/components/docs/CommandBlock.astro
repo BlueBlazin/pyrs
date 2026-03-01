@@ -58,6 +58,8 @@ const copyPayload = commands.join("\n");
 
 	.command-text {
 		white-space: pre;
+		min-width: 0;
+		flex: 1;
 	}
 
 	.command-lines {
@@ -92,7 +94,7 @@ const copyPayload = commands.join("\n");
 
 	@media (max-width: 760px) {
 		.command-lines {
-			overflow-x: hidden;
+			overflow-x: auto;
 			padding-inline: 0.9rem;
 		}
 

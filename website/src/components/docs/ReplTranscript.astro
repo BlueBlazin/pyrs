@@ -95,6 +95,8 @@ const toneClass = (tone?: Tone) => {
 
 	.repl-code {
 		white-space: pre;
+		min-width: 0;
+		flex: 1;
 	}
 
 	.repl-lines {
@@ -129,7 +131,7 @@ const toneClass = (tone?: Tone) => {
 
 	@media (max-width: 760px) {
 		.repl-lines {
-			overflow-x: hidden;
+			overflow-x: auto;
 			padding-inline: 0.9rem;
 		}
 
