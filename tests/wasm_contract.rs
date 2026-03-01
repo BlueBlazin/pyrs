@@ -2,10 +2,13 @@
 
 #[path = "fixtures/wasm_contract_snippets.rs"]
 mod wasm_contract_snippets;
+#[path = "fixtures/wasm_module_policy.rs"]
+mod wasm_module_policy;
 #[path = "fixtures/wasm_worker_contract.rs"]
 mod wasm_worker_contract;
 
 use crate::wasm_contract_snippets::WASM_CONTRACT_SNIPPET_FIXTURES;
+use crate::wasm_module_policy::WASM_MODULE_POLICY_FIXTURES;
 use crate::wasm_worker_contract::{
     WASM_WORKER_EXECUTE_FIXTURES, WASM_WORKER_EXECUTE_PHASE_KEYS, WASM_WORKER_LIFECYCLE_FIXTURES,
     WASM_WORKER_LIFECYCLE_PHASE_KEYS, WASM_WORKER_STATE_KEYS, WASM_WORKER_TIMEOUT_FIXTURES,
@@ -750,9 +753,11 @@ fn wasm_module_policy_entries_are_stable() {
         mappings.insert((module, blocker_key));
     }
 
-    assert!(mappings.contains(&("numpy".to_string(), "dynamic_library_load".to_string())));
-    assert!(mappings.contains(&("socket".to_string(), "network_sockets".to_string())));
-    assert!(mappings.contains(&("subprocess".to_string(), "process_spawn".to_string())));
+    let expected: HashSet<(String, String)> = WASM_MODULE_POLICY_FIXTURES
+        .iter()
+        .map(|fixture| (fixture.module.to_string(), fixture.blocker_key.to_string()))
+        .collect();
+    assert_eq!(mappings, expected);
 }
 
 #[wasm_bindgen_test]
