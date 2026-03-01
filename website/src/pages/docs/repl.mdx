@@ -1,7 +1,7 @@
 ---
 layout: ../../layouts/DocsLayout.astro
 title: PYRS Docs | REPL and Execution
-description: REPL behavior and execution modes for PYRS.
+description: Practical REPL workflow, execution modes, and debugging behavior in PYRS.
 pageTitle: REPL and Execution
 ---
 
@@ -9,17 +9,55 @@ import DocSection from "../../components/docs/DocSection.astro";
 import CommandBlock from "../../components/docs/CommandBlock.astro";
 import Callout from "../../components/docs/Callout.astro";
 import DataTable from "../../components/docs/DataTable.astro";
-import { quickRunCommands } from "../../config/installCommands";
+import CodeBlock from "../../components/docs/CodeBlock.astro";
 
 <DocSection>
-	PYRS supports REPL, inline command mode, and script execution with CPython-style startup paths.
+	PYRS gives you three execution paths: interactive REPL, inline command mode, and script-file mode.
+	This page focuses on how to use each path effectively, and what behavior to expect when debugging.
 </DocSection>
 
-<DocSection title="Quick Modes">
-	<CommandBlock commands={quickRunCommands} />
+<DocSection title="Choose the Right Execution Mode">
+	<DataTable headers={["Mode", "Best for", "Command"]}>
+		{
+			[
+				{
+					mode: "REPL",
+					useCase: "Interactive exploration, quick checks, and step-by-step debugging of values.",
+					command: "pyrs",
+				},
+				{
+					mode: "Inline command",
+					useCase: "Deterministic one-off command from shell scripts or CI checks.",
+					command: "pyrs -c \"import sys; print(sys.version)\"",
+				},
+				{
+					mode: "Script file",
+					useCase: "Normal project/program execution with file-based entrypoint.",
+					command: "pyrs path/to/program.py",
+				},
+			].map((row) => (
+				<tr>
+					<td>{row.mode}</td>
+					<td>{row.useCase}</td>
+					<td><code>{row.command}</code></td>
+				</tr>
+			))
+		}
+	</DataTable>
+	<CommandBlock
+		commands={[
+			"pyrs",
+			"pyrs -c \"import platform; print(platform.python_version())\"",
+			"pyrs path/to/script.py",
+		]}
+	/>
 </DocSection>
 
-<DocSection title="Prompt Behavior">
+<DocSection title="Prompt and Multiline Input Model">
+	<p>
+		Use the primary prompt (`>>>`) for new statements. The continuation prompt (`...`) indicates
+		you are inside an unfinished block or multiline construct.
+	</p>
 	<DataTable headers={["Prompt", "Meaning"]}>
 		<tr>
 			<td><code>&gt;&gt;&gt;</code></td>
@@ -30,16 +68,73 @@ import { quickRunCommands } from "../../config/installCommands";
 			<td>Continuation prompt while completing a block or multi-line construct.</td>
 		</tr>
 	</DataTable>
+	<CodeBlock
+		label="REPL Session"
+		code={`>>> from dataclasses import dataclass
+>>> @dataclass
+... class User:
+...     name: str
+...     id: int
+...
+>>> User("ada", 7)
+User(name='ada', id=7)`}
+	/>
 </DocSection>
 
-<DocSection title="Exit and Interrupt">
+<DocSection title="Execution State and Session Behavior">
+	<ul class="m-0 list-disc space-y-1.5 pl-5">
+		<li>Imports and variable assignments persist for the lifetime of the REPL session.</li>
+		<li>Each entered statement executes in the current session state.</li>
+		<li>Restart REPL to clear state when debugging contamination between experiments.</li>
+	</ul>
+	<CodeBlock
+		label="State Persistence Example"
+		code={`>>> counter = 0
+>>> counter += 1
+>>> counter
+1
+>>> counter += 1
+>>> counter
+2`}
+	/>
+</DocSection>
+
+<DocSection title="Error Feedback in Interactive Runs">
+	<p>
+		Syntax and runtime failures are rendered with traceback context in CPython-style shapes. For
+		repeatable bug reports, capture the exact failing snippet and include both PYRS and CPython output.
+	</p>
+	<CodeBlock
+		label="Runtime Error Shape"
+		code={`>>> items = {}
+>>> items["missing"] + 1
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+KeyError: 'missing'`}
+	/>
+</DocSection>
+
+<DocSection title="Exit, Interrupt, and Deterministic Runs">
 	<ul class="m-0 list-disc space-y-1.5 pl-5">
 		<li><code>Ctrl+D</code> exits the REPL on macOS/Linux terminals.</li>
 		<li><code>Ctrl+C</code> interrupts the running statement where supported.</li>
-		<li>Fatal runtime exceptions print traceback output and return to prompt when possible.</li>
+		<li>For deterministic automation, prefer `-c` or script-file execution over interactive REPL entry.</li>
+		<li>Use script mode for reproducible benchmarks and CI runs.</li>
 	</ul>
-	<Callout title="Tip">
-		If you need deterministic non-interactive behavior for scripts and CI, prefer `pyrs -c ...` or
-		file execution over a REPL session.
+	<Callout title="Practical Workflow">
+		Develop quickly in REPL, then move stable snippets into script files once behavior is confirmed.
+		This keeps iteration fast without sacrificing reproducibility.
+	</Callout>
+</DocSection>
+
+<DocSection title="Troubleshooting Checklist">
+	<ul class="m-0 list-disc space-y-1.5 pl-5">
+		<li>If interactive behavior differs from script mode, rerun with `pyrs -c ...` to isolate session state effects.</li>
+		<li>If imports fail unexpectedly, verify your import root and `PYRS_CPYTHON_LIB` setup.</li>
+		<li>When reporting REPL bugs, include prompt transcript and exact terminal platform details.</li>
+	</ul>
+	<Callout title="Related Docs">
+		See <a href="/docs/import-paths/">Import and Stdlib Paths</a> for import-resolution details and{" "}
+		<a href="/docs/diagnostics/">Diagnostics and Tracebacks</a> for traceback formatting expectations.
 	</Callout>
 </DocSection>
