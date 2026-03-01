@@ -461,6 +461,8 @@ Completed on this branch:
   probe behavior for capability-allowed snippets (`ok`/`runtime_error`) while
   default builds keep `unsupported_worker_execution`; worker lifecycle stubs
   (`start`/`terminate`/`recycle`) remain intentionally unwired.
+- latest: vm-probe local gates now also compile-check `--test wasm_contract`
+  with `wasm-vm-probe`, keeping feature-gated wasm API/test contracts in sync.
 - latest: runtime metadata/blocker exports are now feature-aware for wasm
   vm-probe builds (`wasm_runtime_info.supports_execution = true`,
   `execution_backend = \"vm_probe\"`, and unwired execution blocker keys are
