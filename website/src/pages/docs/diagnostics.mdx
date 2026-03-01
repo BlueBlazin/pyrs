@@ -53,7 +53,7 @@ SyntaxError: invalid syntax`}
 </DocSection>
 
 <DocSection title="Error-Report Expectations">
-	<ul class="m-0 list-disc space-y-1.5 pl-5">
+	<ul class="docs-list">
 		<li>Unhandled exceptions should preserve original exception type, not wrap traceback text in a new runtime error.</li>
 		<li>Re-raised exceptions should preserve traceback-chain fidelity for the original fault context.</li>
 		<li>Diff tests are used to keep traceback shape aligned with CPython behavior over time.</li>

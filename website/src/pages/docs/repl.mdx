@@ -83,7 +83,7 @@ import ReplTranscript from "../../components/docs/ReplTranscript.astro";
 </DocSection>
 
 <DocSection title="Execution State and Session Behavior">
-	<ul class="m-0 list-disc space-y-1.5 pl-5">
+	<ul class="docs-list">
 		<li>Imports and variable assignments persist for the lifetime of the REPL session.</li>
 		<li>Each entered statement executes in the current session state.</li>
 		<li>Restart REPL to clear state when debugging contamination between experiments.</li>
@@ -157,7 +157,7 @@ import ReplTranscript from "../../components/docs/ReplTranscript.astro";
 </DocSection>
 
 <DocSection title="Exit, Interrupt, and Deterministic Runs">
-	<ul class="m-0 list-disc space-y-1.5 pl-5">
+	<ul class="docs-list">
 		<li><code>Ctrl+D</code> exits the REPL on macOS/Linux terminals.</li>
 		<li><code>Ctrl+C</code> interrupts the running statement where supported.</li>
 		<li>Use `-c` or script mode for reproducible automation and CI checks.</li>
@@ -175,7 +175,7 @@ import ReplTranscript from "../../components/docs/ReplTranscript.astro";
 </DocSection>
 
 <DocSection title="Troubleshooting Checklist">
-	<ul class="m-0 list-disc space-y-1.5 pl-5">
+	<ul class="docs-list">
 		<li>If interactive behavior differs from script mode, rerun with `pyrs -c ...` to isolate session state effects.</li>
 		<li>If imports fail unexpectedly, verify your import root and `PYRS_CPYTHON_LIB` setup.</li>
 		<li>When reporting REPL bugs, include prompt transcript and exact terminal platform details.</li>

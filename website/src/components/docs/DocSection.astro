@@ -11,11 +11,11 @@ const { title, id, class: className } = Astro.props;
 ---
 
 <section id={id} class={cn("mt-9 first:mt-0", className)}>
-	{title && <h2 class="text-[1.15rem] font-semibold tracking-[-0.01em] text-docs-text">{title}</h2>}
+	{title && <h2 class="m-0 text-[1.15rem] font-semibold tracking-[-0.01em] text-docs-text">{title}</h2>}
 	<div
 		class={cn(
-			title ? "mt-3.5" : "",
-			"space-y-3.5 text-docs-muted leading-7 text-[0.97rem]",
+			title ? "mt-3" : "",
+			"space-y-3 text-docs-muted leading-7 text-[0.97rem]",
 			"[&>p]:m-0 [&>ul]:m-0 [&>ol]:m-0 [&>h3]:m-0 [&>h4]:m-0 [&>pre]:m-0",
 		)}
 	>

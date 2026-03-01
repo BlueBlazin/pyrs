@@ -48,7 +48,7 @@ import Callout from "../../components/docs/Callout.astro";
 </DocSection>
 
 <DocSection title="Troubleshooting Imports">
-	<ul class="m-0 list-disc space-y-1.5 pl-5">
+	<ul class="docs-list">
 		<li>If a stdlib module is missing, verify `PYRS_CPYTHON_LIB` points to a valid CPython 3.14 `Lib` tree.</li>
 		<li>For environment-specific issues, test with `pyrs -S -c ...` to isolate startup import effects.</li>
 		<li>Keep virtualenv activation separate from parity harness runs if you need stable baseline behavior.</li>
