@@ -56,6 +56,10 @@ enum ResolvedReplTheme {
 #[derive(Debug, Copy, Clone)]
 struct ReplPalette {
     keyword_style: Style,
+    class_name_style: Style,
+    function_name_style: Style,
+    decorator_style: Style,
+    type_name_style: Style,
     number_style: Style,
     string_style: Style,
     comment_style: Style,
@@ -114,17 +118,25 @@ fn resolve_repl_theme_from_env() -> ReplThemeMode {
 fn repl_palette(theme: ResolvedReplTheme) -> ReplPalette {
     match theme {
         ResolvedReplTheme::Dark => ReplPalette {
-            keyword_style: Style::new().fg(AnsiColor::Cyan).bold(),
-            number_style: Style::new().fg(AnsiColor::Purple),
-            string_style: Style::new().fg(AnsiColor::Green),
-            comment_style: Style::new().fg(AnsiColor::LightGreen),
+            keyword_style: Style::new().fg(AnsiColor::Fixed(81)).bold(),
+            class_name_style: Style::new().fg(AnsiColor::Fixed(203)).bold(),
+            function_name_style: Style::new().fg(AnsiColor::Fixed(214)).bold(),
+            decorator_style: Style::new().fg(AnsiColor::Fixed(111)),
+            type_name_style: Style::new().fg(AnsiColor::Fixed(220)),
+            number_style: Style::new().fg(AnsiColor::Fixed(213)),
+            string_style: Style::new().fg(AnsiColor::Fixed(49)),
+            comment_style: Style::new().italic().fg(AnsiColor::Fixed(244)),
             hint_style: Style::new().italic().fg(AnsiColor::LightGray),
         },
         ResolvedReplTheme::Light => ReplPalette {
-            keyword_style: Style::new().fg(AnsiColor::Blue).bold(),
-            number_style: Style::new().fg(AnsiColor::Purple),
-            string_style: Style::new().fg(AnsiColor::Fixed(22)),
-            comment_style: Style::new().fg(AnsiColor::Fixed(28)),
+            keyword_style: Style::new().fg(AnsiColor::Fixed(26)).bold(),
+            class_name_style: Style::new().fg(AnsiColor::Fixed(160)).bold(),
+            function_name_style: Style::new().fg(AnsiColor::Fixed(166)).bold(),
+            decorator_style: Style::new().fg(AnsiColor::Fixed(61)),
+            type_name_style: Style::new().fg(AnsiColor::Fixed(130)),
+            number_style: Style::new().fg(AnsiColor::Fixed(161)),
+            string_style: Style::new().fg(AnsiColor::Fixed(28)),
+            comment_style: Style::new().italic().fg(AnsiColor::Fixed(102)),
             hint_style: Style::new().italic().fg(AnsiColor::DarkGray),
         },
     }
@@ -1472,7 +1484,16 @@ impl Highlighter for PythonHighlighter {
         };
 
         let mut cursor = 0usize;
+        let mut pending_name_style = PendingNameStyle::None;
+        let mut decorator_path_active = false;
         for token in tokens {
+            let style = style_for_token_kind(
+                self.palette,
+                &token.kind,
+                &token.lexeme,
+                pending_name_style,
+                decorator_path_active,
+            );
             let token_start = token.offset.min(line.len());
             let token_end = token_visual_end_offset(line, &token)
                 .unwrap_or_else(|| token_start.saturating_add(token.lexeme.len()))
@@ -1482,12 +1503,14 @@ impl Highlighter for PythonHighlighter {
                 push_plain_or_comment(&mut styled, &line[cursor..token_start], self.palette);
             }
             if token_end > token_start {
-                styled.push((
-                    style_for_token_kind(self.palette, &token.kind),
-                    line[token_start..token_end].to_string(),
-                ));
+                styled.push((style, line[token_start..token_end].to_string()));
             }
             cursor = token_end.max(cursor);
+            update_highlighter_state(
+                &token.kind,
+                &mut pending_name_style,
+                &mut decorator_path_active,
+            );
         }
 
         if cursor < line.len() {
@@ -1562,15 +1585,102 @@ fn string_literal_visual_end(line: &str, start_offset: usize) -> Option<usize> {
     None
 }
 
-fn style_for_token_kind(palette: ReplPalette, token_kind: &parser::token::TokenKind) -> Style {
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum PendingNameStyle {
+    None,
+    Function,
+    Class,
+}
+
+fn is_builtin_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "int"
+            | "str"
+            | "float"
+            | "bool"
+            | "bytes"
+            | "bytearray"
+            | "list"
+            | "tuple"
+            | "dict"
+            | "set"
+            | "frozenset"
+            | "complex"
+            | "object"
+    )
+}
+
+fn style_for_token_kind(
+    palette: ReplPalette,
+    token_kind: &parser::token::TokenKind,
+    lexeme: &str,
+    pending_name_style: PendingNameStyle,
+    decorator_path_active: bool,
+) -> Style {
     match token_kind {
         parser::token::TokenKind::Keyword(_) => palette.keyword_style,
+        parser::token::TokenKind::At => palette.decorator_style,
+        parser::token::TokenKind::Dot if decorator_path_active => palette.decorator_style,
+        parser::token::TokenKind::Name if pending_name_style == PendingNameStyle::Function => {
+            palette.function_name_style
+        }
+        parser::token::TokenKind::Name if pending_name_style == PendingNameStyle::Class => {
+            palette.class_name_style
+        }
+        parser::token::TokenKind::Name if decorator_path_active => palette.decorator_style,
+        parser::token::TokenKind::Name if is_builtin_type_name(lexeme) => palette.type_name_style,
         parser::token::TokenKind::Number => palette.number_style,
         parser::token::TokenKind::String
         | parser::token::TokenKind::Bytes
         | parser::token::TokenKind::FString => palette.string_style,
         parser::token::TokenKind::Name => Style::new(),
         _ => Style::new(),
+    }
+}
+
+fn update_highlighter_state(
+    token_kind: &parser::token::TokenKind,
+    pending_name_style: &mut PendingNameStyle,
+    decorator_path_active: &mut bool,
+) {
+    use parser::token::Keyword;
+    use parser::token::TokenKind;
+
+    match token_kind {
+        TokenKind::Keyword(Keyword::Def) => {
+            *pending_name_style = PendingNameStyle::Function;
+            *decorator_path_active = false;
+        }
+        TokenKind::Keyword(Keyword::Class) => {
+            *pending_name_style = PendingNameStyle::Class;
+            *decorator_path_active = false;
+        }
+        TokenKind::At => {
+            *pending_name_style = PendingNameStyle::None;
+            *decorator_path_active = true;
+        }
+        TokenKind::Name => {
+            if *pending_name_style != PendingNameStyle::None {
+                *pending_name_style = PendingNameStyle::None;
+            } else if *decorator_path_active {
+                *decorator_path_active = true;
+            }
+        }
+        TokenKind::Dot if *decorator_path_active => {}
+        TokenKind::Newline | TokenKind::Semicolon => {
+            *pending_name_style = PendingNameStyle::None;
+            *decorator_path_active = false;
+        }
+        TokenKind::LParen if *decorator_path_active => {
+            *decorator_path_active = false;
+        }
+        _ => {
+            *pending_name_style = PendingNameStyle::None;
+            if *decorator_path_active {
+                *decorator_path_active = false;
+            }
+        }
     }
 }
 
@@ -2558,6 +2668,36 @@ mod tests {
     }
 
     #[test]
+    fn python_highlighter_styles_class_and_builtin_type_names() {
+        let palette = repl_palette(ResolvedReplTheme::Dark);
+        let highlighter = PythonHighlighter::new(palette);
+        let line = "class User: x: int";
+        let styled = highlighter.highlight(line, 0);
+        assert_eq!(styled.raw_string(), line);
+
+        let class_name_style = style_at_byte(&styled, 6).expect("style for class name");
+        let type_name_style = style_at_byte(&styled, 15).expect("style for builtin type");
+        assert_eq!(class_name_style, palette.class_name_style);
+        assert_eq!(type_name_style, palette.type_name_style);
+    }
+
+    #[test]
+    fn python_highlighter_styles_decorator_paths() {
+        let palette = repl_palette(ResolvedReplTheme::Dark);
+        let highlighter = PythonHighlighter::new(palette);
+        let line = "@pkg.decorator";
+        let styled = highlighter.highlight(line, 0);
+        assert_eq!(styled.raw_string(), line);
+
+        let at_style = style_at_byte(&styled, 0).expect("style for at-sign");
+        let name_style = style_at_byte(&styled, 1).expect("style for decorator name");
+        let dot_style = style_at_byte(&styled, 4).expect("style for decorator dot");
+        assert_eq!(at_style, palette.decorator_style);
+        assert_eq!(name_style, palette.decorator_style);
+        assert_eq!(dot_style, palette.decorator_style);
+    }
+
+    #[test]
     fn repl_palette_differs_between_dark_and_light_modes() {
         let dark = repl_palette(ResolvedReplTheme::Dark);
         let light = repl_palette(ResolvedReplTheme::Light);
@@ -2568,6 +2708,14 @@ mod tests {
         assert_ne!(
             format!("{:?}", dark.keyword_style),
             format!("{:?}", light.keyword_style)
+        );
+        assert_ne!(
+            format!("{:?}", dark.class_name_style),
+            format!("{:?}", light.class_name_style)
+        );
+        assert_ne!(
+            format!("{:?}", dark.decorator_style),
+            format!("{:?}", light.decorator_style)
         );
     }
 
