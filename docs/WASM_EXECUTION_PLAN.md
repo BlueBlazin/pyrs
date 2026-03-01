@@ -227,6 +227,8 @@ Completed on this branch:
 - `7fbef01`: structured wasm execute-result contract (syntax/unsupported phases).
 - `e03263e`: capability-key metadata + unsupported-capability helper.
 - `d11b634`: additional VM method-level trace probes routed through host seam.
+- `c32b066`: wasm-target contract smoke harness + targeted wasm test compile lane.
+- `5c1664c`: `vm_execution` env/debug probes routed through host seam.
 
 Remaining near-term focus:
 1. W3: expand `WasmHost` capability stubs and error contracts for unsupported features.
