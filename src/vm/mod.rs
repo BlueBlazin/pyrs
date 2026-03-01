@@ -3810,17 +3810,17 @@ impl Vm {
     fn detect_cpython_stdlib_root(&self) -> Option<PathBuf> {
         if let Some(path) = self.host.env_var("PYRS_CPYTHON_LIB") {
             let path = PathBuf::from(path);
-            if path.is_dir() {
+            if self.host.path_is_dir(&path) {
                 return Some(path);
             }
         }
         let local = PathBuf::from(".local/Python-3.14.3/Lib");
-        if local.is_dir() {
+        if self.host.path_is_dir(&local) {
             return Some(local);
         }
         let framework =
             PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14");
-        if framework.is_dir() {
+        if self.host.path_is_dir(&framework) {
             return Some(framework);
         }
         None
@@ -4137,7 +4137,7 @@ impl Vm {
                 .host
                 .env_var_os("VIRTUAL_ENV")
                 .map(PathBuf::from)
-                .filter(|path| path.is_dir())
+                .filter(|path| self.host.path_is_dir(path))
                 .map(|path| path.to_string_lossy().to_string());
             let prefix = venv_prefix
                 .clone()
