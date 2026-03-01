@@ -1,3 +1,7 @@
+---
+import ButtonLink from "../ButtonLink.astro";
+---
+
 <section class="hero">
 	<div class="hero-copy">
 		<p class="hero-eyebrow">Python in Rust</p>
@@ -7,8 +11,8 @@
 			C-API closure, and production-grade runtime behavior.
 		</p>
 		<div class="cta-row">
-			<a class="btn btn-primary" href="https://github.com/BlueBlazin/pyrs">Explore Repo</a>
-			<a class="btn btn-secondary" href="#install">Install</a>
+			<ButtonLink href="https://github.com/BlueBlazin/pyrs" variant="primary">Explore Repo</ButtonLink>
+			<ButtonLink href="#install" variant="secondary">Install</ButtonLink>
 		</div>
 		<div class="metrics">
 			<div class="metric">
@@ -85,36 +89,6 @@
 		flex-wrap: wrap;
 		gap: 0.72rem;
 		margin-top: 1.35rem;
-	}
-
-	.btn {
-		padding: 0.72rem 1rem;
-		border-radius: 0.72rem;
-		text-decoration: none;
-		font-weight: 600;
-		font-size: 0.91rem;
-		transition: transform 150ms ease, box-shadow 150ms ease;
-	}
-
-	.btn:hover {
-		transform: translateY(-1px);
-		box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
-	}
-
-	.btn:focus-visible {
-		outline: 2px solid rgba(255, 163, 105, 0.9);
-		outline-offset: 2px;
-	}
-
-	.btn-primary {
-		background: linear-gradient(135deg, #df8b5a 0%, #c76638 100%);
-		color: #231108;
-	}
-
-	.btn-secondary {
-		color: var(--text);
-		border: 1px solid var(--line);
-		background: rgba(255, 255, 255, 0.02);
 	}
 
 	.metrics {

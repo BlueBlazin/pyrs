@@ -1,4 +1,5 @@
 ---
+import ButtonLink from "../components/ButtonLink.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
 ---
 
@@ -13,8 +14,8 @@ import SiteLayout from "../layouts/SiteLayout.astro";
 			The requested route does not exist in the current site build.
 		</p>
 		<div class="actions">
-			<a class="btn btn-primary" href="/">Go Home</a>
-			<a class="btn btn-secondary" href="/docs/">Open Docs</a>
+			<ButtonLink href="/" variant="primary">Go Home</ButtonLink>
+			<ButtonLink href="/docs/" variant="secondary">Open Docs</ButtonLink>
 		</div>
 	</section>
 </SiteLayout>
@@ -56,33 +57,4 @@ import SiteLayout from "../layouts/SiteLayout.astro";
 		margin-top: 1.3rem;
 	}
 
-	.btn {
-		padding: 0.72rem 1rem;
-		border-radius: 0.72rem;
-		text-decoration: none;
-		font-weight: 600;
-		font-size: 0.91rem;
-		transition: transform 150ms ease, box-shadow 150ms ease;
-	}
-
-	.btn:hover {
-		transform: translateY(-1px);
-		box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
-	}
-
-	.btn:focus-visible {
-		outline: 2px solid rgba(255, 163, 105, 0.9);
-		outline-offset: 2px;
-	}
-
-	.btn-primary {
-		background: linear-gradient(135deg, #df8b5a 0%, #c76638 100%);
-		color: #231108;
-	}
-
-	.btn-secondary {
-		color: var(--text);
-		border: 1px solid var(--line);
-		background: rgba(255, 255, 255, 0.02);
-	}
 </style>
