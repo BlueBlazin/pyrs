@@ -1437,59 +1437,7 @@ pub fn wasm_worker_recycle() -> WasmWorkerLifecycleResult {
 ///   `phase = "ok"` or `phase = "runtime_error"`.
 #[wasm_bindgen]
 pub fn wasm_worker_execute(source: &str) -> WasmExecutionResult {
-    let host = WasmHost;
-    let parsed = match parse_and_compile_snippet(source) {
-        Ok(parsed) => parsed,
-        Err(compile) => {
-            return compile_failure_to_execution_result(
-                compile,
-                WasmWorkerExecutePhase::SyntaxError.key(),
-                WasmWorkerExecutePhase::CompileError.key(),
-                "worker parse/compile check failed",
-            );
-        }
-    };
-
-    let import_roots = collect_import_roots(&parsed.module);
-    let first_blocker = snippet_blockers_from_import_roots(&import_roots, &host)
-        .into_iter()
-        .next();
-    if let Some(blocker) = first_blocker {
-        return WasmExecutionResult {
-            success: false,
-            phase: WasmWorkerExecutePhase::UnsupportedExecution
-                .key()
-                .to_string(),
-            stdout: String::new(),
-            stderr: blocker.message.clone(),
-            error: Some(blocker.message),
-            blocker_key: Some(blocker.blocker_key),
-            line: 0,
-            column: 0,
-        };
-    }
-
-    if wasm_vm_runtime_enabled() {
-        #[cfg(feature = "wasm-vm-probe")]
-        {
-            return execute_compiled_snippet_with_vm(&parsed.code);
-        }
-    }
-
-    let message = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
-        .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
-    WasmExecutionResult {
-        success: false,
-        phase: WasmWorkerExecutePhase::UnsupportedExecution
-            .key()
-            .to_string(),
-        stdout: String::new(),
-        stderr: message.clone(),
-        error: Some(message),
-        blocker_key: Some(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED.to_string()),
-        line: 0,
-        column: 0,
-    }
+    execute_snippet_with_contract(source, WasmExecutionContractMode::Worker)
 }
 
 /// Executes a snippet through the worker contract with an operation correlation id.
@@ -1716,6 +1664,116 @@ fn compile_failure_to_execution_result(
     }
 }
 
+#[derive(Clone, Copy)]
+enum WasmExecutionContractMode {
+    TopLevel,
+    Worker,
+}
+
+impl WasmExecutionContractMode {
+    fn syntax_phase_key(self) -> &'static str {
+        match self {
+            WasmExecutionContractMode::TopLevel => WasmExecutionPhase::SyntaxError.key(),
+            WasmExecutionContractMode::Worker => WasmWorkerExecutePhase::SyntaxError.key(),
+        }
+    }
+
+    fn compile_phase_key(self) -> &'static str {
+        match self {
+            WasmExecutionContractMode::TopLevel => WasmExecutionPhase::CompileError.key(),
+            WasmExecutionContractMode::Worker => WasmWorkerExecutePhase::CompileError.key(),
+        }
+    }
+
+    fn unsupported_phase_key(self) -> &'static str {
+        match self {
+            WasmExecutionContractMode::TopLevel => WasmExecutionPhase::UnsupportedExecution.key(),
+            WasmExecutionContractMode::Worker => WasmWorkerExecutePhase::UnsupportedExecution.key(),
+        }
+    }
+
+    fn compile_fallback_error(self) -> &'static str {
+        match self {
+            WasmExecutionContractMode::TopLevel => "parse/compile check failed",
+            WasmExecutionContractMode::Worker => "worker parse/compile check failed",
+        }
+    }
+
+    fn unwired_blocker_key(self) -> &'static str {
+        match self {
+            WasmExecutionContractMode::TopLevel => WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED,
+            WasmExecutionContractMode::Worker => WASM_WORKER_BLOCKER_RUNTIME_UNWIRED,
+        }
+    }
+
+    fn unwired_error_message(self) -> String {
+        match self {
+            WasmExecutionContractMode::TopLevel => {
+                wasm_execution_blocker_error(self.unwired_blocker_key())
+                    .unwrap_or_else(|| "wasm execution backend is not wired yet".to_string())
+            }
+            WasmExecutionContractMode::Worker => {
+                wasm_worker_blocker_error(self.unwired_blocker_key())
+                    .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string())
+            }
+        }
+    }
+}
+
+fn execute_snippet_with_contract(
+    source: &str,
+    contract: WasmExecutionContractMode,
+) -> WasmExecutionResult {
+    let host = WasmHost;
+    let parsed = match parse_and_compile_snippet(source) {
+        Ok(parsed) => parsed,
+        Err(compile) => {
+            return compile_failure_to_execution_result(
+                compile,
+                contract.syntax_phase_key(),
+                contract.compile_phase_key(),
+                contract.compile_fallback_error(),
+            );
+        }
+    };
+
+    let import_roots = collect_import_roots(&parsed.module);
+    let first_blocker = snippet_blockers_from_import_roots(&import_roots, &host)
+        .into_iter()
+        .next();
+    if let Some(blocker) = first_blocker {
+        return WasmExecutionResult {
+            success: false,
+            phase: contract.unsupported_phase_key().to_string(),
+            stdout: String::new(),
+            stderr: blocker.message.clone(),
+            error: Some(blocker.message),
+            blocker_key: Some(blocker.blocker_key),
+            line: 0,
+            column: 0,
+        };
+    }
+
+    if wasm_vm_runtime_enabled() {
+        #[cfg(feature = "wasm-vm-probe")]
+        {
+            return execute_compiled_snippet_with_vm(&parsed.code);
+        }
+    }
+
+    let message = contract.unwired_error_message();
+    WasmExecutionResult {
+        success: false,
+        phase: contract.unsupported_phase_key().to_string(),
+        stdout: String::new(),
+        stderr: message.clone(),
+        error: Some(message),
+        blocker_key: Some(contract.unwired_blocker_key().to_string()),
+        line: 0,
+        column: 0,
+    }
+}
+
 fn snippet_blockers_from_import_roots(
     import_roots: &[String],
     host: &dyn VmHost,
@@ -1903,55 +1961,7 @@ fn runtime_error_line_column(err: &crate::runtime::RuntimeError) -> (usize, usiz
 ///   `phase = "ok"` or `phase = "runtime_error"`.
 #[wasm_bindgen]
 pub fn execute(source: &str) -> WasmExecutionResult {
-    let host = WasmHost;
-    let parsed = match parse_and_compile_snippet(source) {
-        Ok(parsed) => parsed,
-        Err(compile) => {
-            return compile_failure_to_execution_result(
-                compile,
-                WasmExecutionPhase::SyntaxError.key(),
-                WasmExecutionPhase::CompileError.key(),
-                "parse/compile check failed",
-            );
-        }
-    };
-
-    let import_roots = collect_import_roots(&parsed.module);
-    let first_blocker = snippet_blockers_from_import_roots(&import_roots, &host)
-        .into_iter()
-        .next();
-    if let Some(blocker) = first_blocker {
-        return WasmExecutionResult {
-            success: false,
-            phase: WasmExecutionPhase::UnsupportedExecution.key().to_string(),
-            stdout: String::new(),
-            stderr: blocker.message.clone(),
-            error: Some(blocker.message),
-            blocker_key: Some(blocker.blocker_key),
-            line: 0,
-            column: 0,
-        };
-    }
-
-    if wasm_vm_runtime_enabled() {
-        #[cfg(feature = "wasm-vm-probe")]
-        {
-            return execute_compiled_snippet_with_vm(&parsed.code);
-        }
-    }
-
-    let message = wasm_execution_blocker_error(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED)
-        .unwrap_or_else(|| "wasm execution backend is not wired yet".to_string());
-    WasmExecutionResult {
-        success: false,
-        phase: WasmExecutionPhase::UnsupportedExecution.key().to_string(),
-        stdout: String::new(),
-        stderr: message.clone(),
-        error: Some(message),
-        blocker_key: Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
-        line: 0,
-        column: 0,
-    }
+    execute_snippet_with_contract(source, WasmExecutionContractMode::TopLevel)
 }
 
 fn format_parse_error(err: &crate::parser::ParseError) -> String {

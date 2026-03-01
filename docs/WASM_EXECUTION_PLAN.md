@@ -487,6 +487,10 @@ Completed on this branch:
   by `scripts/probe_wasm_vm_compile.sh`; branch/smoke wrapper scripts rely on
   that lane for vm-probe summary artifacts and keep default-summary generation
   local to wrapper scope.
+- latest: top-level `execute()` and `wasm_worker_execute()` now share a single
+  contract-mode execution helper in `src/wasm/mod.rs`, removing duplicated
+  parse/compile/blocker/runtime-probe fallback logic and reducing future
+  drift risk between top-level and worker wasm execution paths.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
