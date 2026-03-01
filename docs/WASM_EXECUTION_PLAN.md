@@ -370,6 +370,8 @@ Completed on this branch:
   source+fixture+docs row-set validation.
 - latest: `WasmRuntimeInfo` now includes explicit `execution_backend`
   (`\"unwired\"`) so clients can branch on backend readiness without message parsing.
+- latest: `WasmWorkerInfo` now includes explicit `backend`
+  (`\"unwired\"`) for worker-readiness branching without inferring from state text.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

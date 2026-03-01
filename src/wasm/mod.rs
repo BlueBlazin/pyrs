@@ -12,6 +12,7 @@ const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired"
 const WASM_EXECUTION_BLOCKER_VM_RUNTIME_UNAVAILABLE: &str = "vm_runtime_unavailable";
 const WASM_WORKER_BLOCKER_RUNTIME_UNWIRED: &str = "worker_runtime_unwired";
 const WASM_WORKER_INTERRUPT_MODEL_RECYCLE: &str = "worker_recycle";
+const WASM_WORKER_BACKEND_UNWIRED: &str = "unwired";
 const WASM_WORKER_TIMEOUT_DEFAULT_MS: u32 = 5_000;
 const WASM_WORKER_TIMEOUT_MIN_MS: u32 = 50;
 const WASM_WORKER_TIMEOUT_MAX_MS: u32 = 120_000;
@@ -347,6 +348,7 @@ pub struct WasmSnippetSupport {
 #[wasm_bindgen(getter_with_clone)]
 pub struct WasmWorkerInfo {
     supported: bool,
+    backend: String,
     state: String,
     interruption_model: String,
     blocker_count: usize,
@@ -599,6 +601,11 @@ impl WasmWorkerInfo {
     #[wasm_bindgen(getter)]
     pub fn supported(&self) -> bool {
         self.supported
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn backend(&self) -> String {
+        self.backend.clone()
     }
 
     #[wasm_bindgen(getter)]
@@ -1167,6 +1174,7 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
     let blockers = worker_blocker_keys();
     WasmWorkerInfo {
         supported: false,
+        backend: WASM_WORKER_BACKEND_UNWIRED.to_string(),
         state: WasmWorkerState::Unwired.key().to_string(),
         interruption_model: WASM_WORKER_INTERRUPT_MODEL_RECYCLE.to_string(),
         blocker_count: blockers.len(),

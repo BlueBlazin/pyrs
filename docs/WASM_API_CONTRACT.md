@@ -106,6 +106,7 @@ This document defines the JS-facing contract currently exported by
 ## `WasmWorkerInfo`
 
 - `supported: bool`
+- `backend: String` (currently `"unwired"`)
 - `state: String` (currently `"unwired"`)
 - `interruption_model: String` (currently `"worker_recycle"`)
 - `blocker_count: usize`

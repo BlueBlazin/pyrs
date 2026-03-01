@@ -76,6 +76,7 @@ fn wasm_execution_phase_keys_are_stable() {
 fn wasm_worker_contract_basics() {
     let info = wasm_worker_info();
     assert!(!info.supported());
+    assert_eq!(info.backend(), "unwired".to_string());
     assert_eq!(info.state(), "unwired");
     assert_eq!(info.interruption_model(), "worker_recycle");
 
