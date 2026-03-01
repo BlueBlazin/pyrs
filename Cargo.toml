@@ -3,6 +3,10 @@ name = "pyrs"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+wasm-vm-probe = []
+
 [dependencies]
 blake2 = "0.10.6"
 hmac = "0.12.1"

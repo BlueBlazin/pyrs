@@ -9,7 +9,7 @@ pub mod extensions;
 pub mod host;
 pub mod parser;
 pub mod runtime;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
 pub mod vm;
 
 #[cfg(target_arch = "wasm32")]

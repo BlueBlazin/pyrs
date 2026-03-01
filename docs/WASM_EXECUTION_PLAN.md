@@ -206,6 +206,9 @@ Branch helper:
 - module-policy summary helper:
   `python3 scripts/generate_wasm_module_policy_summary.py --out perf/wasm_module_policy_summary_latest.json`
   for fixture + source + docs parity on module blocker mappings.
+- vm-compile probe helper (non-gating):
+  `scripts/probe_wasm_vm_compile.sh`
+  to surface current wasm-vm compile blockers under opt-in `wasm-vm-probe`.
 
 ## Merge Decision Rubric
 
@@ -375,6 +378,9 @@ Completed on this branch:
 - latest: optional browser smoke path now runs both wasm integration contract
   tests (`--test wasm_contract`) and wasm lib unit tests (`--lib`) via
   `wasm-pack`.
+- latest: opt-in `wasm-vm-probe` feature + `scripts/probe_wasm_vm_compile.sh`
+  landed to allow explicit wasm-target vm compile probing without changing
+  default native/wasm build paths.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
@@ -385,6 +391,15 @@ Remaining near-term focus:
 1. W3: expand `WasmHost` capability stubs and error contracts for unsupported features.
 2. W4: evolve wasm API from syntax-only to controlled in-memory execution API contract.
 3. Add wasm smoke harness (JS/wasm-bindgen-test or equivalent) without touching native CI gates yet.
+
+Current `wasm-vm-probe` snapshot (non-gating, latest local run):
+- unresolved `crate::cli` import in `src/vm/vm_extensions/cpython_runtime_misc_api.rs`
+  when compiling `vm` on wasm target.
+- unix-only fd/process imports (`AsRawFd`/`FromRawFd`/`IntoRawFd`/`ExitStatusExt`/`UnixStream`)
+  leak into wasm-vm probe surfaces via `src/vm/builtins_io.rs` and
+  `src/vm/builtins_os.rs`.
+- one numeric type mismatch in `src/vm/vm_extensions/cpython_descriptor_method_api.rs`
+  (`PyBool_FromLong` expects `i64`; callsite currently casts to `c_long`).
 
 ## Risk Register
 
