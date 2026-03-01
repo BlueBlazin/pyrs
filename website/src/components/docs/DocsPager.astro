@@ -1,0 +1,106 @@
+---
+import { docsNavGroups } from "../../config/docsNav";
+
+interface Props {
+	path: string;
+}
+
+const { path } = Astro.props;
+
+const normalize = (value: string) => (value.endsWith("/") ? value : `${value}/`);
+const orderedItems = docsNavGroups.flatMap((group) =>
+	group.items.map((item) => ({ ...item, href: normalize(item.href) })),
+);
+const normalizedPath = normalize(path);
+const currentIndex = orderedItems.findIndex((item) => item.href === normalizedPath);
+const prev = currentIndex > 0 ? orderedItems[currentIndex - 1] : null;
+const next = currentIndex >= 0 && currentIndex < orderedItems.length - 1 ? orderedItems[currentIndex + 1] : null;
+---
+
+{
+	(prev || next) && (
+		<nav class="docs-pager" aria-label="Docs page navigation">
+			{prev ? (
+				<a class="pager-link prev" href={prev.href}>
+					<span class="pager-label">Previous</span>
+					<strong>{prev.label}</strong>
+				</a>
+			) : (
+				<span />
+			)}
+			{next && (
+				<a class="pager-link next" href={next.href}>
+					<span class="pager-label">Next</span>
+					<strong>{next.label}</strong>
+				</a>
+			)}
+		</nav>
+	)
+}
+
+<style>
+	.docs-pager {
+		margin-top: 1.7rem;
+		padding-top: 1rem;
+		border-top: 1px solid rgba(48, 56, 74, 0.82);
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.7rem;
+	}
+
+	.pager-link {
+		text-decoration: none;
+		border: 1px solid #2a3347;
+		border-radius: 0.7rem;
+		background: #0f1521;
+		padding: 0.7rem 0.78rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.18rem;
+		transition: background-color 130ms ease, border-color 130ms ease;
+	}
+
+	.pager-link.prev {
+		align-items: flex-start;
+	}
+
+	.pager-link.next {
+		align-items: flex-end;
+		text-align: right;
+	}
+
+	.pager-link:hover {
+		background: #141d2e;
+		border-color: #354866;
+	}
+
+	.pager-link:focus-visible {
+		outline: 2px solid rgba(176, 199, 241, 0.92);
+		outline-offset: 2px;
+	}
+
+	.pager-label {
+		font-size: 0.7rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #9eb0d4;
+		font-weight: 700;
+	}
+
+	.pager-link strong {
+		font-size: 0.9rem;
+		color: #f3f6fb;
+		line-height: 1.35;
+	}
+
+	@media (max-width: 640px) {
+		.docs-pager {
+			grid-template-columns: 1fr;
+		}
+
+		.pager-link.next {
+			align-items: flex-start;
+			text-align: left;
+		}
+	}
+</style>
