@@ -5,7 +5,7 @@ interface Props {
 
 const { context = "home" } = Astro.props;
 const isHome = context === "home";
-const intrinsicLogoSize = isHome ? 68 : 44;
+const intrinsicLogoSize = 68;
 ---
 
 <header class="global-topbar" data-context={context}>
@@ -14,8 +14,8 @@ const intrinsicLogoSize = isHome ? 68 : 44;
 		<span>PYRS</span>
 	</a>
 	<nav class="global-topnav">
-		<a href="https://github.com/BlueBlazin/pyrs">GitHub</a>
 		{context === "home" ? <a href="/docs/">Docs</a> : <a href="/">Home</a>}
+		<a href="https://github.com/BlueBlazin/pyrs">GitHub</a>
 	</nav>
 </header>
 
@@ -40,8 +40,9 @@ const intrinsicLogoSize = isHome ? 68 : 44;
 
 <style>
 	.global-topbar {
-		--logo-size: 44px;
-		--brand-gap: 0.68rem;
+		--home-progress: 0;
+		--logo-size: calc(44px + (1 - var(--home-progress)) * 24px);
+		--brand-gap: calc(0.68rem + (1 - var(--home-progress)) * 0.18rem);
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
@@ -50,8 +51,6 @@ const intrinsicLogoSize = isHome ? 68 : 44;
 
 	.global-topbar[data-context="home"] {
 		--home-progress: 0;
-		--logo-size: calc(44px + (1 - var(--home-progress)) * 24px);
-		--brand-gap: calc(0.68rem + (1 - var(--home-progress)) * 0.18rem);
 	}
 
 	.global-brand {
@@ -108,7 +107,7 @@ const intrinsicLogoSize = isHome ? 68 : 44;
 	}
 
 	@media (max-width: 760px) {
-		.global-topbar[data-context="home"] {
+		.global-topbar {
 			--logo-size: calc(44px + (1 - var(--home-progress)) * 14px);
 		}
 
