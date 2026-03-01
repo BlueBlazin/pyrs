@@ -215,6 +215,11 @@ Completed on this branch:
 - `271b5f9`: wasm runtime init + parser syntax-check bridge.
 - `8f0e5a4`: structured wasm syntax diagnostics surface.
 - `165052c`: stateful wasm session scaffold for syntax checks.
+- `23afc18`: wasm capability-report bridge export.
+- `344098e`: wasm API contract version export.
+- `7fbef01`: structured wasm execute-result contract (syntax/unsupported phases).
+- `e03263e`: capability-key metadata + unsupported-capability helper.
+- `d11b634`: additional VM method-level trace probes routed through host seam.
 
 Remaining near-term focus:
 1. W3: expand `WasmHost` capability stubs and error contracts for unsupported features.
