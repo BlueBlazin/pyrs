@@ -550,6 +550,10 @@ Completed on this branch:
   `WasmWorkerSessionSnapshot` were added for atomic worker telemetry reads;
   snapshot fields are parity-tested against live session getters and documented
   in the wasm API contract.
+- latest: worker state emission now routes through a centralized
+  `current_worker_state*` seam in `src/wasm/mod.rs` so worker info/lifecycle
+  timeout/execute-with-operation surfaces stay state-consistent as backend
+  wiring evolves.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

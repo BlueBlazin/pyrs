@@ -264,6 +264,16 @@ fn worker_timeout_phase_keys() -> Vec<&'static str> {
         .collect()
 }
 
+fn current_worker_state() -> WasmWorkerState {
+    // Worker runtime backend is still unwired; centralizing state mapping keeps
+    // future worker backend transitions isolated to one seam.
+    WasmWorkerState::Unwired
+}
+
+fn current_worker_state_key() -> String {
+    current_worker_state().key().to_string()
+}
+
 /// Minimal WASM bridge surface used during compile-isolation bring-up.
 #[wasm_bindgen]
 pub fn pyrs_version() -> String {
@@ -1362,7 +1372,7 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
     WasmWorkerInfo {
         supported: false,
         backend: WASM_WORKER_BACKEND_UNWIRED.to_string(),
-        state: WasmWorkerState::Unwired.key().to_string(),
+        state: current_worker_state_key(),
         interruption_model: WASM_WORKER_INTERRUPT_MODEL_RECYCLE.to_string(),
         blocker_count: blockers.len(),
     }
@@ -1398,7 +1408,7 @@ pub fn wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult {
             success: false,
             operation_id: next_worker_operation_id("set_timeout"),
             phase: WasmWorkerTimeoutPhase::InvalidTimeout.key().to_string(),
-            state: WasmWorkerState::Unwired.key().to_string(),
+            state: current_worker_state_key(),
             timeout_ms,
             error: Some(format!(
                 "worker timeout must be between {} and {} ms",
@@ -1417,7 +1427,7 @@ pub fn wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult {
         phase: WasmWorkerTimeoutPhase::UnsupportedEnforcement
             .key()
             .to_string(),
-        state: WasmWorkerState::Unwired.key().to_string(),
+        state: current_worker_state_key(),
         timeout_ms,
         error: Some(message),
         blocker_key: Some(blocker_key),
@@ -1492,7 +1502,7 @@ fn worker_unwired_result(phase: WasmWorkerLifecyclePhase) -> WasmWorkerLifecycle
         success: false,
         operation_id: next_worker_operation_id(action),
         phase: phase.key().to_string(),
-        state: WasmWorkerState::Unwired.key().to_string(),
+        state: current_worker_state_key(),
         error: Some(message),
         blocker_key: Some(blocker_key),
     }
@@ -1549,7 +1559,7 @@ pub fn wasm_worker_execute_with_operation(source: &str) -> WasmWorkerExecutionRe
         operation_id: next_worker_operation_id("execute"),
         success: result.success,
         phase: result.phase,
-        state: WasmWorkerState::Unwired.key().to_string(),
+        state: current_worker_state_key(),
         stdout: result.stdout,
         stderr: result.stderr,
         error: result.error,
