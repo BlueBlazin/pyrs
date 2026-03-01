@@ -3,6 +3,7 @@ name: website-pages
 on:
   push:
     branches:
+      - master
       - main
     paths:
       - "website/**"
