@@ -197,6 +197,9 @@ Branch helper:
 - host seam audit helper:
   `python3 scripts/audit_wasm_host_seam.py --out perf/wasm_host_seam_audit_latest.json`
   for tracking remaining direct `std::env` usage under `src/vm`.
+- execute-contract summary helper:
+  `python3 scripts/generate_wasm_execute_contract_summary.py --out perf/wasm_execute_contract_summary_latest.json`
+  for fixture-driven execute phase/blocker consistency.
 
 ## Merge Decision Rubric
 
@@ -351,6 +354,9 @@ Completed on this branch:
 - latest: branch/smoke scripts now compile wasm-target lib unit tests with
   `cargo test --target wasm32-unknown-unknown --lib --no-run` to keep
   `src/wasm/mod.rs` contract unit checks in the local gate path.
+- latest: execute-contract fixture summaries are now generated via
+  `scripts/generate_wasm_execute_contract_summary.py` and enforced in
+  branch/smoke scripts (`perf/wasm_execute_contract_summary_latest.json`).
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).
