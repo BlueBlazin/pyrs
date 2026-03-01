@@ -449,6 +449,9 @@ Completed on this branch:
   `cfg_attr(not(target_arch = "wasm32"), link(name = ...))` in
   `bz2`/`lzma`/`sqlite3`/`zlib`, so `wasm-vm-probe` can compile and wasm
   lib test link lanes no longer fail on missing `-lbz2/-llzma/-lsqlite3/-lz`.
+- latest: both local wasm gate entrypoints (`check_wasm_branch.sh` and
+  `run_wasm_contract_smoke.sh`) now execute `probe_wasm_vm_compile.sh`, so
+  wasm vm-probe compile + lib-test link lanes are always exercised.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

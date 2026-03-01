@@ -10,6 +10,9 @@ cargo check --target wasm32-unknown-unknown --test wasm_contract
 echo "[wasm-contract] cargo test wasm lib unit harness (compile-only)"
 cargo test --target wasm32-unknown-unknown --lib --no-run
 
+echo "[wasm-contract] wasm vm probe lane"
+scripts/probe_wasm_vm_compile.sh
+
 echo "[wasm-contract] wasm worker contract summary snapshot"
 python3 scripts/generate_wasm_worker_contract_summary.py \
   --out perf/wasm_worker_contract_summary_latest.json
