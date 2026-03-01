@@ -85,12 +85,36 @@ pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[
         expected_blocker_key: None,
     },
     WasmWorkerTimeoutFixture {
-        name: "worker_timeout_unwired_valid_range",
+        name: "worker_timeout_unwired_min",
+        timeout_ms: 50,
+        expected_phase: "unsupported_worker_timeout_enforcement",
+        expected_state: "unwired",
+        expected_success: false,
+        expected_blocker_key: Some("worker_runtime_unwired"),
+    },
+    WasmWorkerTimeoutFixture {
+        name: "worker_timeout_unwired_default",
         timeout_ms: 5_000,
         expected_phase: "unsupported_worker_timeout_enforcement",
         expected_state: "unwired",
         expected_success: false,
         expected_blocker_key: Some("worker_runtime_unwired"),
+    },
+    WasmWorkerTimeoutFixture {
+        name: "worker_timeout_unwired_max",
+        timeout_ms: 120_000,
+        expected_phase: "unsupported_worker_timeout_enforcement",
+        expected_state: "unwired",
+        expected_success: false,
+        expected_blocker_key: Some("worker_runtime_unwired"),
+    },
+    WasmWorkerTimeoutFixture {
+        name: "worker_timeout_invalid_high",
+        timeout_ms: 120_001,
+        expected_phase: "invalid_worker_timeout",
+        expected_state: "unwired",
+        expected_success: false,
+        expected_blocker_key: None,
     },
 ];
 

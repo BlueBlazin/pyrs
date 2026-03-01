@@ -134,6 +134,22 @@ fn wasm_worker_timeout_set_contract_is_stable() {
             "worker timeout error should be populated: {}",
             fixture.name
         );
+        let message = result
+            .error()
+            .expect("worker timeout error message should be populated");
+        if fixture.expected_phase == "invalid_worker_timeout" {
+            assert!(
+                message.contains("between"),
+                "invalid timeout error should include range details: {}",
+                fixture.name
+            );
+        } else {
+            assert!(
+                message.contains("not wired"),
+                "unsupported timeout error should include unwired details: {}",
+                fixture.name
+            );
+        }
     }
 }
 
@@ -350,12 +366,27 @@ fn wasm_worker_session_contract_is_stable() {
     );
     assert!(session.last_error().is_some());
 
+    let invalid_timeout = session.set_timeout_ms(0);
+    assert_eq!(
+        invalid_timeout.phase(),
+        "invalid_worker_timeout".to_string()
+    );
+    assert_eq!(session.timeout_updates_requested(), 1);
+    assert_eq!(session.last_timeout_ms_requested(), Some(0));
+    assert_eq!(
+        session
+            .last_phase()
+            .expect("last phase after worker timeout update should exist"),
+        "invalid_worker_timeout".to_string()
+    );
+    assert!(session.last_error().is_some());
+
     let timeout = session.set_timeout_ms(5_000);
     assert_eq!(
         timeout.phase(),
         "unsupported_worker_timeout_enforcement".to_string()
     );
-    assert_eq!(session.timeout_updates_requested(), 1);
+    assert_eq!(session.timeout_updates_requested(), 2);
     assert_eq!(session.last_timeout_ms_requested(), Some(5_000));
     assert_eq!(
         session
