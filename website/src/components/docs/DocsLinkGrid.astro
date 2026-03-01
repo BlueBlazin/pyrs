@@ -15,7 +15,7 @@ interface Props {
 const { items, class: className } = Astro.props;
 ---
 
-<div class={cn("docs-link-grid", className)}>
+<div class={cn("docs-block docs-link-grid", className)}>
 	{
 		items.map((item) => (
 			<a class="docs-link-card" href={item.href}>

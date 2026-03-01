@@ -15,10 +15,33 @@ const { title, id, class: className } = Astro.props;
 	<div
 		class={cn(
 			title ? "mt-3" : "",
-			"space-y-3 text-docs-muted leading-7 text-[0.97rem]",
+			"doc-section-body text-docs-muted leading-7 text-[0.97rem]",
 			"[&>p]:m-0 [&>ul]:m-0 [&>ol]:m-0 [&>h3]:m-0 [&>h4]:m-0 [&>pre]:m-0",
 		)}
 	>
 		<slot />
 	</div>
 </section>
+
+<style>
+	.doc-section-body > * + * {
+		margin-top: 1rem;
+	}
+
+	.doc-section-body > .docs-block {
+		margin-top: 1.5rem;
+	}
+
+	.doc-section-body > .docs-block + .docs-block {
+		margin-top: 1.5rem;
+	}
+
+	.doc-section-body > :is(h3, h4) + * {
+		margin-top: 0.72rem;
+	}
+
+	.doc-section-body > p + .docs-list,
+	.doc-section-body > .docs-list + p {
+		margin-top: 0.9rem;
+	}
+</style>

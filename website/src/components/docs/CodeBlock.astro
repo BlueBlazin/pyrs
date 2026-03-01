@@ -10,7 +10,7 @@ interface Props {
 const { code, label = "Code", class: className } = Astro.props;
 ---
 
-<div class={cn("code-block overflow-hidden rounded-xl border border-[#2a3345] bg-[#0b1019]", className)}>
+<div class={cn("docs-block code-block overflow-hidden rounded-xl border border-[#2a3345] bg-[#0b1019]", className)}>
 	<div
 		class="border-b border-[#1f293a] bg-[linear-gradient(180deg,#111b2e_0%,#0b1423_100%)] px-4 py-2.5 text-[0.67rem] font-semibold uppercase tracking-[0.16em] text-[#b6c5e2]"
 	>
