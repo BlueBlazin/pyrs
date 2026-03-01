@@ -15,11 +15,28 @@ CONST_RE_TEMPLATE = r"pub const {name}:[^=]*=\s*&\[(.*?)\];"
 
 @dataclass
 class WorkerExecuteFixtureRow:
+    name: str
     phase: str
     blocker_key: str | None
     vm_probe_phase: str | None
     vm_probe_blocker_key: str | None
     has_vm_probe_blocker_override: bool
+    expect_error: bool
+    vm_probe_expect_error: bool | None
+    expected_success: bool
+    vm_probe_success: bool | None
+    expect_line_column: bool
+    vm_probe_expect_line_column: bool | None
+
+
+@dataclass
+class WorkerExecuteExpectation:
+    name: str
+    phase: str
+    blocker_key: str | None
+    expect_error: bool
+    expected_success: bool
+    expect_line_column: bool
 
 
 def parse_const_body(source: str, const_name: str) -> str:
@@ -99,12 +116,36 @@ def parse_optional_optional_string_field(body: str, field: str) -> tuple[bool, s
     )
 
 
+def parse_required_bool_field(body: str, field: str) -> bool:
+    true_match = re.search(rf"{re.escape(field)}:\s*true", body)
+    if true_match:
+        return True
+    false_match = re.search(rf"{re.escape(field)}:\s*false", body)
+    if false_match:
+        return False
+    raise ValueError(f"missing required bool field '{field}'")
+
+
+def parse_optional_bool_field(body: str, field: str) -> bool | None:
+    true_match = re.search(rf"{re.escape(field)}:\s*Some\(\s*true\s*\)", body)
+    if true_match:
+        return True
+    false_match = re.search(rf"{re.escape(field)}:\s*Some\(\s*false\s*\)", body)
+    if false_match:
+        return False
+    none_match = re.search(rf"{re.escape(field)}:\s*None", body)
+    if none_match:
+        return None
+    raise ValueError(f"missing optional bool field '{field}' with Some(bool) or None")
+
+
 def parse_worker_execute_fixture_rows(source: str) -> list[WorkerExecuteFixtureRow]:
     body = parse_const_body(source, "WASM_WORKER_EXECUTE_FIXTURES")
     pattern = re.compile(r"WasmWorkerExecuteFixture\s*\{(.*?)\n\s*\},", re.DOTALL)
     rows: list[WorkerExecuteFixtureRow] = []
     for match in pattern.finditer(body):
         row_body = match.group(1)
+        name = parse_required_string_field(row_body, "name")
         phase = parse_required_string_field(row_body, "expected_phase")
         blocker_key = parse_optional_string_field(row_body, "expected_blocker_key")
         vm_probe_phase = parse_optional_string_field(row_body, "expected_vm_probe_phase")
@@ -112,13 +153,28 @@ def parse_worker_execute_fixture_rows(source: str) -> list[WorkerExecuteFixtureR
             has_vm_probe_blocker_override,
             vm_probe_blocker_key,
         ) = parse_optional_optional_string_field(row_body, "expected_vm_probe_blocker_key")
+        expect_error = parse_required_bool_field(row_body, "expect_error")
+        vm_probe_expect_error = parse_optional_bool_field(row_body, "expected_vm_probe_expect_error")
+        expected_success = parse_required_bool_field(row_body, "expected_success")
+        vm_probe_success = parse_optional_bool_field(row_body, "expected_vm_probe_success")
+        expect_line_column = parse_required_bool_field(row_body, "expect_line_column")
+        vm_probe_expect_line_column = parse_optional_bool_field(
+            row_body, "expected_vm_probe_expect_line_column"
+        )
         rows.append(
             WorkerExecuteFixtureRow(
+                name=name,
                 phase=phase,
                 blocker_key=blocker_key,
                 vm_probe_phase=vm_probe_phase,
                 vm_probe_blocker_key=vm_probe_blocker_key,
                 has_vm_probe_blocker_override=has_vm_probe_blocker_override,
+                expect_error=expect_error,
+                vm_probe_expect_error=vm_probe_expect_error,
+                expected_success=expected_success,
+                vm_probe_success=vm_probe_success,
+                expect_line_column=expect_line_column,
+                vm_probe_expect_line_column=vm_probe_expect_line_column,
             )
         )
     return rows
@@ -126,15 +182,31 @@ def parse_worker_execute_fixture_rows(source: str) -> list[WorkerExecuteFixtureR
 
 def effective_worker_execute_expectation(
     row: WorkerExecuteFixtureRow, vm_probe_enabled: bool
-) -> tuple[str, str | None]:
+) -> WorkerExecuteExpectation:
     phase = row.phase
     blocker_key = row.blocker_key
+    expect_error = row.expect_error
+    expected_success = row.expected_success
+    expect_line_column = row.expect_line_column
     if vm_probe_enabled:
         if row.vm_probe_phase is not None:
             phase = row.vm_probe_phase
         if row.has_vm_probe_blocker_override:
             blocker_key = row.vm_probe_blocker_key
-    return phase, blocker_key
+        if row.vm_probe_expect_error is not None:
+            expect_error = row.vm_probe_expect_error
+        if row.vm_probe_success is not None:
+            expected_success = row.vm_probe_success
+        if row.vm_probe_expect_line_column is not None:
+            expect_line_column = row.vm_probe_expect_line_column
+    return WorkerExecuteExpectation(
+        name=row.name,
+        phase=phase,
+        blocker_key=blocker_key,
+        expect_error=expect_error,
+        expected_success=expected_success,
+        expect_line_column=expect_line_column,
+    )
 
 
 def unique(values: list[str]) -> list[str]:
@@ -313,12 +385,11 @@ def main() -> int:
         fixture_source, "WASM_WORKER_LIFECYCLE_FIXTURES"
     )
     execute_rows = parse_worker_execute_fixture_rows(fixture_source)
-    execute_fixture_phases = [
-        effective_worker_execute_expectation(row, args.vm_probe)[0] for row in execute_rows
+    execute_effective_expectations = [
+        effective_worker_execute_expectation(row, args.vm_probe) for row in execute_rows
     ]
-    execute_blocker_keys = [
-        effective_worker_execute_expectation(row, args.vm_probe)[1] for row in execute_rows
-    ]
+    execute_fixture_phases = [row.phase for row in execute_effective_expectations]
+    execute_blocker_keys = [row.blocker_key for row in execute_effective_expectations]
     timeout_fixture_phases = parse_expected_phases(
         fixture_source, "WASM_WORKER_TIMEOUT_FIXTURES"
     )
@@ -488,20 +559,56 @@ def main() -> int:
             f"'{source_worker_blocker_key}'"
         )
 
-    if len(execute_fixture_phases) != len(execute_blocker_keys):
+    if len(execute_effective_expectations) != len(execute_blocker_keys):
         errors.append("worker execute fixture phase/blocker row count mismatch")
     else:
-        for phase, blocker_key in zip(execute_fixture_phases, execute_blocker_keys, strict=True):
+        for row in execute_effective_expectations:
+            phase = row.phase
+            blocker_key = row.blocker_key
             if phase == "unsupported_worker_execution":
                 if blocker_key not in allowed_execute_unsupported_blocker_keys:
                     errors.append(
-                        "worker execute unsupported phase must use an allowed blocker key "
-                        f"{allowed_execute_unsupported_blocker_keys}"
+                        f"{row.name}: worker execute unsupported phase must use an allowed "
+                        f"blocker key {allowed_execute_unsupported_blocker_keys}"
                     )
             elif blocker_key is not None:
                 errors.append(
-                    f"worker execute phase '{phase}' must not set expected_blocker_key"
+                    f"{row.name}: worker execute phase '{phase}' must not set expected_blocker_key"
                 )
+
+            if phase == "ok":
+                if not row.expected_success:
+                    errors.append(f"{row.name}: phase 'ok' must set expected_success=true")
+                if row.expect_error:
+                    errors.append(f"{row.name}: phase 'ok' must set expect_error=false")
+                if row.expect_line_column:
+                    errors.append(
+                        f"{row.name}: phase 'ok' must set expect_line_column=false"
+                    )
+            elif phase in {"syntax_error", "compile_error", "runtime_error"}:
+                if row.expected_success:
+                    errors.append(
+                        f"{row.name}: phase '{phase}' must set expected_success=false"
+                    )
+                if not row.expect_error:
+                    errors.append(f"{row.name}: phase '{phase}' must set expect_error=true")
+                if not row.expect_line_column:
+                    errors.append(
+                        f"{row.name}: phase '{phase}' must set expect_line_column=true"
+                    )
+            elif phase == "unsupported_worker_execution":
+                if row.expected_success:
+                    errors.append(
+                        f"{row.name}: unsupported phase must set expected_success=false"
+                    )
+                if not row.expect_error:
+                    errors.append(
+                        f"{row.name}: unsupported phase must set expect_error=true"
+                    )
+                if row.expect_line_column:
+                    errors.append(
+                        f"{row.name}: unsupported phase must set expect_line_column=false"
+                    )
     execute_fixture_phase_set = unique(execute_fixture_phases)
     if set(execute_fixture_phase_set) != set(source_execute_phase_keys):
         errors.append(
@@ -539,6 +646,17 @@ def main() -> int:
         "timeout_phase_keys": timeout_phase_keys,
         "worker_blocker_keys": worker_blocker_keys,
         "execute_fixture_phases": execute_fixture_phase_set,
+        "execute_effective_rows": [
+            {
+                "name": row.name,
+                "phase": row.phase,
+                "blocker_key": row.blocker_key,
+                "expect_error": row.expect_error,
+                "expected_success": row.expected_success,
+                "expect_line_column": row.expect_line_column,
+            }
+            for row in execute_effective_expectations
+        ],
         "source_key_sets": {
             "state": source_state_keys,
             "lifecycle_phase": source_lifecycle_phase_keys,

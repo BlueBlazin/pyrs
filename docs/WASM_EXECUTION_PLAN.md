@@ -498,6 +498,9 @@ Completed on this branch:
 - latest: feature-gated native wasm unit tests now also assert vm-probe
   runtime-error contracts for top-level and worker execution (`1 / 0` =>
   `phase = "runtime_error"`, no blocker key, populated line/column).
+- latest: `generate_wasm_worker_contract_summary.py` now validates effective
+  worker execute contract semantics (success/error/line-column) per phase in
+  both default and vm-probe modes, not just phase/blocker-key parity.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
