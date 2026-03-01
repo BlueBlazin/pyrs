@@ -6467,15 +6467,6 @@ fn uuid_hash_mix_bytes(tag: u8, namespace: [u8; 16], name: &[u8]) -> [u8; 16] {
     bytes
 }
 
-fn uuid_node_from_hostname() -> i64 {
-    let mut hasher = DefaultHasher::new();
-    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string());
-    host.hash(&mut hasher);
-    let mut node = hasher.finish() & 0x0000_FFFF_FFFF_FFFF;
-    node |= 0x0000_0100_0000_0000;
-    node as i64
-}
-
 fn uuid_timestamp_100ns_since_gregorian() -> Result<u64, RuntimeError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
