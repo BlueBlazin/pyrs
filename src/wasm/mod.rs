@@ -7,6 +7,16 @@ use wasm_bindgen::prelude::*;
 pub const WASM_API_VERSION: u32 = 1;
 const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired";
 
+fn execution_blocker_keys(host: &dyn VmHost) -> Vec<&'static str> {
+    let mut keys = vec![WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED];
+    for capability in HostCapability::all() {
+        if !host.supports(*capability) {
+            keys.push(capability.key());
+        }
+    }
+    keys
+}
+
 /// Minimal WASM bridge surface used during compile-isolation bring-up.
 #[wasm_bindgen]
 pub fn pyrs_version() -> String {
@@ -222,6 +232,12 @@ pub struct WasmCapabilityReport {
     network_sockets: bool,
 }
 
+#[wasm_bindgen(getter_with_clone)]
+pub struct WasmExecutionBlocker {
+    key: String,
+    message: String,
+}
+
 #[wasm_bindgen]
 impl WasmCapabilityReport {
     #[wasm_bindgen(getter)]
@@ -262,6 +278,19 @@ impl WasmCapabilityReport {
     #[wasm_bindgen(getter)]
     pub fn network_sockets(&self) -> bool {
         self.network_sockets
+    }
+}
+
+#[wasm_bindgen]
+impl WasmExecutionBlocker {
+    #[wasm_bindgen(getter)]
+    pub fn key(&self) -> String {
+        self.key.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn message(&self) -> String {
+        self.message.clone()
     }
 }
 
@@ -313,9 +342,28 @@ pub fn wasm_runtime_info() -> WasmRuntimeInfo {
 /// Returns canonical blocker keys that currently prevent wasm execution.
 #[wasm_bindgen]
 pub fn wasm_execution_blocker_keys() -> Array {
+    let host = WasmHost;
     let keys = Array::new();
-    keys.push(&JsValue::from_str(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED));
+    for key in execution_blocker_keys(&host) {
+        keys.push(&JsValue::from_str(key));
+    }
     keys
+}
+
+/// Returns key+message entries for known execution blockers.
+#[wasm_bindgen]
+pub fn wasm_execution_blockers() -> Array {
+    let host = WasmHost;
+    let blockers = Array::new();
+    for key in execution_blocker_keys(&host) {
+        let message = wasm_execution_blocker_error(key)
+            .unwrap_or_else(|| "unknown wasm execution blocker".to_string());
+        blockers.push(&JsValue::from(WasmExecutionBlocker {
+            key: key.to_string(),
+            message,
+        }));
+    }
+    blockers
 }
 
 /// Returns a stable blocker message for wasm execution blockers.

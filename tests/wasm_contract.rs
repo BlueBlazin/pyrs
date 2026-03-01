@@ -2,10 +2,11 @@
 
 use pyrs::wasm::{
     WasmSession, check_compile_result, check_syntax_result, execute, wasm_api_version,
-    wasm_capabilities,
+    wasm_capabilities, wasm_execution_blockers,
     wasm_capability_error, wasm_capability_keys, wasm_execution_blocker_error,
     wasm_execution_blocker_keys, wasm_runtime_info,
 };
+use js_sys::Reflect;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -55,9 +56,33 @@ fn wasm_execution_blocker_contract_is_stable() {
         listed_keys.push(key);
     }
     assert!(listed_keys.contains(&"execution_backend_unwired".to_string()));
+    assert!(listed_keys.contains(&"filesystem_read".to_string()));
     let err = wasm_execution_blocker_error("execution_backend_unwired")
         .expect("backend blocker should have error");
     assert!(err.contains("not wired"));
+    let fs_err =
+        wasm_execution_blocker_error("filesystem_read").expect("filesystem_read should be blocked");
+    assert!(fs_err.contains("filesystem_read"));
+
+    let blockers = wasm_execution_blockers();
+    assert!(blockers.length() >= 2);
+    let mut saw_backend = false;
+    for index in 0..blockers.length() {
+        let blocker = blockers.get(index);
+        let key = Reflect::get(&blocker, &"key".into())
+            .expect("blocker.key")
+            .as_string()
+            .expect("blocker.key as string");
+        let message = Reflect::get(&blocker, &"message".into())
+            .expect("blocker.message")
+            .as_string()
+            .expect("blocker.message as string");
+        if key == "execution_backend_unwired" {
+            assert!(message.contains("not wired"));
+            saw_backend = true;
+        }
+    }
+    assert!(saw_backend);
 }
 
 #[wasm_bindgen_test]

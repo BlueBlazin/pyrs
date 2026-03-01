@@ -263,8 +263,10 @@ Completed on this branch:
 - `5811498`: host-routed depth-limit config in `vm_builtin_metadata` and host-adapter profile env reads in `pickle`.
 - `8ecb0f5`: audit script now reports actionable-vs-allowlisted hits for central seam internals.
 - `c86b20c`: wasm execution blocker contract exports (`keys + error`) and execute-path error wiring.
-- latest: wasm parse+compile contract for `execute()`/`check_compile(_result)` with explicit
+- `508317e`: wasm parse+compile contract for `execute()`/`check_compile(_result)` with explicit
   `compile_error` phase while runtime execution remains unwired.
+- latest: structured execution-blocker export (`wasm_execution_blockers`) now includes
+  backend + unsupported capability blockers as key/message entries.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=3`).

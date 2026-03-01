@@ -33,6 +33,12 @@ This document defines the JS-facing contract currently exported by
   - Returns explicit browser capability matrix.
 - `wasm_capability_error(capability_key: &str) -> Option<String>`
   - Returns unsupported-capability message for known keys.
+- `wasm_execution_blocker_keys() -> Array`
+  - Returns canonical blocker keys for execution in browser mode.
+- `wasm_execution_blocker_error(blocker_key: &str) -> Option<String>`
+  - Returns stable blocker message for known execution blockers.
+- `wasm_execution_blockers() -> Array`
+  - Returns structured blocker entries (`key` + `message`).
 
 ## Exported Types
 
@@ -76,6 +82,11 @@ This document defines the JS-facing contract currently exported by
 - `dynamic_library_load: bool`
 - `interactive_terminal: bool`
 - `network_sockets: bool`
+
+## `WasmExecutionBlocker`
+
+- `key: String`
+- `message: String`
 
 ## `WasmSession`
 
