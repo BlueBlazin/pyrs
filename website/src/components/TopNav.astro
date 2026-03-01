@@ -4,11 +4,12 @@ interface Props {
 }
 
 const { context = "home" } = Astro.props;
+const logoSize = context === "home" ? 48 : 44;
 ---
 
 <header class="global-topbar">
 	<a class="global-brand" href="/">
-		<img src="/images/pyrs-logo.png" alt="PYRS logo" width="40" height="40" />
+		<img src="/images/pyrs-logo.png" alt="PYRS logo" width={logoSize} height={logoSize} />
 		<span>PYRS</span>
 	</a>
 	<nav class="global-topnav">
