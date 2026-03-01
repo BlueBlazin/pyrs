@@ -1282,17 +1282,17 @@ impl Vm {
             .sys_str_value("base_exec_prefix")
             .filter(|text| !text.is_empty())
             .unwrap_or_else(|| exec_prefix.clone());
-        let cc = std::env::var("CC").unwrap_or_else(|_| {
+        let cc = self.host.env_var("CC").unwrap_or_else(|| {
             if cfg!(target_os = "windows") {
                 "cl".to_string()
             } else {
                 "cc".to_string()
             }
         });
-        let cflags = std::env::var("CFLAGS").unwrap_or_default();
-        let cppflags = std::env::var("CPPFLAGS").unwrap_or_default();
-        let ldflags = std::env::var("LDFLAGS").unwrap_or_default();
-        let ldshared = std::env::var("LDSHARED").unwrap_or_else(|_| {
+        let cflags = self.host.env_var("CFLAGS").unwrap_or_default();
+        let cppflags = self.host.env_var("CPPFLAGS").unwrap_or_default();
+        let ldflags = self.host.env_var("LDFLAGS").unwrap_or_default();
+        let ldshared = self.host.env_var("LDSHARED").unwrap_or_else(|| {
             if cfg!(target_os = "macos") {
                 format!("{cc} -bundle -undefined dynamic_lookup")
             } else if cfg!(target_os = "windows") {
@@ -1301,22 +1301,25 @@ impl Vm {
                 format!("{cc} -shared")
             }
         });
-        let bldshared = std::env::var("BLDSHARED").unwrap_or_else(|_| ldshared.clone());
-        let ar = std::env::var("AR").unwrap_or_else(|_| {
+        let bldshared = self
+            .host
+            .env_var("BLDSHARED")
+            .unwrap_or_else(|| ldshared.clone());
+        let ar = self.host.env_var("AR").unwrap_or_else(|| {
             if cfg!(target_os = "windows") {
                 "lib".to_string()
             } else {
                 "ar".to_string()
             }
         });
-        let arflags = std::env::var("ARFLAGS").unwrap_or_else(|_| {
+        let arflags = self.host.env_var("ARFLAGS").unwrap_or_else(|| {
             if cfg!(target_os = "windows") {
                 "/NOLOGO".to_string()
             } else {
                 "rcs".to_string()
             }
         });
-        let ccshared = std::env::var("CCSHARED").unwrap_or_else(|_| {
+        let ccshared = self.host.env_var("CCSHARED").unwrap_or_else(|| {
             if cfg!(target_os = "windows") {
                 "/LD".to_string()
             } else {
@@ -8307,7 +8310,7 @@ impl Vm {
     }
 
     pub(super) fn unregister_module(&mut self, name: &str) {
-        if std::env::var_os("PYRS_TRACE_NUMPY_MODULE_REG").is_some()
+        if self.host.env_var_os("PYRS_TRACE_NUMPY_MODULE_REG").is_some()
             && (name == "numpy._core" || name == "numpy._core._multiarray_umath")
         {
             eprintln!(
@@ -8323,7 +8326,7 @@ impl Vm {
                     .join(" <- ")
             );
         }
-        if std::env::var_os("PYRS_TRACE_MODULE_CTYPES").is_some()
+        if self.host.env_var_os("PYRS_TRACE_MODULE_CTYPES").is_some()
             && (name == "ctypes" || name == "_ctypes")
         {
             eprintln!(
@@ -8525,7 +8528,7 @@ impl Vm {
                 return;
             }
         }
-        if std::env::var_os("PYRS_TRACE_NUMPY_MODULE_REG").is_some()
+        if self.host.env_var_os("PYRS_TRACE_NUMPY_MODULE_REG").is_some()
             && (name == "numpy._core" || name == "numpy._core._multiarray_umath")
         {
             let previous = self.modules.get(name).map(|existing| existing.id());
@@ -8544,7 +8547,7 @@ impl Vm {
                     .join(" <- ")
             );
         }
-        if std::env::var_os("PYRS_TRACE_MODULE_CTYPES").is_some()
+        if self.host.env_var_os("PYRS_TRACE_MODULE_CTYPES").is_some()
             && (name == "ctypes" || name == "_ctypes")
         {
             eprintln!(
@@ -9022,7 +9025,7 @@ impl Vm {
     }
 
     pub(super) fn load_module(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
-        if std::env::var_os("PYRS_TRACE_MODULE_LOAD").is_some() {
+        if self.host.env_var_os("PYRS_TRACE_MODULE_LOAD").is_some() {
             eprintln!("[module-load] {name}");
         }
         if let Some(module) = self.modules.get(name).cloned() {
@@ -9202,7 +9205,7 @@ impl Vm {
                         let source_path = PathBuf::from(source_path_from_cache_path(
                             &source_info.path.to_string_lossy(),
                         ));
-                        if std::env::var_os("PYRS_IMPORT_PERF_VERBOSE").is_some() {
+                        if self.host.env_var_os("PYRS_IMPORT_PERF_VERBOSE").is_some() {
                             eprintln!(
                                 "[import-perf] pyc-fallback module={name} pyc={} source={} source_exists={} reason={}",
                                 source_info.path.display(),
@@ -9385,7 +9388,7 @@ impl Vm {
     }
 
     fn try_make_cpython_file_finder_importer(&mut self, root: &std::path::Path) -> Option<Value> {
-        let trace = std::env::var_os("PYRS_TRACE_FILE_FINDER_HOOK").is_some();
+        let trace = self.host.env_var_os("PYRS_TRACE_FILE_FINDER_HOOK").is_some();
         let machinery = if let Some(module) = self.modules.get("importlib.machinery").cloned() {
             module
         } else if let Some(modules_dict) = self.sys_dict_obj("modules") {
@@ -9548,7 +9551,7 @@ impl Vm {
     }
 
     pub(super) fn make_file_finder_importer(&mut self, root: &std::path::Path) -> Value {
-        let trace = std::env::var_os("PYRS_TRACE_FILE_FINDER_HOOK").is_some();
+        let trace = self.host.env_var_os("PYRS_TRACE_FILE_FINDER_HOOK").is_some();
         if let Some(importer) = self.try_make_cpython_file_finder_importer(root) {
             if trace {
                 eprintln!(
@@ -9894,7 +9897,7 @@ impl Vm {
             Object::Module(module) => module.name.clone(),
             _ => return Ok(None),
         };
-        if std::env::var_os("PYRS_TRACE_SUBMODULE").is_some() {
+        if self.host.env_var_os("PYRS_TRACE_SUBMODULE").is_some() {
             let seen = SUBMODULE_TRACE_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
             if seen < 200 {
                 eprintln!("[submodule] parent={parent_name} attr={attr_name}");
@@ -10535,7 +10538,7 @@ impl Vm {
         failed_name: &str,
         existing_modules: &HashSet<String>,
     ) {
-        let trace_cleanup = std::env::var_os("PYRS_TRACE_IMPORT_CLEANUP").is_some();
+        let trace_cleanup = self.host.env_var_os("PYRS_TRACE_IMPORT_CLEANUP").is_some();
         let failed_prefix = format!("{failed_name}.");
         let failed_new_modules: Vec<String> = self
             .modules
@@ -10667,7 +10670,7 @@ impl Vm {
         name: &str,
         caller_depth: usize,
     ) -> Result<Option<ObjRef>, RuntimeError> {
-        let trace_meta_path = std::env::var_os("PYRS_TRACE_META_PATH").is_some();
+        let trace_meta_path = self.host.env_var_os("PYRS_TRACE_META_PATH").is_some();
         let Some(meta_path_obj) = self.sys_list_obj("meta_path") else {
             return Ok(None);
         };
