@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@plugin "@tailwindcss/typography";
+
+@theme {
+	--color-docs-bg: #090b11;
+	--color-docs-surface: #0f131c;
+	--color-docs-line: #242936;
+	--color-docs-text: #f3f6fb;
+	--color-docs-muted: #a5aec0;
+}
+
+@layer base {
+	*,
+	*::before,
+	*::after {
+		box-sizing: border-box;
+	}
+}

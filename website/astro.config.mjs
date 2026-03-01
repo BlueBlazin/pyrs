@@ -1,5 +1,6 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
+import mdx from '@astrojs/mdx';
 
 // https://astro.build/config
 const astroBase = process.env.ASTRO_BASE || '/';
@@ -9,4 +10,5 @@ export default defineConfig({
 	site: astroSite,
 	base: astroBase,
 	output: 'static',
+	integrations: [mdx()],
 });
