@@ -1,0 +1,71 @@
+---
+import TopNav from "../components/TopNav.astro";
+import SiteHead from "../components/SiteHead.astro";
+import "../styles/global.css";
+
+interface Props {
+	title: string;
+	description: string;
+}
+
+const { title, description } = Astro.props;
+---
+
+<html lang="en">
+	<head>
+		<SiteHead title={title} description={description} />
+	</head>
+	<body>
+		<div class="site-shell">
+			<TopNav context="home" />
+			<main class="home-main">
+				<slot />
+			</main>
+		</div>
+	</body>
+</html>
+
+<style>
+	:root {
+		--bg: #0f0907;
+		--bg-card: #17100e;
+		--line: #432d22;
+		--text: #f7eee8;
+		--text-muted: #beaa9f;
+		--accent: #e97d46;
+		--accent-2: #d89563;
+	}
+
+	html {
+		scroll-behavior: smooth;
+	}
+
+	body {
+		margin: 0;
+		min-height: 100vh;
+		font-family: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+		color: var(--text);
+		background:
+			radial-gradient(70rem 38rem at 88% -10%, rgba(233, 125, 70, 0.14), transparent),
+			radial-gradient(68rem 36rem at -5% 10%, rgba(216, 149, 99, 0.09), transparent),
+			linear-gradient(180deg, #090504 0%, var(--bg) 36%, #060404 100%);
+	}
+
+	.site-shell {
+		width: min(1280px, calc(100% - 2.8rem));
+		margin: 0 auto;
+		padding-bottom: 4rem;
+	}
+
+	.home-main {
+		display: flex;
+		flex-direction: column;
+		gap: 2.25rem;
+	}
+
+	@media (max-width: 760px) {
+		.site-shell {
+			width: min(1160px, calc(100% - 1.2rem));
+		}
+	}
+</style>

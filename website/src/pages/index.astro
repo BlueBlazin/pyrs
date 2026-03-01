@@ -1,8 +1,6 @@
 ---
-import TopNav from "../components/TopNav.astro";
-import SiteHead from "../components/SiteHead.astro";
 import InstallMethod from "../components/home/InstallMethod.astro";
-import "../styles/global.css";
+import SiteLayout from "../layouts/SiteLayout.astro";
 
 type InstallLine = string | { text: string; prompt?: boolean };
 type InstallMethodData = {
@@ -98,19 +96,11 @@ const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 };
 ---
 
-<html lang="en">
-	<head>
-		<SiteHead
-			title="PYRS | Python Interpreter in Rust"
-			description="PYRS is a production-focused Python interpreter in Rust targeting CPython 3.14 compatibility."
-		/>
-	</head>
-	<body>
-		<div class="site-shell">
-			<TopNav context="home" />
-
-			<main>
-				<section class="hero">
+<SiteLayout
+	title="PYRS | Python Interpreter in Rust"
+	description="PYRS is a production-focused Python interpreter in Rust targeting CPython 3.14 compatibility."
+>
+	<section class="hero">
 					<div class="hero-copy">
 						<p class="eyebrow">Python in Rust</p>
 						<h1>CPython 3.14 compatibility, built for real execution.</h1>
@@ -232,55 +222,10 @@ const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 							</div>
 						</div>
 					</div>
-				</section>
-
-			</main>
-		</div>
-	</body>
-</html>
+	</section>
+</SiteLayout>
 
 <style>
-	:root {
-		--bg: #0f0907;
-		--bg-card: #17100e;
-		--line: #432d22;
-		--text: #f7eee8;
-		--text-muted: #beaa9f;
-		--accent: #e97d46;
-		--accent-2: #d89563;
-	}
-
-	* {
-		box-sizing: border-box;
-	}
-
-	html {
-		scroll-behavior: smooth;
-	}
-
-	body {
-		margin: 0;
-		min-height: 100vh;
-		font-family: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-		color: var(--text);
-		background:
-			radial-gradient(70rem 38rem at 88% -10%, rgba(233, 125, 70, 0.14), transparent),
-			radial-gradient(68rem 36rem at -5% 10%, rgba(216, 149, 99, 0.09), transparent),
-			linear-gradient(180deg, #090504 0%, var(--bg) 36%, #060404 100%);
-	}
-
-	.site-shell {
-		width: min(1280px, calc(100% - 2.8rem));
-		margin: 0 auto;
-		padding-bottom: 4rem;
-	}
-
-	main {
-		display: flex;
-		flex-direction: column;
-		gap: 2.25rem;
-	}
-
 	.hero {
 		display: block;
 		padding: 1.6rem 0 0;
@@ -728,10 +673,6 @@ const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 	}
 
 	@media (max-width: 760px) {
-		.site-shell {
-			width: min(1160px, calc(100% - 1.2rem));
-		}
-
 		.metrics,
 		.pillars {
 			grid-template-columns: 1fr;
