@@ -1,24 +1,14 @@
 ---
 import TopNav from "../components/TopNav.astro";
+import SiteHead from "../components/SiteHead.astro";
 import "../styles/global.css";
 ---
 
 <html lang="en">
 	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/png" sizes="64x64" href="/images/logo/logo-64.png" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<meta name="generator" content={Astro.generator} />
-		<title>PYRS | Python Interpreter in Rust</title>
-		<meta
-			name="description"
-			content="PYRS is a production-focused Python interpreter in Rust targeting CPython 3.14 compatibility."
-		/>
-		<link rel="preconnect" href="https://fonts.googleapis.com" />
-		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-		<link
-			href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
-			rel="stylesheet"
+		<SiteHead
+			title="PYRS | Python Interpreter in Rust"
+			description="PYRS is a production-focused Python interpreter in Rust targeting CPython 3.14 compatibility."
 		/>
 	</head>
 	<body>
