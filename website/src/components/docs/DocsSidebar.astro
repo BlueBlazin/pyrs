@@ -1,22 +1,11 @@
 ---
+import { docsNavGroups } from "../../config/docsNav";
+
 interface Props {
 	path: string;
 }
 
 const { path } = Astro.props;
-const navGroups = [
-	{
-		label: "Start",
-		items: [
-			{ href: "/docs/", label: "Getting Started" },
-			{ href: "/docs/install/", label: "Installation" },
-		],
-	},
-	{
-		label: "Reference",
-		items: [{ href: "/docs/reference/", label: "CLI and Environment" }],
-	},
-];
 
 const isActive = (href: string) => {
 	if (href === "/docs/") {
@@ -29,7 +18,7 @@ const isActive = (href: string) => {
 <aside class="docs-sidebar">
 	<div class="sidebar-inner">
 		<div class="sidebar-title">Documentation</div>
-		{navGroups.map((group) => (
+		{docsNavGroups.map((group) => (
 			<section class="nav-group">
 				<p class="group-label">{group.label}</p>
 				<nav class="group-links">
