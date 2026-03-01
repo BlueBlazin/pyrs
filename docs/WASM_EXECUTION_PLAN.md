@@ -1,6 +1,6 @@
 # WASM Execution Plan (Isolated Branch)
 
-Status: planned, isolated spike branch only.
+Status: in progress on isolated spike branch only.
 
 Branch policy:
 - All WASM work lives on `codex/wasm` (or descendant branches from it).
@@ -78,6 +78,8 @@ Exit criteria:
 
 ## Milestone W1: Compile/Dependency Isolation
 
+Current state: mostly complete.
+
 Deliverables:
 - Target-gate native-only dependencies and build steps:
   - terminal REPL crates,
@@ -91,6 +93,8 @@ Exit criteria:
 
 ## Milestone W2: VM Host Interface Extraction
 
+Current state: in progress (initial host seam landed).
+
 Deliverables:
 - Introduce host traits/interfaces and a `NativeHost` implementation.
 - `Vm::new()` preserves current behavior via native host defaults.
@@ -102,6 +106,8 @@ Exit criteria:
 
 ## Milestone W3: Web Host Baseline
 
+Current state: pending.
+
 Deliverables:
 - `WebHost` implementation with explicit unsupported-capability errors.
 - Browser-mode import/runtime policy for unavailable modules/features.
@@ -112,6 +118,8 @@ Exit criteria:
 - Deterministic error behavior for unsupported operations.
 
 ## Milestone W4: WASM Binding Surface
+
+Current state: in progress (syntax-check bridge + session scaffold landed).
 
 Deliverables:
 - Expose a minimal host API for browser integration:
@@ -127,6 +135,8 @@ Exit criteria:
 
 ## Milestone W5: Worker Runtime + Interruption Model
 
+Current state: pending.
+
 Deliverables:
 - Run interpreter in a Web Worker.
 - Define timeout/reset semantics (worker recycle for hard-stop).
@@ -136,6 +146,8 @@ Exit criteria:
 - Long-running snippets do not freeze site UI.
 
 ## Milestone W6: Website Integration
+
+Current state: pending.
 
 Deliverables:
 - Add `/playground` route in Astro.
@@ -147,6 +159,8 @@ Exit criteria:
 - Playground UX stable for supported examples.
 
 ## Milestone W7: CI and Promotion Decision
+
+Current state: pending.
 
 Deliverables:
 - Add WASM-specific CI lanes (compile + smoke + browser harness where feasible).
@@ -187,6 +201,25 @@ If any are not true:
 4. Add W4 bindings and local JS harness.
 5. Add W5 worker runtime and timeout/reset behavior.
 6. Integrate W6 website playground only after runtime stability.
+
+## Progress Checkpoints (codex/wasm)
+
+Completed on this branch:
+- `afeed21`: initial isolated execution plan + branch-policy guardrails.
+- `7c92917`: wasm dependency lane + target-gated build/dependency isolation.
+- `302fa6b`: `VmHost`/`NativeHost`/`WasmHost` baseline + `Vm::new_with_host`.
+- `04ca7a1`: startup trace flags routed through host seam.
+- `42fbc8f`: `sys` bootstrap process metadata routed via host seam.
+- `89a2d32`: UUID host-name probe routed via host seam.
+- `26cbc4e`: wasm-target extension import warning cleanup.
+- `271b5f9`: wasm runtime init + parser syntax-check bridge.
+- `8f0e5a4`: structured wasm syntax diagnostics surface.
+- `165052c`: stateful wasm session scaffold for syntax checks.
+
+Remaining near-term focus:
+1. W3: expand `WasmHost` capability stubs and error contracts for unsupported features.
+2. W4: evolve wasm API from syntax-only to controlled in-memory execution API contract.
+3. Add wasm smoke harness (JS/wasm-bindgen-test or equivalent) without touching native CI gates yet.
 
 ## Risk Register
 
