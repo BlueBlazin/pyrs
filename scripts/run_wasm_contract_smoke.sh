@@ -129,21 +129,11 @@ run_vm_probe_state_gate_browser_smoke() {
     return 0
   fi
 
-  echo "[wasm-contract] wasm-pack ${browser}: vm-probe browser smoke (wasm_contract suite)"
-  # Filtering vm-probe wasm-bindgen browser runs by test name has shown
-  # runner-level hangs in CI ("Loading scripts..." timeout). Run the full
-  # wasm_contract integration suite in vm-probe mode for stable signal.
-  if wasm-pack test --headless --"${browser}" --no-default-features --features wasm-vm-probe --test wasm_contract; then
-    vm_probe_browser_smoke_enabled=1
-    return 0
-  fi
-
-  vm_probe_browser_smoke_enabled=0
-  echo "[wasm-contract] vm-probe browser smoke failed; continuing without vm-probe browser gate"
-  if [[ "${PYRS_WASM_STRICT_VM_PROBE_BROWSER_SMOKE:-0}" == "1" ]]; then
-    echo "[wasm-contract] strict vm-probe browser smoke mode enabled; failing"
-    return 1
-  fi
+  echo "[wasm-contract] wasm-pack ${browser}: vm-probe browser smoke (state-gate target)"
+  # Keep vm-probe browser smoke lightweight to avoid long "Loading scripts..."
+  # stalls from the full wasm_contract browser binary in CI.
+  wasm-pack test --headless --"${browser}" --no-default-features --features wasm-vm-probe --test wasm_vm_probe_browser_smoke
+  vm_probe_browser_smoke_enabled=1
   return 0
 }
 
