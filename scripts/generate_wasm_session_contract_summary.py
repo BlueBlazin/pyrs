@@ -392,6 +392,9 @@ def validate(
     source_session_state_override_removed: bool,
     source_execute_updates_last_state_from_result: bool,
     source_timeout_updates_last_state_from_result: bool,
+    has_terminate_start_execute_recovery_test: bool,
+    has_terminate_start_timeout_recovery_test: bool,
+    has_terminate_start_session_recovery_test: bool,
 ) -> list[str]:
     errors: list[str] = []
 
@@ -433,6 +436,18 @@ def validate(
     if not source_timeout_updates_last_state_from_result:
         errors.append(
             "WasmWorkerSession::set_timeout_ms should set last_state from result.state"
+        )
+    if not has_terminate_start_execute_recovery_test:
+        errors.append(
+            "missing wasm contract test fn wasm_worker_execute_recovers_after_terminate_then_start"
+        )
+    if not has_terminate_start_timeout_recovery_test:
+        errors.append(
+            "missing wasm contract test fn wasm_worker_timeout_configuration_recovers_after_terminate_then_start"
+        )
+    if not has_terminate_start_session_recovery_test:
+        errors.append(
+            "missing wasm contract test fn wasm_worker_session_recovers_after_external_terminate_then_start"
         )
 
     top_ok_rows = [
@@ -836,6 +851,11 @@ def main() -> int:
         help="Path to wasm source file",
     )
     parser.add_argument(
+        "--wasm-contract-test",
+        default="tests/wasm_contract.rs",
+        help="Path to wasm contract test file",
+    )
+    parser.add_argument(
         "--out",
         default="perf/wasm_session_contract_summary_latest.json",
         help="Output summary JSON path",
@@ -845,9 +865,11 @@ def main() -> int:
     top_fixture_path = Path(args.top_fixture)
     worker_fixture_path = Path(args.worker_fixture)
     wasm_src_path = Path(args.wasm_src)
+    wasm_contract_test_path = Path(args.wasm_contract_test)
     top_source = top_fixture_path.read_text(encoding="utf-8")
     worker_source = worker_fixture_path.read_text(encoding="utf-8")
     wasm_source = wasm_src_path.read_text(encoding="utf-8")
+    wasm_contract_test_source = wasm_contract_test_path.read_text(encoding="utf-8")
     top_level_rows = parse_top_level_rows(top_source)
     worker_rows = parse_worker_rows(worker_source)
     worker_lifecycle_rows = parse_worker_lifecycle_rows(worker_source)
@@ -881,6 +903,18 @@ def main() -> int:
     source_timeout_updates_last_state_from_result = (
         "self.last_state = Some(result.state.clone());" in set_timeout_ms_body
     )
+    has_terminate_start_execute_recovery_test = (
+        "fn wasm_worker_execute_recovers_after_terminate_then_start()"
+        in wasm_contract_test_source
+    )
+    has_terminate_start_timeout_recovery_test = (
+        "fn wasm_worker_timeout_configuration_recovers_after_terminate_then_start()"
+        in wasm_contract_test_source
+    )
+    has_terminate_start_session_recovery_test = (
+        "fn wasm_worker_session_recovers_after_external_terminate_then_start()"
+        in wasm_contract_test_source
+    )
 
     errors = validate(
         top_level_rows,
@@ -893,6 +927,9 @@ def main() -> int:
         source_session_state_override_removed,
         source_execute_updates_last_state_from_result,
         source_timeout_updates_last_state_from_result,
+        has_terminate_start_execute_recovery_test,
+        has_terminate_start_timeout_recovery_test,
+        has_terminate_start_session_recovery_test,
     )
     if errors:
         print("wasm session contract summary validation failed:")
@@ -904,11 +941,17 @@ def main() -> int:
         "top_fixture": str(top_fixture_path),
         "worker_fixture": str(worker_fixture_path),
         "wasm_source": str(wasm_src_path),
+        "wasm_contract_test": str(wasm_contract_test_path),
         "source_state_tracking": {
             "info_uses_shared_worker_state": source_info_uses_shared_worker_state,
             "session_state_override_removed": source_session_state_override_removed,
             "execute_updates_last_state_from_result": source_execute_updates_last_state_from_result,
             "timeout_updates_last_state_from_result": source_timeout_updates_last_state_from_result,
+        },
+        "test_coverage_tracking": {
+            "terminate_start_execute_recovery_test": has_terminate_start_execute_recovery_test,
+            "terminate_start_timeout_recovery_test": has_terminate_start_timeout_recovery_test,
+            "terminate_start_session_recovery_test": has_terminate_start_session_recovery_test,
         },
         "counts": {
             "top_level_rows": len(top_level_rows),
