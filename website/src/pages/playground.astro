@@ -18,20 +18,30 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 				<p class="playground-kicker">WASM Playground</p>
 				<HighlightChip label="Experimental" />
 			</div>
-			<h1>Run PYRS in your browser</h1>
+			<h1>Browser REPL</h1>
 			<p>
-				The runtime initializes automatically when this page loads. Type directly into the REPL,
-				press <kbd>Enter</kbd> to run, and use <kbd>Shift</kbd> + <kbd>Enter</kbd> for multiline input.
+				Runtime loads automatically on first visit. Use <kbd>Enter</kbd> to execute and
+				<kbd>Shift</kbd> + <kbd>Enter</kbd> for multiline blocks.
 			</p>
 		</header>
 
 		<div class="playground-status" id="playground-status-shell" data-state="idle" aria-live="polite">
 			<span class="status-dot" aria-hidden="true"></span>
-			<span id="playground-status-text">Initializing runtime…</span>
+			<span id="playground-status-text">Loading runtime…</span>
 		</div>
 
 		<section class="playground-shell" aria-label="Browser REPL">
+			<div class="playground-shell-bar" aria-hidden="true">
+				<div class="playground-shell-lights">
+					<span class="light-red"></span>
+					<span class="light-yellow"></span>
+					<span class="light-green"></span>
+				</div>
+				<p class="playground-shell-title">PYRS REPL</p>
+			</div>
+
 			<div class="playground-transcript" id="playground-transcript"></div>
+
 			<form class="playground-input-row" id="playground-form" autocomplete="off">
 				<label for="playground-input" class="sr-only">Python REPL input</label>
 				<span class="playground-prompt" aria-hidden="true">&gt;&gt;&gt;</span>
@@ -44,12 +54,11 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 					rows="1"
 					placeholder="Try: 1 + 1"
 				></textarea>
-				<button type="submit" id="playground-run">Run</button>
 			</form>
 		</section>
 
 		<div class="playground-actions">
-			<button type="button" id="playground-clear">Clear Output</button>
+			<button type="button" id="playground-clear">Clear</button>
 			<button type="button" id="playground-reset">Reset Session</button>
 		</div>
 	</section>
@@ -59,7 +68,6 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		const statusText = document.getElementById("playground-status-text");
 		const transcriptEl = document.getElementById("playground-transcript");
 		const formEl = document.getElementById("playground-form");
-		const runButton = document.getElementById("playground-run");
 		const inputEl = document.getElementById("playground-input");
 		const clearButton = document.getElementById("playground-clear");
 		const resetButton = document.getElementById("playground-reset");
@@ -73,7 +81,8 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		let runtimeModule = null;
 		let runtimeLoadPromise = null;
 		let replSession = null;
-		let commandIndex = 1;
+		let lastRuntimeInfo = null;
+		let bannerRendered = false;
 		const commandHistory = [];
 		let historyIndex = -1;
 
@@ -90,23 +99,54 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 			return value;
 		};
 
-		const appendTranscriptLine = (text, kind = "output") => {
+		const scrollTranscriptToEnd = () => {
 			if (!(transcriptEl instanceof HTMLElement)) return;
-			const line = document.createElement("div");
-			line.className = `transcript-line transcript-line-${kind}`;
-			line.textContent = text;
-			transcriptEl.appendChild(line);
 			requestAnimationFrame(() => {
 				transcriptEl.scrollTop = transcriptEl.scrollHeight;
 			});
 		};
 
+		const appendTranscriptLine = (text, kind = "stdout") => {
+			if (!(transcriptEl instanceof HTMLElement)) return;
+			const line = document.createElement("div");
+			line.className = `transcript-line transcript-line-${kind}`;
+			line.textContent = text;
+			transcriptEl.appendChild(line);
+			scrollTranscriptToEnd();
+		};
+
+		const appendPromptLine = (prompt, text) => {
+			if (!(transcriptEl instanceof HTMLElement)) return;
+			const line = document.createElement("div");
+			line.className = "transcript-line transcript-line-input";
+
+			const promptSpan = document.createElement("span");
+			promptSpan.className = "transcript-prompt";
+			promptSpan.textContent = prompt;
+
+			const codeSpan = document.createElement("span");
+			codeSpan.className = "transcript-input-text";
+			codeSpan.textContent = text;
+
+			line.appendChild(promptSpan);
+			line.appendChild(codeSpan);
+			transcriptEl.appendChild(line);
+			scrollTranscriptToEnd();
+		};
+
 		const appendPromptInput = (source) => {
 			const lines = source.split("\n");
 			lines.forEach((line, index) => {
-				const prompt = index === 0 ? ">>>" : "...";
-				appendTranscriptLine(`${prompt} ${line}`, "input");
+				appendPromptLine(index === 0 ? ">>>" : "...", line);
 			});
+		};
+
+		const appendMultilineOutput = (text, kind) => {
+			const lines = text.replace(/\r/g, "").split("\n");
+			while (lines.length > 0 && lines[lines.length - 1] === "") {
+				lines.pop();
+			}
+			lines.forEach((line) => appendTranscriptLine(line, kind));
 		};
 
 		const setStatus = (state, message) => {
@@ -119,11 +159,14 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		};
 
 		const setBusy = (busy) => {
-			if (runButton instanceof HTMLButtonElement) {
-				runButton.disabled = busy;
-			}
 			if (inputEl instanceof HTMLTextAreaElement) {
 				inputEl.disabled = busy;
+			}
+			if (clearButton instanceof HTMLButtonElement) {
+				clearButton.disabled = busy;
+			}
+			if (resetButton instanceof HTMLButtonElement) {
+				resetButton.disabled = busy;
 			}
 		};
 
@@ -143,51 +186,46 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		};
 
 		const summarizeExecutionResult = (result) => {
-			const phase = readField(result, "phase") || "unknown";
 			const success = Boolean(readField(result, "success"));
 			const stdout = readField(result, "stdout") || "";
 			const stderr = readField(result, "stderr") || "";
 			const error = readField(result, "error") || "";
-			const blockerKey = readField(result, "blocker_key") || "";
-			const line = Number(readField(result, "line") || 0);
-			const column = Number(readField(result, "column") || 0);
-			return {
-				phase,
-				success,
-				stdout,
-				stderr,
-				error,
-				blockerKey,
-				line,
-				column,
-			};
+			return { success, stdout, stderr, error };
 		};
 
 		const renderExecutionResult = (result) => {
 			const summary = summarizeExecutionResult(result);
 			if (summary.stdout.trim().length > 0) {
-				summary.stdout
-					.split("\n")
-					.filter((line) => line.length > 0)
-					.forEach((line) => appendTranscriptLine(line, "stdout"));
+				appendMultilineOutput(summary.stdout, "stdout");
 			}
 			if (summary.stderr.trim().length > 0) {
-				summary.stderr
-					.split("\n")
-					.filter((line) => line.length > 0)
-					.forEach((line) => appendTranscriptLine(line, "stderr"));
+				appendMultilineOutput(summary.stderr, "stderr");
 			}
 			if (!summary.success && summary.error && summary.stderr.trim().length === 0) {
 				appendTranscriptLine(summary.error, "stderr");
 			}
-			if (!summary.success && summary.blockerKey) {
-				appendTranscriptLine(`blocker: ${summary.blockerKey}`, "meta");
+		};
+
+		const renderStartupBanner = (force = false) => {
+			if (!runtimeModule) return;
+			if (bannerRendered && !force) return;
+			const version = String(readField(lastRuntimeInfo, "pyrs_version") || "dev");
+			const backend = String(readField(lastRuntimeInfo, "execution_backend") || "wasm");
+			appendTranscriptLine(`PYRS ${version} (${backend})`, "banner");
+			appendTranscriptLine(
+				'Type "help", "copyright", "credits" or "license" for more information.',
+				"banner",
+			);
+			bannerRendered = true;
+		};
+
+		const clearTranscript = (preserveBanner = true) => {
+			if (transcriptEl instanceof HTMLElement) {
+				transcriptEl.innerHTML = "";
 			}
-			if (summary.line > 0) {
-				appendTranscriptLine(`at line ${summary.line}, column ${Math.max(summary.column, 1)}`, "meta");
-			}
-			if (summary.success && summary.stdout.trim().length === 0 && summary.stderr.trim().length === 0) {
-				appendTranscriptLine(`${summary.phase}`, "meta");
+			bannerRendered = false;
+			if (preserveBanner && runtimeModule) {
+				renderStartupBanner(true);
 			}
 		};
 
@@ -206,80 +244,68 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		};
 
 		const ensureRuntimeLoaded = async () => {
-			if (runtimeModule) {
-				return true;
-			}
-			if (runtimeLoadPromise) {
-				return runtimeLoadPromise;
-			}
+			if (runtimeModule) return true;
+			if (runtimeLoadPromise) return runtimeLoadPromise;
+
 			runtimeLoadPromise = (async () => {
 				setStatus("loading", "Loading runtime…");
 				try {
 					const moduleRef = await import(wasmEntrypoint);
-					const initExport = moduleRef.default;
-					if (typeof initExport === "function") {
-						await initExport();
+					if (typeof moduleRef.default === "function") {
+						await moduleRef.default();
 					}
 					if (typeof moduleRef.init_wasm_runtime === "function") {
 						moduleRef.init_wasm_runtime();
 					}
+
 					runtimeModule = moduleRef;
+					replSession = null;
 					getReplSession();
-					const runtimeInfo =
+
+					lastRuntimeInfo =
 						typeof moduleRef.wasm_runtime_info === "function"
 							? moduleRef.wasm_runtime_info()
 							: null;
-					const backend = readField(runtimeInfo, "execution_backend") || "unknown";
-					const executionEnabled = Boolean(readField(runtimeInfo, "supports_execution"));
-					const executionState = executionEnabled ? "ready" : "compile-only";
-					setStatus("ready", `Runtime loaded (${executionState})`);
-					appendTranscriptLine(
-						`# runtime loaded (${backend})`,
-						"meta",
+					const backend = String(readField(lastRuntimeInfo, "execution_backend") || "wasm");
+					const executionEnabled = Boolean(readField(lastRuntimeInfo, "supports_execution"));
+					setStatus(
+						"ready",
+						executionEnabled
+							? `Runtime ready (${backend})`
+							: `Runtime compile-only (${backend})`,
 					);
-					if (!executionEnabled) {
-						appendTranscriptLine(
-							"# execution backend is currently compile-only in this build",
-							"meta",
-						);
-					}
+					renderStartupBanner();
 					return true;
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
 					setStatus("error", "Runtime failed to load");
-					appendTranscriptLine(message, "stderr");
-					appendTranscriptLine(
-						"# missing wasm assets? run: ./scripts/build_wasm_website_bundle.sh",
-						"meta",
-					);
-					appendTranscriptLine(
-						`# expected wasm entrypoint: ${wasmEntrypoint}`,
-						"meta",
-					);
+					appendTranscriptLine(`Runtime load error: ${message}`, "stderr");
 					return false;
 				} finally {
 					runtimeLoadPromise = null;
 				}
 			})();
+
 			return runtimeLoadPromise;
 		};
 
 		const runSource = async (source) => {
 			const normalized = source.trimEnd();
 			if (!normalized.trim()) return;
+
 			if (commandHistory.at(-1) !== normalized) {
 				commandHistory.push(normalized);
 			}
 			historyIndex = commandHistory.length;
-			appendTranscriptLine(`\n#${commandIndex}`, "meta");
 			appendPromptInput(normalized);
-			commandIndex += 1;
+
 			setBusy(true);
 			const loaded = await ensureRuntimeLoaded();
 			if (!loaded || !runtimeModule) {
 				setBusy(false);
 				return;
 			}
+
 			try {
 				const session = getReplSession();
 				if (session && typeof session.execute_input === "function") {
@@ -289,7 +315,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 				} else if (typeof runtimeModule.execute === "function") {
 					renderExecutionResult(runtimeModule.execute(normalized));
 				} else {
-					appendTranscriptLine("Runtime loaded but no execute entrypoint is available.", "stderr");
+					appendTranscriptLine("Runtime execute entrypoint is unavailable.", "stderr");
 				}
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -303,10 +329,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 			inputEl.addEventListener("keydown", (event) => {
 				if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "l") {
 					event.preventDefault();
-					if (transcriptEl instanceof HTMLElement) {
-						transcriptEl.innerHTML = "";
-					}
-					appendTranscriptLine("# transcript cleared", "meta");
+					clearTranscript(true);
 					return;
 				}
 				if (event.key === "Enter" && !event.shiftKey) {
@@ -317,9 +340,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 					return;
 				}
 				if (event.key === "ArrowUp") {
-					const atStart =
-						inputEl.selectionStart === 0 &&
-						inputEl.selectionEnd === 0;
+					const atStart = inputEl.selectionStart === 0 && inputEl.selectionEnd === 0;
 					if (atStart && commandHistory.length > 0) {
 						event.preventDefault();
 						historyIndex = Math.max(0, historyIndex - 1);
@@ -359,10 +380,10 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 
 		if (clearButton instanceof HTMLButtonElement) {
 			clearButton.addEventListener("click", () => {
-				if (transcriptEl instanceof HTMLElement) {
-					transcriptEl.innerHTML = "";
+				clearTranscript(true);
+				if (inputEl instanceof HTMLTextAreaElement) {
+					inputEl.focus();
 				}
-				appendTranscriptLine("# transcript cleared", "meta");
 			});
 		}
 
@@ -371,15 +392,18 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 				const session = getReplSession();
 				if (session && typeof session.reset === "function") {
 					session.reset();
-					appendTranscriptLine("# session reset", "meta");
-					commandIndex = 1;
-					return;
+				} else {
+					replSession = null;
+					getReplSession();
 				}
-				appendTranscriptLine("# runtime session reset unavailable", "meta");
+				clearTranscript(true);
+				setStatus("ready", "Runtime ready");
+				if (inputEl instanceof HTMLTextAreaElement) {
+					inputEl.focus();
+				}
 			});
 		}
 
-		appendTranscriptLine("# loading wasm runtime", "meta");
 		ensureRuntimeLoaded().then(() => {
 			if (inputEl instanceof HTMLTextAreaElement) {
 				inputEl.focus();
@@ -481,18 +505,62 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		min-height: 60vh;
 		border-radius: 0.94rem;
 		border: 1px solid rgba(70, 47, 36, 0.82);
-		background: linear-gradient(180deg, rgba(8, 11, 17, 0.96) 0%, rgba(5, 8, 13, 0.98) 100%);
+		background: linear-gradient(180deg, rgba(8, 11, 17, 0.97) 0%, rgba(5, 8, 13, 0.99) 100%);
 		overflow: hidden;
 		box-shadow: 0 12px 50px rgba(0, 0, 0, 0.34);
 	}
 
+	.playground-shell-bar {
+		display: flex;
+		align-items: center;
+		gap: 0.72rem;
+		padding: 0.62rem 0.9rem;
+		border-bottom: 1px solid rgba(63, 44, 35, 0.8);
+		background: rgba(24, 16, 12, 0.56);
+	}
+
+	.playground-shell-lights {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.38rem;
+	}
+
+	.playground-shell-lights span {
+		width: 0.68rem;
+		height: 0.68rem;
+		border-radius: 999px;
+		display: inline-block;
+	}
+
+	.light-red {
+		background: #ff6f61;
+	}
+
+	.light-yellow {
+		background: #f5c04e;
+	}
+
+	.light-green {
+		background: #34c16f;
+	}
+
+	.playground-shell-title {
+		margin: 0;
+		font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
+		font-size: 0.76rem;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: #d0bdaf;
+		font-weight: 700;
+	}
+
 	.playground-transcript {
 		flex: 1;
-		padding: 1.12rem 1.22rem 1.2rem;
+		padding: 1rem 1.1rem 1.1rem;
 		overflow-y: auto;
 		font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
-		font-size: 0.95rem;
-		line-height: 1.58;
+		font-size: 0.94rem;
+		line-height: 1.56;
 		word-break: break-word;
 		background: transparent;
 	}
@@ -503,35 +571,48 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 	}
 
 	.transcript-line + .transcript-line {
-		margin-top: 0.28rem;
+		margin-top: 0.24rem;
 	}
 
 	.transcript-line-input {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.62rem;
 		color: #f8f2ec;
 	}
 
+	.transcript-prompt {
+		min-width: 2.35rem;
+		color: #4fc3ff;
+		font-weight: 700;
+		letter-spacing: 0.03em;
+	}
+
+	.transcript-input-text {
+		color: #f8f2ec;
+		flex: 1;
+	}
+
+	.transcript-line-banner {
+		color: #b2bac7;
+	}
+
 	.transcript-line-stdout {
-		color: #d9f3df;
+		color: #f4f8ff;
 	}
 
 	.transcript-line-stderr {
-		color: #ffbab2;
-	}
-
-	.transcript-line-meta {
-		color: #9aa4b3;
-		font-size: 0.85rem;
-		letter-spacing: 0.01em;
+		color: #ffb7aa;
 	}
 
 	.playground-input-row {
 		display: grid;
-		grid-template-columns: auto 1fr auto;
+		grid-template-columns: auto 1fr;
 		align-items: end;
 		gap: 0.72rem;
-		padding: 0.92rem 1rem;
-		border-top: 1px solid rgba(52, 64, 86, 0.88);
-		background: linear-gradient(180deg, rgba(14, 26, 47, 0.64) 0%, rgba(11, 22, 41, 0.82) 100%);
+		padding: 0.86rem 1rem;
+		border-top: 1px solid rgba(52, 64, 86, 0.86);
+		background: linear-gradient(180deg, rgba(16, 25, 39, 0.74) 0%, rgba(11, 18, 30, 0.88) 100%);
 	}
 
 	.playground-prompt {
@@ -539,7 +620,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		font-size: 0.92rem;
 		font-weight: 700;
 		letter-spacing: 0.04em;
-		color: #f0a677;
+		color: #4fc3ff;
 		padding-bottom: 0.5rem;
 	}
 
@@ -547,7 +628,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		width: 100%;
 		resize: none;
 		font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
-		font-size: 0.95rem;
+		font-size: 0.94rem;
 		line-height: 1.5;
 		background: transparent;
 		color: #f8f2ec;
@@ -562,15 +643,21 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		color: #8e9db3;
 	}
 
-	.playground-input-row button,
+	.playground-actions {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.52rem;
+	}
+
 	.playground-actions button {
 		appearance: none;
-		border: 1px solid rgba(113, 143, 198, 0.42);
-		background: rgba(25, 46, 83, 0.82);
+		border: 1px solid rgba(113, 143, 198, 0.4);
+		background: rgba(25, 46, 83, 0.66);
 		color: #e8f0ff;
-		border-radius: 0.58rem;
-		padding: 0.45rem 0.82rem;
-		font-size: 0.82rem;
+		border-radius: 0.55rem;
+		padding: 0.38rem 0.68rem;
+		font-size: 0.74rem;
 		font-weight: 700;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
@@ -578,27 +665,14 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		transition: background 120ms ease, border-color 120ms ease;
 	}
 
-	.playground-input-row button:hover,
 	.playground-actions button:hover {
-		background: rgba(31, 61, 109, 0.9);
-		border-color: rgba(133, 165, 224, 0.64);
+		background: rgba(31, 61, 109, 0.82);
+		border-color: rgba(133, 165, 224, 0.62);
 	}
 
-	.playground-input-row button:disabled {
+	.playground-actions button:disabled {
 		opacity: 0.56;
 		cursor: not-allowed;
-	}
-
-	.playground-actions {
-		display: flex;
-		align-items: center;
-		justify-content: flex-end;
-		gap: 0.56rem;
-	}
-
-	.playground-actions button {
-		padding: 0.36rem 0.68rem;
-		font-size: 0.74rem;
 	}
 
 	.sr-only {
@@ -645,18 +719,16 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		}
 
 		.playground-transcript {
-			padding: 0.96rem 0.88rem 1rem;
-			font-size: 0.88rem;
+			padding: 0.92rem 0.84rem 0.96rem;
+			font-size: 0.87rem;
 		}
 
-		.playground-input-row {
-			grid-template-columns: auto 1fr;
-			row-gap: 0.5rem;
+		.playground-shell-bar {
+			padding: 0.56rem 0.72rem;
 		}
 
-		.playground-input-row button {
-			grid-column: 2;
-			justify-self: start;
+		.transcript-prompt {
+			min-width: 2.05rem;
 		}
 	}
 </style>
