@@ -245,6 +245,10 @@ Branch helper:
   `python3 scripts/generate_wasm_vm_link_blockers_summary.py --out perf/wasm_vm_link_blockers_latest.json`
   to inventory `#[link(name = ...)]` libraries under `src/vm` that block full
   wasm target link/test lanes.
+- vm raw env-import blocker helper:
+  `python3 scripts/generate_wasm_vm_env_import_summary.py --wasm target/wasm32-unknown-unknown/release-wasm/pyrs.wasm --out perf/wasm_vm_env_import_summary_latest.json`
+  to track unresolved wasm `env` function imports (grouped by family) and node
+  shim coverage while vm-probe browser bring-up remains in progress.
 - CI lane helper:
   `.github/workflows/wasm-track.yml`
   runs branch-level wasm contract gating (`scripts/check_wasm_branch.sh`) and
@@ -846,6 +850,10 @@ Current `wasm-vm-probe` snapshot (non-gating, latest local run):
   wasm-active filtering; current snapshot reports
   `active_hits=0` and `known_stdlib_blockers=0` after wasm-safe target gating
   on stdlib C-link modules.
+- env-import blocker status: `perf/wasm_vm_env_import_summary_latest.json`
+  tracks remaining raw wasm `env` imports (current vm-probe baseline) so
+  browser-loader closure can be driven by import-family elimination rather than
+  trial-and-error patching.
 
 ## Risk Register
 

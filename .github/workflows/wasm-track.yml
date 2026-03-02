@@ -68,6 +68,7 @@ jobs:
             perf/wasm_capability_summary_latest.json
             perf/wasm_host_seam_audit_latest.json
             perf/wasm_vm_link_blockers_latest.json
+            perf/wasm_vm_env_import_summary_latest.json
             perf/wasm_worker_contract_summary_vm_probe_latest.json
             perf/wasm_execute_contract_summary_vm_probe_latest.json
             perf/wasm_browser_smoke_baseline_latest.json
@@ -164,6 +165,7 @@ jobs:
             perf/wasm_capability_summary_latest.json
             perf/wasm_host_seam_audit_latest.json
             perf/wasm_vm_link_blockers_latest.json
+            perf/wasm_vm_env_import_summary_latest.json
             perf/wasm_worker_contract_summary_vm_probe_latest.json
             perf/wasm_execute_contract_summary_vm_probe_latest.json
             perf/wasm_evidence_pack_latest/manifest.json
