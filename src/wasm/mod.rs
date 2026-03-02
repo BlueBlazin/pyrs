@@ -3228,6 +3228,11 @@ mod tests {
     fn wasm_worker_vm_probe_failed_state_blocks_until_recovered() {
         clear_worker_vm();
         set_current_worker_state(WasmWorkerState::Failed);
+        let failed_info = wasm_worker_info();
+        assert_eq!(failed_info.state(), "failed".to_string());
+        assert!(!failed_info.execute_supported());
+        assert!(!failed_info.timeout_configuration_supported());
+        assert!(!failed_info.timeout_enforcement_supported());
 
         let blocked_execute = wasm_worker_execute_with_operation("x = 1\n");
         assert_eq!(
@@ -3261,6 +3266,11 @@ mod tests {
         assert_eq!(recycle.phase(), "worker_recycled".to_string());
         assert_eq!(recycle.state(), "ready".to_string());
         assert!(recycle.success());
+        let recovered_info = wasm_worker_info();
+        assert_eq!(recovered_info.state(), "ready".to_string());
+        assert!(recovered_info.execute_supported());
+        assert!(recovered_info.timeout_configuration_supported());
+        assert!(recovered_info.timeout_enforcement_supported());
 
         let resumed_execute = wasm_worker_execute_with_operation("x = 1\n");
         assert_eq!(resumed_execute.phase(), "ok".to_string());

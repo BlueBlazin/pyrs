@@ -924,6 +924,12 @@ Completed on this branch:
   `execute_supported`/`timeout_configuration_supported`/
   `timeout_enforcement_supported`, preventing silent test-coverage erosion for
   worker-info state-gated support flags.
+- latest: vm-probe failed-state unit contracts now explicitly verify
+  `wasm_worker_info()` capability flags across `failed -> ready` recovery:
+  - `execute_supported`, `timeout_configuration_supported`,
+    `timeout_enforcement_supported` are all `false` in `failed` state,
+  - all three return to `true` after `wasm_worker_recycle()` restores
+    `state = "ready"`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
