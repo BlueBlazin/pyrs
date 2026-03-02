@@ -1,7 +1,7 @@
 # WASM Browser Smoke Runbook
 
 Status: manual workflow-dispatch procedure for `codex/wasm`.
-Latest verified dispatch: [22595444066](https://github.com/BlueBlazin/pyrs/actions/runs/22595444066) on commit `85d4da15`.
+Latest verified dispatch: [22596189227](https://github.com/BlueBlazin/pyrs/actions/runs/22596189227) on commit `1bb0c110`.
 
 Purpose:
 - capture reproducible browser-smoke evidence for promotion review,
