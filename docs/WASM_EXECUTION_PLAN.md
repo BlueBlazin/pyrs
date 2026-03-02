@@ -644,6 +644,10 @@ Completed on this branch:
 - latest: `WASM_API_CONTRACT.md` execution matrix now requires explicit worker
   vm-probe state branches (`state = "ready"` vs `state != "ready"`), with
   `generate_wasm_docs_execution_matrix_summary.py` enforcing those row tokens.
+- latest: `WasmWorkerSession::info()` now reports shared top-level worker
+  state (instead of session-local override), and mixed-flow tests/docs/session
+  summaries were updated so external top-level lifecycle changes are reflected
+  immediately in session info state.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
