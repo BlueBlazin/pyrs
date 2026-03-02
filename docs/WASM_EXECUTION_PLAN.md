@@ -808,6 +808,10 @@ Completed on this branch:
     terminate),
   - session snapshot telemetry (`last_phase`, `last_state`,
     `executes_requested`) remains consistent in browser lane.
+- latest: `scripts/run_wasm_contract_smoke.sh` now hard-fails browser smoke
+  when `wasm-pack` output contains `output filename collision`, preventing
+  silent regression toward Cargo’s future hard-error behavior for wasm bin/lib
+  artifact name conflicts.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

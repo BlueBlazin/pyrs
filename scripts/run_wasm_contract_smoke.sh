@@ -109,15 +109,36 @@ configure_browser_test_timeout() {
   echo "[wasm-contract] wasm browser test timeout: ${WASM_BINDGEN_TEST_TIMEOUT}s"
 }
 
+run_wasm_pack_checked() {
+  local label="$1"
+  shift
+  local log_file
+  log_file="$(mktemp)"
+  local command_status=0
+  if ! "$@" 2>&1 | tee "${log_file}"; then
+    command_status=1
+  fi
+  if rg -q "output filename collision" "${log_file}"; then
+    echo "[wasm-contract] ${label}: cargo output filename collision detected; wasm lane must avoid bin/lib wasm artifact name conflicts"
+    command_status=1
+  fi
+  rm -f "${log_file}"
+  return "${command_status}"
+}
+
 run_browser_smoke() {
   local browser="$1"
   local smoke_status=0
   echo "[wasm-contract] wasm-pack ${browser}: integration contract tests"
-  if ! wasm-pack test --headless --"${browser}" --test wasm_contract --no-default-features; then
+  if ! run_wasm_pack_checked \
+    "wasm-pack ${browser} integration contract tests" \
+    wasm-pack test --headless --"${browser}" --test wasm_contract --no-default-features; then
     smoke_status=1
   fi
   echo "[wasm-contract] wasm-pack ${browser}: lib unit tests"
-  if ! wasm-pack test --headless --"${browser}" --lib --no-default-features; then
+  if ! run_wasm_pack_checked \
+    "wasm-pack ${browser} lib unit tests" \
+    wasm-pack test --headless --"${browser}" --lib --no-default-features; then
     smoke_status=1
   fi
   return "${smoke_status}"
@@ -131,7 +152,9 @@ run_vm_probe_state_gate_browser_smoke() {
   fi
 
   echo "[wasm-contract] wasm-pack ${browser}: vm-probe state-gate smoke target"
-  if wasm-pack test --headless --"${browser}" --no-default-features --features wasm-vm-probe --test wasm_vm_probe_browser_smoke; then
+  if run_wasm_pack_checked \
+    "wasm-pack ${browser} vm-probe state-gate smoke target" \
+    wasm-pack test --headless --"${browser}" --no-default-features --features wasm-vm-probe --test wasm_vm_probe_browser_smoke; then
     vm_probe_browser_smoke_enabled=1
     vm_probe_browser_smoke_runner="browser"
     return 0
@@ -151,7 +174,9 @@ run_vm_probe_state_gate_browser_smoke() {
   else
     export NODE_PATH="${shim_root}"
   fi
-  wasm-pack test --node --no-default-features --features wasm-vm-probe --test wasm_vm_probe_browser_smoke
+  run_wasm_pack_checked \
+    "wasm-pack node vm-probe state-gate smoke target" \
+    wasm-pack test --node --no-default-features --features wasm-vm-probe --test wasm_vm_probe_browser_smoke
   vm_probe_browser_smoke_enabled=1
   vm_probe_browser_smoke_runner="node"
   return 0
