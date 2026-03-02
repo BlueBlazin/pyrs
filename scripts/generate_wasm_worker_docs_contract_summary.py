@@ -302,6 +302,10 @@ def main() -> int:
         )
     if "wasm_worker_info().state" not in docs_source:
         errors.append("docs missing wasm_worker_info().state shared-state guidance")
+    if 'when `state = "ready"`' not in docs_source:
+        errors.append("docs missing state-ready gating guidance for worker execute/timeout")
+    if 'when `state != "ready"`' not in docs_source:
+        errors.append("docs missing state-not-ready gating guidance for worker execute/timeout")
     if f'state = "{worker_default_state}"' not in docs_source:
         errors.append(
             "docs missing worker execute-with-operation/default state shape "

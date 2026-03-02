@@ -12,6 +12,7 @@ This guide defines the recommended browser call order for current wasm APIs.
 3. `wasm_worker_info()`
    - use `backend` + `supported` + `lifecycle_supported` + `execution_probe_enabled` + `execute_supported` + `timeout_configuration_supported` + `timeout_enforcement_supported` for worker-runtime/readiness UI state.
    - baseline `state`: default build `"unwired"`, `wasm-vm-probe` `"ready"`.
+   - top-level lifecycle calls mutate this shared state.
 4. `wasm_worker_timeout_policy()`
    - gate timeout controls on `configuration_supported`;
    - treat `enforcement_supported` as the separate hard-enforcement capability.
@@ -55,14 +56,20 @@ are currently explicit stubs.
     - `worker_terminated`
     - `worker_recycled`
   - default build: unsupported phase sets `blocker_key = "worker_runtime_unwired"`
-  - `wasm-vm-probe` build: capability-allowed snippets can return `ok` or
-    `runtime_error`
+  - `wasm-vm-probe` build:
+    - capability-allowed snippets return `ok` or `runtime_error` only when
+      worker `state = "ready"`,
+    - when worker `state != "ready"`, capability-allowed snippets return
+      `unsupported_worker_execution` with `blocker_key = "worker_runtime_unwired"`.
 - `wasm_worker_set_timeout(timeout_ms)` -> `phase` in:
   - `invalid_worker_timeout` for out-of-range values
   - default in-range: `unsupported_worker_timeout_enforcement`
     (`blocker_key = "worker_runtime_unwired"`)
-  - `wasm-vm-probe` in-range: `worker_timeout_configured`
-    (`blocker_key = None`, configuration-only; enforcement still unwired)
+  - `wasm-vm-probe` in-range:
+    - `worker_timeout_configured` when worker `state = "ready"`,
+    - `unsupported_worker_timeout_enforcement` with
+      `blocker_key = "worker_runtime_unwired"` when worker `state != "ready"`,
+    - configuration-only; enforcement still unwired.
   - expected policy shape:
     - default build: `configuration_supported = false`, `enforcement_supported = false`
     - `wasm-vm-probe`: `configuration_supported = true`, `enforcement_supported = false`

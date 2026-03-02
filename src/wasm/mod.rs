@@ -333,6 +333,10 @@ fn set_current_worker_state(state: WasmWorkerState) {
     CURRENT_WASM_WORKER_STATE.store(state as u8, Ordering::Relaxed);
 }
 
+fn worker_runtime_ready() -> bool {
+    current_worker_state() == WasmWorkerState::Ready
+}
+
 fn current_worker_state_key() -> String {
     current_worker_state().key().to_string()
 }
@@ -1556,6 +1560,23 @@ pub fn wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult {
         };
     }
 
+    if !worker_runtime_ready() {
+        let blocker_key = WASM_WORKER_BLOCKER_RUNTIME_UNWIRED.to_string();
+        let message = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
+            .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
+        return WasmWorkerTimeoutResult {
+            success: false,
+            operation_id: next_worker_operation_id("set_timeout"),
+            phase: WasmWorkerTimeoutPhase::UnsupportedEnforcement
+                .key()
+                .to_string(),
+            state: current_worker_state_key(),
+            timeout_ms,
+            error: Some(message),
+            blocker_key: Some(blocker_key),
+        };
+    }
+
     if wasm_vm_runtime_enabled() {
         #[cfg(feature = "wasm-vm-probe")]
         {
@@ -2045,6 +2066,10 @@ impl WasmExecutionContractMode {
             }
         }
     }
+
+    fn requires_worker_ready_state(self) -> bool {
+        matches!(self, WasmExecutionContractMode::Worker)
+    }
 }
 
 fn execute_snippet_with_contract(
@@ -2076,6 +2101,20 @@ fn execute_snippet_with_contract(
             stderr: blocker.message.clone(),
             error: Some(blocker.message),
             blocker_key: Some(blocker.blocker_key),
+            line: 0,
+            column: 0,
+        };
+    }
+
+    if contract.requires_worker_ready_state() && !worker_runtime_ready() {
+        let message = contract.unwired_error_message();
+        return WasmExecutionResult {
+            success: false,
+            phase: contract.unsupported_phase_key().to_string(),
+            stdout: String::new(),
+            stderr: message.clone(),
+            error: Some(message),
+            blocker_key: Some(contract.unwired_blocker_key().to_string()),
             line: 0,
             column: 0,
         };

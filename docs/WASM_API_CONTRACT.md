@@ -12,7 +12,7 @@ This document defines the JS-facing contract currently exported by
 | `execute(source)` | default | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_execution` (`blocker_key = <capability_key>`) | `unsupported_execution` (`blocker_key = execution_backend_unwired`) |
 | `execute(source)` | `wasm-vm-probe` | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_execution` (`blocker_key = <capability_key>`) | `ok` (success) or `runtime_error` (`blocker_key = None`) |
 | `wasm_worker_execute(source)` | default | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_worker_execution` (`blocker_key = <capability_key>`) | `unsupported_worker_execution` (`blocker_key = worker_runtime_unwired`) |
-| `wasm_worker_execute(source)` | `wasm-vm-probe` | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_worker_execution` (`blocker_key = <capability_key>`) | `ok` (success) or `runtime_error` (`blocker_key = None`) |
+| `wasm_worker_execute(source)` | `wasm-vm-probe` | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_worker_execution` (`blocker_key = <capability_key>`) | if `state = "ready"`: `ok` or `runtime_error` (`blocker_key = None`); otherwise `unsupported_worker_execution` (`blocker_key = worker_runtime_unwired`) |
 
 ## Top-Level Functions
 
@@ -75,7 +75,9 @@ This document defines the JS-facing contract currently exported by
   - Worker timeout update contract with deterministic phases:
     - `invalid_worker_timeout` (out-of-range value)
     - default in-range: `unsupported_worker_timeout_enforcement`
-    - `wasm-vm-probe` in-range: `worker_timeout_configured`
+    - `wasm-vm-probe` in-range:
+      - `worker_timeout_configured` when worker `state = "ready"`
+      - `unsupported_worker_timeout_enforcement` when worker `state != "ready"`
 - `wasm_worker_execute(source: &str) -> WasmExecutionResult`
   - Default worker execute phases:
     - `syntax_error`
@@ -83,7 +85,9 @@ This document defines the JS-facing contract currently exported by
     - `unsupported_worker_execution`
   - `wasm-vm-probe` worker execute phases:
     - same parse/compile/capability-preflight phases as default,
-    - capability-allowed snippets can return `ok` or `runtime_error`.
+    - capability-allowed snippets:
+      - return `ok` or `runtime_error` when worker `state = "ready"`,
+      - return `unsupported_worker_execution` when worker `state != "ready"`.
   - `blocker_key` is:
     - `None` for parse/compile failures and vm-probe runtime execution results,
     - `Some("<capability_key>")` when parse+compile-valid source imports a known
@@ -194,10 +198,10 @@ This document defines the JS-facing contract currently exported by
 - `operation_id: String` (shape: `worker_set_timeout_<n>`)
 - `phase: String` (`"unsupported_worker_timeout_enforcement"`, `"invalid_worker_timeout"`)
   - default: `"unsupported_worker_timeout_enforcement"`, `"invalid_worker_timeout"`
-  - `wasm-vm-probe`: also `"worker_timeout_configured"` (in-range config acceptance)
+  - `wasm-vm-probe`: also `"worker_timeout_configured"` (in-range config when state is ready)
 - `state: String` (currently `"unwired"`)
-  - default: `"unwired"`
-  - `wasm-vm-probe`: `"ready"` baseline state (unless session lifecycle overrides)
+  - reflects current shared top-level worker-lifecycle state.
+  - timeout configuration in `wasm-vm-probe` requires `state = "ready"`.
 - `timeout_ms: u32`
 - `error: Option<String>`
 - `blocker_key: Option<String>`
@@ -207,7 +211,9 @@ This document defines the JS-facing contract currently exported by
 - `operation_id: String` (shape: `worker_execute_<n>`)
 - `success: bool`
 - `phase: String`
-- `state: String` (default `"unwired"`, `wasm-vm-probe` => `"ready"` baseline)
+- `state: String`
+  - reflects current shared top-level worker-lifecycle state.
+  - `wasm-vm-probe` runtime execution (`ok` / `runtime_error`) requires `state = "ready"`.
 - `stdout: String`
 - `stderr: String`
 - `error: Option<String>`

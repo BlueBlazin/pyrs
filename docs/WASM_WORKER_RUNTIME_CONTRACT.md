@@ -166,7 +166,7 @@ keys (`worker_runtime_unwired` + module-policy capability keys).
 `wasm_worker_set_timeout(timeout_ms)` currently returns:
 
 - `operation_id = worker_set_timeout_<n>`
-- `state = "unwired"` in default builds, `"ready"` with `wasm-vm-probe`
+- `state` reflects current shared top-level worker state.
 - `phase = "invalid_worker_timeout"` for out-of-range values.
 - for in-range values (`50..=120000` ms):
   - default build:
@@ -175,10 +175,16 @@ keys (`worker_runtime_unwired` + module-policy capability keys).
     - `blocker_key = "worker_runtime_unwired"`
     - `error = "wasm worker runtime is not wired yet"`
   - `wasm-vm-probe` build:
-    - `phase = "worker_timeout_configured"`
-    - `success = true`
-    - `blocker_key = None`
-    - `error = None`
+    - when `state = "ready"`:
+      - `phase = "worker_timeout_configured"`
+      - `success = true`
+      - `blocker_key = None`
+      - `error = None`
+    - when `state != "ready"`:
+      - `phase = "unsupported_worker_timeout_enforcement"`
+      - `success = false`
+      - `blocker_key = "worker_runtime_unwired"`
+      - `error = "wasm worker runtime is not wired yet"`
 
 `worker_timeout_configured` is configuration-only in vm-probe mode; timeout
 enforcement still remains unwired (`enforcement_supported = false`).
@@ -197,15 +203,19 @@ controls, and `enforcement_supported` for hard runtime-enforcement guarantees.
     - `phase = "unsupported_worker_execution"`
     - `blocker_key = "worker_runtime_unwired"`
   - `wasm-vm-probe` build:
-    - `phase = "ok"` on VM success
-    - `phase = "runtime_error"` on VM runtime failure
-    - `blocker_key = None`
+    - when `state = "ready"`:
+      - `phase = "ok"` on VM success
+      - `phase = "runtime_error"` on VM runtime failure
+      - `blocker_key = None`
+    - when `state != "ready"`:
+      - `phase = "unsupported_worker_execution"`
+      - `blocker_key = "worker_runtime_unwired"`
 
 `wasm_worker_execute_with_operation(source)` mirrors
 `wasm_worker_execute(source)` and also returns:
 
 - `operation_id = worker_execute_<n>`
-- `state = "unwired"` in default builds, `"ready"` with `wasm-vm-probe`
+- `state` reflects current shared top-level worker state.
 
 `WasmWorkerSession` currently wraps lifecycle calls and tracks:
 

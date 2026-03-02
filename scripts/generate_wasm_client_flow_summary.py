@@ -251,6 +251,10 @@ def validate_docs(
         errors.append("docs missing session-local info().state guidance")
     if "session-local" not in docs_source:
         errors.append("docs missing session-local wording for worker session state behavior")
+    if 'worker `state = "ready"`' not in docs_source:
+        errors.append("docs missing worker state-ready gating guidance")
+    if 'worker `state != "ready"`' not in docs_source:
+        errors.append("docs missing worker state-not-ready gating guidance")
 
     return errors
 

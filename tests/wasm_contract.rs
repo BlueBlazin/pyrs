@@ -275,6 +275,18 @@ fn expected_mode_baseline_worker_state() -> String {
     }
 }
 
+fn reset_top_level_worker_state_for_contract_tests() {
+    let recycle = wasm_worker_recycle();
+    assert_eq!(
+        recycle.phase(),
+        expected_worker_lifecycle_phase_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+    );
+    assert_eq!(
+        recycle.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+    );
+}
+
 fn expected_worker_info_execution_probe_enabled_for_fixture(
     fixture: &wasm_worker_contract::WasmWorkerInfoFixture,
 ) -> bool {
@@ -376,6 +388,7 @@ fn wasm_execution_phase_keys_are_stable() {
 
 #[wasm_bindgen_test]
 fn wasm_worker_contract_basics() {
+    reset_top_level_worker_state_for_contract_tests();
     let info = wasm_worker_info();
     let fixture = &WASM_WORKER_INFO_FIXTURES[0];
     assert_eq!(
@@ -516,6 +529,7 @@ fn wasm_worker_timeout_policy_contract_is_stable() {
 
 #[wasm_bindgen_test]
 fn wasm_worker_timeout_set_contract_is_stable() {
+    reset_top_level_worker_state_for_contract_tests();
     let mut operation_ids = HashSet::new();
     for fixture in WASM_WORKER_TIMEOUT_FIXTURES {
         let result = wasm_worker_set_timeout(fixture.timeout_ms);
@@ -823,6 +837,7 @@ fn wasm_worker_operation_id_shape_is_stable() {
 
 #[wasm_bindgen_test]
 fn wasm_worker_execute_stub_contract_is_stable() {
+    reset_top_level_worker_state_for_contract_tests();
     for fixture in WASM_WORKER_EXECUTE_FIXTURES {
         let result = wasm_worker_execute(fixture.source);
         let expected_phase = expected_worker_execute_phase_for_fixture(fixture);
@@ -878,6 +893,7 @@ fn wasm_worker_execute_stub_contract_is_stable() {
 
 #[wasm_bindgen_test]
 fn wasm_worker_execute_with_operation_contract_is_stable() {
+    reset_top_level_worker_state_for_contract_tests();
     let mut operation_ids = HashSet::new();
     for fixture in WASM_WORKER_EXECUTE_FIXTURES {
         let result = wasm_worker_execute_with_operation(fixture.source);
@@ -917,6 +933,7 @@ fn wasm_worker_execute_with_operation_contract_is_stable() {
 
 #[wasm_bindgen_test]
 fn wasm_worker_session_contract_is_stable() {
+    reset_top_level_worker_state_for_contract_tests();
     let mut session = WasmWorkerSession::new();
     assert_eq!(session.starts_requested(), 0);
     assert_eq!(session.terminates_requested(), 0);
@@ -1206,6 +1223,7 @@ fn wasm_worker_session_contract_is_stable() {
 
 #[wasm_bindgen_test]
 fn wasm_worker_session_execute_with_operation_contract_is_stable() {
+    reset_top_level_worker_state_for_contract_tests();
     let mut session = WasmWorkerSession::new();
     let first = session.execute_with_operation("x = 1\n");
     if vm_probe_enabled() {
@@ -1279,6 +1297,106 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
         second_snapshot.last_state(),
         Some(expected_mode_baseline_worker_state())
     );
+}
+
+#[wasm_bindgen_test]
+fn wasm_worker_execute_requires_ready_state_after_terminate() {
+    reset_top_level_worker_state_for_contract_tests();
+    let terminate = wasm_worker_terminate();
+    assert_eq!(
+        terminate.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+
+    let blocked = wasm_worker_execute_with_operation("x = 1\n");
+    assert_eq!(blocked.phase(), "unsupported_worker_execution".to_string());
+    assert_eq!(
+        blocked.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+    assert_eq!(
+        blocked.blocker_key(),
+        Some("worker_runtime_unwired".to_string())
+    );
+    assert!(
+        blocked
+            .error()
+            .expect("worker execute should include an unsupported error")
+            .contains("not wired")
+    );
+
+    let recycle = wasm_worker_recycle();
+    assert_eq!(
+        recycle.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+    );
+
+    let resumed = wasm_worker_execute_with_operation("x = 1\n");
+    if vm_probe_enabled() {
+        assert_eq!(resumed.phase(), "ok".to_string());
+        assert!(resumed.blocker_key().is_none());
+        assert!(resumed.error().is_none());
+    } else {
+        assert_eq!(resumed.phase(), "unsupported_worker_execution".to_string());
+        assert_eq!(
+            resumed.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+    }
+}
+
+#[wasm_bindgen_test]
+fn wasm_worker_timeout_configuration_requires_ready_state_after_terminate() {
+    reset_top_level_worker_state_for_contract_tests();
+    let terminate = wasm_worker_terminate();
+    assert_eq!(
+        terminate.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+
+    let blocked = wasm_worker_set_timeout(5_000);
+    assert_eq!(
+        blocked.phase(),
+        "unsupported_worker_timeout_enforcement".to_string()
+    );
+    assert_eq!(
+        blocked.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+    assert_eq!(
+        blocked.blocker_key(),
+        Some("worker_runtime_unwired".to_string())
+    );
+    assert!(
+        blocked
+            .error()
+            .expect("worker timeout should include an unsupported error")
+            .contains("not wired")
+    );
+
+    let recycle = wasm_worker_recycle();
+    assert_eq!(
+        recycle.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+    );
+
+    let resumed = wasm_worker_set_timeout(5_000);
+    if vm_probe_enabled() {
+        assert_eq!(resumed.phase(), "worker_timeout_configured".to_string());
+        assert!(resumed.success());
+        assert!(resumed.blocker_key().is_none());
+        assert!(resumed.error().is_none());
+    } else {
+        assert_eq!(
+            resumed.phase(),
+            "unsupported_worker_timeout_enforcement".to_string()
+        );
+        assert!(!resumed.success());
+        assert_eq!(
+            resumed.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+    }
 }
 
 #[wasm_bindgen_test]

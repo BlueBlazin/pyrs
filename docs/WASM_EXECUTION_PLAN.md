@@ -625,6 +625,11 @@ Completed on this branch:
 - latest: top-level worker lifecycle calls now mutate shared worker state and
   `wasm_worker_info().state` reflects the current top-level lifecycle state;
   worker contract tests/docs and summary checks now guard this behavior.
+- latest: worker execute and timeout-configuration paths are now state-aware:
+  in `wasm-vm-probe`, capability-allowed worker execute and in-range timeout
+  configuration require `state = "ready"` (post-terminate calls now return
+  unwired unsupported phases until `start()`/`recycle()` restores readiness),
+  with fixture/tests/docs/summary guards updated for deterministic behavior.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

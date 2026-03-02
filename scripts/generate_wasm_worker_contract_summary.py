@@ -679,6 +679,50 @@ def parse_source_worker_vm_probe_lifecycle_sets_shared_state(wasm_source: str) -
     return "set_current_worker_state(state);" in body
 
 
+def extract_source_fn_body(wasm_source: str, signature: str) -> str:
+    start = wasm_source.find(signature)
+    if start == -1:
+        raise ValueError(f"unable to locate function signature: {signature}")
+    open_brace = wasm_source.find("{", start)
+    if open_brace == -1:
+        raise ValueError(f"unable to locate function body start for: {signature}")
+    depth = 0
+    for index in range(open_brace, len(wasm_source)):
+        char = wasm_source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return wasm_source[open_brace + 1 : index]
+    raise ValueError(f"unable to locate function body end for: {signature}")
+
+
+def parse_source_worker_set_timeout_requires_ready_state(wasm_source: str) -> bool:
+    body = extract_source_fn_body(
+        wasm_source, "pub fn wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult"
+    )
+    ready_guard = "if !worker_runtime_ready() {"
+    vm_probe_branch = "if wasm_vm_runtime_enabled() {"
+    return ready_guard in body and (
+        vm_probe_branch in body and body.find(ready_guard) < body.find(vm_probe_branch)
+    )
+
+
+def parse_source_worker_execute_requires_ready_state(wasm_source: str) -> bool:
+    body = extract_source_fn_body(
+        wasm_source, "fn execute_snippet_with_contract("
+    )
+    return "contract.requires_worker_ready_state() && !worker_runtime_ready()" in body
+
+
+def parse_source_contract_mode_declares_ready_state_guard(wasm_source: str) -> bool:
+    return (
+        "fn requires_worker_ready_state(self) -> bool" in wasm_source
+        and "matches!(self, WasmExecutionContractMode::Worker)" in wasm_source
+    )
+
+
 def parse_source_worker_info_uses_runtime_probe_flag(worker_info_body: str) -> bool:
     return "execution_probe_enabled: wasm_vm_runtime_enabled()" in worker_info_body
 
@@ -838,6 +882,15 @@ def main() -> int:
     )
     source_worker_vm_probe_lifecycle_sets_shared_state = (
         parse_source_worker_vm_probe_lifecycle_sets_shared_state(wasm_source)
+    )
+    source_worker_set_timeout_requires_ready_state = (
+        parse_source_worker_set_timeout_requires_ready_state(wasm_source)
+    )
+    source_worker_execute_requires_ready_state = (
+        parse_source_worker_execute_requires_ready_state(wasm_source)
+    )
+    source_contract_mode_declares_ready_state_guard = (
+        parse_source_contract_mode_declares_ready_state_guard(wasm_source)
     )
     source_expected_worker_blocker_keys = [
         source_worker_blocker_key,
@@ -1033,6 +1086,18 @@ def main() -> int:
     if not source_worker_vm_probe_lifecycle_sets_shared_state:
         errors.append(
             "worker_vm_probe_lifecycle_result should set shared worker state to input state"
+        )
+    if not source_contract_mode_declares_ready_state_guard:
+        errors.append(
+            "WasmExecutionContractMode should expose requires_worker_ready_state() for worker-mode gating"
+        )
+    if not source_worker_execute_requires_ready_state:
+        errors.append(
+            "execute_snippet_with_contract should gate worker mode when worker_runtime_ready() is false"
+        )
+    if not source_worker_set_timeout_requires_ready_state:
+        errors.append(
+            "wasm_worker_set_timeout should reject configuration when worker_runtime_ready() is false"
         )
     if not source_worker_info_uses_lifecycle_supported_flag:
         errors.append(
@@ -1344,6 +1409,9 @@ def main() -> int:
             "uses_mode_aware_state": source_worker_info_uses_mode_aware_state,
             "unwired_lifecycle_sets_shared_state": source_worker_unwired_lifecycle_sets_shared_state,
             "vm_probe_lifecycle_sets_shared_state": source_worker_vm_probe_lifecycle_sets_shared_state,
+            "contract_mode_declares_ready_state_guard": source_contract_mode_declares_ready_state_guard,
+            "worker_execute_requires_ready_state": source_worker_execute_requires_ready_state,
+            "worker_set_timeout_requires_ready_state": source_worker_set_timeout_requires_ready_state,
             "uses_runtime_probe_flag": source_worker_info_uses_runtime_probe_flag,
             "uses_lifecycle_supported_flag": source_worker_info_uses_lifecycle_supported_flag,
             "uses_execute_supported_flag": source_worker_info_uses_execute_supported_flag,
