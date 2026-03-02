@@ -80,21 +80,21 @@ Promotion review must include:
 
 ### Latest Recorded Evidence Snapshot (2026-03-03 UTC)
 
-- workflow-dispatch run: [22591801427](https://github.com/BlueBlazin/pyrs/actions/runs/22591801427)
-- head commit: `1a6a44d8f0bd2ae22bc09d29ca7fe38a2298a7f0`
+- workflow-dispatch run: [22592519133](https://github.com/BlueBlazin/pyrs/actions/runs/22592519133)
+- head commit: `b3605a2217c824f6031fbeb80c97af175f4bace9`
 - artifact hashes (from CI upload logs):
   - `wasm-contract-artifacts`:
-    - artifact id: `5727910015`
-    - sha256: `3b555b9276aa6c7898d5bd3fa0eacae6d8dd63decce051e1b6a89963483def2c`
+    - artifact id: `5728229636`
+    - sha256: `cee3d518e27d34120e45fec3a1c3165670546f61000e193b1646984455483f3f`
   - `wasm-evidence-pack`:
-    - artifact id: `5727910167`
-    - sha256: `6be1ddaed91c4b6c831ce68429fe75d1bfaf3ef299c7af815e0fd685e8accff2`
+    - artifact id: `5728229779`
+    - sha256: `8f3896b624329e15eb4dc382b967a46840e62ddd69520f256398d535791c1744`
   - `wasm-browser-smoke-artifacts`:
-    - artifact id: `5727944170`
-    - sha256: `de9904c45993f6d4cd691463d04b2e6d6e79c76cdbf9b88227bc4f78a8e45f7c`
+    - artifact id: `5728254300`
+    - sha256: `7890796868fc1404352cdec7dbbcb5e4b85334155240843550439cb7e14af969`
   - `wasm-browser-smoke-evidence-pack`:
-    - artifact id: `5727944418`
-    - sha256: `312e60cb7eb71b762429be9f195063648c5604838df75e8be91a19f22218cd2e`
+    - artifact id: `5728254459`
+    - sha256: `aff93f25bcd8fa79b90ce290b88194cc724be1bddddc99542a48826651a837e3`
 
 ## Decision Rule
 
