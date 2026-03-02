@@ -121,6 +121,18 @@ python3 scripts/extract_wasm_ci_artifact_hashes.py \
   --format markdown
 ```
 
+If your local environment blocks non-interactive `gh` API calls (for example:
+`error connecting to api.github.com`), run extraction from the helper-captured
+log file instead:
+
+```bash
+python3 scripts/extract_wasm_ci_artifact_hashes.py \
+  --log-file perf/wasm-browser-smoke-run/workflow-run.log \
+  --run-url https://github.com/BlueBlazin/pyrs/actions/runs/<run-id> \
+  --head-sha <head-sha> \
+  --format markdown
+```
+
 ## Promotion Evidence Checklist
 
 Before marking browser-smoke baseline captured:
