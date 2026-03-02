@@ -127,9 +127,11 @@ run_vm_probe_state_gate_browser_smoke() {
     return 0
   fi
 
-  echo "[wasm-contract] wasm-pack ${browser}: vm-probe state-gate smoke (terminate/recycle flow)"
-  wasm-pack test --headless --"${browser}" --features wasm-vm-probe --test wasm_contract -- after_terminate
-  wasm-pack test --headless --"${browser}" --features wasm-vm-probe --test wasm_contract -- shared_state_after_external_lifecycle_change
+  echo "[wasm-contract] wasm-pack ${browser}: vm-probe browser smoke (wasm_contract suite)"
+  # Filtering vm-probe wasm-bindgen browser runs by test name has shown
+  # runner-level hangs in CI ("Loading scripts..." timeout). Run the full
+  # wasm_contract integration suite in vm-probe mode for stable signal.
+  wasm-pack test --headless --"${browser}" --features wasm-vm-probe --test wasm_contract
 }
 
 emit_browser_smoke_baseline() {
