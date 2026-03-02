@@ -22,6 +22,10 @@ All of the following must be green for the candidate commit:
    - verifies fixture/docs/source contract summaries and host-seam audit.
 2. When browser smoke is explicitly requested (`workflow_dispatch`):
    - `wasm-track / wasm-browser-smoke` must be reviewed for pass/fail and logs,
+   - browser smoke now hard-fails on Cargo wasm output-collision warnings
+     (`output filename collision`) from `wasm-pack` substeps,
+   - vm-probe browser state-gate smoke (`wasm_vm_probe_browser_smoke`) must pass
+     in browser mode (node fallback only if browser vm-probe target fails),
    - failures block promotion unless they are triaged and explicitly waived.
 3. Existing native mandatory lanes (`parity-gate`, release/nightly lanes) remain green.
 4. No new CI flakes attributable to WASM codepaths.
