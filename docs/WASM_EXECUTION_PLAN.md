@@ -888,7 +888,8 @@ Completed on this branch:
   locking `wasm_worker_info()` state and capability flag updates to the shared
   global worker state machine.
 - latest: session-contract summary gate now fails fast if the
-  `terminate -> start` recovery coverage tests are missing from
+  `terminate -> start` recovery coverage tests and worker-info lifecycle
+  transition coverage test are missing from
   `tests/wasm_contract.rs`
   (`scripts/generate_wasm_session_contract_summary.py`), preventing silent
   deletion of these lifecycle recovery contracts.
