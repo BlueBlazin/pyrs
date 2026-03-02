@@ -89,6 +89,7 @@ pub trait VmHost: Send + Sync {
     fn current_dir(&self) -> Result<PathBuf, String>;
     fn env_var(&self, name: &str) -> Option<String>;
     fn env_var_os(&self, name: &str) -> Option<OsString>;
+    fn env_vars(&self) -> Vec<(String, String)>;
     fn path_is_dir(&self, path: &std::path::Path) -> bool;
     fn process_args(&self) -> Vec<String>;
     fn current_exe(&self) -> Option<PathBuf>;
@@ -144,6 +145,10 @@ impl VmHost for NativeHost {
         std::env::var_os(name)
     }
 
+    fn env_vars(&self) -> Vec<(String, String)> {
+        std::env::vars().collect()
+    }
+
     fn path_is_dir(&self, path: &std::path::Path) -> bool {
         path.is_dir()
     }
@@ -179,6 +184,10 @@ impl VmHost for WasmHost {
 
     fn env_var_os(&self, _name: &str) -> Option<OsString> {
         None
+    }
+
+    fn env_vars(&self) -> Vec<(String, String)> {
+        Vec::new()
     }
 
     fn path_is_dir(&self, _path: &std::path::Path) -> bool {

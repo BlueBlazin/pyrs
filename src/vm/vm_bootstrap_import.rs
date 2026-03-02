@@ -1116,7 +1116,9 @@ impl Vm {
                 (
                     "environ",
                     self.heap.alloc_dict(
-                        std::env::vars()
+                        self.host
+                            .env_vars()
+                            .into_iter()
                             .map(|(name, value)| (Value::Str(name), Value::Str(value)))
                             .collect::<Vec<_>>(),
                     ),
@@ -8489,11 +8491,19 @@ impl Vm {
         if repo_shim_root.is_dir() {
             return Some(repo_shim_root);
         }
+        #[cfg(target_arch = "wasm32")]
+        {
+            return None;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         let cwd_shim_root = std::env::current_dir().ok()?.join("shims");
-        if cwd_shim_root.is_dir() {
-            Some(cwd_shim_root)
-        } else {
-            None
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if cwd_shim_root.is_dir() {
+                Some(cwd_shim_root)
+            } else {
+                None
+            }
         }
     }
 
