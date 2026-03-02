@@ -69,6 +69,9 @@ echo "[wasm-branch] wasm host seam audit snapshot"
 python3 scripts/audit_wasm_host_seam.py \
   --out perf/wasm_host_seam_audit_latest.json
 
+echo "[wasm-branch] wasm artifact-hash extractor contract"
+python3 scripts/check_wasm_artifact_hash_extractor_contract.py
+
 echo "[wasm-branch] wasm local evidence-pack snapshot"
 python3 scripts/collect_wasm_evidence_pack.py \
   --out-dir perf/wasm_evidence_pack_latest

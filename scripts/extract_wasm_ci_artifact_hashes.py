@@ -87,7 +87,7 @@ def run_gh(args: list[str], retries: int = 3, retry_delay_seconds: float = 1.25)
 
 def parse_records(log_text: str) -> list[ArtifactRecord]:
     digest_by_step: dict[tuple[str, str], str] = {}
-    records: list[ArtifactRecord] = []
+    finalized_entries: list[tuple[str, str, str, str]] = []
 
     for raw_line in log_text.splitlines():
         digest_match = DIGEST_RE.match(raw_line)
@@ -100,17 +100,27 @@ def parse_records(log_text: str) -> list[ArtifactRecord]:
         if finalized_match:
             job = finalized_match.group("job")
             step = finalized_match.group("step")
-            key = (job, step)
-            sha = digest_by_step.get(key, "")
-            records.append(
-                ArtifactRecord(
-                    job=job,
-                    step=step,
-                    name=finalized_match.group("name"),
-                    artifact_id=finalized_match.group("artifact_id"),
-                    sha256=sha,
+            finalized_entries.append(
+                (
+                    job,
+                    step,
+                    finalized_match.group("name"),
+                    finalized_match.group("artifact_id"),
                 )
             )
+
+    records: list[ArtifactRecord] = []
+    for job, step, name, artifact_id in finalized_entries:
+        sha = digest_by_step.get((job, step), "")
+        records.append(
+            ArtifactRecord(
+                job=job,
+                step=step,
+                name=name,
+                artifact_id=artifact_id,
+                sha256=sha,
+            )
+        )
 
     records.sort(key=lambda record: record.name)
     return records
@@ -213,6 +223,14 @@ def main() -> int:
     records = parse_records(log_text)
     if not records:
         print("error: no uploaded artifact hash records found in log", file=sys.stderr)
+        return 1
+    missing_sha_records = [record.name for record in records if not record.sha256]
+    if missing_sha_records:
+        print(
+            "error: missing SHA256 digest for uploaded artifact(s): "
+            + ", ".join(missing_sha_records),
+            file=sys.stderr,
+        )
         return 1
 
     payload = build_payload(effective_run_id, run_url, head_sha, records)

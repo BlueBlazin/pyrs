@@ -28,6 +28,7 @@ Use this file to find canonical ownership quickly.
 - `docs/WASM_BROWSER_SMOKE_RUNBOOK.md`: workflow-dispatch browser smoke runbook and artifact capture process.
 - `scripts/run_wasm_browser_smoke_dispatch.sh`: one-shot dispatch/watch/download helper for browser-smoke evidence capture.
 - `scripts/extract_wasm_ci_artifact_hashes.py`: extract artifact IDs + SHA256 digests from a workflow run log for promotion notes.
+- `scripts/check_wasm_artifact_hash_extractor_contract.py`: fixture-backed contract check for artifact-hash extraction behavior.
 
 ## Gap Tracking
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.

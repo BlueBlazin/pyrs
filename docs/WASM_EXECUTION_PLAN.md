@@ -866,6 +866,15 @@ Completed on this branch:
 - latest: wasm promotion-note extraction now has a dedicated helper script
   (`scripts/extract_wasm_ci_artifact_hashes.py`) and runbook wiring so
   artifact hash capture is reproducible and less manual.
+- latest: artifact-hash extraction is now order-robust and contract-gated:
+  - parser now joins digest/finalized records independent of log-line order
+    (prevents empty-digest drift on reordered upload logs),
+  - extraction now fails fast when any finalized artifact is missing a SHA256
+    digest row,
+  - fixture-backed contract checker
+    (`scripts/check_wasm_artifact_hash_extractor_contract.py`) is wired into
+    `scripts/check_wasm_branch.sh` so W8 tooling regressions are blocked in the
+    primary wasm contract lane.
 - latest: `scripts/run_wasm_browser_smoke_dispatch.sh` now writes bundled
   artifact hash snapshots (`wasm-artifact-hashes.json` and `.md`) alongside
   downloaded run artifacts after baseline validation, using a saved
