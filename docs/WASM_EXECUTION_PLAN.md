@@ -736,6 +736,12 @@ Completed on this branch:
   `wasm_worker_info.supported` is sourced from `wasm_vm_runtime_enabled()`
   (not a stale literal), so source contract checks protect mode-aware support
   semantics directly.
+- latest: worker timeout configuration now has persistent contract state:
+  - `wasm_worker_current_timeout_ms()` exports the current worker timeout value,
+  - `wasm_worker_set_timeout(...)` in vm-probe ready state updates that value,
+  - worker lifecycle reset calls (`start` / `terminate` / `recycle`) reset it
+    to the default `5000` ms,
+  with wasm unit + wasm contract + docs/summary gate coverage to prevent drift.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

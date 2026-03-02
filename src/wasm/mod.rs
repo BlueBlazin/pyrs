@@ -4,7 +4,7 @@ use std::collections::HashSet;
 #[cfg(feature = "wasm-vm-probe")]
 use std::sync::Arc;
 use std::sync::Once;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use crate::host::{HostCapability, VmHost, WasmHost};
 #[cfg(feature = "wasm-vm-probe")]
@@ -348,6 +348,18 @@ fn current_worker_state_key() -> String {
     current_worker_state().key().to_string()
 }
 
+fn current_worker_timeout_ms() -> u32 {
+    CURRENT_WASM_WORKER_TIMEOUT_MS.load(Ordering::Relaxed)
+}
+
+fn set_current_worker_timeout_ms(timeout_ms: u32) {
+    CURRENT_WASM_WORKER_TIMEOUT_MS.store(timeout_ms, Ordering::Relaxed);
+}
+
+fn reset_worker_timeout_ms() {
+    set_current_worker_timeout_ms(WASM_WORKER_TIMEOUT_DEFAULT_MS);
+}
+
 fn worker_timeout_policy_unsupported_reason() -> String {
     if wasm_vm_runtime_enabled() {
         WASM_WORKER_TIMEOUT_ENFORCEMENT_UNWIRED_REASON.to_string()
@@ -391,6 +403,7 @@ pub fn wasm_api_version() -> u32 {
 static PANIC_HOOK_ONCE: Once = Once::new();
 static NEXT_WASM_WORKER_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
 static CURRENT_WASM_WORKER_STATE: AtomicU8 = AtomicU8::new(worker_state_baseline() as u8);
+static CURRENT_WASM_WORKER_TIMEOUT_MS: AtomicU32 = AtomicU32::new(WASM_WORKER_TIMEOUT_DEFAULT_MS);
 #[cfg(feature = "wasm-vm-probe")]
 thread_local! {
     static WASM_WORKER_VM: RefCell<Option<Vm>> = const { RefCell::new(None) };
@@ -1781,6 +1794,12 @@ pub fn wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy {
     }
 }
 
+/// Returns the currently configured worker timeout value in milliseconds.
+#[wasm_bindgen]
+pub fn wasm_worker_current_timeout_ms() -> u32 {
+    current_worker_timeout_ms()
+}
+
 /// Applies a requested timeout policy update for worker execution.
 ///
 /// Current milestone behavior:
@@ -1824,6 +1843,7 @@ pub fn wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult {
     if wasm_vm_runtime_enabled() {
         #[cfg(feature = "wasm-vm-probe")]
         {
+            set_current_worker_timeout_ms(timeout_ms);
             return WasmWorkerTimeoutResult {
                 success: true,
                 operation_id: next_worker_operation_id("set_timeout"),
@@ -1917,6 +1937,7 @@ fn worker_unwired_result(phase: WasmWorkerLifecyclePhase) -> WasmWorkerLifecycle
     let blocker_key = WASM_WORKER_BLOCKER_RUNTIME_UNWIRED.to_string();
     let message = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
         .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
+    reset_worker_timeout_ms();
     set_current_worker_state(WasmWorkerState::Unwired);
     WasmWorkerLifecycleResult {
         success: false,
@@ -1954,6 +1975,7 @@ fn worker_vm_probe_lifecycle_result(
 #[wasm_bindgen]
 pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
     set_current_worker_state(WasmWorkerState::Starting);
+    reset_worker_timeout_ms();
     reset_worker_vm();
     worker_vm_probe_lifecycle_result(
         "start",
@@ -1981,6 +2003,7 @@ pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
 #[wasm_bindgen]
 pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
     set_current_worker_state(WasmWorkerState::Terminating);
+    reset_worker_timeout_ms();
     clear_worker_vm();
     worker_vm_probe_lifecycle_result(
         "terminate",
@@ -2008,6 +2031,7 @@ pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
 #[wasm_bindgen]
 pub fn wasm_worker_recycle() -> WasmWorkerLifecycleResult {
     set_current_worker_state(WasmWorkerState::Starting);
+    reset_worker_timeout_ms();
     reset_worker_vm();
     worker_vm_probe_lifecycle_result(
         "recycle",
@@ -2734,13 +2758,13 @@ pub fn check_compile(source: &str) -> Result<(), JsValue> {
 mod tests {
     use super::{
         WasmExecutionPhase, WasmReplSession, check_syntax, execute, execution_phase_keys,
-        pyrs_version, wasm_worker_execute, wasm_worker_info, wasm_worker_recycle,
-        wasm_worker_start, wasm_worker_terminate,
+        pyrs_version, wasm_worker_current_timeout_ms, wasm_worker_execute, wasm_worker_info,
+        wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start, wasm_worker_terminate,
     };
     #[cfg(feature = "wasm-vm-probe")]
     use super::{
         WasmWorkerState, clear_worker_vm, set_current_worker_state,
-        wasm_worker_execute_with_operation, wasm_worker_set_timeout,
+        wasm_worker_execute_with_operation,
     };
 
     fn vm_probe_enabled() -> bool {
@@ -2914,6 +2938,65 @@ mod tests {
         let blocked = wasm_worker_execute("import socket\n");
         assert_eq!(blocked.phase(), "unsupported_worker_execution".to_string());
         assert_eq!(blocked.blocker_key(), Some("network_sockets".to_string()));
+    }
+
+    #[test]
+    fn wasm_worker_timeout_configuration_value_is_deterministic() {
+        let baseline = wasm_worker_recycle();
+        if vm_probe_enabled() {
+            assert_eq!(baseline.phase(), "worker_recycled".to_string());
+            assert_eq!(baseline.state(), "ready".to_string());
+        } else {
+            assert_eq!(baseline.phase(), "unsupported_worker_recycle".to_string());
+            assert_eq!(baseline.state(), "unwired".to_string());
+        }
+        assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+
+        let configured = wasm_worker_set_timeout(7_500);
+        if vm_probe_enabled() {
+            assert_eq!(configured.phase(), "worker_timeout_configured".to_string());
+            assert!(configured.success());
+            assert_eq!(configured.timeout_ms(), 7_500);
+            assert_eq!(wasm_worker_current_timeout_ms(), 7_500);
+        } else {
+            assert_eq!(
+                configured.phase(),
+                "unsupported_worker_timeout_enforcement".to_string()
+            );
+            assert!(!configured.success());
+            assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+        }
+
+        let out_of_range = wasm_worker_set_timeout(1);
+        assert_eq!(out_of_range.phase(), "invalid_worker_timeout".to_string());
+        if vm_probe_enabled() {
+            assert_eq!(wasm_worker_current_timeout_ms(), 7_500);
+        } else {
+            assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+        }
+
+        let terminated = wasm_worker_terminate();
+        if vm_probe_enabled() {
+            assert_eq!(terminated.phase(), "worker_terminated".to_string());
+            assert_eq!(terminated.state(), "unwired".to_string());
+        } else {
+            assert_eq!(
+                terminated.phase(),
+                "unsupported_worker_terminate".to_string()
+            );
+            assert_eq!(terminated.state(), "unwired".to_string());
+        }
+        assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+
+        let started = wasm_worker_start();
+        if vm_probe_enabled() {
+            assert_eq!(started.phase(), "worker_started".to_string());
+            assert_eq!(started.state(), "ready".to_string());
+        } else {
+            assert_eq!(started.phase(), "unsupported_worker_start".to_string());
+            assert_eq!(started.state(), "unwired".to_string());
+        }
+        assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
     }
 
     #[cfg(feature = "wasm-vm-probe")]

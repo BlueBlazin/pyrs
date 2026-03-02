@@ -41,6 +41,11 @@ This document defines the JS-facing contract currently exported by
     - `invalid_worker_timeout`
   - `wasm-vm-probe` adds:
     - `worker_timeout_configured`
+- `wasm_worker_current_timeout_ms() -> u32`
+  - Returns current configured worker timeout (milliseconds).
+  - Default is `5000`.
+  - Resets to `5000` on worker lifecycle reset calls (`start`, `terminate`,
+    `recycle`) in both default and `wasm-vm-probe` builds.
 - `wasm_worker_state_keys() -> Array`
   - Returns canonical worker runtime state keys.
 - `wasm_worker_lifecycle_phase_keys() -> Array`
@@ -81,6 +86,8 @@ This document defines the JS-facing contract currently exported by
     - `wasm-vm-probe` in-range:
       - `worker_timeout_configured` when worker `state = "ready"`
       - `unsupported_worker_timeout_enforcement` when worker `state != "ready"`
+  - In `wasm-vm-probe`, successful in-range configuration updates the current
+    worker timeout reported by `wasm_worker_current_timeout_ms()`.
 - `wasm_worker_execute(source: &str) -> WasmExecutionResult`
   - Default worker execute phases:
     - `syntax_error`
@@ -211,6 +218,7 @@ This document defines the JS-facing contract currently exported by
   - reflects current shared top-level worker-lifecycle state.
   - timeout configuration in `wasm-vm-probe` requires `state = "ready"`.
 - `timeout_ms: u32`
+  - requested timeout value for this operation.
 - `error: Option<String>`
 - `blocker_key: Option<String>`
 

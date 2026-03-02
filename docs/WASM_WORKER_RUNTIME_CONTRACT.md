@@ -7,6 +7,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `wasm_worker_info()`
 - `wasm_worker_timeout_policy()`
 - `wasm_worker_timeout_phase_keys()`
+- `wasm_worker_current_timeout_ms()`
 - `wasm_worker_state_keys()`
 - `wasm_worker_lifecycle_phase_keys()`
 - `wasm_worker_execute_phase_keys()`
@@ -53,6 +54,14 @@ Top-level lifecycle calls now mutate shared worker state, and
   - default build: `"wasm worker runtime is not wired yet"`
   - `wasm-vm-probe`:
     `"worker timeout enforcement is not wired yet (wasm-vm-probe currently supports configuration-only updates)"`
+
+`wasm_worker_current_timeout_ms()` currently returns:
+
+- default `5000`,
+- in `wasm-vm-probe`, in-range `wasm_worker_set_timeout(...)` updates this
+  value when `state = "ready"`,
+- resets back to `5000` on lifecycle reset calls (`start`, `terminate`,
+  `recycle`) in both default and `wasm-vm-probe` builds.
 
 `wasm_worker_timeout_phase_keys()` currently includes:
 
@@ -188,6 +197,7 @@ keys (`worker_runtime_unwired`, `worker_runtime_failed` + module-policy capabili
       - `success = true`
       - `blocker_key = None`
       - `error = None`
+      - updates `wasm_worker_current_timeout_ms()` to requested `timeout_ms`
     - when `state != "ready"`:
       - `phase = "unsupported_worker_timeout_enforcement"`
       - `success = false`
@@ -271,6 +281,8 @@ Current behavior is:
   capability-allowed snippets on a persistent worker VM.
 - `start` and `recycle` reinitialize worker VM runtime state; `terminate`
   clears worker runtime state.
+- `start` / `terminate` / `recycle` reset current worker timeout value to the
+  default `5000` ms.
 - there is still no true Web Worker thread orchestration in this milestone.
 
 ## Interruption Model

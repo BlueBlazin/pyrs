@@ -30,10 +30,11 @@ use pyrs::wasm::{
     wasm_execution_blockers, wasm_execution_phase_keys, wasm_module_policy_entries,
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_import_roots,
     wasm_snippet_support, wasm_worker_blocker_error, wasm_worker_blocker_keys,
-    wasm_worker_blockers, wasm_worker_execute, wasm_worker_execute_phase_keys,
-    wasm_worker_execute_with_operation, wasm_worker_info, wasm_worker_lifecycle_phase_keys,
-    wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start, wasm_worker_state_keys,
-    wasm_worker_terminate, wasm_worker_timeout_phase_keys, wasm_worker_timeout_policy,
+    wasm_worker_blockers, wasm_worker_current_timeout_ms, wasm_worker_execute,
+    wasm_worker_execute_phase_keys, wasm_worker_execute_with_operation, wasm_worker_info,
+    wasm_worker_lifecycle_phase_keys, wasm_worker_recycle, wasm_worker_set_timeout,
+    wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate,
+    wasm_worker_timeout_phase_keys, wasm_worker_timeout_policy,
 };
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
@@ -710,6 +711,48 @@ fn wasm_worker_timeout_set_contract_is_stable() {
             fixture.name
         );
     }
+}
+
+#[wasm_bindgen_test]
+fn wasm_worker_timeout_value_tracks_configuration_and_lifecycle_reset() {
+    reset_top_level_worker_state_for_contract_tests();
+    assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+
+    let configured = wasm_worker_set_timeout(9_000);
+    if vm_probe_enabled() {
+        assert_eq!(configured.phase(), "worker_timeout_configured".to_string());
+        assert!(configured.success());
+        assert_eq!(wasm_worker_current_timeout_ms(), 9_000);
+    } else {
+        assert_eq!(
+            configured.phase(),
+            "unsupported_worker_timeout_enforcement".to_string()
+        );
+        assert!(!configured.success());
+        assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+    }
+
+    let invalid = wasm_worker_set_timeout(1);
+    assert_eq!(invalid.phase(), "invalid_worker_timeout".to_string());
+    if vm_probe_enabled() {
+        assert_eq!(wasm_worker_current_timeout_ms(), 9_000);
+    } else {
+        assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+    }
+
+    let terminate = wasm_worker_terminate();
+    assert_eq!(
+        terminate.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+    assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+
+    let start = wasm_worker_start();
+    assert_eq!(
+        start.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[0])
+    );
+    assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
 }
 
 #[wasm_bindgen_test]

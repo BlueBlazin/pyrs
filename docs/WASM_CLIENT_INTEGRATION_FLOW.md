@@ -16,20 +16,22 @@ This guide defines the recommended browser call order for current wasm APIs.
 4. `wasm_worker_timeout_policy()`
    - gate timeout controls on `configuration_supported`;
    - treat `enforcement_supported` as the separate hard-enforcement capability.
-5. Optional: `wasm_worker_set_timeout(timeout_ms)` for UI timeout controls.
-6. `wasm_snippet_support(source)`
-7. Optional: `wasm_snippet_import_roots(source)` to display dependency roots.
-8. If `phase == "supported"`:
+5. Optional: `wasm_worker_current_timeout_ms()`
+   - read active timeout config for timeout-control UI state.
+6. Optional: `wasm_worker_set_timeout(timeout_ms)` for UI timeout controls.
+7. `wasm_snippet_support(source)`
+8. Optional: `wasm_snippet_import_roots(source)` to display dependency roots.
+9. If `phase == "supported"`:
    - call `check_compile_result(source)` (optional if you already used snippet preflight),
    - call `execute(source)`.
    - default build: parse+compile-valid calls return `unsupported_execution`.
    - `wasm-vm-probe` build: capability-allowed snippets can return `ok` or `runtime_error`.
    - when phase is unsupported, use `result.blocker_key` for deterministic UI branching.
    - optional: use `wasm_execution_phase_keys()` for execute-phase enum hydration.
-9. If `phase == "blocked_capability"`:
+10. If `phase == "blocked_capability"`:
    - call `wasm_snippet_blockers(source)` for full blocker rows,
    - render module/capability-specific guidance.
-10. If `phase == "syntax_error"` or `phase == "compile_error"`:
+11. If `phase == "syntax_error"` or `phase == "compile_error"`:
    - use `line`/`column` + `error` for diagnostics UI.
 
 ## Worker Branch (Current)
@@ -75,7 +77,8 @@ are explicit contract lifecycle controls.
     - `unsupported_worker_timeout_enforcement` with
       `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`
       when worker `state != "ready"`,
-    - configuration-only; enforcement still unwired.
+    - configuration-only; enforcement still unwired,
+    - when configured, `wasm_worker_current_timeout_ms()` reflects the new value.
   - expected policy shape:
     - default build: `configuration_supported = false`, `enforcement_supported = false`
     - `wasm-vm-probe`: `configuration_supported = true`, `enforcement_supported = false`
@@ -118,9 +121,12 @@ pyrs.init_wasm_runtime();
 const runtime = pyrs.wasm_runtime_info();
 const worker = pyrs.wasm_worker_info();
 const timeoutPolicy = pyrs.wasm_worker_timeout_policy();
+const currentTimeoutMs = pyrs.wasm_worker_current_timeout_ms();
 
 if (timeoutPolicy.configuration_supported) {
-  const timeoutResult = pyrs.wasm_worker_set_timeout(timeoutPolicy.default_timeout_ms);
+  const timeoutResult = pyrs.wasm_worker_set_timeout(
+    currentTimeoutMs || timeoutPolicy.default_timeout_ms,
+  );
   if (timeoutResult.phase === "invalid_worker_timeout") {
     showError(timeoutResult.error);
     return;
