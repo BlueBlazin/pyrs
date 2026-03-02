@@ -229,6 +229,7 @@ Branch helper:
   `python3 scripts/collect_wasm_evidence_pack.py`
   to bundle required local wasm artifact snapshots under
   `perf/wasm_evidence_pack_latest/` with a manifest for review handoff.
+  `scripts/check_wasm_branch.sh` now emits this evidence pack automatically.
 - vm-compile probe helper (non-gating):
   `scripts/probe_wasm_vm_compile.sh`
   to surface current wasm-vm compile blockers under opt-in `wasm-vm-probe`.

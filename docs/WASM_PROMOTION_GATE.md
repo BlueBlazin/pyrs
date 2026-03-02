@@ -59,7 +59,8 @@ Promotion review must include:
 1. Latest `wasm-track` artifact bundle from CI.
 2. Latest local `scripts/check_wasm_branch.sh` output.
 3. Latest local consolidated evidence pack:
-   - run `python3 scripts/collect_wasm_evidence_pack.py`,
+   - generated automatically by `scripts/check_wasm_branch.sh`,
+   - or run `python3 scripts/collect_wasm_evidence_pack.py` directly,
    - attach `perf/wasm_evidence_pack_latest/manifest.json` and copied artifacts.
 4. Documented capability limitations and known gaps for browser mode.
 5. Rollback plan (commit range and revert strategy) if post-merge regressions appear.
