@@ -102,10 +102,16 @@ fi
 
 run_browser_smoke() {
   local browser="$1"
+  local smoke_status=0
   echo "[wasm-contract] wasm-pack ${browser}: integration contract tests"
-  wasm-pack test --headless --"${browser}" -- --test wasm_contract
+  if ! wasm-pack test --headless --"${browser}" -- --test wasm_contract; then
+    smoke_status=1
+  fi
   echo "[wasm-contract] wasm-pack ${browser}: lib unit tests"
-  wasm-pack test --headless --"${browser}" -- --lib
+  if ! wasm-pack test --headless --"${browser}" -- --lib; then
+    smoke_status=1
+  fi
+  return "${smoke_status}"
 }
 
 run_vm_probe_state_gate_browser_smoke() {

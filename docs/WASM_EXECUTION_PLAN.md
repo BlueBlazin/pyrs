@@ -715,6 +715,10 @@ Completed on this branch:
   `cargo check --target wasm32-unknown-unknown --tests` compile gates in
   default and `wasm-vm-probe` modes, preventing future wasm-pack compile drift
   from native-only integration suites.
+- latest: `run_wasm_contract_smoke.sh` browser helper now aggregates
+  per-substep failures (integration + lib wasm-pack runs) before returning,
+  so fallback and pass/fail decisions cannot silently ignore a failed smoke
+  sub-command.
 - latest: docs index now links to `/playground/` as an explicit browser-route
   entrypoint in Getting Started navigation.
 - latest: browser routes are now split by product UX vs diagnostics:
