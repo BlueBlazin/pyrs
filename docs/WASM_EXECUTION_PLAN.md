@@ -188,6 +188,8 @@ Branch helper:
 - `scripts/run_wasm_contract_smoke.sh` runs local wasm contract smoke checks
   (compile-only by default; set `PYRS_WASM_RUN_BROWSER_SMOKE=1` for optional
   browser run via `wasm-pack` covering both `--test wasm_contract` and `--lib`;
+  set `PYRS_WASM_SKIP_CORE_SMOKE=1` to run browser smoke without repeating
+  core compile/summary/nextest checks;
   set `PYRS_WASM_RUN_VM_PROBE_BROWSER_STATE_GATE_SMOKE=1` to additionally run
   vm-probe browser smoke focused on terminate/recycle state-gating flows).
 - wasm harness note: use targeted wasm contract compile lane
@@ -667,7 +669,8 @@ Completed on this branch:
 - latest: W7 CI now includes an optional `wasm-browser-smoke` job on manual
   dispatch; it installs `wasm-pack` and executes
   `scripts/run_wasm_contract_smoke.sh` with browser and vm-probe state-gate
-  smoke flags enabled, while keeping the mandatory gate lane deterministic.
+  smoke flags enabled (`PYRS_WASM_SKIP_CORE_SMOKE=1` in CI to avoid duplicate
+  core checks), while keeping the mandatory gate lane deterministic.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
