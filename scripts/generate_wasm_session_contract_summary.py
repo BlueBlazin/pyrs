@@ -388,6 +388,7 @@ def validate(
     worker_timeout_rows: list[WorkerTimeoutFixtureRow],
     worker_info_rows: list[WorkerInfoFixtureRow],
     worker_session_state_gate_rows: list[WorkerSessionStateGateFixtureRow],
+    source_info_uses_shared_worker_state: bool,
     source_session_state_override_removed: bool,
     source_execute_updates_last_state_from_result: bool,
     source_timeout_updates_last_state_from_result: bool,
@@ -420,6 +421,10 @@ def validate(
     if not source_session_state_override_removed:
         errors.append(
             "WasmWorkerSession execute/timeout paths should not override result.state with cached session state"
+        )
+    if not source_info_uses_shared_worker_state:
+        errors.append(
+            "WasmWorkerSession::info should return shared worker info state (no session-local state override)"
         )
     if not source_execute_updates_last_state_from_result:
         errors.append(
@@ -814,6 +819,10 @@ def main() -> int:
     worker_timeout_rows = parse_worker_timeout_rows(worker_source)
     worker_info_rows = parse_worker_info_rows(worker_source)
     worker_session_state_gate_rows = parse_worker_session_state_gate_rows(worker_source)
+    info_body = extract_source_fn_body(
+        wasm_source,
+        "pub fn info(&self) -> WasmWorkerInfo",
+    )
     execute_with_operation_body = extract_source_fn_body(
         wasm_source,
         "pub fn execute_with_operation(&mut self, source: &str) -> WasmWorkerExecutionResult",
@@ -825,6 +834,11 @@ def main() -> int:
     source_session_state_override_removed = (
         "fn effective_state_for_followup_call(&self)" not in wasm_source
         and "result.state = self.effective_state_for_followup_call();" not in wasm_source
+    )
+    source_info_uses_shared_worker_state = (
+        "wasm_worker_info()" in info_body
+        and "self.last_state" not in info_body
+        and "info.state =" not in info_body
     )
     source_execute_updates_last_state_from_result = (
         "self.last_state = Some(result.state.clone());" in execute_with_operation_body
@@ -840,6 +854,7 @@ def main() -> int:
         worker_timeout_rows,
         worker_info_rows,
         worker_session_state_gate_rows,
+        source_info_uses_shared_worker_state,
         source_session_state_override_removed,
         source_execute_updates_last_state_from_result,
         source_timeout_updates_last_state_from_result,
@@ -855,6 +870,7 @@ def main() -> int:
         "worker_fixture": str(worker_fixture_path),
         "wasm_source": str(wasm_src_path),
         "source_state_tracking": {
+            "info_uses_shared_worker_state": source_info_uses_shared_worker_state,
             "session_state_override_removed": source_session_state_override_removed,
             "execute_updates_last_state_from_result": source_execute_updates_last_state_from_result,
             "timeout_updates_last_state_from_result": source_timeout_updates_last_state_from_result,

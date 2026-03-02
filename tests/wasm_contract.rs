@@ -1516,6 +1516,13 @@ fn wasm_worker_session_followups_track_shared_state_after_external_lifecycle_cha
             "state gate lifecycle state mismatch: {}",
             fixture.name
         );
+        let info_after_external_trigger = session.info();
+        assert_eq!(
+            info_after_external_trigger.state(),
+            expected_worker_lifecycle_state_for_fixture(lifecycle_fixture),
+            "state gate session info state mismatch after external trigger: {}",
+            fixture.name
+        );
 
         let execute_result = session.execute_with_operation("x = 1\n");
         assert_eq!(

@@ -293,9 +293,11 @@ def main() -> int:
             "docs missing worker info timeout_enforcement_supported=false shape"
         )
     if "info().state" not in docs_source:
-        errors.append("docs missing session-local info().state guidance")
-    if "session-local" not in docs_source:
-        errors.append("docs missing session-local wording for worker session state behavior")
+        errors.append("docs missing info().state guidance")
+    if "shared top-level worker state" not in docs_source:
+        errors.append("docs missing shared top-level worker-state guidance for info().state")
+    if "last_state" not in docs_source or "session-local telemetry" not in docs_source:
+        errors.append("docs missing session-local last_state telemetry wording")
     if "Top-level lifecycle calls now mutate shared worker state" not in docs_source:
         errors.append(
             "docs missing top-level shared worker-state lifecycle guidance"

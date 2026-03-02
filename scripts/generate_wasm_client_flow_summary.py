@@ -248,9 +248,11 @@ def validate_docs(
         if field not in docs_source:
             errors.append(f"docs missing WasmWorkerSession telemetry field '{field}'")
     if "info().state" not in docs_source:
-        errors.append("docs missing session-local info().state guidance")
-    if "session-local" not in docs_source:
-        errors.append("docs missing session-local wording for worker session state behavior")
+        errors.append("docs missing info().state guidance")
+    if "shared top-level worker" not in docs_source:
+        errors.append("docs missing shared top-level worker-state wording for info().state")
+    if "last_state" not in docs_source or "session-local telemetry" not in docs_source:
+        errors.append("docs missing session-local telemetry wording for last_state")
     if 'worker `state = "ready"`' not in docs_source:
         errors.append("docs missing worker state-ready gating guidance")
     if 'worker `state != "ready"`' not in docs_source:

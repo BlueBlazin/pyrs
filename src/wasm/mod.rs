@@ -999,11 +999,7 @@ impl WasmWorkerSession {
     }
 
     pub fn info(&self) -> WasmWorkerInfo {
-        let mut info = wasm_worker_info();
-        if let Some(state) = self.last_state.clone() {
-            info.state = state;
-        }
-        info
+        wasm_worker_info()
     }
 
     pub fn start(&mut self) -> WasmWorkerLifecycleResult {

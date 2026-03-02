@@ -233,9 +233,9 @@ controls, and `enforcement_supported` for hard runtime-enforcement guarantees.
 Session state behavior:
 
 - `last_state` is lifecycle-derived (`start`/`terminate`/`recycle` results).
-- `info().state` is session-local: once lifecycle calls run, `info()` reflects
-  the session’s most recent lifecycle state (instead of always top-level
-  unwired state).
+- `info().state` reflects the current shared top-level worker state.
+- `last_state` remains session-local telemetry for the most recent session
+  operation result.
 - `execute_with_operation` and `set_timeout_ms` now follow the operation-reported
   shared worker state (so external top-level lifecycle changes are reflected in
   returned/session telemetry state).
