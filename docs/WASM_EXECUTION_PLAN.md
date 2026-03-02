@@ -937,6 +937,13 @@ Completed on this branch:
     `scripts/check_wasm_branch.sh`,
   - this prevents vm-probe-only wasm unit contracts from drifting
     uncompiled between checkpoints.
+- latest: vm-probe failed-state coverage now also locks worker/top-level
+  isolation behavior:
+  - worker-mode execute remains blocked with
+    `blocker_key = worker_runtime_failed` while worker state is `failed`,
+  - top-level `execute()` remains available (`phase = "ok"`) in the same
+    failed-state window,
+  - `wasm_worker_start()` recovery restores worker-mode execute paths.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
