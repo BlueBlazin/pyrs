@@ -586,6 +586,9 @@ Completed on this branch:
 - latest: `WasmWorkerSession` now carries lifecycle-derived state through
   `execute_with_operation` and `set_timeout_ms` telemetry updates (not just
   direct lifecycle calls), with vm-probe `ready` state preserved after recycle.
+- latest: `generate_wasm_session_contract_summary.py` now validates worker
+  lifecycle fixture state prerequisites (`recycle` vm-probe `ready`,
+  `terminate` vm-probe `unwired`) alongside existing execute contract rows.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

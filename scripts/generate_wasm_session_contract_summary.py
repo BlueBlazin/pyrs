@@ -38,6 +38,14 @@ class WorkerFixtureRow:
     expected_vm_probe_expect_line_column: bool | None
 
 
+@dataclass
+class WorkerLifecycleFixtureRow:
+    name: str
+    action: str
+    expected_state: str
+    expected_vm_probe_state: str | None
+
+
 def parse_const_body(source: str, const_name: str) -> str:
     match = re.search(
         rf"pub const {re.escape(const_name)}:[^=]*=\s*&\[(.*?)\];",
@@ -134,7 +142,7 @@ def parse_top_level_rows(source: str) -> list[TopLevelFixtureRow]:
 
 def parse_worker_rows(source: str) -> list[WorkerFixtureRow]:
     body = parse_const_body(source, "WASM_WORKER_EXECUTE_FIXTURES")
-    pattern = re.compile(r"WasmWorkerExecuteFixture\s*\{(.*?)\n\s*\},", re.DOTALL)
+    pattern = re.compile(r"WasmWorkerExecuteFixture\s*\{(.*?)\n\s*\},?", re.DOTALL)
     rows: list[WorkerFixtureRow] = []
     for match in pattern.finditer(body):
         row = match.group(1)
@@ -165,6 +173,23 @@ def parse_worker_rows(source: str) -> list[WorkerFixtureRow]:
     return rows
 
 
+def parse_worker_lifecycle_rows(source: str) -> list[WorkerLifecycleFixtureRow]:
+    body = parse_const_body(source, "WASM_WORKER_LIFECYCLE_FIXTURES")
+    pattern = re.compile(r"WasmWorkerLifecycleFixture\s*\{(.*?)\n\s*\},?", re.DOTALL)
+    rows: list[WorkerLifecycleFixtureRow] = []
+    for match in pattern.finditer(body):
+        row = match.group(1)
+        rows.append(
+            WorkerLifecycleFixtureRow(
+                name=parse_required_string(row, "name"),
+                action=parse_required_string(row, "action"),
+                expected_state=parse_required_string(row, "expected_state"),
+                expected_vm_probe_state=parse_optional_string(row, "expected_vm_probe_state"),
+            )
+        )
+    return rows
+
+
 def find_row(rows: list[WorkerFixtureRow], name: str) -> WorkerFixtureRow | None:
     for row in rows:
         if row.name == name:
@@ -172,14 +197,27 @@ def find_row(rows: list[WorkerFixtureRow], name: str) -> WorkerFixtureRow | None
     return None
 
 
+def find_lifecycle_row(
+    rows: list[WorkerLifecycleFixtureRow], action: str
+) -> WorkerLifecycleFixtureRow | None:
+    for row in rows:
+        if row.action == action:
+            return row
+    return None
+
+
 def validate(
-    top_level_rows: list[TopLevelFixtureRow], worker_rows: list[WorkerFixtureRow]
+    top_level_rows: list[TopLevelFixtureRow],
+    worker_rows: list[WorkerFixtureRow],
+    worker_lifecycle_rows: list[WorkerLifecycleFixtureRow],
 ) -> list[str]:
     errors: list[str] = []
     if not top_level_rows:
         errors.append("top-level fixture rows are empty")
     if not worker_rows:
         errors.append("worker execute fixture rows are empty")
+    if not worker_lifecycle_rows:
+        errors.append("worker lifecycle fixture rows are empty")
     if errors:
         return errors
 
@@ -290,6 +328,28 @@ def validate(
                 "worker_execute_runtime_error_zero_division expected_vm_probe_expect_line_column must be Some(true)"
             )
 
+    recycle_row = find_lifecycle_row(worker_lifecycle_rows, "recycle")
+    if recycle_row is None:
+        errors.append("missing worker lifecycle fixture row for action 'recycle'")
+    else:
+        if recycle_row.expected_state != "unwired":
+            errors.append(
+                "worker lifecycle recycle default expected_state must be 'unwired'"
+            )
+        if recycle_row.expected_vm_probe_state != "ready":
+            errors.append(
+                "worker lifecycle recycle expected_vm_probe_state must be Some(\"ready\")"
+            )
+
+    terminate_row = find_lifecycle_row(worker_lifecycle_rows, "terminate")
+    if terminate_row is None:
+        errors.append("missing worker lifecycle fixture row for action 'terminate'")
+    else:
+        if terminate_row.expected_vm_probe_state != "unwired":
+            errors.append(
+                "worker lifecycle terminate expected_vm_probe_state must be Some(\"unwired\")"
+            )
+
     return errors
 
 
@@ -318,8 +378,9 @@ def main() -> int:
     worker_source = worker_fixture_path.read_text(encoding="utf-8")
     top_level_rows = parse_top_level_rows(top_source)
     worker_rows = parse_worker_rows(worker_source)
+    worker_lifecycle_rows = parse_worker_lifecycle_rows(worker_source)
 
-    errors = validate(top_level_rows, worker_rows)
+    errors = validate(top_level_rows, worker_rows, worker_lifecycle_rows)
     if errors:
         print("wasm session contract summary validation failed:")
         for error in errors:
@@ -332,6 +393,7 @@ def main() -> int:
         "counts": {
             "top_level_rows": len(top_level_rows),
             "worker_rows": len(worker_rows),
+            "worker_lifecycle_rows": len(worker_lifecycle_rows),
             "top_level_supported_vm_probe_ok_rows": len(
                 [
                     row
@@ -399,6 +461,15 @@ def main() -> int:
                 None,
             ),
         },
+        "worker_lifecycle_state_rows": [
+            {
+                "name": row.name,
+                "action": row.action,
+                "expected_state": row.expected_state,
+                "expected_vm_probe_state": row.expected_vm_probe_state,
+            }
+            for row in worker_lifecycle_rows
+        ],
     }
 
     out_path = Path(args.out)
