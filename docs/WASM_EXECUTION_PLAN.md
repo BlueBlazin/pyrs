@@ -162,7 +162,7 @@ Exit criteria:
 
 ## Milestone W7: CI and Promotion Decision
 
-Current state: pending.
+Current state: in progress.
 
 Deliverables:
 - Add WASM-specific CI lanes (compile + smoke + browser harness where feasible).
@@ -227,6 +227,13 @@ Branch helper:
   `python3 scripts/generate_wasm_vm_link_blockers_summary.py --out perf/wasm_vm_link_blockers_latest.json`
   to inventory `#[link(name = ...)]` libraries under `src/vm` that block full
   wasm target link/test lanes.
+- CI lane helper:
+  `.github/workflows/wasm-track.yml`
+  runs branch-level wasm contract gating (`scripts/check_wasm_branch.sh`) and
+  uploads wasm contract evidence artifacts.
+- promotion decision rubric:
+  `docs/WASM_PROMOTION_GATE.md`
+  defines explicit go/no-go criteria before any merge candidacy decision.
 
 ## Merge Decision Rubric
 
@@ -652,14 +659,18 @@ Completed on this branch:
   lazy wasm module loading flow (`/wasm/pyrs.js`) isolated to that page; top
   navigation now exposes the playground route while non-playground pages remain
   static-first.
+- latest: W7 bootstrap landed with branch-scoped CI lane
+  (`.github/workflows/wasm-track.yml`) running `scripts/check_wasm_branch.sh`
+  plus artifact upload, and explicit promotion go/no-go criteria are now
+  codified in `docs/WASM_PROMOTION_GATE.md`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
 
 Remaining near-term focus:
-1. W3: expand `WasmHost` capability stubs and error contracts for unsupported features.
-2. W4: evolve wasm API from syntax-only to controlled in-memory execution API contract.
-3. Add wasm smoke harness (JS/wasm-bindgen-test or equivalent) without touching native CI gates yet.
+1. W5: increase worker runtime execution coverage in vm-probe mode (state/lifecycle edges).
+2. W6: deepen playground UX around capability preflight and blocker-key visibility.
+3. W7: add optional browser smoke execution in CI with clear isolation and failure policy.
 
 Current `wasm-vm-probe` snapshot (non-gating, latest local run):
 - compile status: `scripts/probe_wasm_vm_compile.sh` now completes without
