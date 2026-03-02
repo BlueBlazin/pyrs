@@ -225,6 +225,10 @@ Branch helper:
 - capability summary helper:
   `python3 scripts/generate_wasm_capability_summary.py --out perf/wasm_capability_summary_latest.json`
   for fixture + source + docs parity on capability keys/support matrix.
+- promotion evidence-pack helper:
+  `python3 scripts/collect_wasm_evidence_pack.py`
+  to bundle required local wasm artifact snapshots under
+  `perf/wasm_evidence_pack_latest/` with a manifest for review handoff.
 - vm-compile probe helper (non-gating):
   `scripts/probe_wasm_vm_compile.sh`
   to surface current wasm-vm compile blockers under opt-in `wasm-vm-probe`.

@@ -26,6 +26,18 @@ Notes:
   - `wasm-browser-smoke` (manual browser lane).
 - Browser lane is fail-hard; failures must be triaged before promotion.
 
+## Local Evidence Pack (Before or After Dispatch)
+
+After running local branch checks, bundle required local artifacts:
+
+```bash
+python3 scripts/collect_wasm_evidence_pack.py
+```
+
+Expected output:
+- `perf/wasm_evidence_pack_latest/manifest.json`
+- copied local wasm contract artifacts in the same directory.
+
 ## Watch Run and Capture Run ID
 
 List recent runs:
