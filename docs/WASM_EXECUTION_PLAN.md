@@ -894,6 +894,9 @@ Completed on this branch:
   `tests/wasm_contract.rs::wasm_worker_session_followups_track_multi_step_external_sequences`,
   with session-summary gate validation wired in
   `scripts/generate_wasm_session_contract_summary.py`.
+  The validator now explicitly enforces coverage rows ending in
+  `start`, `recycle`, and `terminate` plus an explicit `terminate -> start`
+  transition sequence.
 - latest: session-contract summary gate now fails fast if the
   `terminate -> start` recovery coverage tests and worker-info lifecycle
   transition coverage test are missing from
