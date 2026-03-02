@@ -33,14 +33,24 @@ This guide defines the recommended browser call order for current wasm APIs.
 `wasm_worker_start()`, `wasm_worker_terminate()`, and `wasm_worker_recycle()`
 are currently explicit stubs.
 
-- `wasm_worker_start()` -> `phase = "unsupported_worker_start"`
-- `wasm_worker_terminate()` -> `phase = "unsupported_worker_terminate"`
-- `wasm_worker_recycle()` -> `phase = "unsupported_worker_recycle"`
-- both return `blocker_key = "worker_runtime_unwired"`
+- default build:
+  - `wasm_worker_start()` -> `phase = "unsupported_worker_start"`
+  - `wasm_worker_terminate()` -> `phase = "unsupported_worker_terminate"`
+  - `wasm_worker_recycle()` -> `phase = "unsupported_worker_recycle"`
+  - lifecycle calls return `blocker_key = "worker_runtime_unwired"`
+- `wasm-vm-probe` build:
+  - `wasm_worker_start()` -> `phase = "worker_started"` (`state = "ready"`)
+  - `wasm_worker_terminate()` -> `phase = "worker_terminated"` (`state = "unwired"`)
+  - `wasm_worker_recycle()` -> `phase = "worker_recycled"` (`state = "ready"`)
+  - lifecycle calls return `success = true`, `blocker_key = None`, `error = None`
 - `wasm_worker_execute(source)` -> `phase` in:
   - `syntax_error`
   - `compile_error`
   - `unsupported_worker_execution`
+  - `worker phase keys` also include vm-probe lifecycle-only keys:
+    - `worker_started`
+    - `worker_terminated`
+    - `worker_recycled`
   - default build: unsupported phase sets `blocker_key = "worker_runtime_unwired"`
   - `wasm-vm-probe` build: capability-allowed snippets can return `ok` or
     `runtime_error`

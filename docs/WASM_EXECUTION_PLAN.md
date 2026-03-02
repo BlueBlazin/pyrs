@@ -573,6 +573,13 @@ Completed on this branch:
 - latest: `generate_wasm_client_flow_summary.py` now requires explicit
   `WasmWorkerInfo` integration tokens (`supported`, `backend`, `state`,
   `execution_probe_enabled`, `execute_supported`) in client-flow docs.
+- latest: worker lifecycle contracts are now dual-mode aware: default builds
+  keep explicit unsupported lifecycle phases while `wasm-vm-probe` exposes
+  deterministic lifecycle probe phases (`worker_started`,
+  `worker_terminated`, `worker_recycled`) with fixture/source/test parity.
+- latest: worker/client docs and summary guards now enforce vm-probe lifecycle
+  phase coverage in `WASM_WORKER_RUNTIME_CONTRACT.md`,
+  `WASM_CLIENT_INTEGRATION_FLOW.md`, and `WASM_API_CONTRACT.md`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

@@ -59,9 +59,15 @@ This document defines the browser worker-runtime contract currently exposed by:
 
 `wasm_worker_lifecycle_phase_keys()` currently includes:
 
-- `unsupported_worker_start`
-- `unsupported_worker_terminate`
-- `unsupported_worker_recycle`
+- default build:
+  - `unsupported_worker_start`
+  - `unsupported_worker_terminate`
+  - `unsupported_worker_recycle`
+- `wasm-vm-probe` build:
+  - all default keys, plus:
+  - `worker_started`
+  - `worker_terminated`
+  - `worker_recycled`
 
 `wasm_worker_execute_phase_keys()` currently includes:
 
@@ -94,30 +100,54 @@ keys (`worker_runtime_unwired` + module-policy capability keys).
 
 `wasm_worker_start()` currently returns:
 
-- `success = false`
-- `operation_id = worker_start_<n>`
-- `phase = "unsupported_worker_start"`
-- `state = "unwired"`
-- `blocker_key = "worker_runtime_unwired"`
-- `error = "wasm worker runtime is not wired yet"`
+- default build:
+  - `success = false`
+  - `operation_id = worker_start_<n>`
+  - `phase = "unsupported_worker_start"`
+  - `state = "unwired"`
+  - `blocker_key = "worker_runtime_unwired"`
+  - `error = "wasm worker runtime is not wired yet"`
+- `wasm-vm-probe` build:
+  - `success = true`
+  - `operation_id = worker_start_<n>`
+  - `phase = "worker_started"`
+  - `state = "ready"`
+  - `blocker_key = None`
+  - `error = None`
 
 `wasm_worker_terminate()` currently returns:
 
-- `success = false`
-- `operation_id = worker_terminate_<n>`
-- `phase = "unsupported_worker_terminate"`
-- `state = "unwired"`
-- `blocker_key = "worker_runtime_unwired"`
-- `error = "wasm worker runtime is not wired yet"`
+- default build:
+  - `success = false`
+  - `operation_id = worker_terminate_<n>`
+  - `phase = "unsupported_worker_terminate"`
+  - `state = "unwired"`
+  - `blocker_key = "worker_runtime_unwired"`
+  - `error = "wasm worker runtime is not wired yet"`
+- `wasm-vm-probe` build:
+  - `success = true`
+  - `operation_id = worker_terminate_<n>`
+  - `phase = "worker_terminated"`
+  - `state = "unwired"`
+  - `blocker_key = None`
+  - `error = None`
 
 `wasm_worker_recycle()` currently returns:
 
-- `success = false`
-- `operation_id = worker_recycle_<n>`
-- `phase = "unsupported_worker_recycle"`
-- `state = "unwired"`
-- `blocker_key = "worker_runtime_unwired"`
-- `error = "wasm worker runtime is not wired yet"`
+- default build:
+  - `success = false`
+  - `operation_id = worker_recycle_<n>`
+  - `phase = "unsupported_worker_recycle"`
+  - `state = "unwired"`
+  - `blocker_key = "worker_runtime_unwired"`
+  - `error = "wasm worker runtime is not wired yet"`
+- `wasm-vm-probe` build:
+  - `success = true`
+  - `operation_id = worker_recycle_<n>`
+  - `phase = "worker_recycled"`
+  - `state = "ready"`
+  - `blocker_key = None`
+  - `error = None`
 
 `wasm_worker_set_timeout(timeout_ms)` currently returns:
 
@@ -175,9 +205,13 @@ Future states should evolve without breaking existing consumers:
 5. `terminating`
 6. `failed`
 
-The transition from `unwired` to later states is a future milestone; current
-clients should branch on `wasm_worker_execute_phase_keys()` and handle both
-default unsupported execution and vm-probe runtime phases.
+The transition from true worker lifecycle orchestration is still a future
+milestone. Current behavior is:
+
+- default builds stay unwired with explicit unsupported lifecycle phases,
+- `wasm-vm-probe` builds expose deterministic lifecycle probe phases
+  (`worker_started` / `worker_terminated` / `worker_recycled`) so UI paths can
+  validate control flow without a real worker thread.
 
 ## Interruption Model
 

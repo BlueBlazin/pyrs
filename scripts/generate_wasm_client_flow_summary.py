@@ -56,6 +56,21 @@ def parse_source_enum_keys(
     return ordered_unique(keys)
 
 
+def parse_source_worker_lifecycle_phase_keys(
+    default_keys: list[str], const_map: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    vm_probe_const_names = [
+        "WASM_WORKER_LIFECYCLE_PHASE_STARTED",
+        "WASM_WORKER_LIFECYCLE_PHASE_TERMINATED",
+        "WASM_WORKER_LIFECYCLE_PHASE_RECYCLED",
+    ]
+    vm_probe_keys = [
+        const_map[name] for name in vm_probe_const_names if name in const_map
+    ]
+    effective_keys = ordered_unique(default_keys + vm_probe_keys)
+    return effective_keys, vm_probe_keys
+
+
 def parse_source_worker_session_fields(wasm_source: str) -> list[str]:
     match = re.search(
         r"pub struct WasmWorkerSession \{(.*?)\n\}",
@@ -106,6 +121,7 @@ def validate_docs(
     docs_source: str,
     exported_functions: set[str],
     worker_lifecycle_phase_keys: list[str],
+    worker_lifecycle_phase_keys_vm_probe_extra: list[str],
     worker_execute_phase_keys: list[str],
     worker_timeout_invalid_phase: str,
     worker_unwired_blocker_key: str,
@@ -154,6 +170,9 @@ def validate_docs(
     for key in worker_lifecycle_phase_keys:
         if key not in docs_source:
             errors.append(f"docs missing worker lifecycle phase key '{key}'")
+    for key in worker_lifecycle_phase_keys_vm_probe_extra:
+        if key not in docs_source:
+            errors.append(f"docs missing worker vm-probe lifecycle phase key '{key}'")
     for key in worker_execute_phase_keys:
         if key not in docs_source:
             errors.append(f"docs missing worker execute phase key '{key}'")
@@ -212,8 +231,14 @@ def main() -> int:
     const_map = parse_source_const_string_map(wasm_source)
     exported_functions = parse_source_exported_functions(wasm_source)
     worker_state_keys = parse_source_enum_keys(wasm_source, "WasmWorkerState", const_map)
-    worker_lifecycle_phase_keys = parse_source_enum_keys(
+    worker_lifecycle_phase_keys_default = parse_source_enum_keys(
         wasm_source, "WasmWorkerLifecyclePhase", const_map
+    )
+    (
+        worker_lifecycle_phase_keys,
+        worker_lifecycle_phase_keys_vm_probe_extra,
+    ) = parse_source_worker_lifecycle_phase_keys(
+        worker_lifecycle_phase_keys_default, const_map
     )
     worker_execute_phase_keys = parse_source_enum_keys(
         wasm_source, "WasmWorkerExecutePhase", const_map
@@ -230,6 +255,7 @@ def main() -> int:
         docs_source=docs_source,
         exported_functions=exported_functions,
         worker_lifecycle_phase_keys=worker_lifecycle_phase_keys,
+        worker_lifecycle_phase_keys_vm_probe_extra=worker_lifecycle_phase_keys_vm_probe_extra,
         worker_execute_phase_keys=worker_execute_phase_keys,
         worker_timeout_invalid_phase=worker_timeout_invalid_phase,
         worker_unwired_blocker_key=worker_unwired_blocker_key,
@@ -272,7 +298,9 @@ def main() -> int:
             "wasm_worker_timeout_phase_keys()",
         ],
         "worker_state_keys": worker_state_keys,
-        "worker_lifecycle_phase_keys": worker_lifecycle_phase_keys,
+        "worker_lifecycle_phase_keys_default": worker_lifecycle_phase_keys_default,
+        "worker_lifecycle_phase_keys_vm_probe_extra": worker_lifecycle_phase_keys_vm_probe_extra,
+        "worker_lifecycle_phase_keys_effective": worker_lifecycle_phase_keys,
         "worker_execute_phase_keys": worker_execute_phase_keys,
         "worker_timeout_phase_keys": worker_timeout_phase_keys,
         "worker_unwired_blocker_key": worker_unwired_blocker_key,

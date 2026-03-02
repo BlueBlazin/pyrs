@@ -34,15 +34,32 @@ This document defines the JS-facing contract currently exported by
   - Returns canonical worker runtime state keys.
 - `wasm_worker_lifecycle_phase_keys() -> Array`
   - Returns canonical worker lifecycle phase keys.
+  - default keys:
+    - `unsupported_worker_start`
+    - `unsupported_worker_terminate`
+    - `unsupported_worker_recycle`
+  - `wasm-vm-probe` adds:
+    - `worker_started`
+    - `worker_terminated`
+    - `worker_recycled`
 - `wasm_worker_execute_phase_keys() -> Array`
   - Returns canonical worker execute phase keys.
   - Includes `ok` + `runtime_error` only when built with `wasm-vm-probe`.
 - `wasm_worker_start() -> WasmWorkerLifecycleResult`
-  - Worker lifecycle start contract (currently unsupported/unwired).
+  - default build: unsupported unwired lifecycle result
+    (`phase = "unsupported_worker_start"`).
+  - `wasm-vm-probe`: lifecycle probe success
+    (`phase = "worker_started"`, `state = "ready"`).
 - `wasm_worker_terminate() -> WasmWorkerLifecycleResult`
-  - Worker lifecycle terminate contract (currently unsupported/unwired).
+  - default build: unsupported unwired lifecycle result
+    (`phase = "unsupported_worker_terminate"`).
+  - `wasm-vm-probe`: lifecycle probe success
+    (`phase = "worker_terminated"`, `state = "unwired"`).
 - `wasm_worker_recycle() -> WasmWorkerLifecycleResult`
-  - Worker lifecycle recycle contract (currently unsupported/unwired).
+  - default build: unsupported unwired lifecycle result
+    (`phase = "unsupported_worker_recycle"`).
+  - `wasm-vm-probe`: lifecycle probe success
+    (`phase = "worker_recycled"`, `state = "ready"`).
 - `wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult`
   - Worker timeout update contract with deterministic phases:
     - `unsupported_worker_timeout_enforcement` (in-range while unwired)
@@ -180,8 +197,14 @@ This document defines the JS-facing contract currently exported by
 
 - `success: bool`
 - `operation_id: String` (shape: `worker_<action>_<n>`)
-- `phase: String` (`"unsupported_worker_start"`, `"unsupported_worker_terminate"`, `"unsupported_worker_recycle"`)
-- `state: String` (currently `"unwired"`)
+- `phase: String`
+  - default: `"unsupported_worker_start"`, `"unsupported_worker_terminate"`,
+    `"unsupported_worker_recycle"`
+  - `wasm-vm-probe`: `"worker_started"`, `"worker_terminated"`,
+    `"worker_recycled"`
+- `state: String`
+  - default: `"unwired"`
+  - `wasm-vm-probe`: `"ready"` for start/recycle, `"unwired"` for terminate
 - `error: Option<String>`
 - `blocker_key: Option<String>`
 
