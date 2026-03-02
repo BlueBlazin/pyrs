@@ -91,6 +91,29 @@ class WorkerSessionStateGateFixtureRow:
     has_vm_probe_timeout_blocker_override: bool
 
 
+@dataclass
+class WorkerSessionStateSequenceFixtureRow:
+    name: str
+    trigger_actions: list[str]
+    timeout_ms: int
+    expected_execute_phase: str
+    expected_execute_state: str
+    expected_execute_blocker_key: str | None
+    expected_timeout_phase: str
+    expected_timeout_state: str
+    expected_timeout_success: bool
+    expected_timeout_blocker_key: str | None
+    expected_vm_probe_execute_phase: str | None
+    expected_vm_probe_execute_state: str | None
+    expected_vm_probe_execute_blocker_key: str | None
+    has_vm_probe_execute_blocker_override: bool
+    expected_vm_probe_timeout_phase: str | None
+    expected_vm_probe_timeout_state: str | None
+    expected_vm_probe_timeout_success: bool | None
+    expected_vm_probe_timeout_blocker_key: str | None
+    has_vm_probe_timeout_blocker_override: bool
+
+
 def parse_const_body(source: str, const_name: str) -> str:
     match = re.search(
         rf"pub const {re.escape(const_name)}:[^=]*=\s*&\[(.*?)\];",
@@ -181,6 +204,16 @@ def parse_required_u32(body: str, field: str) -> int:
     if not match:
         raise ValueError(f"missing required u32 field '{field}'")
     return int(match.group(1).replace("_", ""))
+
+
+def parse_required_string_list(body: str, field: str) -> list[str]:
+    match = re.search(rf"{re.escape(field)}:\s*&\[(.*?)\]", body, flags=re.DOTALL)
+    if not match:
+        raise ValueError(f"missing required string list field '{field}'")
+    values = re.findall(r'"([^"]+)"', match.group(1))
+    if not values:
+        raise ValueError(f"required string list field '{field}' must not be empty")
+    return values
 
 
 def parse_top_level_rows(source: str) -> list[TopLevelFixtureRow]:
@@ -359,6 +392,62 @@ def parse_worker_session_state_gate_rows(source: str) -> list[WorkerSessionState
     return rows
 
 
+def parse_worker_session_state_sequence_rows(
+    source: str,
+) -> list[WorkerSessionStateSequenceFixtureRow]:
+    body = parse_const_body(source, "WASM_WORKER_SESSION_STATE_SEQUENCE_FIXTURES")
+    pattern = re.compile(r"WasmWorkerSessionStateSequenceFixture\s*\{(.*?)\n\s*\},?", re.DOTALL)
+    rows: list[WorkerSessionStateSequenceFixtureRow] = []
+    for match in pattern.finditer(body):
+        row = match.group(1)
+        (
+            has_vm_probe_execute_blocker_override,
+            expected_vm_probe_execute_blocker_key,
+        ) = parse_optional_optional_string(row, "expected_vm_probe_execute_blocker_key")
+        (
+            has_vm_probe_timeout_blocker_override,
+            expected_vm_probe_timeout_blocker_key,
+        ) = parse_optional_optional_string(row, "expected_vm_probe_timeout_blocker_key")
+        rows.append(
+            WorkerSessionStateSequenceFixtureRow(
+                name=parse_required_string(row, "name"),
+                trigger_actions=parse_required_string_list(row, "trigger_actions"),
+                timeout_ms=parse_required_u32(row, "timeout_ms"),
+                expected_execute_phase=parse_required_string(row, "expected_execute_phase"),
+                expected_execute_state=parse_required_string(row, "expected_execute_state"),
+                expected_execute_blocker_key=parse_optional_string(
+                    row, "expected_execute_blocker_key"
+                ),
+                expected_timeout_phase=parse_required_string(row, "expected_timeout_phase"),
+                expected_timeout_state=parse_required_string(row, "expected_timeout_state"),
+                expected_timeout_success=parse_required_bool(row, "expected_timeout_success"),
+                expected_timeout_blocker_key=parse_optional_string(
+                    row, "expected_timeout_blocker_key"
+                ),
+                expected_vm_probe_execute_phase=parse_optional_string(
+                    row, "expected_vm_probe_execute_phase"
+                ),
+                expected_vm_probe_execute_state=parse_optional_string(
+                    row, "expected_vm_probe_execute_state"
+                ),
+                expected_vm_probe_execute_blocker_key=expected_vm_probe_execute_blocker_key,
+                has_vm_probe_execute_blocker_override=has_vm_probe_execute_blocker_override,
+                expected_vm_probe_timeout_phase=parse_optional_string(
+                    row, "expected_vm_probe_timeout_phase"
+                ),
+                expected_vm_probe_timeout_state=parse_optional_string(
+                    row, "expected_vm_probe_timeout_state"
+                ),
+                expected_vm_probe_timeout_success=parse_optional_bool(
+                    row, "expected_vm_probe_timeout_success"
+                ),
+                expected_vm_probe_timeout_blocker_key=expected_vm_probe_timeout_blocker_key,
+                has_vm_probe_timeout_blocker_override=has_vm_probe_timeout_blocker_override,
+            )
+        )
+    return rows
+
+
 def find_row(rows: list[WorkerFixtureRow], name: str) -> WorkerFixtureRow | None:
     for row in rows:
         if row.name == name:
@@ -388,6 +477,7 @@ def validate(
     worker_timeout_rows: list[WorkerTimeoutFixtureRow],
     worker_info_rows: list[WorkerInfoFixtureRow],
     worker_session_state_gate_rows: list[WorkerSessionStateGateFixtureRow],
+    worker_session_state_sequence_rows: list[WorkerSessionStateSequenceFixtureRow],
     source_info_uses_shared_worker_state: bool,
     source_session_state_override_removed: bool,
     source_execute_updates_last_state_from_result: bool,
@@ -419,6 +509,8 @@ def validate(
         errors.append("worker timeout fixture rows are empty")
     if not worker_session_state_gate_rows:
         errors.append("worker session state-gate fixture rows are empty")
+    if not worker_session_state_sequence_rows:
+        errors.append("worker session state-sequence fixture rows are empty")
     if errors:
         return errors
 
@@ -835,6 +927,169 @@ def validate(
                 f"{row.name}: unsupported trigger_action '{row.trigger_action}'"
             )
 
+    required_sequence_pair_found = False
+    for row in worker_session_state_sequence_rows:
+        if row.timeout_ms <= 0:
+            errors.append(f"{row.name}: timeout_ms must be positive")
+        if not row.trigger_actions:
+            errors.append(f"{row.name}: trigger_actions must not be empty")
+            continue
+        for action in row.trigger_actions:
+            if action not in required_actions:
+                errors.append(f"{row.name}: unsupported trigger_action '{action}' in sequence")
+
+        for index in range(len(row.trigger_actions) - 1):
+            if (
+                row.trigger_actions[index] == "terminate"
+                and row.trigger_actions[index + 1] == "start"
+            ):
+                required_sequence_pair_found = True
+                break
+
+        last_action = row.trigger_actions[-1]
+        lifecycle_row = find_lifecycle_row(worker_lifecycle_rows, last_action)
+        if lifecycle_row is None:
+            errors.append(
+                f"{row.name}: last trigger_action '{last_action}' has no matching lifecycle fixture"
+            )
+            continue
+
+        if row.expected_execute_state != lifecycle_row.expected_state:
+            errors.append(
+                f"{row.name}: expected_execute_state must match lifecycle default state '{lifecycle_row.expected_state}'"
+            )
+        if row.expected_timeout_state != lifecycle_row.expected_state:
+            errors.append(
+                f"{row.name}: expected_timeout_state must match lifecycle default state '{lifecycle_row.expected_state}'"
+            )
+
+        effective_vm_execute_phase = (
+            row.expected_vm_probe_execute_phase
+            if row.expected_vm_probe_execute_phase is not None
+            else row.expected_execute_phase
+        )
+        effective_vm_execute_state = (
+            row.expected_vm_probe_execute_state
+            if row.expected_vm_probe_execute_state is not None
+            else row.expected_execute_state
+        )
+        effective_vm_execute_blocker_key = (
+            row.expected_vm_probe_execute_blocker_key
+            if row.has_vm_probe_execute_blocker_override
+            else row.expected_execute_blocker_key
+        )
+
+        effective_vm_timeout_phase = (
+            row.expected_vm_probe_timeout_phase
+            if row.expected_vm_probe_timeout_phase is not None
+            else row.expected_timeout_phase
+        )
+        effective_vm_timeout_state = (
+            row.expected_vm_probe_timeout_state
+            if row.expected_vm_probe_timeout_state is not None
+            else row.expected_timeout_state
+        )
+        effective_vm_timeout_success = (
+            row.expected_vm_probe_timeout_success
+            if row.expected_vm_probe_timeout_success is not None
+            else row.expected_timeout_success
+        )
+        effective_vm_timeout_blocker_key = (
+            row.expected_vm_probe_timeout_blocker_key
+            if row.has_vm_probe_timeout_blocker_override
+            else row.expected_timeout_blocker_key
+        )
+
+        effective_lifecycle_vm_state = (
+            lifecycle_row.expected_vm_probe_state
+            if lifecycle_row.expected_vm_probe_state is not None
+            else lifecycle_row.expected_state
+        )
+        if effective_vm_execute_state != effective_lifecycle_vm_state:
+            errors.append(
+                f"{row.name}: effective vm-probe execute state must match lifecycle vm-probe state '{effective_lifecycle_vm_state}'"
+            )
+        if effective_vm_timeout_state != effective_lifecycle_vm_state:
+            errors.append(
+                f"{row.name}: effective vm-probe timeout state must match lifecycle vm-probe state '{effective_lifecycle_vm_state}'"
+            )
+
+        if last_action in {"start", "recycle"}:
+            if row.expected_execute_phase != "unsupported_worker_execution":
+                errors.append(
+                    f"{row.name}: default execute phase must be unsupported_worker_execution"
+                )
+            if row.expected_execute_blocker_key != "worker_runtime_unwired":
+                errors.append(
+                    f"{row.name}: default execute blocker must be worker_runtime_unwired"
+                )
+            if row.expected_timeout_phase != "unsupported_worker_timeout_enforcement":
+                errors.append(
+                    f"{row.name}: default timeout phase must be unsupported_worker_timeout_enforcement"
+                )
+            if row.expected_timeout_success:
+                errors.append(f"{row.name}: default timeout success must be false")
+            if row.expected_timeout_blocker_key != "worker_runtime_unwired":
+                errors.append(
+                    f"{row.name}: default timeout blocker must be worker_runtime_unwired"
+                )
+            if effective_vm_execute_phase != "ok":
+                errors.append(f"{row.name}: vm-probe execute phase must be ok")
+            if effective_vm_execute_blocker_key is not None:
+                errors.append(f"{row.name}: vm-probe execute blocker must be None")
+            if effective_vm_timeout_phase != "worker_timeout_configured":
+                errors.append(
+                    f"{row.name}: vm-probe timeout phase must be worker_timeout_configured"
+                )
+            if not effective_vm_timeout_success:
+                errors.append(f"{row.name}: vm-probe timeout success must be true")
+            if effective_vm_timeout_blocker_key is not None:
+                errors.append(f"{row.name}: vm-probe timeout blocker must be None")
+        elif last_action == "terminate":
+            if row.expected_execute_phase != "unsupported_worker_execution":
+                errors.append(
+                    f"{row.name}: default execute phase must be unsupported_worker_execution"
+                )
+            if row.expected_execute_blocker_key != "worker_runtime_unwired":
+                errors.append(
+                    f"{row.name}: default execute blocker must be worker_runtime_unwired"
+                )
+            if row.expected_timeout_phase != "unsupported_worker_timeout_enforcement":
+                errors.append(
+                    f"{row.name}: default timeout phase must be unsupported_worker_timeout_enforcement"
+                )
+            if row.expected_timeout_success:
+                errors.append(f"{row.name}: default timeout success must be false")
+            if row.expected_timeout_blocker_key != "worker_runtime_unwired":
+                errors.append(
+                    f"{row.name}: default timeout blocker must be worker_runtime_unwired"
+                )
+            if effective_vm_execute_phase != "unsupported_worker_execution":
+                errors.append(
+                    f"{row.name}: vm-probe execute phase must remain unsupported_worker_execution"
+                )
+            if effective_vm_execute_blocker_key != "worker_runtime_unwired":
+                errors.append(
+                    f"{row.name}: vm-probe execute blocker must remain worker_runtime_unwired"
+                )
+            if effective_vm_timeout_phase != "unsupported_worker_timeout_enforcement":
+                errors.append(
+                    f"{row.name}: vm-probe timeout phase must remain unsupported_worker_timeout_enforcement"
+                )
+            if effective_vm_timeout_success:
+                errors.append(
+                    f"{row.name}: vm-probe timeout success must remain false"
+                )
+            if effective_vm_timeout_blocker_key != "worker_runtime_unwired":
+                errors.append(
+                    f"{row.name}: vm-probe timeout blocker must remain worker_runtime_unwired"
+                )
+
+    if not required_sequence_pair_found:
+        errors.append(
+            "worker session state-sequence fixtures must include a terminate->start transition"
+        )
+
     return errors
 
 
@@ -881,6 +1136,7 @@ def main() -> int:
     worker_timeout_rows = parse_worker_timeout_rows(worker_source)
     worker_info_rows = parse_worker_info_rows(worker_source)
     worker_session_state_gate_rows = parse_worker_session_state_gate_rows(worker_source)
+    worker_session_state_sequence_rows = parse_worker_session_state_sequence_rows(worker_source)
     info_body = extract_source_fn_body(
         wasm_source,
         "pub fn info(&self) -> WasmWorkerInfo",
@@ -932,6 +1188,7 @@ def main() -> int:
         worker_timeout_rows,
         worker_info_rows,
         worker_session_state_gate_rows,
+        worker_session_state_sequence_rows,
         source_info_uses_shared_worker_state,
         source_session_state_override_removed,
         source_execute_updates_last_state_from_result,
@@ -971,6 +1228,7 @@ def main() -> int:
             "worker_timeout_rows": len(worker_timeout_rows),
             "worker_info_rows": len(worker_info_rows),
             "worker_session_state_gate_rows": len(worker_session_state_gate_rows),
+            "worker_session_state_sequence_rows": len(worker_session_state_sequence_rows),
             "worker_timeout_invalid_rows": len(
                 [
                     row
@@ -1121,6 +1379,36 @@ def main() -> int:
                 ),
             }
             for row in worker_session_state_gate_rows
+        ],
+        "worker_session_state_sequence_rows": [
+            {
+                "name": row.name,
+                "trigger_actions": row.trigger_actions,
+                "timeout_ms": row.timeout_ms,
+                "expected_execute_phase": row.expected_execute_phase,
+                "expected_execute_state": row.expected_execute_state,
+                "expected_execute_blocker_key": row.expected_execute_blocker_key,
+                "expected_vm_probe_execute_phase": row.expected_vm_probe_execute_phase,
+                "expected_vm_probe_execute_state": row.expected_vm_probe_execute_state,
+                "expected_vm_probe_execute_blocker_key": (
+                    row.expected_vm_probe_execute_blocker_key
+                    if row.has_vm_probe_execute_blocker_override
+                    else None
+                ),
+                "expected_timeout_phase": row.expected_timeout_phase,
+                "expected_timeout_state": row.expected_timeout_state,
+                "expected_timeout_success": row.expected_timeout_success,
+                "expected_timeout_blocker_key": row.expected_timeout_blocker_key,
+                "expected_vm_probe_timeout_phase": row.expected_vm_probe_timeout_phase,
+                "expected_vm_probe_timeout_state": row.expected_vm_probe_timeout_state,
+                "expected_vm_probe_timeout_success": row.expected_vm_probe_timeout_success,
+                "expected_vm_probe_timeout_blocker_key": (
+                    row.expected_vm_probe_timeout_blocker_key
+                    if row.has_vm_probe_timeout_blocker_override
+                    else None
+                ),
+            }
+            for row in worker_session_state_sequence_rows
         ],
     }
 

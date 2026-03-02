@@ -19,6 +19,7 @@ use crate::wasm_worker_contract::{
     WASM_WORKER_BLOCKER_KEYS, WASM_WORKER_EXECUTE_FIXTURES, WASM_WORKER_EXECUTE_PHASE_KEYS,
     WASM_WORKER_INFO_FIXTURES, WASM_WORKER_LIFECYCLE_FIXTURES, WASM_WORKER_LIFECYCLE_PHASE_KEYS,
     WASM_WORKER_LIFECYCLE_PHASE_KEYS_VM_PROBE_EXTRA, WASM_WORKER_SESSION_STATE_GATE_FIXTURES,
+    WASM_WORKER_SESSION_STATE_SEQUENCE_FIXTURES,
     WASM_WORKER_STATE_KEYS, WASM_WORKER_TIMEOUT_FIXTURES, WASM_WORKER_TIMEOUT_PHASE_KEYS,
     WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA, WasmWorkerExecuteFixture,
 };
@@ -431,6 +432,83 @@ fn expected_worker_session_gate_timeout_success_for_fixture(
 
 fn expected_worker_session_gate_timeout_blocker_key_for_fixture(
     fixture: &wasm_worker_contract::WasmWorkerSessionStateGateFixture,
+) -> Option<String> {
+    if vm_probe_enabled() {
+        if let Some(override_blocker) = fixture.expected_vm_probe_timeout_blocker_key {
+            return override_blocker.map(str::to_string);
+        }
+    }
+    fixture.expected_timeout_blocker_key.map(str::to_string)
+}
+
+fn expected_worker_session_sequence_execute_phase_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerSessionStateSequenceFixture,
+) -> String {
+    if vm_probe_enabled() {
+        if let Some(phase) = fixture.expected_vm_probe_execute_phase {
+            return phase.to_string();
+        }
+    }
+    fixture.expected_execute_phase.to_string()
+}
+
+fn expected_worker_session_sequence_execute_state_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerSessionStateSequenceFixture,
+) -> String {
+    if vm_probe_enabled() {
+        if let Some(state) = fixture.expected_vm_probe_execute_state {
+            return state.to_string();
+        }
+    }
+    fixture.expected_execute_state.to_string()
+}
+
+fn expected_worker_session_sequence_execute_blocker_key_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerSessionStateSequenceFixture,
+) -> Option<String> {
+    if vm_probe_enabled() {
+        if let Some(override_blocker) = fixture.expected_vm_probe_execute_blocker_key {
+            return override_blocker.map(str::to_string);
+        }
+    }
+    fixture.expected_execute_blocker_key.map(str::to_string)
+}
+
+fn expected_worker_session_sequence_timeout_phase_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerSessionStateSequenceFixture,
+) -> String {
+    if vm_probe_enabled() {
+        if let Some(phase) = fixture.expected_vm_probe_timeout_phase {
+            return phase.to_string();
+        }
+    }
+    fixture.expected_timeout_phase.to_string()
+}
+
+fn expected_worker_session_sequence_timeout_state_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerSessionStateSequenceFixture,
+) -> String {
+    if vm_probe_enabled() {
+        if let Some(state) = fixture.expected_vm_probe_timeout_state {
+            return state.to_string();
+        }
+    }
+    fixture.expected_timeout_state.to_string()
+}
+
+fn expected_worker_session_sequence_timeout_success_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerSessionStateSequenceFixture,
+) -> bool {
+    if vm_probe_enabled() {
+        if let Some(success) = fixture.expected_vm_probe_timeout_success {
+            return success;
+        }
+    }
+    fixture.expected_timeout_success
+}
+
+fn expected_worker_session_sequence_timeout_blocker_key_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerSessionStateSequenceFixture,
 ) -> Option<String> {
     if vm_probe_enabled() {
         if let Some(override_blocker) = fixture.expected_vm_probe_timeout_blocker_key {
@@ -2048,6 +2126,111 @@ fn wasm_worker_session_recovers_after_external_terminate_then_start() {
     }
     assert_eq!(session.executes_requested(), 2);
     assert_eq!(session.timeout_updates_requested(), 2);
+}
+
+#[wasm_bindgen_test]
+fn wasm_worker_session_followups_track_multi_step_external_sequences() {
+    for fixture in WASM_WORKER_SESSION_STATE_SEQUENCE_FIXTURES {
+        reset_top_level_worker_state_for_contract_tests();
+        let mut session = WasmWorkerSession::new();
+
+        let start = session.start();
+        assert_eq!(
+            start.state(),
+            expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[0])
+        );
+
+        for action in fixture.trigger_actions {
+            let lifecycle_fixture = lifecycle_fixture_for_action(action);
+            let trigger_result = match *action {
+                "start" => wasm_worker_start(),
+                "terminate" => wasm_worker_terminate(),
+                "recycle" => wasm_worker_recycle(),
+                other => panic!("unknown sequence trigger_action: {other}"),
+            };
+            assert_eq!(
+                trigger_result.phase(),
+                expected_worker_lifecycle_phase_for_fixture(lifecycle_fixture),
+                "sequence lifecycle phase mismatch: {}",
+                fixture.name
+            );
+            assert_eq!(
+                trigger_result.state(),
+                expected_worker_lifecycle_state_for_fixture(lifecycle_fixture),
+                "sequence lifecycle state mismatch: {}",
+                fixture.name
+            );
+            let info_after_external_trigger = session.info();
+            assert_eq!(
+                info_after_external_trigger.state(),
+                expected_worker_lifecycle_state_for_fixture(lifecycle_fixture),
+                "sequence session info state mismatch after external trigger: {}",
+                fixture.name
+            );
+        }
+
+        let execute_result = session.execute_with_operation("x = 1\n");
+        assert_eq!(
+            execute_result.phase(),
+            expected_worker_session_sequence_execute_phase_for_fixture(fixture),
+            "sequence execute phase mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            execute_result.state(),
+            expected_worker_session_sequence_execute_state_for_fixture(fixture),
+            "sequence execute state mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            execute_result.blocker_key(),
+            expected_worker_session_sequence_execute_blocker_key_for_fixture(fixture),
+            "sequence execute blocker mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            session.last_state(),
+            Some(expected_worker_session_sequence_execute_state_for_fixture(
+                fixture
+            )),
+            "sequence execute last_state mismatch: {}",
+            fixture.name
+        );
+
+        let timeout_result = session.set_timeout_ms(fixture.timeout_ms);
+        assert_eq!(
+            timeout_result.phase(),
+            expected_worker_session_sequence_timeout_phase_for_fixture(fixture),
+            "sequence timeout phase mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            timeout_result.state(),
+            expected_worker_session_sequence_timeout_state_for_fixture(fixture),
+            "sequence timeout state mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            timeout_result.success(),
+            expected_worker_session_sequence_timeout_success_for_fixture(fixture),
+            "sequence timeout success mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            timeout_result.blocker_key(),
+            expected_worker_session_sequence_timeout_blocker_key_for_fixture(fixture),
+            "sequence timeout blocker mismatch: {}",
+            fixture.name
+        );
+        assert_eq!(
+            session.last_state(),
+            Some(expected_worker_session_sequence_timeout_state_for_fixture(
+                fixture
+            )),
+            "sequence timeout last_state mismatch: {}",
+            fixture.name
+        );
+    }
 }
 
 #[wasm_bindgen_test]
