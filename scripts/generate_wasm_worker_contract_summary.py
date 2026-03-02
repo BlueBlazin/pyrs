@@ -861,6 +861,12 @@ def main() -> int:
     fixture_source = fixture_path.read_text(encoding="utf-8")
     wasm_source_path = Path(args.wasm_src)
     wasm_source = wasm_source_path.read_text(encoding="utf-8")
+    contract_test_source_path = Path("tests/wasm_contract.rs")
+    contract_test_source = contract_test_source_path.read_text(encoding="utf-8")
+    vm_probe_browser_test_source_path = Path("tests/wasm_vm_probe_browser_smoke.rs")
+    vm_probe_browser_test_source = vm_probe_browser_test_source_path.read_text(
+        encoding="utf-8"
+    )
 
     state_keys = parse_string_array(fixture_source, "WASM_WORKER_STATE_KEYS")
     lifecycle_phase_keys = parse_string_array(
@@ -1030,6 +1036,16 @@ def main() -> int:
             'let missing_after_recycle = wasm_worker_execute_with_operation("x\\n");',
             'assert!(missing_error.contains("NameError"));',
         ],
+    )
+    has_failed_state_force_hook = (
+        "pub fn wasm_worker_force_failed_state_for_tests()" in wasm_source
+    )
+    has_failed_state_contract_surface_test = (
+        "fn wasm_worker_forced_failed_state_blocks_until_start_or_recycle()"
+        in contract_test_source
+    )
+    has_failed_state_browser_surface_test = (
+        "fn vm_probe_worker_forced_failed_state_roundtrip()" in vm_probe_browser_test_source
     )
     source_worker_unwired_lifecycle_sets_shared_state = (
         parse_source_worker_unwired_lifecycle_sets_shared_state(wasm_source)
@@ -1316,6 +1332,16 @@ def main() -> int:
     if not has_failed_state_recycle_reset_assertions:
         errors.append(
             "missing wasm vm-probe failed-state recycle reset assertion coverage"
+        )
+    if not has_failed_state_force_hook:
+        errors.append("missing wasm vm-probe failed-state test hook")
+    if not has_failed_state_contract_surface_test:
+        errors.append(
+            "missing wasm vm-probe failed-state integration contract surface test coverage"
+        )
+    if not has_failed_state_browser_surface_test:
+        errors.append(
+            "missing wasm vm-probe failed-state browser smoke surface test coverage"
         )
     if (
         source_worker_info_timeout_enforcement_supported
@@ -1636,6 +1662,9 @@ def main() -> int:
             "has_failed_state_recycle_reset_test": has_failed_state_recycle_reset_test,
             "has_failed_state_terminate_start_pre_failure_reset_assertions": has_failed_state_terminate_start_pre_failure_reset_assertions,
             "has_failed_state_recycle_reset_assertions": has_failed_state_recycle_reset_assertions,
+            "has_failed_state_force_hook": has_failed_state_force_hook,
+            "has_failed_state_contract_surface_test": has_failed_state_contract_surface_test,
+            "has_failed_state_browser_surface_test": has_failed_state_browser_surface_test,
         },
         "worker_info_effective_rows": [
             {

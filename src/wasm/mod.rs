@@ -2051,6 +2051,27 @@ pub fn wasm_worker_recycle() -> WasmWorkerLifecycleResult {
     worker_unwired_result(WasmWorkerLifecyclePhase::UnsupportedRecycle)
 }
 
+/// Forces wasm worker state into `failed` for vm-probe contract tests.
+///
+/// This hook is intentionally vm-probe-only so default wasm builds do not
+/// expose native-runtime lifecycle simulation controls.
+#[cfg(feature = "wasm-vm-probe")]
+pub fn wasm_worker_force_failed_state_for_tests() -> WasmWorkerLifecycleResult {
+    clear_worker_vm();
+    set_current_worker_state(WasmWorkerState::Failed);
+    let blocker_key = WASM_WORKER_BLOCKER_RUNTIME_FAILED.to_string();
+    let message = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_FAILED)
+        .unwrap_or_else(|| "wasm worker runtime entered failed state".to_string());
+    WasmWorkerLifecycleResult {
+        success: true,
+        operation_id: next_worker_operation_id("force_failed"),
+        phase: "worker_failed_forced".to_string(),
+        state: current_worker_state_key(),
+        error: Some(message),
+        blocker_key: Some(blocker_key),
+    }
+}
+
 /// Executes a snippet through the wasm worker contract.
 ///
 /// Current milestone behavior:
@@ -2787,12 +2808,12 @@ mod tests {
         wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start, wasm_worker_terminate,
     };
     #[cfg(feature = "wasm-vm-probe")]
-    use std::collections::HashSet;
-    #[cfg(feature = "wasm-vm-probe")]
     use super::{
         WasmWorkerState, clear_worker_vm, set_current_worker_state,
         wasm_worker_execute_with_operation,
     };
+    #[cfg(feature = "wasm-vm-probe")]
+    use std::collections::HashSet;
 
     fn vm_probe_enabled() -> bool {
         cfg!(feature = "wasm-vm-probe")
@@ -3382,7 +3403,10 @@ mod tests {
         assert_eq!(baseline.phase(), "worker_recycled".to_string());
         assert_eq!(baseline.state(), "ready".to_string());
         let preconfigured = wasm_worker_set_timeout(250);
-        assert_eq!(preconfigured.phase(), "worker_timeout_configured".to_string());
+        assert_eq!(
+            preconfigured.phase(),
+            "worker_timeout_configured".to_string()
+        );
         assert!(preconfigured.success());
         assert_eq!(wasm_worker_current_timeout_ms(), 250);
         let pre_assigned = wasm_worker_execute_with_operation("x = 1\n");

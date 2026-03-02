@@ -1,9 +1,9 @@
 #![cfg(all(target_arch = "wasm32", feature = "wasm-vm-probe"))]
 
 use pyrs::wasm::{
-    execute, wasm_runtime_info, wasm_worker_current_timeout_ms, wasm_worker_execute_with_operation,
-    wasm_worker_info, wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start,
-    wasm_worker_terminate, WasmWorkerSession,
+    WasmWorkerSession, execute, wasm_runtime_info, wasm_worker_current_timeout_ms,
+    wasm_worker_execute_with_operation, wasm_worker_force_failed_state_for_tests, wasm_worker_info,
+    wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start, wasm_worker_terminate,
 };
 use wasm_bindgen_test::*;
 
@@ -60,10 +60,60 @@ fn vm_probe_worker_state_gate_roundtrip() {
     assert!(recycle.success());
 
     let resumed_timeout = wasm_worker_set_timeout(5_000);
-    assert_eq!(resumed_timeout.phase(), "worker_timeout_configured".to_string());
+    assert_eq!(
+        resumed_timeout.phase(),
+        "worker_timeout_configured".to_string()
+    );
     assert_eq!(resumed_timeout.state(), "ready".to_string());
     assert!(resumed_timeout.success());
     assert_eq!(wasm_worker_info().state(), "ready".to_string());
+}
+
+#[wasm_bindgen_test]
+fn vm_probe_worker_forced_failed_state_roundtrip() {
+    let recycle = wasm_worker_recycle();
+    assert_eq!(recycle.phase(), "worker_recycled".to_string());
+    assert_eq!(recycle.state(), "ready".to_string());
+
+    let assign = wasm_worker_execute_with_operation("x = 8\n");
+    assert_eq!(assign.phase(), "ok".to_string());
+    assert_eq!(assign.state(), "ready".to_string());
+    assert!(assign.success());
+
+    let forced = wasm_worker_force_failed_state_for_tests();
+    assert_eq!(forced.phase(), "worker_failed_forced".to_string());
+    assert_eq!(forced.state(), "failed".to_string());
+    assert!(forced.success());
+    assert_eq!(
+        forced.blocker_key(),
+        Some("worker_runtime_failed".to_string())
+    );
+
+    let blocked_execute = wasm_worker_execute_with_operation("x\n");
+    assert_eq!(
+        blocked_execute.phase(),
+        "unsupported_worker_execution".to_string()
+    );
+    assert_eq!(blocked_execute.state(), "failed".to_string());
+    assert!(!blocked_execute.success());
+    assert_eq!(
+        blocked_execute.blocker_key(),
+        Some("worker_runtime_failed".to_string())
+    );
+
+    let restart = wasm_worker_start();
+    assert_eq!(restart.phase(), "worker_started".to_string());
+    assert_eq!(restart.state(), "ready".to_string());
+    assert!(restart.success());
+
+    let missing_after_start = wasm_worker_execute_with_operation("x\n");
+    assert_eq!(missing_after_start.phase(), "runtime_error".to_string());
+    assert_eq!(missing_after_start.state(), "ready".to_string());
+    assert!(!missing_after_start.success());
+    let err = missing_after_start
+        .error()
+        .expect("post-start execution should report NameError");
+    assert!(err.contains("NameError"));
 }
 
 #[wasm_bindgen_test]

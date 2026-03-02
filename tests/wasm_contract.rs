@@ -19,11 +19,13 @@ use crate::wasm_worker_contract::{
     WASM_WORKER_BLOCKER_KEYS, WASM_WORKER_EXECUTE_FIXTURES, WASM_WORKER_EXECUTE_PHASE_KEYS,
     WASM_WORKER_INFO_FIXTURES, WASM_WORKER_LIFECYCLE_FIXTURES, WASM_WORKER_LIFECYCLE_PHASE_KEYS,
     WASM_WORKER_LIFECYCLE_PHASE_KEYS_VM_PROBE_EXTRA, WASM_WORKER_SESSION_STATE_GATE_FIXTURES,
-    WASM_WORKER_SESSION_STATE_SEQUENCE_FIXTURES,
-    WASM_WORKER_STATE_KEYS, WASM_WORKER_TIMEOUT_FIXTURES, WASM_WORKER_TIMEOUT_PHASE_KEYS,
+    WASM_WORKER_SESSION_STATE_SEQUENCE_FIXTURES, WASM_WORKER_STATE_KEYS,
+    WASM_WORKER_TIMEOUT_FIXTURES, WASM_WORKER_TIMEOUT_PHASE_KEYS,
     WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA, WasmWorkerExecuteFixture,
 };
 use js_sys::Reflect;
+#[cfg(feature = "wasm-vm-probe")]
+use pyrs::wasm::wasm_worker_force_failed_state_for_tests;
 use pyrs::wasm::{
     WasmCapabilityReport, WasmSession, WasmWorkerSession, check_compile_result,
     check_syntax_result, execute, wasm_api_version, wasm_capabilities, wasm_capability_error,
@@ -1654,6 +1656,85 @@ fn wasm_worker_runtime_error_does_not_force_failed_state() {
     assert_eq!(info.state(), "ready".to_string());
 }
 
+#[cfg(feature = "wasm-vm-probe")]
+#[wasm_bindgen_test]
+fn wasm_worker_forced_failed_state_blocks_until_start_or_recycle() {
+    reset_top_level_worker_state_for_contract_tests();
+
+    let configured = wasm_worker_set_timeout(250);
+    assert_eq!(configured.phase(), "worker_timeout_configured".to_string());
+    assert_eq!(configured.state(), "ready".to_string());
+    assert!(configured.success());
+
+    let assigned = wasm_worker_execute_with_operation("x = 99\n");
+    assert_eq!(assigned.phase(), "ok".to_string());
+    assert_eq!(assigned.state(), "ready".to_string());
+    assert!(assigned.success());
+
+    let forced = wasm_worker_force_failed_state_for_tests();
+    assert_eq!(forced.phase(), "worker_failed_forced".to_string());
+    assert_eq!(forced.state(), "failed".to_string());
+    assert!(forced.success());
+    assert_eq!(
+        forced.blocker_key(),
+        Some("worker_runtime_failed".to_string())
+    );
+
+    let info_while_failed = wasm_worker_info();
+    assert_eq!(info_while_failed.state(), "failed".to_string());
+    assert!(!info_while_failed.execute_supported());
+    assert!(!info_while_failed.timeout_configuration_supported());
+    assert!(!info_while_failed.timeout_enforcement_supported());
+
+    let blocked_execute = wasm_worker_execute_with_operation("x\n");
+    assert_eq!(
+        blocked_execute.phase(),
+        "unsupported_worker_execution".to_string()
+    );
+    assert_eq!(blocked_execute.state(), "failed".to_string());
+    assert!(!blocked_execute.success());
+    assert_eq!(
+        blocked_execute.blocker_key(),
+        Some("worker_runtime_failed".to_string())
+    );
+
+    let blocked_timeout = wasm_worker_set_timeout(5_000);
+    assert_eq!(
+        blocked_timeout.phase(),
+        "unsupported_worker_timeout_enforcement".to_string()
+    );
+    assert_eq!(blocked_timeout.state(), "failed".to_string());
+    assert!(!blocked_timeout.success());
+    assert_eq!(
+        blocked_timeout.blocker_key(),
+        Some("worker_runtime_failed".to_string())
+    );
+
+    let invalid_timeout = wasm_worker_set_timeout(0);
+    assert_eq!(
+        invalid_timeout.phase(),
+        "invalid_worker_timeout".to_string()
+    );
+    assert_eq!(invalid_timeout.state(), "failed".to_string());
+    assert!(!invalid_timeout.success());
+    assert!(invalid_timeout.blocker_key().is_none());
+
+    let restarted = wasm_worker_start();
+    assert_eq!(restarted.phase(), "worker_started".to_string());
+    assert_eq!(restarted.state(), "ready".to_string());
+    assert!(restarted.success());
+    assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+
+    let missing_after_start = wasm_worker_execute_with_operation("x\n");
+    assert_eq!(missing_after_start.phase(), "runtime_error".to_string());
+    assert_eq!(missing_after_start.state(), "ready".to_string());
+    assert!(!missing_after_start.success());
+    let missing_error = missing_after_start
+        .error()
+        .expect("post-start execution should report NameError");
+    assert!(missing_error.contains("NameError"));
+}
+
 #[wasm_bindgen_test]
 fn wasm_worker_timeout_runtime_error_recycles_worker_state() {
     reset_top_level_worker_state_for_contract_tests();
@@ -2101,7 +2182,10 @@ fn wasm_worker_session_recovers_after_external_terminate_then_start() {
         assert_eq!(resumed_execute.state(), "ready".to_string());
         assert!(resumed_execute.success());
         assert!(resumed_execute.blocker_key().is_none());
-        assert_eq!(resumed_timeout.phase(), "worker_timeout_configured".to_string());
+        assert_eq!(
+            resumed_timeout.phase(),
+            "worker_timeout_configured".to_string()
+        );
         assert_eq!(resumed_timeout.state(), "ready".to_string());
         assert!(resumed_timeout.success());
         assert!(resumed_timeout.blocker_key().is_none());
@@ -2293,7 +2377,10 @@ fn wasm_worker_session_timeout_tracks_external_lifecycle_resets() {
     assert_eq!(session.info().state(), "ready".to_string());
 
     let reconfigured = session.set_timeout_ms(8_000);
-    assert_eq!(reconfigured.phase(), "worker_timeout_configured".to_string());
+    assert_eq!(
+        reconfigured.phase(),
+        "worker_timeout_configured".to_string()
+    );
     assert_eq!(reconfigured.state(), "ready".to_string());
     assert!(reconfigured.success());
     assert!(reconfigured.blocker_key().is_none());
