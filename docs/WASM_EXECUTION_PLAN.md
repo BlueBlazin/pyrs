@@ -700,6 +700,10 @@ Completed on this branch:
 - latest: browser-smoke dispatch and artifact capture now have an explicit
   operator runbook (`docs/WASM_BROWSER_SMOKE_RUNBOOK.md`) to standardize first
   baseline collection and future promotion evidence.
+- latest: successful browser-smoke runs now emit a machine-readable baseline
+  summary artifact (`perf/wasm_browser_smoke_baseline_latest.json`) from
+  `scripts/run_wasm_contract_smoke.sh`, and CI uploads it with
+  `wasm-browser-smoke-artifacts` for promotion evidence tracking.
 - latest: docs index now links to `/playground/` as an explicit browser-route
   entrypoint in Getting Started navigation.
 - latest: browser routes are now split by product UX vs diagnostics:

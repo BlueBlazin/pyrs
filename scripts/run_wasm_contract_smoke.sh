@@ -114,9 +114,25 @@ run_vm_probe_state_gate_browser_smoke() {
   wasm-pack test --headless --"${browser}" --features wasm-vm-probe -- --test wasm_contract shared_state_after_external_lifecycle_change
 }
 
+emit_browser_smoke_baseline() {
+  local browser="$1"
+  local fallback_from="${2:-}"
+  local args=(
+    --browser "${browser}"
+  )
+  if [[ -n "${fallback_from}" ]]; then
+    args+=(--fallback-from "${fallback_from}")
+  fi
+  if [[ "${PYRS_WASM_RUN_VM_PROBE_BROWSER_STATE_GATE_SMOKE:-0}" == "1" ]]; then
+    args+=(--vm-probe-state-gate)
+  fi
+  python3 scripts/generate_wasm_browser_smoke_baseline.py "${args[@]}"
+}
+
 echo "[wasm-contract] wasm-pack detected; running optional browser smoke tests"
 if run_browser_smoke chrome; then
   run_vm_probe_state_gate_browser_smoke chrome
+  emit_browser_smoke_baseline chrome
   echo "[wasm-contract] browser smoke tests passed"
   exit 0
 fi
@@ -124,4 +140,5 @@ fi
 echo "[wasm-contract] chrome smoke failed; trying firefox"
 run_browser_smoke firefox
 run_vm_probe_state_gate_browser_smoke firefox
+emit_browser_smoke_baseline firefox chrome
 echo "[wasm-contract] browser smoke tests passed (firefox)"
