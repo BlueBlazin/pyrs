@@ -634,6 +634,11 @@ Completed on this branch:
   `set_timeout_ms`) now retain operation-reported shared worker state instead of
   overriding with cached session-local state, preventing stale-state telemetry
   after external top-level lifecycle mutations.
+- latest: mixed top-level/session lifecycle behavior is now fixture-driven:
+  `WASM_WORKER_SESSION_STATE_GATE_FIXTURES` encodes post-terminate and
+  post-recycle worker execute/timeout contracts, and
+  `generate_wasm_session_contract_summary.py` now validates those fixture rows
+  against lifecycle state/phase invariants and vm-probe overrides.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
