@@ -99,6 +99,8 @@ This document defines the JS-facing contract currently exported by
     - capability-allowed snippets:
       - return `ok` or `runtime_error` when worker `state = "ready"`,
       - return `unsupported_worker_execution` when worker `state != "ready"`.
+    - `runtime_error` does not force `state = "failed"`; subsequent capability-allowed
+      executes continue using the same ready worker session.
   - `blocker_key` is:
     - `None` for parse/compile failures and vm-probe runtime execution results,
     - `Some("<capability_key>")` when parse+compile-valid source imports a known

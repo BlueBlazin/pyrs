@@ -1495,6 +1495,41 @@ fn wasm_worker_execute_requires_ready_state_after_terminate() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_worker_runtime_error_does_not_force_failed_state() {
+    reset_top_level_worker_state_for_contract_tests();
+
+    let assign = wasm_worker_execute_with_operation("x = 5\n");
+    if vm_probe_enabled() {
+        assert_eq!(assign.phase(), "ok".to_string());
+        assert_eq!(assign.state(), "ready".to_string());
+        assert!(assign.success());
+    } else {
+        assert_eq!(assign.phase(), "unsupported_worker_execution".to_string());
+        assert_eq!(
+            assign.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+        return;
+    }
+
+    let runtime_error = wasm_worker_execute_with_operation("1 / 0\n");
+    assert_eq!(runtime_error.phase(), "runtime_error".to_string());
+    assert_eq!(runtime_error.state(), "ready".to_string());
+    assert!(!runtime_error.success());
+    assert!(runtime_error.blocker_key().is_none());
+    assert!(runtime_error.error().is_some());
+
+    let resumed = wasm_worker_execute_with_operation("assert x == 5\n");
+    assert_eq!(resumed.phase(), "ok".to_string());
+    assert_eq!(resumed.state(), "ready".to_string());
+    assert!(resumed.success());
+    assert!(resumed.blocker_key().is_none());
+
+    let info = wasm_worker_info();
+    assert_eq!(info.state(), "ready".to_string());
+}
+
+#[wasm_bindgen_test]
 fn wasm_worker_timeout_configuration_requires_ready_state_after_terminate() {
     reset_top_level_worker_state_for_contract_tests();
     let terminate = wasm_worker_terminate();

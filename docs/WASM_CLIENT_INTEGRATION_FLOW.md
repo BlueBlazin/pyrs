@@ -65,6 +65,7 @@ are explicit contract lifecycle controls.
     - capability-allowed snippets return `ok` or `runtime_error` only when
       worker `state = "ready"`,
     - capability-allowed snippets run on a persistent worker VM while `state = "ready"`,
+    - `runtime_error` keeps worker `state = "ready"` for follow-up executes,
     - when worker `state != "ready"`, capability-allowed snippets return
       `unsupported_worker_execution` with
       `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`.

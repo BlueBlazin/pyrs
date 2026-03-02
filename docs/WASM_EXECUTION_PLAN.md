@@ -740,8 +740,14 @@ Completed on this branch:
   - `wasm_worker_current_timeout_ms()` exports the current worker timeout value,
   - `wasm_worker_set_timeout(...)` in vm-probe ready state updates that value,
   - worker lifecycle reset calls (`start` / `terminate` / `recycle`) reset it
-    to the default `5000` ms,
+  to the default `5000` ms,
   with wasm unit + wasm contract + docs/summary gate coverage to prevent drift.
+- latest: vm-probe worker runtime errors are now explicitly contract-locked to
+  preserve worker readiness:
+  - `phase = "runtime_error"` leaves worker `state = "ready"`,
+  - subsequent capability-allowed executes continue in the same worker VM
+    session state,
+  covered by both native wasm unit tests and wasm browser-contract tests.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

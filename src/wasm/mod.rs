@@ -3123,6 +3123,35 @@ mod tests {
 
     #[cfg(feature = "wasm-vm-probe")]
     #[test]
+    fn wasm_worker_vm_probe_runtime_error_keeps_worker_ready_and_stateful() {
+        let recycle = wasm_worker_recycle();
+        assert_eq!(recycle.phase(), "worker_recycled".to_string());
+        assert_eq!(recycle.state(), "ready".to_string());
+
+        let assign = wasm_worker_execute_with_operation("x = 11\n");
+        assert_eq!(assign.phase(), "ok".to_string());
+        assert_eq!(assign.state(), "ready".to_string());
+        assert!(assign.success());
+
+        let runtime_error = wasm_worker_execute_with_operation("1 / 0\n");
+        assert_eq!(runtime_error.phase(), "runtime_error".to_string());
+        assert_eq!(runtime_error.state(), "ready".to_string());
+        assert!(!runtime_error.success());
+        assert!(runtime_error.blocker_key().is_none());
+        assert!(runtime_error.error().is_some());
+
+        let resumed = wasm_worker_execute_with_operation("assert x == 11\n");
+        assert_eq!(resumed.phase(), "ok".to_string());
+        assert_eq!(resumed.state(), "ready".to_string());
+        assert!(resumed.success());
+        assert!(resumed.blocker_key().is_none());
+
+        let info = wasm_worker_info();
+        assert_eq!(info.state(), "ready".to_string());
+    }
+
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
     fn wasm_worker_vm_probe_failed_state_blocks_until_recovered() {
         clear_worker_vm();
         set_current_worker_state(WasmWorkerState::Failed);

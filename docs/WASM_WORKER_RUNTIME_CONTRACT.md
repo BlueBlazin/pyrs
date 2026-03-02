@@ -227,6 +227,8 @@ controls, and `enforcement_supported` for hard runtime-enforcement guarantees.
       - `phase = "runtime_error"` on VM runtime failure
       - `blocker_key = None`
       - execution uses a persistent worker VM (state survives across calls)
+      - `runtime_error` does not transition worker into `failed`; follow-up
+        capability-allowed executes continue in `state = "ready"`
     - when `state != "ready"`:
       - `phase = "unsupported_worker_execution"`
       - `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`
