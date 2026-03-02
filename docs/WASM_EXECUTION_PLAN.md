@@ -671,14 +671,23 @@ Completed on this branch:
   `scripts/run_wasm_contract_smoke.sh` with browser and vm-probe state-gate
   smoke flags enabled (`PYRS_WASM_SKIP_CORE_SMOKE=1` in CI to avoid duplicate
   core checks), while keeping the mandatory gate lane deterministic.
+- latest: docs index now links to `/playground/` as an explicit browser-route
+  entrypoint in Getting Started navigation.
+- latest: `/playground` now surfaces runtime contract introspection
+  (`wasm_runtime_info`, worker info, capability matrix, blocker rows), snippet
+  preflight details (import roots + blocker rows), and worker probe controls
+  (start/recycle/terminate/execute/timeout) for state-gate debugging.
+- latest: `run_wasm_contract_smoke.sh` now supports
+  `PYRS_WASM_SKIP_CORE_SMOKE=1` so browser-smoke lanes can run wasm-pack
+  checks without re-running core compile/summary/nextest gates.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
 
 Remaining near-term focus:
 1. W5: increase worker runtime execution coverage in vm-probe mode (state/lifecycle edges).
-2. W6: deepen playground UX around capability preflight and blocker-key visibility.
-3. W7: add optional browser smoke execution in CI with clear isolation and failure policy.
+2. W6: add docs-level guidance for playground worker controls and preflight interpretation.
+3. W7: capture and publish first workflow-dispatch browser-smoke baseline artifact.
 
 Current `wasm-vm-probe` snapshot (non-gating, latest local run):
 - compile status: `scripts/probe_wasm_vm_compile.sh` now completes without
