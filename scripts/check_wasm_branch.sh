@@ -72,6 +72,9 @@ python3 scripts/audit_wasm_host_seam.py \
 echo "[wasm-branch] wasm artifact-hash extractor contract"
 python3 scripts/check_wasm_artifact_hash_extractor_contract.py
 
+echo "[wasm-branch] wasm dispatch snapshot contract"
+python3 scripts/check_wasm_dispatch_snapshot_contract.py
+
 echo "[wasm-branch] wasm local evidence-pack snapshot"
 python3 scripts/collect_wasm_evidence_pack.py \
   --out-dir perf/wasm_evidence_pack_latest
