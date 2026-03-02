@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
-use std::ffi::CString;
-use std::os::raw::{c_char, c_int};
+#[cfg(target_arch = "wasm32")]
+use super::wasm_c_float_format::format_float_with_c_pattern;
 
 use super::class_name_for_instance;
 use super::containers::{dedup_hashable_values, dict_contains_key_checked, ensure_hashable};
@@ -12,10 +12,6 @@ use super::{
 use crate::runtime::{
     BigInt, BuiltinFunction, Heap, Object, RuntimeError, Value, format_repr, format_value,
 };
-
-unsafe extern "C" {
-    fn snprintf(buffer: *mut c_char, size: usize, format: *const c_char, ...) -> c_int;
-}
 
 fn string_like_for_add(value: &Value) -> Option<String> {
     match value {
@@ -923,28 +919,43 @@ fn format_percent_float_with_snprintf(
     format_spec: &str,
     value: f64,
 ) -> Result<String, RuntimeError> {
-    let c_format = CString::new(format_spec)
-        .map_err(|_| RuntimeError::value_error("invalid format string"))?;
-    // SAFETY: `c_format` is NUL-terminated and valid for both calls.
-    let needed = unsafe { snprintf(std::ptr::null_mut(), 0, c_format.as_ptr(), value) };
-    if needed < 0 {
-        return Err(RuntimeError::value_error("failed to format float"));
+    #[cfg(target_arch = "wasm32")]
+    {
+        format_float_with_c_pattern(format_spec, value)
     }
-    let mut buffer = vec![0u8; needed as usize + 1];
-    // SAFETY: output buffer is writable and large enough for the result and trailing NUL.
-    let wrote = unsafe {
-        snprintf(
-            buffer.as_mut_ptr().cast::<c_char>(),
-            buffer.len(),
-            c_format.as_ptr(),
-            value,
-        )
-    };
-    if wrote < 0 {
-        return Err(RuntimeError::value_error("failed to format float"));
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::ffi::CString;
+        use std::os::raw::{c_char, c_int};
+
+        unsafe extern "C" {
+            fn snprintf(buffer: *mut c_char, size: usize, format: *const c_char, ...) -> c_int;
+        }
+
+        let c_format = CString::new(format_spec)
+            .map_err(|_| RuntimeError::value_error("invalid format string"))?;
+        // SAFETY: `c_format` is NUL-terminated and valid for both calls.
+        let needed = unsafe { snprintf(std::ptr::null_mut(), 0, c_format.as_ptr(), value) };
+        if needed < 0 {
+            return Err(RuntimeError::value_error("failed to format float"));
+        }
+        let mut buffer = vec![0u8; needed as usize + 1];
+        // SAFETY: output buffer is writable and large enough for the result and trailing NUL.
+        let wrote = unsafe {
+            snprintf(
+                buffer.as_mut_ptr().cast::<c_char>(),
+                buffer.len(),
+                c_format.as_ptr(),
+                value,
+            )
+        };
+        if wrote < 0 {
+            return Err(RuntimeError::value_error("failed to format float"));
+        }
+        buffer.truncate(wrote as usize);
+        Ok(String::from_utf8_lossy(&buffer).into_owned())
     }
-    buffer.truncate(wrote as usize);
-    Ok(String::from_utf8_lossy(&buffer).into_owned())
 }
 
 fn apply_percent_width(

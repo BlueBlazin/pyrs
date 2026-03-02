@@ -21,6 +21,10 @@ mod vm_execution;
 mod vm_extensions;
 mod vm_native_dispatch;
 mod vm_runtime_methods;
+#[cfg(target_arch = "wasm32")]
+mod wasm_c_float_format;
+#[cfg(target_arch = "wasm32")]
+mod wasm_libc_shim;
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;

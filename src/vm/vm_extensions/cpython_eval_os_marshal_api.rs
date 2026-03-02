@@ -1,5 +1,7 @@
 use std::collections::HashMap;
-use std::ffi::{CStr, c_char, c_double, c_int, c_long, c_ulong, c_void};
+use std::ffi::{CStr, c_char, c_double, c_long, c_ulong, c_void};
+#[cfg(not(target_arch = "wasm32"))]
+use std::ffi::c_int;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::bytecode::cpython::{marshal_dump_object, marshal_load_object};
@@ -18,6 +20,7 @@ use super::{
     with_active_cpython_context_mut,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 unsafe extern "C" {
     fn strtol(string: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_long;
     fn strtoul(string: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_ulong;
@@ -27,6 +30,318 @@ unsafe extern "C" {
 const PY_GILSTATE_LOCKED: i32 = 0;
 const PY_GILSTATE_UNLOCKED: i32 = 1;
 const PY_MUTEX_LOCKED_BIT: u8 = 0x01;
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_parse_c_digit(byte: u8) -> Option<u32> {
+    match byte {
+        b'0'..=b'9' => Some((byte - b'0') as u32),
+        b'a'..=b'z' => Some((byte - b'a') as u32 + 10),
+        b'A'..=b'Z' => Some((byte - b'A') as u32 + 10),
+        _ => None,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe fn wasm_set_endptr(base: *const c_char, endptr: *mut *mut c_char, offset: usize) {
+    if endptr.is_null() {
+        return;
+    }
+    // SAFETY: caller provides a valid source string pointer and out-pointer.
+    unsafe {
+        *endptr = base.cast_mut().add(offset);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe fn wasm_cstr_bytes(ptr: *const c_char) -> &'static [u8] {
+    if ptr.is_null() {
+        return &[];
+    }
+    let mut len = 0usize;
+    // SAFETY: pointer is expected to refer to a NUL-terminated C string.
+    while unsafe { *ptr.add(len) } != 0 {
+        len += 1;
+    }
+    // SAFETY: byte slice spans exactly the UTF-8/ASCII payload before the trailing NUL.
+    unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) }
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe fn wasm_strtol_impl(
+    string: *const c_char,
+    endptr: *mut *mut c_char,
+    base: i32,
+) -> c_long {
+    let bytes = unsafe { wasm_cstr_bytes(string) };
+    if bytes.is_empty() {
+        unsafe { wasm_set_endptr(string, endptr, 0) };
+        return 0;
+    }
+    if !(base == 0 || (2..=36).contains(&base)) {
+        unsafe { wasm_set_endptr(string, endptr, 0) };
+        return 0;
+    }
+
+    let mut idx = 0usize;
+    while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+        idx += 1;
+    }
+    let mut sign: i32 = 1;
+    if idx < bytes.len() && matches!(bytes[idx], b'+' | b'-') {
+        if bytes[idx] == b'-' {
+            sign = -1;
+        }
+        idx += 1;
+    }
+    let first_digit_offset = idx;
+    let mut parsed_base = base;
+    let mut consumed_single_zero_prefix = false;
+    if parsed_base == 0 {
+        if idx + 2 <= bytes.len()
+            && bytes[idx] == b'0'
+            && matches!(bytes[idx + 1], b'x' | b'X')
+            && idx + 2 < bytes.len()
+            && wasm_parse_c_digit(bytes[idx + 2]).is_some_and(|digit| digit < 16)
+        {
+            parsed_base = 16;
+            idx += 2;
+        } else if idx < bytes.len() && bytes[idx] == b'0' {
+            parsed_base = 8;
+            idx += 1;
+            consumed_single_zero_prefix = true;
+        } else {
+            parsed_base = 10;
+        }
+    } else if parsed_base == 16
+        && idx + 1 < bytes.len()
+        && bytes[idx] == b'0'
+        && matches!(bytes[idx + 1], b'x' | b'X')
+    {
+        idx += 2;
+    }
+    let base_u32 = parsed_base as u32;
+
+    let mut acc: u128 = 0;
+    let mut parsed_digits = 0usize;
+    let positive_limit = c_long::MAX as i128 as u128;
+    let negative_limit = (-(c_long::MIN as i128)) as u128;
+    let limit = if sign < 0 {
+        negative_limit
+    } else {
+        positive_limit
+    };
+    while idx < bytes.len() {
+        let Some(digit) = wasm_parse_c_digit(bytes[idx]) else {
+            break;
+        };
+        if digit >= base_u32 {
+            break;
+        }
+        parsed_digits += 1;
+        let next = acc
+            .checked_mul(base_u32 as u128)
+            .and_then(|value| value.checked_add(digit as u128))
+            .unwrap_or(limit.saturating_add(1));
+        acc = next.min(limit.saturating_add(1));
+        idx += 1;
+    }
+
+    if parsed_digits == 0 && !consumed_single_zero_prefix {
+        unsafe { wasm_set_endptr(string, endptr, 0) };
+        return 0;
+    }
+    let end_offset = if parsed_digits == 0 {
+        first_digit_offset + 1
+    } else {
+        idx
+    };
+    unsafe { wasm_set_endptr(string, endptr, end_offset) };
+
+    if sign < 0 {
+        if acc > negative_limit {
+            c_long::MIN
+        } else {
+            (-(acc as i128)) as c_long
+        }
+    } else if acc > positive_limit {
+        c_long::MAX
+    } else {
+        acc as c_long
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe fn wasm_strtoul_impl(
+    string: *const c_char,
+    endptr: *mut *mut c_char,
+    base: i32,
+) -> c_ulong {
+    let bytes = unsafe { wasm_cstr_bytes(string) };
+    if bytes.is_empty() {
+        unsafe { wasm_set_endptr(string, endptr, 0) };
+        return 0;
+    }
+    if !(base == 0 || (2..=36).contains(&base)) {
+        unsafe { wasm_set_endptr(string, endptr, 0) };
+        return 0;
+    }
+
+    let mut idx = 0usize;
+    while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+        idx += 1;
+    }
+    let mut is_negative = false;
+    if idx < bytes.len() && matches!(bytes[idx], b'+' | b'-') {
+        is_negative = bytes[idx] == b'-';
+        idx += 1;
+    }
+    let first_digit_offset = idx;
+    let mut parsed_base = base;
+    let mut consumed_single_zero_prefix = false;
+    if parsed_base == 0 {
+        if idx + 2 <= bytes.len()
+            && bytes[idx] == b'0'
+            && matches!(bytes[idx + 1], b'x' | b'X')
+            && idx + 2 < bytes.len()
+            && wasm_parse_c_digit(bytes[idx + 2]).is_some_and(|digit| digit < 16)
+        {
+            parsed_base = 16;
+            idx += 2;
+        } else if idx < bytes.len() && bytes[idx] == b'0' {
+            parsed_base = 8;
+            idx += 1;
+            consumed_single_zero_prefix = true;
+        } else {
+            parsed_base = 10;
+        }
+    } else if parsed_base == 16
+        && idx + 1 < bytes.len()
+        && bytes[idx] == b'0'
+        && matches!(bytes[idx + 1], b'x' | b'X')
+    {
+        idx += 2;
+    }
+    let base_u32 = parsed_base as u32;
+
+    let mut acc: u128 = 0;
+    let mut parsed_digits = 0usize;
+    let limit = c_ulong::MAX as u128;
+    while idx < bytes.len() {
+        let Some(digit) = wasm_parse_c_digit(bytes[idx]) else {
+            break;
+        };
+        if digit >= base_u32 {
+            break;
+        }
+        parsed_digits += 1;
+        let next = acc
+            .checked_mul(base_u32 as u128)
+            .and_then(|value| value.checked_add(digit as u128))
+            .unwrap_or(limit.saturating_add(1));
+        acc = next.min(limit.saturating_add(1));
+        idx += 1;
+    }
+
+    if parsed_digits == 0 && !consumed_single_zero_prefix {
+        unsafe { wasm_set_endptr(string, endptr, 0) };
+        return 0;
+    }
+    let end_offset = if parsed_digits == 0 {
+        first_digit_offset + 1
+    } else {
+        idx
+    };
+    unsafe { wasm_set_endptr(string, endptr, end_offset) };
+
+    if acc > limit {
+        return c_ulong::MAX;
+    }
+    let mut out = acc as c_ulong;
+    if is_negative {
+        out = out.wrapping_neg();
+    }
+    out
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_ascii_case_prefix_eq(bytes: &[u8], pat: &[u8]) -> bool {
+    if bytes.len() < pat.len() {
+        return false;
+    }
+    bytes.iter()
+        .zip(pat.iter())
+        .all(|(left, right)| left.eq_ignore_ascii_case(right))
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe fn wasm_strtod_impl(string: *const c_char, endptr: *mut *mut c_char) -> c_double {
+    let bytes = unsafe { wasm_cstr_bytes(string) };
+    if bytes.is_empty() {
+        unsafe { wasm_set_endptr(string, endptr, 0) };
+        return 0.0;
+    }
+    let mut idx = 0usize;
+    while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+        idx += 1;
+    }
+    let token_start = idx;
+    if idx < bytes.len() && matches!(bytes[idx], b'+' | b'-') {
+        idx += 1;
+    }
+
+    let remaining = &bytes[idx..];
+    if wasm_ascii_case_prefix_eq(remaining, b"inf") {
+        idx += 3;
+        if wasm_ascii_case_prefix_eq(&bytes[idx..], b"inity") {
+            idx += 5;
+        }
+        unsafe { wasm_set_endptr(string, endptr, idx) };
+        let text = std::str::from_utf8(&bytes[token_start..idx]).unwrap_or("inf");
+        return text.parse::<f64>().unwrap_or(f64::INFINITY);
+    }
+    if wasm_ascii_case_prefix_eq(remaining, b"nan") {
+        idx += 3;
+        unsafe { wasm_set_endptr(string, endptr, idx) };
+        let text = std::str::from_utf8(&bytes[token_start..idx]).unwrap_or("nan");
+        return text.parse::<f64>().unwrap_or(f64::NAN);
+    }
+
+    let mut seen_digit = false;
+    while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+        seen_digit = true;
+        idx += 1;
+    }
+    if idx < bytes.len() && bytes[idx] == b'.' {
+        idx += 1;
+        while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+            seen_digit = true;
+            idx += 1;
+        }
+    }
+    if !seen_digit {
+        unsafe { wasm_set_endptr(string, endptr, 0) };
+        return 0.0;
+    }
+
+    if idx < bytes.len() && matches!(bytes[idx], b'e' | b'E') {
+        let exponent_marker = idx;
+        idx += 1;
+        if idx < bytes.len() && matches!(bytes[idx], b'+' | b'-') {
+            idx += 1;
+        }
+        let exp_digits_start = idx;
+        while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+            idx += 1;
+        }
+        if exp_digits_start == idx {
+            idx = exponent_marker;
+        }
+    }
+
+    unsafe { wasm_set_endptr(string, endptr, idx) };
+    let text = std::str::from_utf8(&bytes[token_start..idx]).unwrap_or("");
+    text.parse::<f64>().unwrap_or(0.0)
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_CheckSignals() -> i32 {
@@ -392,7 +707,16 @@ pub unsafe extern "C" fn PyOS_strtol(
     endptr: *mut *mut c_char,
     base: i32,
 ) -> c_long {
-    unsafe { strtol(string, endptr, base as c_int) }
+    #[cfg(target_arch = "wasm32")]
+    {
+        // SAFETY: helper mirrors libc `strtol` pointer contract.
+        unsafe { wasm_strtol_impl(string, endptr, base) }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // SAFETY: forwarded directly to libc.
+        unsafe { strtol(string, endptr, base as c_int) }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -401,7 +725,16 @@ pub unsafe extern "C" fn PyOS_strtoul(
     endptr: *mut *mut c_char,
     base: i32,
 ) -> c_ulong {
-    unsafe { strtoul(string, endptr, base as c_int) }
+    #[cfg(target_arch = "wasm32")]
+    {
+        // SAFETY: helper mirrors libc `strtoul` pointer contract.
+        unsafe { wasm_strtoul_impl(string, endptr, base) }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // SAFETY: forwarded directly to libc.
+        unsafe { strtoul(string, endptr, base as c_int) }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -410,7 +743,16 @@ pub unsafe extern "C" fn PyOS_string_to_double(
     endptr: *mut *mut c_char,
     _overflow_exception: *mut c_void,
 ) -> c_double {
-    unsafe { strtod(string, endptr) }
+    #[cfg(target_arch = "wasm32")]
+    {
+        // SAFETY: helper mirrors libc `strtod` pointer contract.
+        unsafe { wasm_strtod_impl(string, endptr) }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // SAFETY: forwarded directly to libc.
+        unsafe { strtod(string, endptr) }
+    }
 }
 
 #[unsafe(no_mangle)]

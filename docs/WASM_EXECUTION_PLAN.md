@@ -854,6 +854,11 @@ Current `wasm-vm-probe` snapshot (non-gating, latest local run):
   tracks remaining raw wasm `env` imports (current vm-probe baseline) so
   browser-loader closure can be driven by import-family elimination rather than
   trial-and-error patching.
+- latest: wasm vm-probe lane now uses wasm-native allocator shims
+  (`malloc`/`calloc`/`realloc`/`free`) plus wasm-native float-formatting and
+  `PyOS_strto*` parsing paths (no direct wasm libc imports for
+  `snprintf`/`strtol`/`strtoul`/`strtod`), reducing raw wasm `env` imports from
+  `206` to `198` in the current probe baseline.
 
 ## Risk Register
 

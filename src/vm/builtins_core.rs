@@ -33,13 +33,9 @@ use crate::ast::{
 };
 use crate::runtime::value_lookup_hash;
 use std::collections::hash_map::DefaultHasher;
-use std::ffi::CString;
 use std::hash::{Hash, Hasher};
-use std::os::raw::{c_char, c_int};
-
-unsafe extern "C" {
-    fn snprintf(buffer: *mut c_char, size: usize, format: *const c_char, ...) -> c_int;
-}
+#[cfg(target_arch = "wasm32")]
+use super::wasm_c_float_format::format_float_with_c_pattern;
 
 thread_local! {
     static TYPE_INSTANCECHECK_BYPASS_CUSTOM: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -10963,28 +10959,48 @@ impl Vm {
         format_text: &str,
         value: f64,
     ) -> Result<String, RuntimeError> {
-        let c_format = CString::new(format_text)
-            .map_err(|_| RuntimeError::value_error("invalid format string"))?;
-        // SAFETY: `c_format` is NUL-terminated and valid for both calls.
-        let needed = unsafe { snprintf(std::ptr::null_mut(), 0, c_format.as_ptr(), value) };
-        if needed < 0 {
-            return Err(RuntimeError::value_error("failed to format float"));
+        #[cfg(target_arch = "wasm32")]
+        {
+            format_float_with_c_pattern(format_text, value)
         }
-        let mut buffer = vec![0u8; needed as usize + 1];
-        // SAFETY: buffer is writable and large enough for output including trailing NUL.
-        let wrote = unsafe {
-            snprintf(
-                buffer.as_mut_ptr().cast::<c_char>(),
-                buffer.len(),
-                c_format.as_ptr(),
-                value,
-            )
-        };
-        if wrote < 0 {
-            return Err(RuntimeError::value_error("failed to format float"));
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use std::ffi::CString;
+            use std::os::raw::{c_char, c_int};
+
+            unsafe extern "C" {
+                fn snprintf(
+                    buffer: *mut c_char,
+                    size: usize,
+                    format: *const c_char,
+                    ...
+                ) -> c_int;
+            }
+
+            let c_format = CString::new(format_text)
+                .map_err(|_| RuntimeError::value_error("invalid format string"))?;
+            // SAFETY: `c_format` is NUL-terminated and valid for both calls.
+            let needed = unsafe { snprintf(std::ptr::null_mut(), 0, c_format.as_ptr(), value) };
+            if needed < 0 {
+                return Err(RuntimeError::value_error("failed to format float"));
+            }
+            let mut buffer = vec![0u8; needed as usize + 1];
+            // SAFETY: buffer is writable and large enough for output including trailing NUL.
+            let wrote = unsafe {
+                snprintf(
+                    buffer.as_mut_ptr().cast::<c_char>(),
+                    buffer.len(),
+                    c_format.as_ptr(),
+                    value,
+                )
+            };
+            if wrote < 0 {
+                return Err(RuntimeError::value_error("failed to format float"));
+            }
+            buffer.truncate(wrote as usize);
+            Ok(String::from_utf8_lossy(&buffer).into_owned())
         }
-        buffer.truncate(wrote as usize);
-        Ok(String::from_utf8_lossy(&buffer).into_owned())
     }
 
     fn apply_grouping_to_float_text(
