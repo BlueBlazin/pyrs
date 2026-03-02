@@ -75,6 +75,8 @@ Promotion review must include:
    [`docs/WASM_BROWSER_SMOKE_RUNBOOK.md`](./WASM_BROWSER_SMOKE_RUNBOOK.md),
    including `perf/wasm_browser_smoke_baseline_latest.json` from the
    `wasm-browser-smoke-artifacts` bundle.
+7. Artifact ID + SHA256 snapshot for the reviewed run:
+   - `python3 scripts/extract_wasm_ci_artifact_hashes.py --run-id <run-id> --format markdown`
 
 ### Latest Recorded Evidence Snapshot (2026-03-02 UTC)
 

@@ -27,6 +27,7 @@ Use this file to find canonical ownership quickly.
 - `docs/WASM_CLIENT_INTEGRATION_FLOW.md`: browser/client integration order and worker RPC flow.
 - `docs/WASM_BROWSER_SMOKE_RUNBOOK.md`: workflow-dispatch browser smoke runbook and artifact capture process.
 - `scripts/run_wasm_browser_smoke_dispatch.sh`: one-shot dispatch/watch/download helper for browser-smoke evidence capture.
+- `scripts/extract_wasm_ci_artifact_hashes.py`: extract artifact IDs + SHA256 digests from a workflow run log for promotion notes.
 
 ## Gap Tracking
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.

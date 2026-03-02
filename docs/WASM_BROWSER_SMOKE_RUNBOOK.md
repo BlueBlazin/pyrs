@@ -104,6 +104,14 @@ python3 scripts/validate_wasm_browser_smoke_baseline.py \
   --summary perf/wasm-browser-smoke-run/wasm-browser-smoke-artifacts/wasm_browser_smoke_baseline_latest.json
 ```
 
+Optional artifact-hash extraction (for promotion notes):
+
+```bash
+python3 scripts/extract_wasm_ci_artifact_hashes.py \
+  --run-id <run-id> \
+  --format markdown
+```
+
 ## Promotion Evidence Checklist
 
 Before marking browser-smoke baseline captured:

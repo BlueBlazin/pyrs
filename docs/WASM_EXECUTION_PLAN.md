@@ -270,6 +270,10 @@ Branch helper:
   `scripts/run_wasm_browser_smoke_dispatch.sh`
   runs one-shot workflow dispatch/watch/download flow with baseline-summary
   validation so browser evidence capture is deterministic.
+- artifact-hash extraction helper:
+  `scripts/extract_wasm_ci_artifact_hashes.py`
+  parses workflow logs (live `gh run view --log` or local log file) into
+  artifact-id + sha256 records for promotion snapshots.
 
 ## Merge Decision Rubric
 
@@ -855,6 +859,9 @@ Completed on this branch:
   (`22582347683`, commit `176f14f`) is green for both jobs
   (`wasm-contract-gate`, `wasm-browser-smoke`); artifact IDs and SHA256
   digests are now recorded in `docs/WASM_PROMOTION_GATE.md`.
+- latest: wasm promotion-note extraction now has a dedicated helper script
+  (`scripts/extract_wasm_ci_artifact_hashes.py`) and runbook wiring so
+  artifact hash capture is reproducible and less manual.
 - latest: browser-smoke capture now has an operator helper script
   (`scripts/run_wasm_browser_smoke_dispatch.sh`) that dispatches
   `wasm-track.yml`, waits for completion, downloads artifacts, and validates
