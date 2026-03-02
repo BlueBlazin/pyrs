@@ -154,27 +154,13 @@ jobs:
           name: wasm-browser-smoke-artifacts
           if-no-files-found: ignore
           path: |
-            perf/wasm_worker_contract_summary_latest.json
-            perf/wasm_execute_contract_summary_latest.json
-            perf/wasm_session_contract_summary_latest.json
-            perf/wasm_docs_execution_matrix_summary_latest.json
-            perf/wasm_api_contract_surface_summary_latest.json
-            perf/wasm_worker_docs_contract_summary_latest.json
-            perf/wasm_client_flow_summary_latest.json
-            perf/wasm_module_policy_summary_latest.json
-            perf/wasm_capability_summary_latest.json
-            perf/wasm_host_seam_audit_latest.json
-            perf/wasm_vm_link_blockers_latest.json
-            perf/wasm_vm_env_import_summary_latest.json
-            perf/wasm_worker_contract_summary_vm_probe_latest.json
-            perf/wasm_execute_contract_summary_vm_probe_latest.json
-            perf/wasm_evidence_pack_latest/manifest.json
-            perf/wasm_evidence_pack_latest/*.json
+            perf/wasm_browser_smoke_baseline_latest.json
+            perf/wasm_evidence_pack_from_gate/**
 
       - name: Upload browser smoke evidence-pack artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: wasm-browser-smoke-evidence-pack
-          if-no-files-found: ignore
-          path: perf/wasm_evidence_pack_latest/**
+          if-no-files-found: error
+          path: perf/wasm_evidence_pack_from_gate/**
