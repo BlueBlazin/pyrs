@@ -1,118 +1,73 @@
 ---
 import SiteLayout from "../layouts/SiteLayout.astro";
+import HighlightChip from "../components/ui/HighlightChip.astro";
 ---
 
 <SiteLayout
-	title="PYRS Playground | WASM Probe"
-	description="Browser playground for wasm-backed PYRS execution probes."
+	title="PYRS Playground | Browser REPL"
+	description="Run PYRS in a browser REPL powered by wasm."
 	navContext="playground"
 	noindex={true}
 >
 	<section class="playground-page">
 		<header class="playground-header">
-			<p class="playground-kicker">WASM Playground (Experimental)</p>
+			<div class="playground-kicker-row">
+				<p class="playground-kicker">WASM Playground</p>
+				<HighlightChip label="Experimental" />
+			</div>
 			<h1>Run PYRS in your browser</h1>
 			<p>
-				This route lazy-loads the wasm bundle only on <code>/playground</code>. It is an
-				experimental probe surface for `codex/wasm` and not part of the production runtime
-				contract yet.
+				The runtime initializes automatically when this page loads. Type directly into the REPL,
+				press <kbd>Enter</kbd> to run, and use <kbd>Shift</kbd> + <kbd>Enter</kbd> for multiline input.
 			</p>
 		</header>
 
-		<section class="playground-card playground-controls">
-			<div class="playground-toolbar">
-				<button id="playground-init" type="button">Load Runtime</button>
-				<button id="playground-inspect" type="button" disabled>Inspect Runtime</button>
-				<button id="playground-analyze" type="button" disabled>Analyze Snippet</button>
-				<button id="playground-run" type="button" disabled>Run Snippet</button>
-				<span id="playground-status" aria-live="polite">Runtime not loaded</span>
-			</div>
-			<label for="playground-source">Python snippet</label>
-			<textarea id="playground-source" spellcheck="false">x = 1
-print(x)</textarea>
+		<div class="playground-status" id="playground-status-shell" data-state="idle" aria-live="polite">
+			<span class="status-dot" aria-hidden="true"></span>
+			<span id="playground-status-text">Initializing runtime…</span>
+		</div>
+
+		<section class="playground-shell" aria-label="Browser REPL">
+			<div class="playground-transcript" id="playground-transcript"></div>
+			<form class="playground-input-row" id="playground-form" autocomplete="off">
+				<label for="playground-input" class="sr-only">Python REPL input</label>
+				<span class="playground-prompt" aria-hidden="true">&gt;&gt;&gt;</span>
+				<textarea
+					id="playground-input"
+					name="source"
+					spellcheck="false"
+					autocapitalize="off"
+					autocorrect="off"
+					rows="1"
+					placeholder="Try: 1 + 1"
+				></textarea>
+				<button type="submit" id="playground-run">Run</button>
+			</form>
 		</section>
 
-		<section class="playground-card">
-			<h2>Runtime Contract Snapshot</h2>
-			<pre id="playground-runtime">Load runtime to inspect contract metadata.</pre>
-		</section>
-
-		<section class="playground-card">
-			<h2>Snippet Preflight</h2>
-			<pre id="playground-preflight">Analyze snippet to view import roots and blocker mapping.</pre>
-		</section>
-
-		<section class="playground-card playground-worker">
-			<h2>Worker Probe Controls</h2>
-			<p>
-				Use these controls to exercise worker lifecycle and timeout contracts in browser mode.
-				Worker execution support depends on build mode and current worker state.
-			</p>
-			<div class="playground-worker-grid">
-				<button id="playground-worker-start" type="button" disabled>Worker Start</button>
-				<button id="playground-worker-recycle" type="button" disabled>Worker Recycle</button>
-				<button id="playground-worker-terminate" type="button" disabled>Worker Terminate</button>
-				<button id="playground-worker-execute" type="button" disabled>Worker Execute</button>
-				<button id="playground-worker-reset-session" type="button" disabled>
-					Reset Session Telemetry
-				</button>
-			</div>
-			<div class="playground-worker-timeout">
-				<label for="playground-worker-timeout-ms">Worker timeout (ms)</label>
-				<input
-					id="playground-worker-timeout-ms"
-					type="number"
-					min="1"
-					max="120000"
-					value="5000"
-					disabled
-				/>
-				<button id="playground-worker-timeout-set" type="button" disabled>
-					Set Timeout
-				</button>
-			</div>
-			<pre id="playground-worker-output">Load runtime to use worker probe controls.</pre>
-		</section>
-
-		<section class="playground-card">
-			<h2>Output</h2>
-			<pre id="playground-output">Load runtime to begin.</pre>
-		</section>
-
-		<section class="playground-card">
-			<h2>Bundle Expectations</h2>
-			<ul>
-				<li>Expected entrypoint: <code>/wasm/pyrs.js</code></li>
-				<li>Expected wasm binary: <code>/wasm/pyrs_bg.wasm</code></li>
-				<li>Generate with wasm-pack and publish assets into <code>website/public/wasm/</code></li>
-			</ul>
-		</section>
+		<div class="playground-actions">
+			<button type="button" id="playground-clear">Clear Output</button>
+			<button type="button" id="playground-reset">Reset Session</button>
+		</div>
 	</section>
 
 	<script is:inline>
-		const initButton = document.getElementById("playground-init");
-		const inspectButton = document.getElementById("playground-inspect");
-		const analyzeButton = document.getElementById("playground-analyze");
+		const statusShell = document.getElementById("playground-status-shell");
+		const statusText = document.getElementById("playground-status-text");
+		const transcriptEl = document.getElementById("playground-transcript");
+		const formEl = document.getElementById("playground-form");
 		const runButton = document.getElementById("playground-run");
-		const statusEl = document.getElementById("playground-status");
-		const runtimeEl = document.getElementById("playground-runtime");
-		const preflightEl = document.getElementById("playground-preflight");
-		const workerOutputEl = document.getElementById("playground-worker-output");
-		const workerStartButton = document.getElementById("playground-worker-start");
-		const workerRecycleButton = document.getElementById("playground-worker-recycle");
-		const workerTerminateButton = document.getElementById("playground-worker-terminate");
-		const workerExecuteButton = document.getElementById("playground-worker-execute");
-		const workerResetSessionButton = document.getElementById("playground-worker-reset-session");
-		const workerTimeoutInput = document.getElementById("playground-worker-timeout-ms");
-		const workerTimeoutSetButton = document.getElementById("playground-worker-timeout-set");
-		const outputEl = document.getElementById("playground-output");
-		const sourceEl = document.getElementById("playground-source");
+		const inputEl = document.getElementById("playground-input");
+		const clearButton = document.getElementById("playground-clear");
+		const resetButton = document.getElementById("playground-reset");
 
 		const baseUrl = import.meta.env.BASE_URL || "/";
 		const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 
 		let runtimeModule = null;
-		let workerSession = null;
+		let runtimeLoadPromise = null;
+		let replSession = null;
+		let commandIndex = 1;
 
 		const readField = (object, key) => {
 			if (!object) return undefined;
@@ -127,523 +82,247 @@ print(x)</textarea>
 			return value;
 		};
 
-		const toArray = (value) => {
-			if (value == null) return [];
-			if (Array.isArray(value)) return value;
-			try {
-				return Array.from(value);
-			} catch {
-				return [];
-			}
-		};
-
-		const setStatus = (message, isError = false) => {
-			if (!statusEl || !(statusEl instanceof HTMLElement)) return;
-			statusEl.textContent = message;
-			statusEl.dataset.status = isError ? "error" : "ok";
-		};
-
-		const setRuntimeSnapshot = (message) => {
-			if (!runtimeEl || !(runtimeEl instanceof HTMLElement)) return;
-			runtimeEl.textContent = message;
-		};
-
-		const setPreflight = (message) => {
-			if (!preflightEl || !(preflightEl instanceof HTMLElement)) return;
-			preflightEl.textContent = message;
-		};
-
-		const setOutput = (message) => {
-			if (!outputEl || !(outputEl instanceof HTMLElement)) return;
-			outputEl.textContent = message;
-		};
-
-		const setWorkerOutput = (message) => {
-			if (!workerOutputEl || !(workerOutputEl instanceof HTMLElement)) return;
-			workerOutputEl.textContent = message;
-		};
-
-		const setWorkerControlsEnabled = (enabled) => {
-			if (workerStartButton instanceof HTMLButtonElement) {
-				workerStartButton.disabled = !enabled;
-			}
-			if (workerRecycleButton instanceof HTMLButtonElement) {
-				workerRecycleButton.disabled = !enabled;
-			}
-			if (workerTerminateButton instanceof HTMLButtonElement) {
-				workerTerminateButton.disabled = !enabled;
-			}
-			if (workerExecuteButton instanceof HTMLButtonElement) {
-				workerExecuteButton.disabled = !enabled;
-			}
-			if (workerTimeoutSetButton instanceof HTMLButtonElement) {
-				workerTimeoutSetButton.disabled = !enabled;
-			}
-			if (workerTimeoutInput instanceof HTMLInputElement) {
-				workerTimeoutInput.disabled = !enabled;
-			}
-			if (workerResetSessionButton instanceof HTMLButtonElement) {
-				workerResetSessionButton.disabled = !enabled;
-			}
-		};
-
-		const resolveWorkerSession = () => {
-			if (!runtimeModule) return null;
-			if (workerSession) return workerSession;
-			if (typeof runtimeModule.WasmWorkerSession === "function") {
-				workerSession = new runtimeModule.WasmWorkerSession();
-			}
-			return workerSession;
-		};
-
-		const toWorkerInfoObject = (info) => ({
-			backend: readField(info, "backend"),
-			state: readField(info, "state"),
-			lifecycle_supported: readField(info, "lifecycle_supported"),
-			execution_probe_enabled: readField(info, "execution_probe_enabled"),
-			execute_supported: readField(info, "execute_supported"),
-			timeout_configuration_supported: readField(info, "timeout_configuration_supported"),
-			timeout_enforcement_supported: readField(info, "timeout_enforcement_supported"),
-			blocker_count: readField(info, "blocker_count"),
-		});
-
-		const toWorkerSessionSnapshotObject = (snapshot) => ({
-			starts_requested: readField(snapshot, "starts_requested"),
-			terminates_requested: readField(snapshot, "terminates_requested"),
-			recycles_requested: readField(snapshot, "recycles_requested"),
-			executes_requested: readField(snapshot, "executes_requested"),
-			timeout_updates_requested: readField(snapshot, "timeout_updates_requested"),
-			last_timeout_ms_requested: readField(snapshot, "last_timeout_ms_requested"),
-			last_operation_id: readField(snapshot, "last_operation_id"),
-			last_phase: readField(snapshot, "last_phase"),
-			last_state: readField(snapshot, "last_state"),
-			last_error: readField(snapshot, "last_error"),
-		});
-
-		const collectRuntimeSnapshot = () => {
-			if (!runtimeModule) return null;
-
-			const runtimeInfo = runtimeModule.wasm_runtime_info?.();
-			const workerInfo = runtimeModule.wasm_worker_info?.();
-			const session = resolveWorkerSession();
-			const workerSessionInfo = session?.info?.();
-			const workerSessionSnapshot = session?.snapshot?.();
-			const timeoutPolicy = runtimeModule.wasm_worker_timeout_policy?.();
-			const capabilityReport = runtimeModule.wasm_capabilities?.();
-			const capabilityKeys = toArray(runtimeModule.wasm_capability_keys?.()).map((item) =>
-				String(item)
-			);
-			const executionPhaseKeys = toArray(runtimeModule.wasm_execution_phase_keys?.()).map(
-				(item) => String(item)
-			);
-			const workerStateKeys = toArray(runtimeModule.wasm_worker_state_keys?.()).map((item) =>
-				String(item)
-			);
-			const workerExecutePhaseKeys = toArray(
-				runtimeModule.wasm_worker_execute_phase_keys?.()
-			).map((item) => String(item));
-			const executionBlockers = toArray(runtimeModule.wasm_execution_blockers?.()).map(
-				(entry) => ({
-					key: readField(entry, "key"),
-					message: readField(entry, "message"),
-				})
-			);
-			const workerBlockers = toArray(runtimeModule.wasm_worker_blockers?.()).map(
-				(entry) => ({
-					key: readField(entry, "key"),
-					message: readField(entry, "message"),
-				})
-			);
-
-			const capabilities = capabilityKeys.map((key) => {
-				const supported = Boolean(readField(capabilityReport, key));
-				const error = supported
-					? null
-					: runtimeModule.wasm_capability_error?.(key) ?? null;
-				return {
-					key,
-					supported,
-					error,
-				};
+		const appendTranscriptLine = (text, kind = "output") => {
+			if (!(transcriptEl instanceof HTMLElement)) return;
+			const line = document.createElement("div");
+			line.className = `transcript-line transcript-line-${kind}`;
+			line.textContent = text;
+			transcriptEl.appendChild(line);
+			requestAnimationFrame(() => {
+				transcriptEl.scrollTop = transcriptEl.scrollHeight;
 			});
+		};
 
+		const appendPromptInput = (source) => {
+			const lines = source.split("\n");
+			lines.forEach((line, index) => {
+				const prompt = index === 0 ? ">>>" : "...";
+				appendTranscriptLine(`${prompt} ${line}`, "input");
+			});
+		};
+
+		const setStatus = (state, message) => {
+			if (statusShell instanceof HTMLElement) {
+				statusShell.dataset.state = state;
+			}
+			if (statusText instanceof HTMLElement) {
+				statusText.textContent = message;
+			}
+		};
+
+		const setBusy = (busy) => {
+			if (runButton instanceof HTMLButtonElement) {
+				runButton.disabled = busy;
+			}
+			if (inputEl instanceof HTMLTextAreaElement) {
+				inputEl.disabled = busy;
+			}
+		};
+
+		const resizeInput = () => {
+			if (!(inputEl instanceof HTMLTextAreaElement)) return;
+			inputEl.style.height = "0px";
+			const nextHeight = Math.min(Math.max(inputEl.scrollHeight, 40), 220);
+			inputEl.style.height = `${nextHeight}px`;
+		};
+
+		const summarizeExecutionResult = (result) => {
+			const phase = readField(result, "phase") || "unknown";
+			const success = Boolean(readField(result, "success"));
+			const stdout = readField(result, "stdout") || "";
+			const stderr = readField(result, "stderr") || "";
+			const error = readField(result, "error") || "";
+			const blockerKey = readField(result, "blocker_key") || "";
+			const line = Number(readField(result, "line") || 0);
+			const column = Number(readField(result, "column") || 0);
 			return {
-				runtime: {
-					api_version: readField(runtimeInfo, "api_version"),
-					pyrs_version: readField(runtimeInfo, "pyrs_version"),
-					supports_parse_compile: readField(runtimeInfo, "supports_parse_compile"),
-					supports_execution: readField(runtimeInfo, "supports_execution"),
-					execution_backend: readField(runtimeInfo, "execution_backend"),
-					execution_status: readField(runtimeInfo, "execution_status"),
-					execution_blocker_count: readField(runtimeInfo, "execution_blocker_count"),
-				},
-				worker: toWorkerInfoObject(workerInfo),
-				worker_session_info: workerSessionInfo
-					? toWorkerInfoObject(workerSessionInfo)
-					: null,
-				worker_session_snapshot: workerSessionSnapshot
-					? toWorkerSessionSnapshotObject(workerSessionSnapshot)
-					: null,
-				timeout_policy: {
-					default_timeout_ms: readField(timeoutPolicy, "default_timeout_ms"),
-					min_timeout_ms: readField(timeoutPolicy, "min_timeout_ms"),
-					max_timeout_ms: readField(timeoutPolicy, "max_timeout_ms"),
-					configuration_supported: readField(timeoutPolicy, "configuration_supported"),
-					enforcement_supported: readField(timeoutPolicy, "enforcement_supported"),
-					recycle_on_timeout: readField(timeoutPolicy, "recycle_on_timeout"),
-					unsupported_phase: readField(timeoutPolicy, "unsupported_phase"),
-					unsupported_reason: readField(timeoutPolicy, "unsupported_reason"),
-				},
-				capabilities,
-				execution_phase_keys: executionPhaseKeys,
-				worker_state_keys: workerStateKeys,
-				worker_execute_phase_keys: workerExecutePhaseKeys,
-				execution_blockers: executionBlockers,
-				worker_blockers: workerBlockers,
+				phase,
+				success,
+				stdout,
+				stderr,
+				error,
+				blockerKey,
+				line,
+				column,
 			};
 		};
 
-		const inspectRuntime = () => {
-			if (!runtimeModule) {
-				setStatus("Runtime not loaded", true);
-				return null;
+		const renderExecutionResult = (result) => {
+			const summary = summarizeExecutionResult(result);
+			if (summary.stdout.trim().length > 0) {
+				summary.stdout
+					.split("\n")
+					.filter((line) => line.length > 0)
+					.forEach((line) => appendTranscriptLine(line, "stdout"));
 			}
-			const snapshot = collectRuntimeSnapshot();
-			if (!snapshot) {
-				setStatus("Runtime snapshot unavailable", true);
-				setRuntimeSnapshot("Runtime snapshot unavailable.");
-				return null;
+			if (summary.stderr.trim().length > 0) {
+				summary.stderr
+					.split("\n")
+					.filter((line) => line.length > 0)
+					.forEach((line) => appendTranscriptLine(line, "stderr"));
 			}
-			setRuntimeSnapshot(JSON.stringify(snapshot, null, 2));
-			setStatus("Runtime snapshot refreshed");
-			return snapshot;
-		};
-
-		const analyzeSnippet = () => {
-			if (!runtimeModule) {
-				setStatus("Runtime not loaded", true);
-				return null;
+			if (!summary.success && summary.error && summary.stderr.trim().length === 0) {
+				appendTranscriptLine(summary.error, "stderr");
 			}
-			if (!sourceEl || !(sourceEl instanceof HTMLTextAreaElement)) return null;
-			const source = sourceEl.value;
-
-			const support = runtimeModule.wasm_snippet_support(source);
-			const blockers = toArray(runtimeModule.wasm_snippet_blockers(source)).map((entry) => ({
-				module: readField(entry, "module"),
-				blocker_key: readField(entry, "blocker_key"),
-				message: readField(entry, "message"),
-			}));
-			const importRoots = toArray(runtimeModule.wasm_snippet_import_roots(source)).map(
-				(item) => String(item)
-			);
-
-			const payload = {
-				supported: readField(support, "supported"),
-				phase: readField(support, "phase"),
-				error: readField(support, "error"),
-				line: readField(support, "line"),
-				column: readField(support, "column"),
-				imported_module_count: readField(support, "imported_module_count"),
-				blocker_count: readField(support, "blocker_count"),
-				first_blocker_module: readField(support, "first_blocker_module"),
-				first_blocker_key: readField(support, "first_blocker_key"),
-				first_blocker_message: readField(support, "first_blocker_message"),
-				import_roots: importRoots,
-				blockers,
-			};
-
-			setPreflight(JSON.stringify(payload, null, 2));
-			if (payload.phase === "supported") {
-				setStatus("Snippet preflight passed");
-			} else {
-				setStatus(`Snippet blocked (${payload.phase || "unsupported"})`, true);
+			if (!summary.success && summary.blockerKey) {
+				appendTranscriptLine(`blocker: ${summary.blockerKey}`, "meta");
 			}
-			return payload;
-		};
-
-		const runWorkerLifecycle = (opName, operation) => {
-			if (!runtimeModule) {
-				setStatus("Runtime not loaded", true);
-				return;
+			if (summary.line > 0) {
+				appendTranscriptLine(`at line ${summary.line}, column ${Math.max(summary.column, 1)}`, "meta");
 			}
-			try {
-				const session = resolveWorkerSession();
-				const result = operation(session);
-				const payload = {
-					operation: opName,
-					success: readField(result, "success"),
-					operation_id: readField(result, "operation_id"),
-					phase: readField(result, "phase"),
-					state: readField(result, "state"),
-					error: readField(result, "error"),
-					blocker_key: readField(result, "blocker_key"),
-					session_snapshot: session
-						? toWorkerSessionSnapshotObject(session.snapshot())
-						: null,
-				};
-				inspectRuntime();
-				setStatus(`Worker ${opName} completed`);
-				setWorkerOutput(JSON.stringify(payload, null, 2));
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				setStatus(`Worker ${opName} failed`, true);
-				setWorkerOutput(message);
+			if (summary.success && summary.stdout.trim().length === 0 && summary.stderr.trim().length === 0) {
+				appendTranscriptLine(`${summary.phase}`, "meta");
 			}
 		};
 
-		const runWorkerExecute = () => {
-			if (!runtimeModule) {
-				setStatus("Runtime not loaded", true);
-				return;
+		const getReplSession = () => {
+			if (!runtimeModule) return null;
+			if (replSession) return replSession;
+			if (typeof runtimeModule.WasmReplSession === "function") {
+				replSession = new runtimeModule.WasmReplSession();
+				return replSession;
 			}
-			if (!sourceEl || !(sourceEl instanceof HTMLTextAreaElement)) return;
-			try {
-				const source = sourceEl.value;
-				const session = resolveWorkerSession();
-				const result = session
-					? session.execute_with_operation(source)
-					: runtimeModule.wasm_worker_execute_with_operation(source);
-				const payload = {
-					operation: "execute",
-					operation_id: readField(result, "operation_id"),
-					success: readField(result, "success"),
-					phase: readField(result, "phase"),
-					state: readField(result, "state"),
-					stdout: readField(result, "stdout"),
-					stderr: readField(result, "stderr"),
-					error: readField(result, "error"),
-					blocker_key: readField(result, "blocker_key"),
-					line: readField(result, "line"),
-					column: readField(result, "column"),
-					session_snapshot: session
-						? toWorkerSessionSnapshotObject(session.snapshot())
-						: null,
-				};
-				inspectRuntime();
-				setStatus("Worker execute completed");
-				setWorkerOutput(JSON.stringify(payload, null, 2));
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				setStatus("Worker execute failed", true);
-				setWorkerOutput(message);
+			if (typeof runtimeModule.WasmSession === "function") {
+				replSession = new runtimeModule.WasmSession();
+				return replSession;
 			}
+			return null;
 		};
 
-		const runWorkerSetTimeout = () => {
-			if (!runtimeModule) {
-				setStatus("Runtime not loaded", true);
-				return;
-			}
-			if (!workerTimeoutInput || !(workerTimeoutInput instanceof HTMLInputElement)) {
-				return;
-			}
-			const timeoutMs = Number.parseInt(workerTimeoutInput.value, 10);
-			if (!Number.isFinite(timeoutMs)) {
-				setStatus("Invalid timeout value", true);
-				return;
-			}
-			try {
-				const session = resolveWorkerSession();
-				const result = session
-					? session.set_timeout_ms(timeoutMs)
-					: runtimeModule.wasm_worker_set_timeout(timeoutMs);
-				const payload = {
-					operation: "set_timeout",
-					success: readField(result, "success"),
-					operation_id: readField(result, "operation_id"),
-					phase: readField(result, "phase"),
-					state: readField(result, "state"),
-					timeout_ms: readField(result, "timeout_ms"),
-					error: readField(result, "error"),
-					blocker_key: readField(result, "blocker_key"),
-					session_snapshot: session
-						? toWorkerSessionSnapshotObject(session.snapshot())
-						: null,
-				};
-				inspectRuntime();
-				setStatus("Worker timeout call completed");
-				setWorkerOutput(JSON.stringify(payload, null, 2));
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				setStatus("Worker timeout call failed", true);
-				setWorkerOutput(message);
-			}
-		};
-
-		const runWorkerResetSession = () => {
-			if (!runtimeModule) {
-				setStatus("Runtime not loaded", true);
-				return;
-			}
-			const session = resolveWorkerSession();
-			if (!session || typeof session.reset !== "function") {
-				setStatus("Worker session API unavailable", true);
-				return;
-			}
-			session.reset();
-			inspectRuntime();
-			setStatus("Worker session telemetry reset");
-			setWorkerOutput(
-				JSON.stringify(
-					{
-						operation: "session_reset",
-						session_snapshot: toWorkerSessionSnapshotObject(session.snapshot()),
-					},
-					null,
-					2
-				)
-			);
-		};
-
-		const loadRuntime = async () => {
+		const ensureRuntimeLoaded = async () => {
 			if (runtimeModule) {
-				setStatus("Runtime already loaded");
+				return true;
+			}
+			if (runtimeLoadPromise) {
+				return runtimeLoadPromise;
+			}
+			runtimeLoadPromise = (async () => {
+				setStatus("loading", "Loading runtime…");
+				try {
+					const moduleRef = await import(wasmEntrypoint);
+					const initExport = moduleRef.default;
+					if (typeof initExport === "function") {
+						await initExport();
+					}
+					if (typeof moduleRef.init_wasm_runtime === "function") {
+						moduleRef.init_wasm_runtime();
+					}
+					runtimeModule = moduleRef;
+					getReplSession();
+					const runtimeInfo =
+						typeof moduleRef.wasm_runtime_info === "function"
+							? moduleRef.wasm_runtime_info()
+							: null;
+					const backend = readField(runtimeInfo, "execution_backend") || "unknown";
+					const executionEnabled = Boolean(readField(runtimeInfo, "supports_execution"));
+					const executionState = executionEnabled ? "ready" : "compile-only";
+					setStatus("ready", `Runtime loaded (${executionState})`);
+					appendTranscriptLine(
+						`# runtime loaded (${backend})`,
+						"meta",
+					);
+					if (!executionEnabled) {
+						appendTranscriptLine(
+							"# execution backend is currently compile-only in this build",
+							"meta",
+						);
+					}
+					return true;
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					setStatus("error", "Runtime failed to load");
+					appendTranscriptLine(message, "stderr");
+					return false;
+				} finally {
+					runtimeLoadPromise = null;
+				}
+			})();
+			return runtimeLoadPromise;
+		};
+
+		const runSource = async (source) => {
+			const normalized = source.trimEnd();
+			if (!normalized.trim()) return;
+			appendTranscriptLine(`\n#${commandIndex}`, "meta");
+			appendPromptInput(normalized);
+			commandIndex += 1;
+			setBusy(true);
+			const loaded = await ensureRuntimeLoaded();
+			if (!loaded || !runtimeModule) {
+				setBusy(false);
 				return;
 			}
-			setStatus("Loading runtime...");
 			try {
-				const mod = await import(/* @vite-ignore */ wasmEntrypoint);
-				const init = mod.default;
-				if (typeof init !== "function") {
-					throw new Error("missing wasm-pack default init export");
+				const session = getReplSession();
+				if (session && typeof session.execute_input === "function") {
+					renderExecutionResult(session.execute_input(normalized));
+				} else if (session && typeof session.execute === "function") {
+					renderExecutionResult(session.execute(normalized));
+				} else if (typeof runtimeModule.execute === "function") {
+					renderExecutionResult(runtimeModule.execute(normalized));
+				} else {
+					appendTranscriptLine("Runtime loaded but no execute entrypoint is available.", "stderr");
 				}
-				await init();
-				if (typeof mod.init_wasm_runtime === "function") {
-					mod.init_wasm_runtime();
-				}
-				runtimeModule = mod;
-				workerSession = null;
-				resolveWorkerSession();
-				if (runButton instanceof HTMLButtonElement) {
-					runButton.disabled = false;
-				}
-				if (inspectButton instanceof HTMLButtonElement) {
-					inspectButton.disabled = false;
-				}
-				if (analyzeButton instanceof HTMLButtonElement) {
-					analyzeButton.disabled = false;
-				}
-				setWorkerControlsEnabled(true);
-				setStatus("Runtime loaded");
-				setOutput("Runtime loaded. Edit snippet and run.");
-				setWorkerOutput("Worker controls enabled. Choose a lifecycle action or execute snippet.");
-				inspectRuntime();
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
-				setStatus("Failed to load runtime", true);
-				setOutput(
-					`Unable to load wasm runtime from ${wasmEntrypoint}\n\n${message}`
-				);
+				appendTranscriptLine(message, "stderr");
+			} finally {
+				setBusy(false);
 			}
 		};
 
-		const runSnippet = () => {
-			if (!runtimeModule) {
-				setStatus("Runtime not loaded", true);
-				return;
+		if (inputEl instanceof HTMLTextAreaElement) {
+			inputEl.addEventListener("keydown", (event) => {
+				if (event.key === "Enter" && !event.shiftKey) {
+					event.preventDefault();
+					if (formEl instanceof HTMLFormElement) {
+						formEl.requestSubmit();
+					}
+				}
+			});
+			inputEl.addEventListener("input", resizeInput);
+			resizeInput();
+		}
+
+		if (formEl instanceof HTMLFormElement && inputEl instanceof HTMLTextAreaElement) {
+			formEl.addEventListener("submit", async (event) => {
+				event.preventDefault();
+				const source = inputEl.value;
+				inputEl.value = "";
+				resizeInput();
+				await runSource(source);
+				inputEl.focus();
+			});
+		}
+
+		if (clearButton instanceof HTMLButtonElement) {
+			clearButton.addEventListener("click", () => {
+				if (transcriptEl instanceof HTMLElement) {
+					transcriptEl.innerHTML = "";
+				}
+				appendTranscriptLine("# transcript cleared", "meta");
+			});
+		}
+
+		if (resetButton instanceof HTMLButtonElement) {
+			resetButton.addEventListener("click", () => {
+				const session = getReplSession();
+				if (session && typeof session.reset === "function") {
+					session.reset();
+					appendTranscriptLine("# session reset", "meta");
+					commandIndex = 1;
+					return;
+				}
+				appendTranscriptLine("# runtime session reset unavailable", "meta");
+			});
+		}
+
+		appendTranscriptLine("# loading wasm runtime", "meta");
+		ensureRuntimeLoaded().then(() => {
+			if (inputEl instanceof HTMLTextAreaElement) {
+				inputEl.focus();
 			}
-			if (!sourceEl || !(sourceEl instanceof HTMLTextAreaElement)) return;
-			const source = sourceEl.value;
-			const preflight = analyzeSnippet();
-			const supportPhase = preflight?.phase;
-
-			if (!preflight || supportPhase !== "supported") {
-				setOutput(
-					"Execution skipped because snippet preflight is not in the supported phase."
-				);
-				return;
-			}
-
-			try {
-				const result = runtimeModule.execute(source);
-				const payload = {
-					preflight,
-					execute: {
-						phase: readField(result, "phase"),
-						success: readField(result, "success"),
-						stdout: readField(result, "stdout"),
-						stderr: readField(result, "stderr"),
-						error: readField(result, "error"),
-						blocker_key: readField(result, "blocker_key"),
-						line: readField(result, "line"),
-						column: readField(result, "column"),
-					},
-				};
-				inspectRuntime();
-				setStatus("Snippet executed");
-				setOutput(JSON.stringify(payload, null, 2));
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				setStatus("Execution failed", true);
-				setOutput(message);
-			}
-		};
-
-		if (initButton instanceof HTMLButtonElement) {
-			initButton.addEventListener("click", () => {
-				loadRuntime();
-			});
-		}
-
-		if (runButton instanceof HTMLButtonElement) {
-			runButton.addEventListener("click", () => {
-				runSnippet();
-			});
-		}
-
-		if (inspectButton instanceof HTMLButtonElement) {
-			inspectButton.addEventListener("click", () => {
-				inspectRuntime();
-			});
-		}
-
-		if (analyzeButton instanceof HTMLButtonElement) {
-			analyzeButton.addEventListener("click", () => {
-				analyzeSnippet();
-			});
-		}
-
-		if (workerStartButton instanceof HTMLButtonElement) {
-			workerStartButton.addEventListener("click", () => {
-				runWorkerLifecycle("start", (session) =>
-					session ? session.start() : runtimeModule.wasm_worker_start()
-				);
-			});
-		}
-
-		if (workerRecycleButton instanceof HTMLButtonElement) {
-			workerRecycleButton.addEventListener("click", () => {
-				runWorkerLifecycle("recycle", (session) =>
-					session ? session.recycle() : runtimeModule.wasm_worker_recycle()
-				);
-			});
-		}
-
-		if (workerTerminateButton instanceof HTMLButtonElement) {
-			workerTerminateButton.addEventListener("click", () => {
-				runWorkerLifecycle("terminate", (session) =>
-					session ? session.terminate() : runtimeModule.wasm_worker_terminate()
-				);
-			});
-		}
-
-		if (workerExecuteButton instanceof HTMLButtonElement) {
-			workerExecuteButton.addEventListener("click", () => {
-				runWorkerExecute();
-			});
-		}
-
-		if (workerTimeoutSetButton instanceof HTMLButtonElement) {
-			workerTimeoutSetButton.addEventListener("click", () => {
-				runWorkerSetTimeout();
-			});
-		}
-
-		if (workerResetSessionButton instanceof HTMLButtonElement) {
-			workerResetSessionButton.addEventListener("click", () => {
-				runWorkerResetSession();
-			});
-		}
+		});
 	</script>
 </SiteLayout>
 
@@ -652,171 +331,258 @@ print(x)</textarea>
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
-		padding: 0.4rem 0;
+		padding-bottom: 2rem;
 	}
 
-	.playground-header h1 {
-		margin: 0;
-		font-size: clamp(1.7rem, 2.6vw, 2.4rem);
-		letter-spacing: -0.02em;
+	.playground-header {
+		display: grid;
+		gap: 0.72rem;
 	}
 
-	.playground-header p {
-		margin: 0.6rem 0 0;
-		max-width: 74ch;
-		color: #beaa9f;
-		line-height: 1.58;
+	.playground-kicker-row {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.46rem;
 	}
 
 	.playground-kicker {
 		margin: 0;
 		font-size: 0.74rem;
-		font-weight: 700;
-		letter-spacing: 0.18em;
+		letter-spacing: 0.14em;
 		text-transform: uppercase;
-		color: #e1b38f;
+		color: #f9d3ba;
+		font-weight: 700;
 	}
 
-	.playground-card {
-		border: 1px solid #432d22;
-		border-radius: 0.9rem;
-		background: linear-gradient(180deg, rgba(21, 13, 11, 0.96), rgba(13, 9, 8, 0.94));
-		padding: 1rem 1rem 1.1rem;
-	}
-
-	.playground-card h2 {
+	.playground-header h1 {
 		margin: 0;
-		font-size: 1rem;
+		font-size: clamp(2rem, 3vw, 2.8rem);
+		line-height: 1.08;
 	}
 
-	.playground-controls {
+	.playground-header p {
+		margin: 0;
+		color: var(--text-muted);
+		max-width: 72ch;
+		font-size: 1.03rem;
+		line-height: 1.62;
+	}
+
+	.playground-header kbd {
+		font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
+		font-size: 0.76em;
+		padding: 0.12rem 0.34rem;
+		border-radius: 0.34rem;
+		border: 1px solid rgba(212, 146, 103, 0.44);
+		background: rgba(32, 16, 11, 0.72);
+		color: #f5d4bd;
+	}
+
+	.playground-status {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.54rem;
+		width: fit-content;
+		padding: 0.43rem 0.72rem;
+		border-radius: 999px;
+		border: 1px solid rgba(71, 47, 36, 0.9);
+		background: rgba(15, 9, 7, 0.68);
+		color: #d8c5b6;
+		font-size: 0.84rem;
+		letter-spacing: 0.01em;
+	}
+
+	.status-dot {
+		width: 0.52rem;
+		height: 0.52rem;
+		border-radius: 999px;
+		background: #997d6d;
+	}
+
+	.playground-status[data-state="loading"] .status-dot {
+		background: #f2ad79;
+		animation: pulse 1s ease-in-out infinite;
+	}
+
+	.playground-status[data-state="ready"] .status-dot {
+		background: #5ac98f;
+	}
+
+	.playground-status[data-state="error"] .status-dot {
+		background: #ff7d70;
+	}
+
+	.playground-shell {
 		display: flex;
 		flex-direction: column;
-		gap: 0.74rem;
+		width: 100%;
+		min-height: 60vh;
+		border-radius: 0.94rem;
+		border: 1px solid rgba(70, 47, 36, 0.82);
+		background: linear-gradient(180deg, rgba(8, 11, 17, 0.96) 0%, rgba(5, 8, 13, 0.98) 100%);
+		overflow: hidden;
+		box-shadow: 0 12px 50px rgba(0, 0, 0, 0.34);
 	}
 
-	.playground-toolbar {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.56rem;
-		align-items: center;
-	}
-
-	.playground-toolbar button,
-	.playground-worker-grid button,
-	.playground-worker-timeout button {
-		border: 1px solid #6a4535;
-		background: #251713;
-		color: #f7eee8;
-		border-radius: 0.52rem;
-		padding: 0.42rem 0.72rem;
-		font: inherit;
-		font-size: 0.86rem;
-		font-weight: 600;
-		cursor: pointer;
-	}
-
-	.playground-toolbar button:disabled,
-	.playground-worker-grid button:disabled,
-	.playground-worker-timeout button:disabled {
-		cursor: not-allowed;
-		opacity: 0.58;
-	}
-
-	.playground-toolbar span {
-		font-size: 0.83rem;
-		color: #beaa9f;
-	}
-
-	.playground-toolbar span[data-status="error"] {
-		color: #ffb9a6;
-	}
-
-	.playground-toolbar span[data-status="ok"] {
-		color: #c5e7d2;
-	}
-
-	.playground-controls label {
-		font-size: 0.84rem;
-		font-weight: 600;
-		color: #dcc9be;
-	}
-
-	.playground-controls textarea {
-		min-height: 160px;
-		padding: 0.8rem;
-		border-radius: 0.7rem;
-		border: 1px solid #573b2f;
-		background: #0c0908;
-		color: #f7eee8;
-		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.84rem;
-		line-height: 1.45;
-		resize: vertical;
-	}
-
-	.playground-card pre {
-		margin: 0.7rem 0 0;
-		padding: 0.75rem;
-		border-radius: 0.62rem;
-		border: 1px solid #3a2820;
-		background: #070505;
-		color: #e8dfd8;
-		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.8rem;
-		line-height: 1.44;
-		white-space: pre-wrap;
+	.playground-transcript {
+		flex: 1;
+		padding: 1.12rem 1.22rem 1.2rem;
+		overflow-y: auto;
+		font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
+		font-size: 0.95rem;
+		line-height: 1.58;
 		word-break: break-word;
+		background: transparent;
 	}
 
-	.playground-card ul {
-		margin: 0.75rem 0 0;
-		padding-left: 1.1rem;
-		color: #beaa9f;
-		line-height: 1.5;
+	.transcript-line {
+		white-space: pre-wrap;
 	}
 
-	.playground-card code {
-		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.84em;
-		color: #f0d1bd;
+	.transcript-line + .transcript-line {
+		margin-top: 0.28rem;
 	}
 
-	.playground-worker p {
-		margin: 0.7rem 0 0;
-		color: #beaa9f;
-		line-height: 1.48;
+	.transcript-line-input {
+		color: #f8f2ec;
 	}
 
-	.playground-worker-grid {
-		margin-top: 0.72rem;
+	.transcript-line-stdout {
+		color: #d9f3df;
+	}
+
+	.transcript-line-stderr {
+		color: #ffbab2;
+	}
+
+	.transcript-line-meta {
+		color: #9aa4b3;
+		font-size: 0.85rem;
+		letter-spacing: 0.01em;
+	}
+
+	.playground-input-row {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-		gap: 0.56rem;
+		grid-template-columns: auto 1fr auto;
+		align-items: end;
+		gap: 0.72rem;
+		padding: 0.92rem 1rem;
+		border-top: 1px solid rgba(52, 64, 86, 0.88);
+		background: linear-gradient(180deg, rgba(14, 26, 47, 0.64) 0%, rgba(11, 22, 41, 0.82) 100%);
 	}
 
-	.playground-worker-timeout {
-		margin-top: 0.72rem;
+	.playground-prompt {
+		font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
+		font-size: 0.92rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		color: #f0a677;
+		padding-bottom: 0.5rem;
+	}
+
+	.playground-input-row textarea {
+		width: 100%;
+		resize: none;
+		font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
+		font-size: 0.95rem;
+		line-height: 1.5;
+		background: transparent;
+		color: #f8f2ec;
+		border: none;
+		outline: none;
+		padding: 0.32rem 0;
+		min-height: 2.5rem;
+		max-height: 220px;
+	}
+
+	.playground-input-row textarea::placeholder {
+		color: #8e9db3;
+	}
+
+	.playground-input-row button,
+	.playground-actions button {
+		appearance: none;
+		border: 1px solid rgba(113, 143, 198, 0.42);
+		background: rgba(25, 46, 83, 0.82);
+		color: #e8f0ff;
+		border-radius: 0.58rem;
+		padding: 0.45rem 0.82rem;
+		font-size: 0.82rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		cursor: pointer;
+		transition: background 120ms ease, border-color 120ms ease;
+	}
+
+	.playground-input-row button:hover,
+	.playground-actions button:hover {
+		background: rgba(31, 61, 109, 0.9);
+		border-color: rgba(133, 165, 224, 0.64);
+	}
+
+	.playground-input-row button:disabled {
+		opacity: 0.56;
+		cursor: not-allowed;
+	}
+
+	.playground-actions {
 		display: flex;
-		flex-wrap: wrap;
 		align-items: center;
+		justify-content: flex-end;
 		gap: 0.56rem;
 	}
 
-	.playground-worker-timeout label {
-		font-size: 0.82rem;
-		font-weight: 600;
-		color: #dcc9be;
+	.playground-actions button {
+		padding: 0.36rem 0.68rem;
+		font-size: 0.74rem;
 	}
 
-	.playground-worker-timeout input {
-		width: 120px;
-		padding: 0.36rem 0.5rem;
-		border-radius: 0.42rem;
-		border: 1px solid #573b2f;
-		background: #0c0908;
-		color: #f7eee8;
-		font: inherit;
-		font-size: 0.82rem;
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		border: 0;
+	}
+
+	@keyframes pulse {
+		0% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.35;
+		}
+		100% {
+			opacity: 1;
+		}
+	}
+
+	@media (max-width: 760px) {
+		.playground-header h1 {
+			font-size: 1.9rem;
+		}
+
+		.playground-shell {
+			min-height: 55vh;
+		}
+
+		.playground-transcript {
+			padding: 0.96rem 0.88rem 1rem;
+			font-size: 0.88rem;
+		}
+
+		.playground-input-row {
+			grid-template-columns: auto 1fr;
+			row-gap: 0.5rem;
+		}
+
+		.playground-input-row button {
+			grid-column: 2;
+			justify-self: start;
+		}
 	}
 </style>

@@ -38,3 +38,11 @@ cc = "1.2.43"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+
+[profile.release-wasm]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

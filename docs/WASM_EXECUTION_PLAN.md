@@ -689,6 +689,14 @@ Completed on this branch:
   (`wasm_runtime_info`, worker info, capability matrix, blocker rows), snippet
   preflight details (import roots + blocker rows), and worker probe controls
   (start/recycle/terminate/execute/timeout) for state-gate debugging.
+- latest: wasm website artifact generation now has a dedicated size-first build
+  path:
+  - Cargo profile `release-wasm` (`opt-level = "z"`, `strip = "symbols"`,
+    release inheritance),
+  - script `scripts/build_wasm_website_bundle.sh` using
+    `wasm-pack build ... --profile release-wasm --features wasm-vm-probe`,
+  keeping native release tuning speed-focused while wasm artifacts prioritize
+  browser payload size.
 - latest: playground worker controls now route through `WasmWorkerSession`
   when available, exposing `worker_session_info`/`worker_session_snapshot`
   telemetry in runtime inspector output and supporting session-telemetry reset
