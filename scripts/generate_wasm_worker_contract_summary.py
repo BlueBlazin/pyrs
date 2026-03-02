@@ -669,6 +669,10 @@ def parse_source_worker_info_uses_mode_aware_state(worker_info_body: str) -> boo
     return "state: current_worker_state_key()," in worker_info_body
 
 
+def parse_source_worker_info_uses_supported_flag(worker_info_body: str) -> bool:
+    return "supported: wasm_vm_runtime_enabled()," in worker_info_body
+
+
 def parse_source_worker_unwired_lifecycle_sets_shared_state(wasm_source: str) -> bool:
     match = re.search(
         r"fn worker_unwired_result\(.*?\) -> WasmWorkerLifecycleResult \{(.*?)\n\}",
@@ -872,6 +876,9 @@ def main() -> int:
     source_worker_info_body = parse_source_wasm_worker_info_body(wasm_source)
     source_worker_info_supported = parse_source_worker_info_supported(
         source_worker_info_body, args.vm_probe
+    )
+    source_worker_info_uses_supported_flag = (
+        parse_source_worker_info_uses_supported_flag(source_worker_info_body)
     )
     source_worker_info_uses_mode_aware_state = (
         parse_source_worker_info_uses_mode_aware_state(source_worker_info_body)
@@ -1088,6 +1095,10 @@ def main() -> int:
     if not source_worker_info_uses_runtime_probe_flag:
         errors.append(
             "wasm_worker_info should set execution_probe_enabled from wasm_vm_runtime_enabled()"
+        )
+    if not source_worker_info_uses_supported_flag:
+        errors.append(
+            "wasm_worker_info should set supported from wasm_vm_runtime_enabled()"
         )
     if not source_worker_info_uses_mode_aware_state:
         errors.append(
@@ -1420,6 +1431,7 @@ def main() -> int:
             "execute_supported": source_expected_worker_execute_supported,
             "timeout_configuration_supported": source_expected_worker_timeout_configuration_supported,
             "timeout_enforcement_supported": source_expected_worker_timeout_enforcement_supported,
+            "uses_supported_flag": source_worker_info_uses_supported_flag,
             "uses_mode_aware_state": source_worker_info_uses_mode_aware_state,
             "unwired_lifecycle_sets_shared_state": source_worker_unwired_lifecycle_sets_shared_state,
             "vm_probe_lifecycle_sets_shared_state": source_worker_vm_probe_lifecycle_sets_shared_state,

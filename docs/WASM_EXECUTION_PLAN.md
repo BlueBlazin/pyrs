@@ -716,6 +716,10 @@ Completed on this branch:
 - latest: `generate_wasm_worker_docs_contract_summary.py` now enforces
   docs-level `supported = false` default and `supported = true` vm-probe
   wording for worker info contract docs, preventing future mode-signal drift.
+- latest: `generate_wasm_worker_contract_summary.py` now enforces that
+  `wasm_worker_info.supported` is sourced from `wasm_vm_runtime_enabled()`
+  (not a stale literal), so source contract checks protect mode-aware support
+  semantics directly.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
