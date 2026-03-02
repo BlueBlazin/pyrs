@@ -695,7 +695,8 @@ Completed on this branch:
   - Cargo profile `release-wasm` (`opt-level = "z"`, `strip = "symbols"`,
     release inheritance),
   - script `scripts/build_wasm_website_bundle.sh` using
-    `wasm-pack build ... --profile release-wasm --features wasm-vm-probe`,
+    `cargo build --profile release-wasm --features wasm-vm-probe` followed by
+    direct `wasm-bindgen` emission into `website/public/wasm/`,
   keeping native release tuning speed-focused while wasm artifacts prioritize
   browser payload size.
 - latest: playground worker controls now route through `WasmWorkerSession`
