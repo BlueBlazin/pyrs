@@ -897,6 +897,10 @@ Completed on this branch:
   The validator now explicitly enforces coverage rows ending in
   `start`, `recycle`, and `terminate` plus an explicit `terminate -> start`
   transition sequence.
+- latest: sequence coverage also includes invalid-timeout precedence after
+  lifecycle transitions (`start -> recycle` with `timeout_ms = 0`), locking
+  `invalid_worker_timeout` semantics over lifecycle-state timeout gating in
+  both default and vm-probe expectation rows.
 - latest: session-contract summary gate now fails fast if the
   `terminate -> start` recovery coverage tests and worker-info lifecycle
   transition coverage test are missing from
