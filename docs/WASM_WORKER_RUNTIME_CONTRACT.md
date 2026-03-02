@@ -42,7 +42,10 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `recycle_on_timeout = true`
 - `enforcement_supported = false`
 - `unsupported_phase = "unsupported_worker_timeout_enforcement"`
-- `unsupported_reason = "wasm worker runtime is not wired yet"`
+- `unsupported_reason`:
+  - default build: `"wasm worker runtime is not wired yet"`
+  - `wasm-vm-probe`:
+    `"worker timeout enforcement is not wired yet (wasm-vm-probe currently supports configuration-only updates)"`
 
 `wasm_worker_timeout_phase_keys()` currently includes:
 

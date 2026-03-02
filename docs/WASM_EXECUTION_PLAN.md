@@ -602,6 +602,9 @@ Completed on this branch:
   `configuration_supported` mode signaling (`false` default,
   `true` in `wasm-vm-probe`) and docs/client-flow validations enforce usage of
   that capability flag separately from `enforcement_supported`.
+- latest: timeout-policy `unsupported_reason` is now mode-aware: default builds
+  report worker-runtime unwired status, while `wasm-vm-probe` reports
+  enforcement-unwired (configuration-only support) status.
 - latest: timeout phase key parity and docs guards now include vm-probe timeout
   extras across worker-contract, worker-docs, and client-flow summary scripts.
 - latest: `generate_wasm_api_contract_surface_summary.py` now also validates

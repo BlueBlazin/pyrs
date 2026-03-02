@@ -36,6 +36,8 @@ const WASM_WORKER_TIMEOUT_MIN_MS: u32 = 50;
 const WASM_WORKER_TIMEOUT_MAX_MS: u32 = 120_000;
 const WASM_WORKER_TIMEOUT_UNSUPPORTED_PHASE: &str = "unsupported_worker_timeout_enforcement";
 const WASM_WORKER_TIMEOUT_INVALID_PHASE: &str = "invalid_worker_timeout";
+const WASM_WORKER_TIMEOUT_ENFORCEMENT_UNWIRED_REASON: &str =
+    "worker timeout enforcement is not wired yet (wasm-vm-probe currently supports configuration-only updates)";
 #[cfg(feature = "wasm-vm-probe")]
 const WASM_WORKER_TIMEOUT_CONFIGURED_PHASE: &str = "worker_timeout_configured";
 const WASM_MODULE_BLOCKER_POLICY: [(&str, &str); 10] = [
@@ -308,6 +310,15 @@ fn current_worker_state() -> WasmWorkerState {
 
 fn current_worker_state_key() -> String {
     current_worker_state().key().to_string()
+}
+
+fn worker_timeout_policy_unsupported_reason() -> String {
+    if wasm_vm_runtime_enabled() {
+        WASM_WORKER_TIMEOUT_ENFORCEMENT_UNWIRED_REASON.to_string()
+    } else {
+        wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
+            .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string())
+    }
 }
 
 /// Minimal WASM bridge surface used during compile-isolation bring-up.
@@ -1461,8 +1472,6 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
 /// Returns timeout/recycle policy contract for wasm worker execution.
 #[wasm_bindgen]
 pub fn wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy {
-    let reason = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
-        .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
     WasmWorkerTimeoutPolicy {
         default_timeout_ms: WASM_WORKER_TIMEOUT_DEFAULT_MS,
         min_timeout_ms: WASM_WORKER_TIMEOUT_MIN_MS,
@@ -1473,7 +1482,7 @@ pub fn wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy {
         unsupported_phase: WasmWorkerTimeoutPhase::UnsupportedEnforcement
             .key()
             .to_string(),
-        unsupported_reason: Some(reason),
+        unsupported_reason: Some(worker_timeout_policy_unsupported_reason()),
     }
 }
 

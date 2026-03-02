@@ -236,6 +236,10 @@ def main() -> int:
         errors.append(
             "docs missing vm-probe worker timeout policy configuration_supported=true shape"
         )
+    if "wasm worker runtime is not wired yet" not in docs_source:
+        errors.append("docs missing default worker timeout unsupported_reason text")
+    if "worker timeout enforcement is not wired yet" not in docs_source:
+        errors.append("docs missing vm-probe worker timeout unsupported_reason text")
     if worker_backend_default not in docs_source:
         errors.append(
             f"docs missing worker backend default key '{worker_backend_default}'"

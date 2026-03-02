@@ -435,6 +435,12 @@ fn wasm_worker_timeout_policy_contract_is_stable() {
     let reason = policy
         .unsupported_reason()
         .expect("timeout policy should expose unsupported reason");
+    if vm_probe_enabled() {
+        assert!(reason.contains("enforcement"));
+        assert!(reason.contains("configuration-only"));
+    } else {
+        assert!(reason.contains("runtime"));
+    }
     assert!(reason.contains("not wired"));
 }
 

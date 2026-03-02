@@ -177,6 +177,9 @@ This document defines the JS-facing contract currently exported by
 - `enforcement_supported: bool` (currently `false`)
 - `unsupported_phase: String` (currently `"unsupported_worker_timeout_enforcement"`)
 - `unsupported_reason: Option<String>`
+  - default: `"wasm worker runtime is not wired yet"`
+  - `wasm-vm-probe`:
+    `"worker timeout enforcement is not wired yet (wasm-vm-probe currently supports configuration-only updates)"`
 
 ## `WasmWorkerTimeoutResult`
 
