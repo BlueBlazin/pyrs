@@ -887,6 +887,13 @@ Completed on this branch:
   - `tests/wasm_contract.rs::wasm_worker_info_tracks_external_lifecycle_state_transitions`
   locking `wasm_worker_info()` state and capability flag updates to the shared
   global worker state machine.
+- latest: worker session lifecycle coverage now includes multi-step external
+  sequence fixtures (for example `terminate -> start`,
+  `start -> terminate -> start`, `terminate -> recycle`) via
+  `WASM_WORKER_SESSION_STATE_SEQUENCE_FIXTURES` and
+  `tests/wasm_contract.rs::wasm_worker_session_followups_track_multi_step_external_sequences`,
+  with session-summary gate validation wired in
+  `scripts/generate_wasm_session_contract_summary.py`.
 - latest: session-contract summary gate now fails fast if the
   `terminate -> start` recovery coverage tests and worker-info lifecycle
   transition coverage test are missing from
