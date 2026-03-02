@@ -30,6 +30,21 @@ def fail(message: str) -> int:
     return 1
 
 
+def resolve_copied_path(copied_to: str, pack_dir: Path) -> Path:
+    """Resolve copied artifact path for both local and downloaded pack validation.
+
+    Manifest rows currently store the original local copy target
+    (`perf/wasm_evidence_pack_latest/<file>`). When the bundle is downloaded as a
+    CI artifact, files may be unpacked under a different directory. In that case,
+    validate against `<pack-dir>/<basename>` as the relocated target.
+    """
+    declared = Path(copied_to)
+    if declared.is_file():
+        return declared
+    relocated = pack_dir / declared.name
+    return relocated
+
+
 def main() -> int:
     args = parse_args()
     pack_dir = Path(args.pack_dir)
@@ -62,11 +77,14 @@ def main() -> int:
         copied_sources.add(source)
 
         source_path = Path(source)
-        copied_path = Path(copied_to)
+        copied_path = resolve_copied_path(copied_to, pack_dir)
         if not source_path.is_file() and not args.allow_missing_source:
             return fail(f"required source artifact is missing: {source}")
         if not copied_path.is_file():
-            return fail(f"copied artifact is missing: {copied_to}")
+            return fail(
+                "copied artifact is missing: "
+                f"declared={copied_to}, checked={copied_path}"
+            )
 
     missing_sources = [path for path in required if path not in copied_sources]
     if missing_sources:
