@@ -79,6 +79,25 @@ def parse_const_body(source: str, const_name: str) -> str:
     return match.group(1)
 
 
+def extract_source_fn_body(source: str, signature: str) -> str:
+    start = source.find(signature)
+    if start == -1:
+        raise ValueError(f"missing source function signature '{signature}'")
+    open_brace = source.find("{", start)
+    if open_brace == -1:
+        raise ValueError(f"missing opening brace for function '{signature}'")
+    depth = 0
+    for index in range(open_brace, len(source)):
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[open_brace + 1 : index]
+    raise ValueError(f"missing closing brace for function '{signature}'")
+
+
 def parse_required_string(body: str, field: str) -> str:
     match = re.search(rf"{re.escape(field)}:\s*\"([^\"]+)\"", body)
     if not match:
@@ -291,6 +310,9 @@ def validate(
     worker_lifecycle_rows: list[WorkerLifecycleFixtureRow],
     worker_timeout_rows: list[WorkerTimeoutFixtureRow],
     worker_info_rows: list[WorkerInfoFixtureRow],
+    source_session_state_override_removed: bool,
+    source_execute_updates_last_state_from_result: bool,
+    source_timeout_updates_last_state_from_result: bool,
 ) -> list[str]:
     errors: list[str] = []
 
@@ -314,6 +336,19 @@ def validate(
         errors.append("worker timeout fixture rows are empty")
     if errors:
         return errors
+
+    if not source_session_state_override_removed:
+        errors.append(
+            "WasmWorkerSession execute/timeout paths should not override result.state with cached session state"
+        )
+    if not source_execute_updates_last_state_from_result:
+        errors.append(
+            "WasmWorkerSession::execute_with_operation should set last_state from result.state"
+        )
+    if not source_timeout_updates_last_state_from_result:
+        errors.append(
+            "WasmWorkerSession::set_timeout_ms should set last_state from result.state"
+        )
 
     top_ok_rows = [
         row
@@ -517,6 +552,11 @@ def main() -> int:
         help="Path to worker wasm contract fixture file",
     )
     parser.add_argument(
+        "--wasm-src",
+        default="src/wasm/mod.rs",
+        help="Path to wasm source file",
+    )
+    parser.add_argument(
         "--out",
         default="perf/wasm_session_contract_summary_latest.json",
         help="Output summary JSON path",
@@ -525,13 +565,33 @@ def main() -> int:
 
     top_fixture_path = Path(args.top_fixture)
     worker_fixture_path = Path(args.worker_fixture)
+    wasm_src_path = Path(args.wasm_src)
     top_source = top_fixture_path.read_text(encoding="utf-8")
     worker_source = worker_fixture_path.read_text(encoding="utf-8")
+    wasm_source = wasm_src_path.read_text(encoding="utf-8")
     top_level_rows = parse_top_level_rows(top_source)
     worker_rows = parse_worker_rows(worker_source)
     worker_lifecycle_rows = parse_worker_lifecycle_rows(worker_source)
     worker_timeout_rows = parse_worker_timeout_rows(worker_source)
     worker_info_rows = parse_worker_info_rows(worker_source)
+    execute_with_operation_body = extract_source_fn_body(
+        wasm_source,
+        "pub fn execute_with_operation(&mut self, source: &str) -> WasmWorkerExecutionResult",
+    )
+    set_timeout_ms_body = extract_source_fn_body(
+        wasm_source,
+        "pub fn set_timeout_ms(&mut self, timeout_ms: u32) -> WasmWorkerTimeoutResult",
+    )
+    source_session_state_override_removed = (
+        "fn effective_state_for_followup_call(&self)" not in wasm_source
+        and "result.state = self.effective_state_for_followup_call();" not in wasm_source
+    )
+    source_execute_updates_last_state_from_result = (
+        "self.last_state = Some(result.state.clone());" in execute_with_operation_body
+    )
+    source_timeout_updates_last_state_from_result = (
+        "self.last_state = Some(result.state.clone());" in set_timeout_ms_body
+    )
 
     errors = validate(
         top_level_rows,
@@ -539,6 +599,9 @@ def main() -> int:
         worker_lifecycle_rows,
         worker_timeout_rows,
         worker_info_rows,
+        source_session_state_override_removed,
+        source_execute_updates_last_state_from_result,
+        source_timeout_updates_last_state_from_result,
     )
     if errors:
         print("wasm session contract summary validation failed:")
@@ -549,6 +612,12 @@ def main() -> int:
     summary = {
         "top_fixture": str(top_fixture_path),
         "worker_fixture": str(worker_fixture_path),
+        "wasm_source": str(wasm_src_path),
+        "source_state_tracking": {
+            "session_state_override_removed": source_session_state_override_removed,
+            "execute_updates_last_state_from_result": source_execute_updates_last_state_from_result,
+            "timeout_updates_last_state_from_result": source_timeout_updates_last_state_from_result,
+        },
         "counts": {
             "top_level_rows": len(top_level_rows),
             "worker_rows": len(worker_rows),
