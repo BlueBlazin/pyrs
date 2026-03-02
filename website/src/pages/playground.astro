@@ -82,6 +82,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		const activePromptEl = document.getElementById("playground-active-prompt");
 		const clearButton = document.getElementById("playground-clear");
 		const resetButton = document.getElementById("playground-reset");
+		const shellEl = document.querySelector(".playground-shell");
 
 		const pageRoot = document.querySelector(".playground-page");
 		const wasmEntrypoint =
@@ -189,13 +190,13 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 			scrollTranscriptToEnd();
 		};
 
-		const highlightPython = (source) => {
+		const tokenizePython = (source) => {
 			const input = source.replace(/\r/g, "");
 			if (input.length === 0) {
-				return "";
+				return [];
 			}
 
-			let html = "";
+			const segments = [];
 			let cursor = 0;
 			let expectNameKind = null;
 			PY_TOKEN_REGEX.lastIndex = 0;
@@ -205,28 +206,29 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 				const start = match.index ?? 0;
 
 				if (start > cursor) {
-					html += escapeHtml(input.slice(cursor, start));
+					segments.push({ text: input.slice(cursor, start), kind: null });
 				}
 
+				let kind = null;
 				if (match[1]) {
-					html += `<span class="tok-decorator">${escapeHtml(matchText)}</span>`;
+					kind = "tok-decorator";
 					expectNameKind = null;
 				} else if (match[2]) {
-					html += `<span class="tok-string">${escapeHtml(matchText)}</span>`;
+					kind = "tok-string";
 					expectNameKind = null;
 				} else if (match[3]) {
-					html += `<span class="tok-number">${escapeHtml(matchText)}</span>`;
+					kind = "tok-number";
 					expectNameKind = null;
 				} else if (match[4]) {
 					const word = matchText;
 					if (expectNameKind === "class") {
-						html += `<span class="tok-class-name">${escapeHtml(word)}</span>`;
+						kind = "tok-class-name";
 						expectNameKind = null;
 					} else if (expectNameKind === "def") {
-						html += `<span class="tok-function-name">${escapeHtml(word)}</span>`;
+						kind = "tok-function-name";
 						expectNameKind = null;
 					} else if (PY_KEYWORDS.has(word)) {
-						html += `<span class="tok-keyword">${escapeHtml(word)}</span>`;
+						kind = "tok-keyword";
 						if (word === "class") {
 							expectNameKind = "class";
 						} else if (word === "def") {
@@ -235,16 +237,17 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 							expectNameKind = null;
 						}
 					} else if (PY_BUILTIN_TYPES.has(word)) {
-						html += `<span class="tok-type-name">${escapeHtml(word)}</span>`;
+						kind = "tok-type-name";
 						expectNameKind = null;
 					} else {
-						html += escapeHtml(word);
+						expectNameKind = null;
 					}
 				} else if (match[5]) {
-					html += `<span class="tok-comment">${escapeHtml(matchText)}</span>`;
+					kind = "tok-comment";
 					expectNameKind = null;
 				}
 
+				segments.push({ text: matchText, kind });
 				cursor = start + matchText.length;
 				if (matchText.includes("\n")) {
 					expectNameKind = null;
@@ -252,9 +255,65 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 			}
 
 			if (cursor < input.length) {
-				html += escapeHtml(input.slice(cursor));
+				segments.push({ text: input.slice(cursor), kind: null });
 			}
-			return html;
+			return segments;
+		};
+
+		const renderToken = (text, kind) => {
+			const escaped = escapeHtml(text);
+			if (!kind) return escaped;
+			return `<span class="${kind}">${escaped}</span>`;
+		};
+
+		const highlightPython = (source) => {
+			const segments = tokenizePython(source.replace(/\r/g, ""));
+			if (segments.length === 0) {
+				return "";
+			}
+			return segments.map((segment) => renderToken(segment.text, segment.kind)).join("");
+		};
+
+		const highlightPythonWithCursor = (source, cursorIndex, showCursor) => {
+			const input = source.replace(/\r/g, "");
+			const boundedCursor = Math.max(0, Math.min(cursorIndex, input.length));
+			const segments = tokenizePython(input);
+			let rendered = "";
+			let offset = 0;
+			let cursorRendered = false;
+
+			for (const segment of segments) {
+				const { text, kind } = segment;
+				const segmentStart = offset;
+				const segmentEnd = segmentStart + text.length;
+
+				if (!showCursor || cursorRendered || boundedCursor < segmentStart || boundedCursor >= segmentEnd) {
+					rendered += renderToken(text, kind);
+					offset = segmentEnd;
+					continue;
+				}
+
+				const local = boundedCursor - segmentStart;
+				const before = text.slice(0, local);
+				const current = text.slice(local, local + 1);
+				const after = text.slice(local + 1);
+
+				rendered += renderToken(before, kind);
+				if (current === "\n") {
+					rendered += '<span class="tok-caret-end" aria-hidden="true"></span>\n';
+				} else if (current.length > 0) {
+					const visible = current === " " ? "&nbsp;" : escapeHtml(current);
+					rendered += `<span class="tok-caret-char" aria-hidden="true">${visible}</span>`;
+				}
+				rendered += renderToken(after, kind);
+				cursorRendered = true;
+				offset = segmentEnd;
+			}
+
+			if (showCursor && !cursorRendered) {
+				rendered += '<span class="tok-caret-end" aria-hidden="true"></span>';
+			}
+			return rendered.length > 0 ? rendered : " ";
 		};
 
 		const updateEditorHighlight = () => {
@@ -263,13 +322,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 			const selectionStart = Math.max(0, inputEl.selectionStart ?? value.length);
 			const cursorIndex = Math.min(selectionStart, value.length);
 			const hasFocus = document.activeElement === inputEl && !inputEl.disabled;
-			const beforeCursor = value.slice(0, cursorIndex);
-			const afterCursor = value.slice(cursorIndex);
-			const rendered =
-				highlightPython(beforeCursor) +
-				(hasFocus ? '<span class="tok-caret" aria-hidden="true"></span>' : "") +
-				highlightPython(afterCursor);
-			highlightEl.innerHTML = rendered.length > 0 ? rendered : " ";
+			highlightEl.innerHTML = highlightPythonWithCursor(value, cursorIndex, hasFocus);
 		};
 
 		const setStatus = (state, message) => {
@@ -304,6 +357,14 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 			refreshEditorState();
 			const end = value.length;
 			inputEl.setSelectionRange(end, end);
+		};
+
+		const focusInputAtEnd = () => {
+			if (!(inputEl instanceof HTMLTextAreaElement) || inputEl.disabled) return;
+			inputEl.focus();
+			const end = inputEl.value.length;
+			inputEl.setSelectionRange(end, end);
+			refreshEditorState();
 		};
 
 		const resizeInput = () => {
@@ -554,6 +615,10 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 					}
 				}
 			});
+			inputEl.addEventListener("pointerdown", (event) => {
+				event.preventDefault();
+				focusInputAtEnd();
+			});
 			inputEl.addEventListener("input", refreshEditorState);
 			inputEl.addEventListener("scroll", refreshEditorState);
 			inputEl.addEventListener("click", refreshEditorState);
@@ -564,6 +629,18 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 			refreshEditorState();
 		}
 
+		if (shellEl instanceof HTMLElement) {
+			shellEl.addEventListener("pointerdown", (event) => {
+				const target = event.target;
+				if (!(target instanceof HTMLElement)) return;
+				if (target.closest("button")) {
+					return;
+				}
+				event.preventDefault();
+				focusInputAtEnd();
+			});
+		}
+
 		if (formEl instanceof HTMLFormElement && inputEl instanceof HTMLTextAreaElement) {
 			formEl.addEventListener("submit", async (event) => {
 				event.preventDefault();
@@ -571,16 +648,14 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 				inputEl.value = "";
 				refreshEditorState();
 				await runSource(source);
-				inputEl.focus();
+				focusInputAtEnd();
 			});
 		}
 
 		if (clearButton instanceof HTMLButtonElement) {
 			clearButton.addEventListener("click", () => {
 				clearTranscript(true);
-				if (inputEl instanceof HTMLTextAreaElement) {
-					inputEl.focus();
-				}
+				focusInputAtEnd();
 			});
 		}
 
@@ -595,16 +670,12 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 				}
 				clearTranscript(true);
 				setStatus("ready", "Runtime ready");
-				if (inputEl instanceof HTMLTextAreaElement) {
-					inputEl.focus();
-				}
+				focusInputAtEnd();
 			});
 		}
 
 		ensureRuntimeLoaded().then(() => {
-			if (inputEl instanceof HTMLTextAreaElement) {
-				inputEl.focus();
-			}
+			focusInputAtEnd();
 		});
 	</script>
 </SiteLayout>
@@ -753,6 +824,9 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 
 	.playground-transcript {
 		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 0.24rem;
 		padding: 1rem 1.1rem 1.1rem;
 		overflow-y: auto;
 		font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
@@ -767,14 +841,11 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		animation: line-in 120ms ease;
 	}
 
-	.transcript-line + .transcript-line {
-		margin-top: 0.24rem;
-	}
-
 	.transcript-line-input {
 		display: flex;
 		align-items: flex-start;
 		gap: 0.62rem;
+		min-height: 1.56em;
 		color: #f8f2ec;
 	}
 
@@ -808,15 +879,6 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		align-items: flex-start;
 		gap: 0.62rem;
 		min-height: 1.56em;
-	}
-
-	.transcript-line + .playground-inline-entry,
-	.playground-inline-entry + .transcript-line {
-		margin-top: 0.24rem;
-	}
-
-	.transcript-prompt-active {
-		padding-top: 0.04rem;
 	}
 
 	.playground-editor-stack {
@@ -894,7 +956,15 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		font-style: italic;
 	}
 
-	:global(.tok-caret) {
+	:global(.tok-caret-char) {
+		display: inline;
+		background: rgba(248, 242, 236, 0.92);
+		color: #05080d;
+		border-radius: 2px;
+		animation: tok-caret-blink 1s steps(1, end) infinite;
+	}
+
+	:global(.tok-caret-end) {
 		display: inline-block;
 		width: 0.64ch;
 		min-width: 0.64ch;
