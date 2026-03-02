@@ -937,8 +937,10 @@ def validate(
     required_recycle_terminal_sequence_found = False
     required_terminate_terminal_sequence_found = False
     for row in worker_session_state_sequence_rows:
-        if row.timeout_ms <= 0:
-            errors.append(f"{row.name}: timeout_ms must be positive")
+        if row.timeout_ms <= 0 and row.expected_timeout_phase != "invalid_worker_timeout":
+            errors.append(
+                f"{row.name}: timeout_ms must be positive unless expected_timeout_phase is invalid_worker_timeout"
+            )
         if not row.trigger_actions:
             errors.append(f"{row.name}: trigger_actions must not be empty")
             continue
@@ -1037,28 +1039,51 @@ def validate(
                 errors.append(
                     f"{row.name}: default execute blocker must be worker_runtime_unwired"
                 )
-            if row.expected_timeout_phase != "unsupported_worker_timeout_enforcement":
-                errors.append(
-                    f"{row.name}: default timeout phase must be unsupported_worker_timeout_enforcement"
-                )
-            if row.expected_timeout_success:
-                errors.append(f"{row.name}: default timeout success must be false")
-            if row.expected_timeout_blocker_key != "worker_runtime_unwired":
-                errors.append(
-                    f"{row.name}: default timeout blocker must be worker_runtime_unwired"
-                )
+            if row.expected_timeout_phase == "invalid_worker_timeout":
+                if row.timeout_ms >= 50 and row.timeout_ms <= 120_000:
+                    errors.append(
+                        f"{row.name}: invalid timeout phase requires out-of-range timeout_ms"
+                    )
+                if row.expected_timeout_success:
+                    errors.append(f"{row.name}: invalid timeout success must be false")
+                if row.expected_timeout_blocker_key is not None:
+                    errors.append(f"{row.name}: invalid timeout blocker must be None")
+                if effective_vm_timeout_phase != "invalid_worker_timeout":
+                    errors.append(
+                        f"{row.name}: vm-probe timeout phase must stay invalid_worker_timeout for out-of-range timeout"
+                    )
+                if effective_vm_timeout_success:
+                    errors.append(
+                        f"{row.name}: vm-probe invalid timeout success must be false"
+                    )
+                if effective_vm_timeout_blocker_key is not None:
+                    errors.append(
+                        f"{row.name}: vm-probe invalid timeout blocker must be None"
+                    )
+            else:
+                if row.expected_timeout_phase != "unsupported_worker_timeout_enforcement":
+                    errors.append(
+                        f"{row.name}: default timeout phase must be unsupported_worker_timeout_enforcement"
+                    )
+                if row.expected_timeout_success:
+                    errors.append(f"{row.name}: default timeout success must be false")
+                if row.expected_timeout_blocker_key != "worker_runtime_unwired":
+                    errors.append(
+                        f"{row.name}: default timeout blocker must be worker_runtime_unwired"
+                    )
             if effective_vm_execute_phase != "ok":
                 errors.append(f"{row.name}: vm-probe execute phase must be ok")
             if effective_vm_execute_blocker_key is not None:
                 errors.append(f"{row.name}: vm-probe execute blocker must be None")
-            if effective_vm_timeout_phase != "worker_timeout_configured":
-                errors.append(
-                    f"{row.name}: vm-probe timeout phase must be worker_timeout_configured"
-                )
-            if not effective_vm_timeout_success:
-                errors.append(f"{row.name}: vm-probe timeout success must be true")
-            if effective_vm_timeout_blocker_key is not None:
-                errors.append(f"{row.name}: vm-probe timeout blocker must be None")
+            if row.expected_timeout_phase != "invalid_worker_timeout":
+                if effective_vm_timeout_phase != "worker_timeout_configured":
+                    errors.append(
+                        f"{row.name}: vm-probe timeout phase must be worker_timeout_configured"
+                    )
+                if not effective_vm_timeout_success:
+                    errors.append(f"{row.name}: vm-probe timeout success must be true")
+                if effective_vm_timeout_blocker_key is not None:
+                    errors.append(f"{row.name}: vm-probe timeout blocker must be None")
         elif last_action == "terminate":
             if row.expected_execute_phase != "unsupported_worker_execution":
                 errors.append(
@@ -1068,16 +1093,38 @@ def validate(
                 errors.append(
                     f"{row.name}: default execute blocker must be worker_runtime_unwired"
                 )
-            if row.expected_timeout_phase != "unsupported_worker_timeout_enforcement":
-                errors.append(
-                    f"{row.name}: default timeout phase must be unsupported_worker_timeout_enforcement"
-                )
-            if row.expected_timeout_success:
-                errors.append(f"{row.name}: default timeout success must be false")
-            if row.expected_timeout_blocker_key != "worker_runtime_unwired":
-                errors.append(
-                    f"{row.name}: default timeout blocker must be worker_runtime_unwired"
-                )
+            if row.expected_timeout_phase == "invalid_worker_timeout":
+                if row.timeout_ms >= 50 and row.timeout_ms <= 120_000:
+                    errors.append(
+                        f"{row.name}: invalid timeout phase requires out-of-range timeout_ms"
+                    )
+                if row.expected_timeout_success:
+                    errors.append(f"{row.name}: invalid timeout success must be false")
+                if row.expected_timeout_blocker_key is not None:
+                    errors.append(f"{row.name}: invalid timeout blocker must be None")
+                if effective_vm_timeout_phase != "invalid_worker_timeout":
+                    errors.append(
+                        f"{row.name}: vm-probe timeout phase must stay invalid_worker_timeout for out-of-range timeout"
+                    )
+                if effective_vm_timeout_success:
+                    errors.append(
+                        f"{row.name}: vm-probe invalid timeout success must be false"
+                    )
+                if effective_vm_timeout_blocker_key is not None:
+                    errors.append(
+                        f"{row.name}: vm-probe invalid timeout blocker must be None"
+                    )
+            else:
+                if row.expected_timeout_phase != "unsupported_worker_timeout_enforcement":
+                    errors.append(
+                        f"{row.name}: default timeout phase must be unsupported_worker_timeout_enforcement"
+                    )
+                if row.expected_timeout_success:
+                    errors.append(f"{row.name}: default timeout success must be false")
+                if row.expected_timeout_blocker_key != "worker_runtime_unwired":
+                    errors.append(
+                        f"{row.name}: default timeout blocker must be worker_runtime_unwired"
+                    )
             if effective_vm_execute_phase != "unsupported_worker_execution":
                 errors.append(
                     f"{row.name}: vm-probe execute phase must remain unsupported_worker_execution"
@@ -1086,18 +1133,19 @@ def validate(
                 errors.append(
                     f"{row.name}: vm-probe execute blocker must remain worker_runtime_unwired"
                 )
-            if effective_vm_timeout_phase != "unsupported_worker_timeout_enforcement":
-                errors.append(
-                    f"{row.name}: vm-probe timeout phase must remain unsupported_worker_timeout_enforcement"
-                )
-            if effective_vm_timeout_success:
-                errors.append(
-                    f"{row.name}: vm-probe timeout success must remain false"
-                )
-            if effective_vm_timeout_blocker_key != "worker_runtime_unwired":
-                errors.append(
-                    f"{row.name}: vm-probe timeout blocker must remain worker_runtime_unwired"
-                )
+            if row.expected_timeout_phase != "invalid_worker_timeout":
+                if effective_vm_timeout_phase != "unsupported_worker_timeout_enforcement":
+                    errors.append(
+                        f"{row.name}: vm-probe timeout phase must remain unsupported_worker_timeout_enforcement"
+                    )
+                if effective_vm_timeout_success:
+                    errors.append(
+                        f"{row.name}: vm-probe timeout success must remain false"
+                    )
+                if effective_vm_timeout_blocker_key != "worker_runtime_unwired":
+                    errors.append(
+                        f"{row.name}: vm-probe timeout blocker must remain worker_runtime_unwired"
+                    )
 
     if not required_sequence_pair_found:
         errors.append(

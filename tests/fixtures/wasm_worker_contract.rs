@@ -449,6 +449,25 @@ pub const WASM_WORKER_SESSION_STATE_SEQUENCE_FIXTURES: &[WasmWorkerSessionStateS
         expected_vm_probe_timeout_success: Some(true),
         expected_vm_probe_timeout_blocker_key: Some(None),
     },
+    WasmWorkerSessionStateSequenceFixture {
+        name: "session_state_sequence_start_then_recycle_invalid_timeout",
+        trigger_actions: &["start", "recycle"],
+        timeout_ms: 0,
+        expected_execute_phase: "unsupported_worker_execution",
+        expected_execute_state: "unwired",
+        expected_execute_blocker_key: Some("worker_runtime_unwired"),
+        expected_timeout_phase: "invalid_worker_timeout",
+        expected_timeout_state: "unwired",
+        expected_timeout_success: false,
+        expected_timeout_blocker_key: None,
+        expected_vm_probe_execute_phase: Some("ok"),
+        expected_vm_probe_execute_state: Some("ready"),
+        expected_vm_probe_execute_blocker_key: Some(None),
+        expected_vm_probe_timeout_phase: None,
+        expected_vm_probe_timeout_state: Some("ready"),
+        expected_vm_probe_timeout_success: None,
+        expected_vm_probe_timeout_blocker_key: None,
+    },
 ];
 
 pub const WASM_WORKER_STATE_KEYS: &[&str] = &[
