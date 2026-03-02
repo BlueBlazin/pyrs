@@ -3339,6 +3339,42 @@ mod tests {
         assert!(resumed_worker.blocker_key().is_none());
     }
 
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
+    fn wasm_worker_vm_probe_failed_state_start_restores_timeout_configuration() {
+        clear_worker_vm();
+        set_current_worker_state(WasmWorkerState::Failed);
+
+        let blocked_timeout = wasm_worker_set_timeout(5_000);
+        assert_eq!(
+            blocked_timeout.phase(),
+            "unsupported_worker_timeout_enforcement".to_string()
+        );
+        assert_eq!(blocked_timeout.state(), "failed".to_string());
+        assert_eq!(
+            blocked_timeout.blocker_key(),
+            Some("worker_runtime_failed".to_string())
+        );
+
+        let started = wasm_worker_start();
+        assert_eq!(started.phase(), "worker_started".to_string());
+        assert_eq!(started.state(), "ready".to_string());
+        assert!(started.success());
+        assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+
+        let configured = wasm_worker_set_timeout(250);
+        assert_eq!(configured.phase(), "worker_timeout_configured".to_string());
+        assert_eq!(configured.state(), "ready".to_string());
+        assert!(configured.success());
+        assert!(configured.blocker_key().is_none());
+        assert_eq!(wasm_worker_current_timeout_ms(), 250);
+
+        let execute_ok = wasm_worker_execute_with_operation("x = 7\n");
+        assert_eq!(execute_ok.phase(), "ok".to_string());
+        assert_eq!(execute_ok.state(), "ready".to_string());
+        assert!(execute_ok.success());
+    }
+
     #[cfg(not(feature = "wasm-vm-probe"))]
     #[test]
     fn wasm_worker_default_mode_lifecycle_remains_unwired() {

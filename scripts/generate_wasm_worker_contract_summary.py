@@ -961,6 +961,10 @@ def main() -> int:
         and '"invalid_worker_timeout".to_string()' in wasm_source
         and "assert!(invalid_timeout.blocker_key().is_none());" in wasm_source
     )
+    has_failed_state_start_timeout_recovery_test = (
+        "fn wasm_worker_vm_probe_failed_state_start_restores_timeout_configuration()"
+        in wasm_source
+    )
     source_worker_unwired_lifecycle_sets_shared_state = (
         parse_source_worker_unwired_lifecycle_sets_shared_state(wasm_source)
     )
@@ -1222,6 +1226,10 @@ def main() -> int:
     if not has_failed_state_invalid_timeout_precedence_assertions:
         errors.append(
             "missing wasm vm-probe failed-state invalid-timeout precedence assertions"
+        )
+    if not has_failed_state_start_timeout_recovery_test:
+        errors.append(
+            "missing wasm vm-probe failed-state start timeout-recovery test coverage"
         )
     if (
         source_worker_info_timeout_enforcement_supported
@@ -1536,6 +1544,7 @@ def main() -> int:
             "has_failed_state_worker_recovery_test": has_failed_state_worker_recovery_test,
             "has_failed_state_top_level_isolation_test": has_failed_state_top_level_isolation_test,
             "has_failed_state_invalid_timeout_precedence_assertions": has_failed_state_invalid_timeout_precedence_assertions,
+            "has_failed_state_start_timeout_recovery_test": has_failed_state_start_timeout_recovery_test,
         },
         "worker_info_effective_rows": [
             {
