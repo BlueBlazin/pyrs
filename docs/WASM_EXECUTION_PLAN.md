@@ -967,6 +967,15 @@ Completed on this branch:
   invalid-timeout precedence assertions in vm-probe unit contracts
   (`wasm_worker_set_timeout(0)` => `invalid_worker_timeout` with no blocker
   key), preventing silent regression of timeout precedence in `failed` state.
+- latest: vm-probe failed-state coverage now also locks `start()` timeout
+  recovery semantics:
+  - after `state = "failed"`, `wasm_worker_start()` restores `state = "ready"`,
+  - in-range timeout updates then return `phase = "worker_timeout_configured"`
+    with no blocker key,
+  - gate validation now requires
+    `wasm_worker_vm_probe_failed_state_start_restores_timeout_configuration`
+    in `src/wasm/mod.rs`
+    (`scripts/generate_wasm_worker_contract_summary.py`).
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

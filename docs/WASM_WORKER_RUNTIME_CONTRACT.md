@@ -289,6 +289,9 @@ Current behavior is:
   clears worker runtime state.
 - `start` / `terminate` / `recycle` reset current worker timeout value to the
   default `5000` ms.
+- in vm-probe failed-state recovery, `start` returns worker state to `ready`
+  and immediately re-enables in-range timeout configuration
+  (`phase = "worker_timeout_configured"` for valid timeout updates).
 - there is still no true Web Worker thread orchestration in this milestone.
 
 ## Interruption Model
