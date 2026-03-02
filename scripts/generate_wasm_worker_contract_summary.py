@@ -652,10 +652,7 @@ def parse_source_worker_info_supported_literal(worker_info_body: str) -> bool:
 
 
 def parse_source_worker_info_uses_mode_aware_state(worker_info_body: str) -> bool:
-    return (
-        "let state = if wasm_vm_runtime_enabled()" in worker_info_body
-        and "state," in worker_info_body
-    )
+    return "state: current_worker_state_key()," in worker_info_body
 
 
 def parse_source_worker_info_uses_runtime_probe_flag(worker_info_body: str) -> bool:
@@ -997,7 +994,7 @@ def main() -> int:
         )
     if not source_worker_info_uses_mode_aware_state:
         errors.append(
-            "wasm_worker_info should derive state from a wasm_vm_runtime_enabled() mode-aware branch"
+            "wasm_worker_info should source state from current_worker_state_key()"
         )
     if not source_worker_info_uses_lifecycle_supported_flag:
         errors.append(

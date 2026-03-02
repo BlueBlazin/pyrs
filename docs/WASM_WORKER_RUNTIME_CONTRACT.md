@@ -36,6 +36,9 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `timeout_enforcement_supported = false` in current milestone builds
 - `blocker_count = len(wasm_worker_blocker_keys())`
 
+Top-level lifecycle calls now mutate shared worker state, and
+`wasm_worker_info().state` reflects that current top-level state.
+
 `wasm_worker_timeout_policy()` currently returns:
 
 - `default_timeout_ms = 5000`

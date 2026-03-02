@@ -758,6 +758,42 @@ fn wasm_worker_lifecycle_stub_contract_is_stable() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_worker_info_tracks_top_level_lifecycle_state() {
+    let start = wasm_worker_start();
+    assert_eq!(
+        start.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[0])
+    );
+    let info_after_start = wasm_worker_info();
+    assert_eq!(
+        info_after_start.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[0])
+    );
+
+    let terminate = wasm_worker_terminate();
+    assert_eq!(
+        terminate.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+    let info_after_terminate = wasm_worker_info();
+    assert_eq!(
+        info_after_terminate.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+
+    let recycle = wasm_worker_recycle();
+    assert_eq!(
+        recycle.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+    );
+    let info_after_recycle = wasm_worker_info();
+    assert_eq!(
+        info_after_recycle.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+    );
+}
+
+#[wasm_bindgen_test]
 fn wasm_worker_operation_id_shape_is_stable() {
     let mut ids = HashSet::new();
     for fixture in WASM_WORKER_LIFECYCLE_FIXTURES {

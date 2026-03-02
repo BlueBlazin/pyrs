@@ -2,7 +2,7 @@ use std::collections::HashSet;
 #[cfg(feature = "wasm-vm-probe")]
 use std::sync::Arc;
 use std::sync::Once;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
 use crate::host::{HostCapability, VmHost, WasmHost};
 #[cfg(feature = "wasm-vm-probe")]
@@ -95,6 +95,7 @@ fn worker_blocker_keys() -> Vec<&'static str> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 enum WasmWorkerState {
     Unwired,
     Starting,
@@ -124,6 +125,28 @@ impl WasmWorkerState {
             WasmWorkerState::Failed => "failed",
         }
     }
+
+    fn from_storage(value: u8) -> Self {
+        match value {
+            x if x == Self::Unwired as u8 => Self::Unwired,
+            x if x == Self::Starting as u8 => Self::Starting,
+            x if x == Self::Ready as u8 => Self::Ready,
+            x if x == Self::Busy as u8 => Self::Busy,
+            x if x == Self::Terminating as u8 => Self::Terminating,
+            x if x == Self::Failed as u8 => Self::Failed,
+            _ => worker_state_baseline(),
+        }
+    }
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+const fn worker_state_baseline() -> WasmWorkerState {
+    WasmWorkerState::Ready
+}
+
+#[cfg(not(feature = "wasm-vm-probe"))]
+const fn worker_state_baseline() -> WasmWorkerState {
+    WasmWorkerState::Unwired
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -303,14 +326,11 @@ fn worker_timeout_phase_keys() -> Vec<&'static str> {
 }
 
 fn current_worker_state() -> WasmWorkerState {
-    // Centralized baseline worker-state seam:
-    // - default builds remain unwired,
-    // - wasm-vm-probe builds expose ready-state baseline.
-    if wasm_vm_runtime_enabled() {
-        WasmWorkerState::Ready
-    } else {
-        WasmWorkerState::Unwired
-    }
+    WasmWorkerState::from_storage(CURRENT_WASM_WORKER_STATE.load(Ordering::Relaxed))
+}
+
+fn set_current_worker_state(state: WasmWorkerState) {
+    CURRENT_WASM_WORKER_STATE.store(state as u8, Ordering::Relaxed);
 }
 
 fn current_worker_state_key() -> String {
@@ -340,6 +360,7 @@ pub fn wasm_api_version() -> u32 {
 
 static PANIC_HOOK_ONCE: Once = Once::new();
 static NEXT_WASM_WORKER_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
+static CURRENT_WASM_WORKER_STATE: AtomicU8 = AtomicU8::new(worker_state_baseline() as u8);
 
 fn next_worker_operation_id(action: &str) -> String {
     let id = NEXT_WASM_WORKER_OPERATION_ID.fetch_add(1, Ordering::Relaxed);
@@ -1481,15 +1502,10 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
     } else {
         WASM_WORKER_BACKEND_UNWIRED.to_string()
     };
-    let state = if wasm_vm_runtime_enabled() {
-        WasmWorkerState::Ready.key().to_string()
-    } else {
-        current_worker_state_key()
-    };
     WasmWorkerInfo {
         supported: false,
         backend,
-        state,
+        state: current_worker_state_key(),
         interruption_model: WASM_WORKER_INTERRUPT_MODEL_RECYCLE.to_string(),
         lifecycle_supported: wasm_vm_runtime_enabled(),
         execution_probe_enabled: wasm_vm_runtime_enabled(),
@@ -1636,6 +1652,7 @@ fn worker_unwired_result(phase: WasmWorkerLifecyclePhase) -> WasmWorkerLifecycle
     let blocker_key = WASM_WORKER_BLOCKER_RUNTIME_UNWIRED.to_string();
     let message = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
         .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
+    set_current_worker_state(WasmWorkerState::Unwired);
     WasmWorkerLifecycleResult {
         success: false,
         operation_id: next_worker_operation_id(action),
@@ -1652,6 +1669,7 @@ fn worker_vm_probe_lifecycle_result(
     phase: &'static str,
     state: WasmWorkerState,
 ) -> WasmWorkerLifecycleResult {
+    set_current_worker_state(state);
     WasmWorkerLifecycleResult {
         success: true,
         operation_id: next_worker_operation_id(action),
