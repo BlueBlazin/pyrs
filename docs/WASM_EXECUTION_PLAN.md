@@ -685,10 +685,11 @@ Completed on this branch:
   baseline collection and future promotion evidence.
 - latest: docs index now links to `/playground/` as an explicit browser-route
   entrypoint in Getting Started navigation.
-- latest: `/playground` now surfaces runtime contract introspection
-  (`wasm_runtime_info`, worker info, capability matrix, blocker rows), snippet
-  preflight details (import roots + blocker rows), and worker probe controls
-  (start/recycle/terminate/execute/timeout) for state-gate debugging.
+- latest: browser routes are now split by product UX vs diagnostics:
+  - `/playground` is the minimal product-facing wasm REPL route with automatic
+    runtime load, load-status indicator, and session-oriented input/output flow,
+  - `/debug` is the unlisted diagnostics route carrying runtime introspection,
+    preflight, and worker-state probe controls.
 - latest: wasm website artifact generation now has a dedicated size-first build
   path:
   - Cargo profile `release-wasm` (`opt-level = "z"`, `strip = "symbols"`,
