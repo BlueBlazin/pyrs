@@ -866,6 +866,9 @@ Completed on this branch:
 - latest: wasm promotion-note extraction now has a dedicated helper script
   (`scripts/extract_wasm_ci_artifact_hashes.py`) and runbook wiring so
   artifact hash capture is reproducible and less manual.
+- latest: `scripts/run_wasm_browser_smoke_dispatch.sh` now writes bundled
+  artifact hash snapshots (`wasm-artifact-hashes.json` and `.md`) alongside
+  downloaded run artifacts after baseline validation.
 - latest: browser-smoke capture now has an operator helper script
   (`scripts/run_wasm_browser_smoke_dispatch.sh`) that dispatches
   `wasm-track.yml`, waits for completion, downloads artifacts, and validates

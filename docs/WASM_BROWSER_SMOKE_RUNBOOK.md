@@ -72,6 +72,10 @@ The helper script prints both run URL and downloaded artifact path:
 scripts/run_wasm_browser_smoke_dispatch.sh --run-id <run-id>
 ```
 
+On successful download/validation, the helper also writes:
+- `<download-dir>/wasm-artifact-hashes.json`
+- `<download-dir>/wasm-artifact-hashes.md`
+
 If artifact downloads are unavailable in your environment, use:
 
 ```bash

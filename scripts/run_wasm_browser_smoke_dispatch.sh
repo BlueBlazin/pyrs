@@ -139,6 +139,18 @@ fi
 echo "[wasm-browser-dispatch] validating baseline summary: ${baseline_path}"
 python3 scripts/validate_wasm_browser_smoke_baseline.py --summary "${baseline_path}"
 
+hash_json="${download_dir}/wasm-artifact-hashes.json"
+hash_md="${download_dir}/wasm-artifact-hashes.md"
+echo "[wasm-browser-dispatch] extracting artifact hash summary"
+if python3 scripts/extract_wasm_ci_artifact_hashes.py --run-id "${run_id}" --format json --out "${hash_json}"; then
+  python3 scripts/extract_wasm_ci_artifact_hashes.py --run-id "${run_id}" --format markdown --out "${hash_md}" >/dev/null
+  echo "[wasm-browser-dispatch] artifact hash files:"
+  echo "  - ${hash_json}"
+  echo "  - ${hash_md}"
+else
+  echo "[wasm-browser-dispatch] warning: failed to extract artifact hashes from run logs"
+fi
+
 echo "[wasm-browser-dispatch] baseline capture complete"
 echo "[wasm-browser-dispatch] run-url: ${run_url}"
 echo "[wasm-browser-dispatch] artifacts: ${download_dir}"
