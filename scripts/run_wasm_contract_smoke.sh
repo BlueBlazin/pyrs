@@ -104,11 +104,11 @@ run_browser_smoke() {
   local browser="$1"
   local smoke_status=0
   echo "[wasm-contract] wasm-pack ${browser}: integration contract tests"
-  if ! wasm-pack test --headless --"${browser}" -- --test wasm_contract; then
+  if ! wasm-pack test --headless --"${browser}" --test wasm_contract; then
     smoke_status=1
   fi
   echo "[wasm-contract] wasm-pack ${browser}: lib unit tests"
-  if ! wasm-pack test --headless --"${browser}" -- --lib; then
+  if ! wasm-pack test --headless --"${browser}" --lib; then
     smoke_status=1
   fi
   return "${smoke_status}"
@@ -122,8 +122,8 @@ run_vm_probe_state_gate_browser_smoke() {
   fi
 
   echo "[wasm-contract] wasm-pack ${browser}: vm-probe state-gate smoke (terminate/recycle flow)"
-  wasm-pack test --headless --"${browser}" --features wasm-vm-probe -- --test wasm_contract after_terminate
-  wasm-pack test --headless --"${browser}" --features wasm-vm-probe -- --test wasm_contract shared_state_after_external_lifecycle_change
+  wasm-pack test --headless --"${browser}" --features wasm-vm-probe --test wasm_contract -- after_terminate
+  wasm-pack test --headless --"${browser}" --features wasm-vm-probe --test wasm_contract -- shared_state_after_external_lifecycle_change
 }
 
 emit_browser_smoke_baseline() {
