@@ -10,6 +10,12 @@ if [[ "${PYRS_WASM_SKIP_CORE_SMOKE:-0}" != "1" ]]; then
   echo "[wasm-contract] cargo check wasm contract target"
   cargo check --target wasm32-unknown-unknown --test wasm_contract
 
+  echo "[wasm-contract] cargo check wasm32 integration-tests compile set (default)"
+  cargo check --target wasm32-unknown-unknown --tests
+
+  echo "[wasm-contract] cargo check wasm32 integration-tests compile set (vm-probe)"
+  cargo check --target wasm32-unknown-unknown --tests --features wasm-vm-probe
+
   echo "[wasm-contract] cargo test wasm lib unit harness (compile-only)"
   cargo test --target wasm32-unknown-unknown --lib --no-run
 

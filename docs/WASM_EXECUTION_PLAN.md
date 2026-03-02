@@ -710,6 +710,11 @@ Completed on this branch:
 - latest: native-only integration test crates are now explicitly gated with
   `#![cfg(not(target_arch = "wasm32"))]`, so wasm-target browser smoke compiles
   only wasm-relevant suites instead of failing on native `pyrs::vm` imports.
+- latest: both wasm local gate entrypoints (`scripts/check_wasm_branch.sh` and
+  `scripts/run_wasm_contract_smoke.sh`) now include explicit
+  `cargo check --target wasm32-unknown-unknown --tests` compile gates in
+  default and `wasm-vm-probe` modes, preventing future wasm-pack compile drift
+  from native-only integration suites.
 - latest: docs index now links to `/playground/` as an explicit browser-route
   entrypoint in Getting Started navigation.
 - latest: browser routes are now split by product UX vs diagnostics:
