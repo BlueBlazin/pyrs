@@ -974,13 +974,32 @@ def main() -> int:
         in wasm_source
     )
     has_failed_state_invalid_timeout_precedence_assertions = (
-        "let invalid_timeout = wasm_worker_set_timeout(0);" in wasm_source
-        and '"invalid_worker_timeout".to_string()' in wasm_source
-        and "assert!(invalid_timeout.blocker_key().is_none());" in wasm_source
+        source_test_function_contains_all(
+            wasm_source,
+            "wasm_worker_vm_probe_failed_state_blocks_until_recovered",
+            [
+                "let invalid_timeout = wasm_worker_set_timeout(0);",
+                '"invalid_worker_timeout".to_string()',
+                "assert!(invalid_timeout.blocker_key().is_none());",
+            ],
+        )
     )
     has_failed_state_start_timeout_recovery_test = (
         "fn wasm_worker_vm_probe_failed_state_start_restores_timeout_configuration()"
         in wasm_source
+    )
+    has_failed_state_start_timeout_recovery_assertions = (
+        source_test_function_contains_all(
+            wasm_source,
+            "wasm_worker_vm_probe_failed_state_start_restores_timeout_configuration",
+            [
+                "let blocked_timeout = wasm_worker_set_timeout(5_000);",
+                "let started = wasm_worker_start();",
+                "assert_eq!(wasm_worker_current_timeout_ms(), 5_000);",
+                "let configured = wasm_worker_set_timeout(250);",
+                '"worker_timeout_configured".to_string()',
+            ],
+        )
     )
     has_failed_state_terminate_start_execute_recovery_test = (
         "fn wasm_worker_vm_probe_failed_state_terminate_then_start_restores_worker_execute()"
@@ -1277,6 +1296,10 @@ def main() -> int:
     if not has_failed_state_start_timeout_recovery_test:
         errors.append(
             "missing wasm vm-probe failed-state start timeout-recovery test coverage"
+        )
+    if not has_failed_state_start_timeout_recovery_assertions:
+        errors.append(
+            "missing wasm vm-probe failed-state start timeout-recovery assertions"
         )
     if not has_failed_state_terminate_start_execute_recovery_test:
         errors.append(
@@ -1608,6 +1631,7 @@ def main() -> int:
             "has_failed_state_top_level_isolation_test": has_failed_state_top_level_isolation_test,
             "has_failed_state_invalid_timeout_precedence_assertions": has_failed_state_invalid_timeout_precedence_assertions,
             "has_failed_state_start_timeout_recovery_test": has_failed_state_start_timeout_recovery_test,
+            "has_failed_state_start_timeout_recovery_assertions": has_failed_state_start_timeout_recovery_assertions,
             "has_failed_state_terminate_start_execute_recovery_test": has_failed_state_terminate_start_execute_recovery_test,
             "has_failed_state_recycle_reset_test": has_failed_state_recycle_reset_test,
             "has_failed_state_terminate_start_pre_failure_reset_assertions": has_failed_state_terminate_start_pre_failure_reset_assertions,

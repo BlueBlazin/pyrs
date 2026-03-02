@@ -1008,6 +1008,11 @@ Completed on this branch:
     (`scripts/generate_wasm_worker_contract_summary.py`).
 - latest: worker-summary validation now enforces assertion-level coverage
   (not just function-name presence) for:
+  - failed-state invalid-timeout precedence checks
+    (`invalid_worker_timeout` with no blocker key),
+  - failed-state `start` timeout-recovery checks
+    (blocked timeout in failed state, then `worker_timeout_configured`
+    after restart),
   - failed-state `terminate -> start` pre-failure reset checks
     (timeout default reset + NameError on pre-failure binding),
   - failed-state `recycle` reset checks
