@@ -32,6 +32,8 @@ workflow_name="wasm-track.yml"
 run_id=""
 download_root="perf/wasm-browser-smoke-run"
 skip_download=0
+expected_ref_sha=""
+dispatched_run=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -71,15 +73,11 @@ require_cmd gh
 require_cmd python3
 
 if [[ -z "${run_id}" ]]; then
-  previous_run_id="$(
-    gh run list \
-      --workflow "${workflow_name}" \
-      --branch "${branch_ref}" \
-      --event workflow_dispatch \
-      --limit 1 \
-      --json databaseId \
-      --jq '.[0].databaseId // empty'
-  )"
+  dispatched_run=1
+  dispatch_started_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  if git rev-parse --verify --quiet "${branch_ref}^{commit}" >/dev/null 2>&1; then
+    expected_ref_sha="$(git rev-parse "${branch_ref}^{commit}")"
+  fi
 
   echo "[wasm-browser-dispatch] dispatching workflow '${workflow_name}' on ref '${branch_ref}'"
   gh workflow run "${workflow_name}" --ref "${branch_ref}"
@@ -91,11 +89,11 @@ if [[ -z "${run_id}" ]]; then
         --workflow "${workflow_name}" \
         --branch "${branch_ref}" \
         --event workflow_dispatch \
-        --limit 1 \
-        --json databaseId \
-        --jq '.[0].databaseId // empty'
+        --limit 20 \
+        --json databaseId,createdAt \
+        --jq "[.[] | select(.createdAt >= \"${dispatch_started_at}\")][0].databaseId // empty"
     )"
-    if [[ -n "${candidate_run_id}" ]] && [[ "${candidate_run_id}" != "${previous_run_id}" ]]; then
+    if [[ -n "${candidate_run_id}" ]]; then
       run_id="${candidate_run_id}"
       break
     fi
@@ -117,6 +115,14 @@ run_url="$(
 run_head_sha="$(
   gh run view "${run_id}" --json headSha --jq '.headSha'
 )"
+if [[ -z "${expected_ref_sha}" ]] && git rev-parse --verify --quiet "${branch_ref}^{commit}" >/dev/null 2>&1; then
+  expected_ref_sha="$(git rev-parse "${branch_ref}^{commit}")"
+fi
+if [[ "${dispatched_run}" == "1" ]] && [[ -n "${expected_ref_sha}" ]] && [[ "${run_head_sha}" != "${expected_ref_sha}" ]]; then
+  echo "[wasm-browser-dispatch] run head sha mismatch for ref '${branch_ref}': expected ${expected_ref_sha}, got ${run_head_sha}" >&2
+  echo "[wasm-browser-dispatch] pass --run-id <id> to target a specific run explicitly" >&2
+  exit 1
+fi
 echo "[wasm-browser-dispatch] run complete: ${run_url}"
 
 if [[ "${skip_download}" == "1" ]]; then

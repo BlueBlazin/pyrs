@@ -77,6 +77,9 @@ On successful download/validation, the helper also writes:
 - `<download-dir>/wasm-artifact-hashes.json`
 - `<download-dir>/wasm-artifact-hashes.md`
 - `<download-dir>/workflow-run.log`
+- helper dispatch selection is anchored to dispatch-time run creation and
+  verifies `headSha` against your local `<ref>` commit when that ref exists
+  locally, to reduce stale-run/race mis-association.
 
 If artifact downloads are unavailable in your environment, use:
 
