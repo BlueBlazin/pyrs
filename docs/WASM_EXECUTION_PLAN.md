@@ -801,6 +801,13 @@ Completed on this branch:
   - cross-path state-gate validation that top-level `execute()` remains
     functional while worker state is `unwired` (worker execute blocked,
     top-level execute still `phase = "ok"`).
+- latest: browser vm-probe smoke now also covers `WasmWorkerSession` shared
+  lifecycle parity:
+  - session `info().state` reflects external top-level lifecycle transitions,
+  - session execute-with-operation follows worker state-gates (`unwired` after
+    terminate),
+  - session snapshot telemetry (`last_phase`, `last_state`,
+    `executes_requested`) remains consistent in browser lane.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

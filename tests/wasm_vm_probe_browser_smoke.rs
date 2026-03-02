@@ -3,7 +3,7 @@
 use pyrs::wasm::{
     execute, wasm_runtime_info, wasm_worker_current_timeout_ms, wasm_worker_execute_with_operation,
     wasm_worker_info, wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start,
-    wasm_worker_terminate,
+    wasm_worker_terminate, WasmWorkerSession,
 };
 use wasm_bindgen_test::*;
 
@@ -125,4 +125,47 @@ fn vm_probe_top_level_execute_survives_worker_terminated_state() {
     assert_eq!(restore.phase(), "worker_recycled".to_string());
     assert_eq!(restore.state(), "ready".to_string());
     assert!(restore.success());
+}
+
+#[wasm_bindgen_test]
+fn vm_probe_worker_session_tracks_shared_lifecycle_state() {
+    let recycle = wasm_worker_recycle();
+    assert_eq!(recycle.phase(), "worker_recycled".to_string());
+    assert_eq!(recycle.state(), "ready".to_string());
+
+    let mut session = WasmWorkerSession::new();
+    let start = session.start();
+    assert_eq!(start.phase(), "worker_started".to_string());
+    assert_eq!(start.state(), "ready".to_string());
+    assert!(start.success());
+
+    let terminate = wasm_worker_terminate();
+    assert_eq!(terminate.phase(), "worker_terminated".to_string());
+    assert_eq!(terminate.state(), "unwired".to_string());
+    assert!(terminate.success());
+
+    let info = session.info();
+    assert_eq!(info.state(), "unwired".to_string());
+    assert_eq!(info.backend(), "vm_probe".to_string());
+
+    let blocked = session.execute_with_operation("x = 1\n");
+    assert_eq!(blocked.phase(), "unsupported_worker_execution".to_string());
+    assert_eq!(blocked.state(), "unwired".to_string());
+    assert_eq!(
+        blocked.blocker_key(),
+        Some("worker_runtime_unwired".to_string())
+    );
+
+    let snapshot = session.snapshot();
+    assert_eq!(
+        snapshot.last_phase(),
+        Some("unsupported_worker_execution".to_string())
+    );
+    assert_eq!(snapshot.last_state(), Some("unwired".to_string()));
+    assert_eq!(snapshot.executes_requested(), 1);
+
+    let resumed = session.recycle();
+    assert_eq!(resumed.phase(), "worker_recycled".to_string());
+    assert_eq!(resumed.state(), "ready".to_string());
+    assert!(resumed.success());
 }
