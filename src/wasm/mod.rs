@@ -3437,6 +3437,41 @@ mod tests {
         assert!(resumed.blocker_key().is_none());
     }
 
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
+    fn wasm_worker_vm_probe_failed_state_recycle_resets_timeout_and_vm_state() {
+        let baseline = wasm_worker_recycle();
+        assert_eq!(baseline.phase(), "worker_recycled".to_string());
+        assert_eq!(baseline.state(), "ready".to_string());
+
+        let configured = wasm_worker_set_timeout(250);
+        assert_eq!(configured.phase(), "worker_timeout_configured".to_string());
+        assert_eq!(configured.state(), "ready".to_string());
+        assert!(configured.success());
+        assert_eq!(wasm_worker_current_timeout_ms(), 250);
+
+        let assigned = wasm_worker_execute_with_operation("x = 42\n");
+        assert_eq!(assigned.phase(), "ok".to_string());
+        assert_eq!(assigned.state(), "ready".to_string());
+        assert!(assigned.success());
+
+        set_current_worker_state(WasmWorkerState::Failed);
+        let recycled = wasm_worker_recycle();
+        assert_eq!(recycled.phase(), "worker_recycled".to_string());
+        assert_eq!(recycled.state(), "ready".to_string());
+        assert!(recycled.success());
+        assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+
+        let missing_after_recycle = wasm_worker_execute_with_operation("x\n");
+        assert_eq!(missing_after_recycle.phase(), "runtime_error".to_string());
+        assert_eq!(missing_after_recycle.state(), "ready".to_string());
+        assert!(!missing_after_recycle.success());
+        let missing_error = missing_after_recycle
+            .error()
+            .expect("post-failed recycle execute should report NameError");
+        assert!(missing_error.contains("NameError"));
+    }
+
     #[cfg(not(feature = "wasm-vm-probe"))]
     #[test]
     fn wasm_worker_default_mode_lifecycle_remains_unwired() {
