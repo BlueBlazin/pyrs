@@ -76,6 +76,24 @@ Promotion review must include:
    including `perf/wasm_browser_smoke_baseline_latest.json` from the
    `wasm-browser-smoke-artifacts` bundle.
 
+### Latest Recorded Evidence Snapshot (2026-03-02 UTC)
+
+- workflow-dispatch run: [22582347683](https://github.com/BlueBlazin/pyrs/actions/runs/22582347683)
+- head commit: `176f14f38986afc3c3864504ff4e6070b20f11a9`
+- artifact hashes (from CI upload logs):
+  - `wasm-contract-artifacts`:
+    - artifact id: `5723749301`
+    - sha256: `2403a64cd266c7ca7e903488ac722802999ac3014327cc17865983da082b5d30`
+  - `wasm-evidence-pack`:
+    - artifact id: `5723749667`
+    - sha256: `fc5531eed96e51c090ffde4493f445ae6f670f9c9f7656cd0a1a7273ba2b402c`
+  - `wasm-browser-smoke-artifacts`:
+    - artifact id: `5723779122`
+    - sha256: `e698079612770e98d1248ea074791581fff14b2e445e36d7a1702713758c926c`
+  - `wasm-browser-smoke-evidence-pack`:
+    - artifact id: `5723779351`
+    - sha256: `d739e40c5dd00676c01ec7a2a0cae62be3150c65dd819ba15d6d80399fb62574`
+
 ## Decision Rule
 
 - `GO`: all required signals/checklists above are satisfied and approved by maintainers.

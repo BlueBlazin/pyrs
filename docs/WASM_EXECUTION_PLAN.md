@@ -843,6 +843,14 @@ Completed on this branch:
   envelope and action contracts (`load`, `execute`, `reset`) in
   `docs/WASM_CLIENT_INTEGRATION_FLOW.md` and `docs/WASM_API_CONTRACT.md`,
   with both docs summary generators re-run to keep source/doc gates current.
+- latest: wasm contract coverage now includes mixed session/top-level timeout
+  reset behavior after external lifecycle mutations (`start`/`terminate`/
+  `recycle`) via
+  `tests/wasm_contract.rs::wasm_worker_session_timeout_tracks_external_lifecycle_resets`.
+- latest: workflow-dispatch browser smoke on current head
+  (`22582347683`, commit `176f14f`) is green for both jobs
+  (`wasm-contract-gate`, `wasm-browser-smoke`); artifact IDs and SHA256
+  digests are now recorded in `docs/WASM_PROMOTION_GATE.md`.
 - latest: browser-smoke capture now has an operator helper script
   (`scripts/run_wasm_browser_smoke_dispatch.sh`) that dispatches
   `wasm-track.yml`, waits for completion, downloads artifacts, and validates

@@ -19,6 +19,15 @@ Use this file to find canonical ownership quickly.
 - `docs/CAPI_LIFETIME_MODEL.md`: P0 ownership/lifetime architecture for CPython-compat pointers and UAF closure plan.
 - `docs/WEBSITE_DOCS_DESIGN_SYSTEM_PLAN.md`: multi-milestone website/docs design-system and IA execution plan.
 
+## WASM Track (Isolated Branch)
+- `docs/WASM_EXECUTION_PLAN.md`: canonical wasm milestone tracker and current branch execution status.
+- `docs/WASM_PROMOTION_GATE.md`: explicit go/no-go criteria and evidence requirements before any merge candidacy.
+- `docs/WASM_API_CONTRACT.md`: top-level wasm bridge export and contract surface.
+- `docs/WASM_WORKER_RUNTIME_CONTRACT.md`: worker lifecycle/execute/timeout contract semantics.
+- `docs/WASM_CLIENT_INTEGRATION_FLOW.md`: browser/client integration order and worker RPC flow.
+- `docs/WASM_BROWSER_SMOKE_RUNBOOK.md`: workflow-dispatch browser smoke runbook and artifact capture process.
+- `scripts/run_wasm_browser_smoke_dispatch.sh`: one-shot dispatch/watch/download helper for browser-smoke evidence capture.
+
 ## Gap Tracking
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.
 - `docs/LANGUAGE_FEATURE_INVENTORY.md`: source-derived CPython 3.14 language-feature inventory baseline and regeneration flow.
