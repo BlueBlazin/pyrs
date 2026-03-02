@@ -1006,12 +1006,6 @@ impl WasmWorkerSession {
         info
     }
 
-    fn effective_state_for_followup_call(&self) -> String {
-        self.last_state
-            .clone()
-            .unwrap_or_else(current_worker_state_key)
-    }
-
     pub fn start(&mut self) -> WasmWorkerLifecycleResult {
         let result = wasm_worker_start();
         self.starts_requested += 1;
@@ -1057,8 +1051,7 @@ impl WasmWorkerSession {
     }
 
     pub fn execute_with_operation(&mut self, source: &str) -> WasmWorkerExecutionResult {
-        let mut result = wasm_worker_execute_with_operation(source);
-        result.state = self.effective_state_for_followup_call();
+        let result = wasm_worker_execute_with_operation(source);
         self.executes_requested += 1;
         self.last_operation_id = Some(result.operation_id.clone());
         self.last_phase = Some(result.phase.clone());
@@ -1068,8 +1061,7 @@ impl WasmWorkerSession {
     }
 
     pub fn set_timeout_ms(&mut self, timeout_ms: u32) -> WasmWorkerTimeoutResult {
-        let mut result = wasm_worker_set_timeout(timeout_ms);
-        result.state = self.effective_state_for_followup_call();
+        let result = wasm_worker_set_timeout(timeout_ms);
         self.timeout_updates_requested += 1;
         self.last_timeout_ms_requested = Some(timeout_ms);
         self.last_operation_id = Some(result.operation_id.clone());

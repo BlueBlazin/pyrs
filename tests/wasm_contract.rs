@@ -1400,6 +1400,77 @@ fn wasm_worker_timeout_configuration_requires_ready_state_after_terminate() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_worker_session_followups_track_shared_state_after_external_lifecycle_change() {
+    reset_top_level_worker_state_for_contract_tests();
+    let mut session = WasmWorkerSession::new();
+
+    let start = session.start();
+    assert_eq!(
+        start.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[0])
+    );
+
+    let external_terminate = wasm_worker_terminate();
+    assert_eq!(
+        external_terminate.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+
+    let exec_after_external_terminate = session.execute_with_operation("x = 1\n");
+    assert_eq!(
+        exec_after_external_terminate.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+    assert_eq!(
+        exec_after_external_terminate.phase(),
+        "unsupported_worker_execution".to_string()
+    );
+    assert_eq!(
+        exec_after_external_terminate.blocker_key(),
+        Some("worker_runtime_unwired".to_string())
+    );
+
+    let timeout_after_external_terminate = session.set_timeout_ms(5_000);
+    assert_eq!(
+        timeout_after_external_terminate.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+    assert_eq!(
+        timeout_after_external_terminate.phase(),
+        "unsupported_worker_timeout_enforcement".to_string()
+    );
+    assert_eq!(
+        timeout_after_external_terminate.blocker_key(),
+        Some("worker_runtime_unwired".to_string())
+    );
+
+    let external_recycle = wasm_worker_recycle();
+    assert_eq!(
+        external_recycle.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+    );
+
+    let exec_after_external_recycle = session.execute_with_operation("x = 1\n");
+    assert_eq!(
+        exec_after_external_recycle.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+    );
+    if vm_probe_enabled() {
+        assert_eq!(exec_after_external_recycle.phase(), "ok".to_string());
+        assert!(exec_after_external_recycle.blocker_key().is_none());
+    } else {
+        assert_eq!(
+            exec_after_external_recycle.phase(),
+            "unsupported_worker_execution".to_string()
+        );
+        assert_eq!(
+            exec_after_external_recycle.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+    }
+}
+
+#[wasm_bindgen_test]
 fn wasm_capability_contract_is_stable() {
     let keys = wasm_capability_keys();
     let mut listed_keys = Vec::new();

@@ -236,8 +236,9 @@ Session state behavior:
 - `info().state` is session-local: once lifecycle calls run, `info()` reflects
   the session’s most recent lifecycle state (instead of always top-level
   unwired state).
-- `execute_with_operation` and `set_timeout_ms` preserve that session state in
-  their returned/stateful telemetry fields.
+- `execute_with_operation` and `set_timeout_ms` now follow the operation-reported
+  shared worker state (so external top-level lifecycle changes are reflected in
+  returned/session telemetry state).
 - in `wasm-vm-probe`, calling `recycle()` before execute/timeout yields
   `last_state = "ready"` for those follow-up operations.
 
