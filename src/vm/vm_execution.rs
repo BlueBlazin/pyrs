@@ -976,6 +976,15 @@ impl Vm {
                     )));
                 }
             }
+            if let Some(deadline) = self.execution_deadline
+                && std::time::Instant::now() >= deadline
+            {
+                let frame = self.frames.last().expect("frame exists");
+                return Err(RuntimeError::new(format!(
+                    "execution timeout exceeded at {}:{} in {} ({:?})",
+                    frame.code.filename, frame.last_ip, frame.code.name, instr.opcode
+                )));
+            }
             let step_result = self.execute_instruction(instr);
 
             match step_result {

@@ -319,6 +319,21 @@ fn executes_name_expression_with_global() {
 }
 
 #[test]
+fn execute_with_timeout_ms_aborts_busy_loop() {
+    let module = parser::parse_module("while True:\n    pass\n").expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm
+        .execute_with_timeout_ms(&code, 5)
+        .expect_err("busy loop should hit timeout");
+    assert!(
+        err.message.contains("execution timeout exceeded"),
+        "unexpected timeout error: {}",
+        err.message
+    );
+}
+
+#[test]
 fn type_repr_matches_cpython_for_builtin_type_objects() {
     let source = "ok = (repr(type(7)) == \"<class 'int'>\" and repr(int) == \"<class 'int'>\" and repr(type) == \"<class 'type'>\")\n";
     let module = parser::parse_module(source).expect("parse should succeed");

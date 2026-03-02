@@ -1185,6 +1185,7 @@ pub struct Vm {
     traceback_caret_enabled: bool,
     instruction_step_limit: Option<u64>,
     instruction_steps: u64,
+    execution_deadline: Option<Instant>,
 }
 
 impl Drop for Vm {
@@ -1477,6 +1478,7 @@ impl Vm {
                 .and_then(|value| value.parse::<u64>().ok())
                 .filter(|limit| *limit > 0),
             instruction_steps: 0,
+            execution_deadline: None,
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(
@@ -3836,6 +3838,22 @@ impl Vm {
         if result.is_err() {
             self.clear_host_error_indicators();
         }
+        result
+    }
+
+    pub fn execute_with_timeout_ms(
+        &mut self,
+        code: &CodeObject,
+        timeout_ms: u32,
+    ) -> Result<Value, RuntimeError> {
+        if timeout_ms == 0 {
+            return self.execute(code);
+        }
+        let previous_deadline = self.execution_deadline;
+        self.execution_deadline =
+            Instant::now().checked_add(Duration::from_millis(timeout_ms as u64));
+        let result = self.execute(code);
+        self.execution_deadline = previous_deadline;
         result
     }
 
