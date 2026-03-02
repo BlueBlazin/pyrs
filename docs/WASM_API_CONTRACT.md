@@ -195,6 +195,8 @@ This document defines the JS-facing contract currently exported by
   - default: `"unsupported_worker_timeout_enforcement"`, `"invalid_worker_timeout"`
   - `wasm-vm-probe`: also `"worker_timeout_configured"` (in-range config acceptance)
 - `state: String` (currently `"unwired"`)
+  - default: `"unwired"`
+  - `wasm-vm-probe`: `"ready"` baseline state (unless session lifecycle overrides)
 - `timeout_ms: u32`
 - `error: Option<String>`
 - `blocker_key: Option<String>`
@@ -204,7 +206,7 @@ This document defines the JS-facing contract currently exported by
 - `operation_id: String` (shape: `worker_execute_<n>`)
 - `success: bool`
 - `phase: String`
-- `state: String` (currently `"unwired"`)
+- `state: String` (default `"unwired"`, `wasm-vm-probe` => `"ready"` baseline)
 - `stdout: String`
 - `stderr: String`
 - `error: Option<String>`

@@ -303,9 +303,14 @@ fn worker_timeout_phase_keys() -> Vec<&'static str> {
 }
 
 fn current_worker_state() -> WasmWorkerState {
-    // Worker runtime backend is still unwired; centralizing state mapping keeps
-    // future worker backend transitions isolated to one seam.
-    WasmWorkerState::Unwired
+    // Centralized baseline worker-state seam:
+    // - default builds remain unwired,
+    // - wasm-vm-probe builds expose ready-state baseline.
+    if wasm_vm_runtime_enabled() {
+        WasmWorkerState::Ready
+    } else {
+        WasmWorkerState::Unwired
+    }
 }
 
 fn current_worker_state_key() -> String {

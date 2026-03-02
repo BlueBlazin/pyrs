@@ -267,6 +267,14 @@ fn expected_worker_info_state_for_fixture(
     fixture.expected_state.to_string()
 }
 
+fn expected_mode_baseline_worker_state() -> String {
+    if vm_probe_enabled() {
+        "ready".to_string()
+    } else {
+        "unwired".to_string()
+    }
+}
+
 fn expected_worker_info_execution_probe_enabled_for_fixture(
     fixture: &wasm_worker_contract::WasmWorkerInfoFixture,
 ) -> bool {
@@ -852,7 +860,7 @@ fn wasm_worker_execute_with_operation_contract_is_stable() {
         );
         assert_eq!(
             result.state(),
-            "unwired".to_string(),
+            expected_mode_baseline_worker_state(),
             "worker execute-with-operation state mismatch: {}",
             fixture.name
         );
@@ -1179,14 +1187,20 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
     }
     let first_id = first.operation_id();
     assert!(first_id.starts_with("worker_execute_"));
-    assert_eq!(first.state(), "unwired".to_string());
+    assert_eq!(first.state(), expected_mode_baseline_worker_state());
     assert_eq!(session.executes_requested(), 1);
     assert_eq!(session.last_operation_id(), Some(first_id.clone()));
-    assert_eq!(session.last_state(), Some("unwired".to_string()));
+    assert_eq!(
+        session.last_state(),
+        Some(expected_mode_baseline_worker_state())
+    );
     let first_snapshot = session.snapshot();
     assert_eq!(first_snapshot.executes_requested(), 1);
     assert_eq!(first_snapshot.last_operation_id(), Some(first_id.clone()));
-    assert_eq!(first_snapshot.last_state(), Some("unwired".to_string()));
+    assert_eq!(
+        first_snapshot.last_state(),
+        Some(expected_mode_baseline_worker_state())
+    );
     if vm_probe_enabled() {
         assert_eq!(session.last_phase(), Some("ok".to_string()));
         assert!(first.blocker_key().is_none());
@@ -1209,12 +1223,15 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
     );
     let second_id = second.operation_id();
     assert!(second_id.starts_with("worker_execute_"));
-    assert_eq!(second.state(), "unwired".to_string());
+    assert_eq!(second.state(), expected_mode_baseline_worker_state());
     assert_ne!(first_id, second_id);
     assert_eq!(session.executes_requested(), 2);
     assert_eq!(session.last_operation_id(), Some(second_id));
     assert_eq!(session.last_phase(), Some("syntax_error".to_string()));
-    assert_eq!(session.last_state(), Some("unwired".to_string()));
+    assert_eq!(
+        session.last_state(),
+        Some(expected_mode_baseline_worker_state())
+    );
     assert!(second.blocker_key().is_none());
     let second_snapshot = session.snapshot();
     assert_eq!(second_snapshot.executes_requested(), 2);
@@ -1222,7 +1239,10 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
         second_snapshot.last_phase(),
         Some("syntax_error".to_string())
     );
-    assert_eq!(second_snapshot.last_state(), Some("unwired".to_string()));
+    assert_eq!(
+        second_snapshot.last_state(),
+        Some(expected_mode_baseline_worker_state())
+    );
 }
 
 #[wasm_bindgen_test]

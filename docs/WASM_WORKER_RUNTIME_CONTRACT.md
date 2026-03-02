@@ -163,6 +163,7 @@ keys (`worker_runtime_unwired` + module-policy capability keys).
 `wasm_worker_set_timeout(timeout_ms)` currently returns:
 
 - `operation_id = worker_set_timeout_<n>`
+- `state = "unwired"` in default builds, `"ready"` with `wasm-vm-probe`
 - `phase = "invalid_worker_timeout"` for out-of-range values.
 - for in-range values (`50..=120000` ms):
   - default build:
@@ -201,7 +202,7 @@ controls, and `enforcement_supported` for hard runtime-enforcement guarantees.
 `wasm_worker_execute(source)` and also returns:
 
 - `operation_id = worker_execute_<n>`
-- `state = "unwired"` (current stub/runtime state)
+- `state = "unwired"` in default builds, `"ready"` with `wasm-vm-probe`
 
 `WasmWorkerSession` currently wraps lifecycle calls and tracks:
 

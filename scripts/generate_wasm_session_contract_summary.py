@@ -61,6 +61,13 @@ class WorkerTimeoutFixtureRow:
     has_vm_probe_blocker_override: bool
 
 
+@dataclass
+class WorkerInfoFixtureRow:
+    name: str
+    expected_state: str
+    expected_vm_probe_state: str | None
+
+
 def parse_const_body(source: str, const_name: str) -> str:
     match = re.search(
         rf"pub const {re.escape(const_name)}:[^=]*=\s*&\[(.*?)\];",
@@ -240,6 +247,22 @@ def parse_worker_timeout_rows(source: str) -> list[WorkerTimeoutFixtureRow]:
     return rows
 
 
+def parse_worker_info_rows(source: str) -> list[WorkerInfoFixtureRow]:
+    body = parse_const_body(source, "WASM_WORKER_INFO_FIXTURES")
+    pattern = re.compile(r"WasmWorkerInfoFixture\s*\{(.*?)\n\s*\},?", re.DOTALL)
+    rows: list[WorkerInfoFixtureRow] = []
+    for match in pattern.finditer(body):
+        row = match.group(1)
+        rows.append(
+            WorkerInfoFixtureRow(
+                name=parse_required_string(row, "name"),
+                expected_state=parse_required_string(row, "expected_state"),
+                expected_vm_probe_state=parse_optional_string(row, "expected_vm_probe_state"),
+            )
+        )
+    return rows
+
+
 def find_row(rows: list[WorkerFixtureRow], name: str) -> WorkerFixtureRow | None:
     for row in rows:
         if row.name == name:
@@ -267,8 +290,20 @@ def validate(
     worker_rows: list[WorkerFixtureRow],
     worker_lifecycle_rows: list[WorkerLifecycleFixtureRow],
     worker_timeout_rows: list[WorkerTimeoutFixtureRow],
+    worker_info_rows: list[WorkerInfoFixtureRow],
 ) -> list[str]:
     errors: list[str] = []
+
+    if not worker_info_rows:
+        errors.append("missing worker info fixture rows")
+        vm_probe_baseline_state = "unwired"
+    else:
+        baseline_info = worker_info_rows[0]
+        vm_probe_baseline_state = (
+            baseline_info.expected_vm_probe_state
+            if baseline_info.expected_vm_probe_state is not None
+            else baseline_info.expected_state
+        )
     if not top_level_rows:
         errors.append("top-level fixture rows are empty")
     if not worker_rows:
@@ -421,8 +456,10 @@ def validate(
             errors.append(f"{row.name}: invalid timeout expected_blocker_key must be None")
         if row.expected_vm_probe_phase is not None:
             errors.append(f"{row.name}: invalid timeout expected_vm_probe_phase must be None")
-        if row.expected_vm_probe_state is not None:
-            errors.append(f"{row.name}: invalid timeout expected_vm_probe_state must be None")
+        if row.expected_vm_probe_state != vm_probe_baseline_state:
+            errors.append(
+                f"{row.name}: invalid timeout expected_vm_probe_state must be Some(\"{vm_probe_baseline_state}\")"
+            )
         if row.expected_vm_probe_success is not None:
             errors.append(f"{row.name}: invalid timeout expected_vm_probe_success must be None")
         if row.has_vm_probe_blocker_override:
@@ -448,9 +485,9 @@ def validate(
             errors.append(
                 f"{row.name}: unsupported timeout expected_vm_probe_phase must be worker_timeout_configured"
             )
-        if row.expected_vm_probe_state != "unwired":
+        if row.expected_vm_probe_state != vm_probe_baseline_state:
             errors.append(
-                f"{row.name}: unsupported timeout expected_vm_probe_state must be Some(\"unwired\")"
+                f"{row.name}: unsupported timeout expected_vm_probe_state must be Some(\"{vm_probe_baseline_state}\")"
             )
         if row.expected_vm_probe_success is not True:
             errors.append(
@@ -494,9 +531,14 @@ def main() -> int:
     worker_rows = parse_worker_rows(worker_source)
     worker_lifecycle_rows = parse_worker_lifecycle_rows(worker_source)
     worker_timeout_rows = parse_worker_timeout_rows(worker_source)
+    worker_info_rows = parse_worker_info_rows(worker_source)
 
     errors = validate(
-        top_level_rows, worker_rows, worker_lifecycle_rows, worker_timeout_rows
+        top_level_rows,
+        worker_rows,
+        worker_lifecycle_rows,
+        worker_timeout_rows,
+        worker_info_rows,
     )
     if errors:
         print("wasm session contract summary validation failed:")
@@ -512,6 +554,7 @@ def main() -> int:
             "worker_rows": len(worker_rows),
             "worker_lifecycle_rows": len(worker_lifecycle_rows),
             "worker_timeout_rows": len(worker_timeout_rows),
+            "worker_info_rows": len(worker_info_rows),
             "worker_timeout_invalid_rows": len(
                 [
                     row
@@ -544,6 +587,18 @@ def main() -> int:
             ),
         },
         "worker_session_rows": {
+            "worker_info_runtime_contract": next(
+                (
+                    {
+                        "name": row.name,
+                        "expected_state": row.expected_state,
+                        "expected_vm_probe_state": row.expected_vm_probe_state,
+                    }
+                    for row in worker_info_rows
+                    if row.name == "worker_info_runtime_contract"
+                ),
+                None,
+            ),
             "worker_execute_unwired": next(
                 (
                     {
