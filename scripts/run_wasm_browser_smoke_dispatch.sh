@@ -27,6 +27,46 @@ require_cmd() {
   fi
 }
 
+watch_run_with_fallback() {
+  local run_id="$1"
+  if gh run watch "${run_id}" --exit-status; then
+    return 0
+  fi
+
+  echo "[wasm-browser-dispatch] warning: gh run watch failed; falling back to run-view polling"
+  local attempt=1
+  local max_attempts=120
+  while [[ "${attempt}" -le "${max_attempts}" ]]; do
+    local status_payload=""
+    status_payload="$(
+      gh run view "${run_id}" --json status,conclusion --jq '.status + ":" + (.conclusion // "")' 2>/dev/null || true
+    )"
+    if [[ -z "${status_payload}" ]]; then
+      echo "[wasm-browser-dispatch] poll ${attempt}/${max_attempts}: run status unavailable; retrying"
+      sleep 3
+      attempt=$((attempt + 1))
+      continue
+    fi
+
+    local run_status="${status_payload%%:*}"
+    local run_conclusion="${status_payload#*:}"
+    if [[ "${run_status}" == "completed" ]]; then
+      if [[ "${run_conclusion}" == "success" ]]; then
+        echo "[wasm-browser-dispatch] fallback poll observed successful completion"
+        return 0
+      fi
+      echo "[wasm-browser-dispatch] run completed with conclusion='${run_conclusion}'" >&2
+      return 1
+    fi
+
+    sleep 3
+    attempt=$((attempt + 1))
+  done
+
+  echo "[wasm-browser-dispatch] fallback poll timed out waiting for run completion" >&2
+  return 1
+}
+
 branch_ref="codex/wasm"
 workflow_name="wasm-track.yml"
 run_id=""
@@ -107,7 +147,7 @@ if [[ -z "${run_id}" ]]; then
 fi
 
 echo "[wasm-browser-dispatch] watching run ${run_id}"
-gh run watch "${run_id}" --exit-status
+watch_run_with_fallback "${run_id}"
 
 run_url="$(
   gh run view "${run_id}" --json url --jq '.url'
