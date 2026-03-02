@@ -2786,6 +2786,7 @@ mod tests {
         pyrs_version, wasm_worker_current_timeout_ms, wasm_worker_execute, wasm_worker_info,
         wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start, wasm_worker_terminate,
     };
+    #[cfg(feature = "wasm-vm-probe")]
     use std::collections::HashSet;
     #[cfg(feature = "wasm-vm-probe")]
     use super::{
