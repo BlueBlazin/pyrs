@@ -639,6 +639,9 @@ Completed on this branch:
   post-recycle worker execute/timeout contracts, and
   `generate_wasm_session_contract_summary.py` now validates those fixture rows
   against lifecycle state/phase invariants and vm-probe overrides.
+- latest: `WASM_API_CONTRACT.md` execution matrix now requires explicit worker
+  vm-probe state branches (`state = "ready"` vs `state != "ready"`), with
+  `generate_wasm_docs_execution_matrix_summary.py` enforcing those row tokens.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
