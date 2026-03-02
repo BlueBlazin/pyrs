@@ -933,6 +933,7 @@ def validate(
             )
 
     required_sequence_pair_found = False
+    required_terminate_terminal_sequence_found = False
     for row in worker_session_state_sequence_rows:
         if row.timeout_ms <= 0:
             errors.append(f"{row.name}: timeout_ms must be positive")
@@ -952,6 +953,8 @@ def validate(
                 break
 
         last_action = row.trigger_actions[-1]
+        if last_action == "terminate":
+            required_terminate_terminal_sequence_found = True
         lifecycle_row = find_lifecycle_row(worker_lifecycle_rows, last_action)
         if lifecycle_row is None:
             errors.append(
@@ -1093,6 +1096,10 @@ def validate(
     if not required_sequence_pair_found:
         errors.append(
             "worker session state-sequence fixtures must include a terminate->start transition"
+        )
+    if not required_terminate_terminal_sequence_found:
+        errors.append(
+            "worker session state-sequence fixtures must include at least one sequence ending in terminate"
         )
 
     return errors
