@@ -1,0 +1,132 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Browser Playground
+description: Reference guide for the experimental PYRS browser playground and wasm worker probe controls.
+pageTitle: Browser Playground
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import CodeBlock from "../../components/docs/CodeBlock.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	This page documents the experimental browser route at <a href="/playground/"><code>/playground</code></a>.
+	It is a wasm probe surface for `codex/wasm`, not the production runtime contract.
+</DocSection>
+
+<DocSection title="Core Workflow">
+	<DataTable headers={["Step", "Action", "What to check"]}>
+		<tr>
+			<td>1</td>
+			<td>Click <code>Load Runtime</code></td>
+			<td>Runtime status changes to loaded; runtime snapshot becomes populated.</td>
+		</tr>
+		<tr>
+			<td>2</td>
+			<td>Click <code>Inspect Runtime</code></td>
+			<td>Verify backend/state/capability keys before running snippets.</td>
+		</tr>
+		<tr>
+			<td>3</td>
+			<td>Click <code>Analyze Snippet</code></td>
+			<td>Review import roots and blocker rows in the preflight panel.</td>
+		</tr>
+		<tr>
+			<td>4</td>
+			<td>Click <code>Run Snippet</code></td>
+			<td>Execution output includes both preflight snapshot and execute result payload.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Runtime Snapshot Fields">
+	<DataTable headers={["Area", "Fields", "Notes"]}>
+		<tr>
+			<td>Runtime</td>
+			<td>
+				<code>api_version</code>, <code>supports_execution</code>,
+				<code>execution_backend</code>, <code>execution_blocker_count</code>
+			</td>
+			<td>Use these for top-level execution readiness and backend-mode branching.</td>
+		</tr>
+		<tr>
+			<td>Worker</td>
+			<td>
+				<code>state</code>, <code>lifecycle_supported</code>,
+				<code>execute_supported</code>, <code>timeout_configuration_supported</code>
+			</td>
+			<td>Use these for worker controls and state-gate interpretation.</td>
+		</tr>
+		<tr>
+			<td>Capabilities</td>
+			<td><code>key</code>, <code>supported</code>, <code>error</code></td>
+			<td>Unsupported capabilities are explicit and map directly to blocker keys.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Snippet Preflight Interpretation">
+	<CodeBlock
+		label="Preflight Example"
+		code={`{
+  "phase": "blocked_capability",
+  "import_roots": ["socket"],
+  "blockers": [
+    {
+      "module": "socket",
+      "blocker_key": "network_sockets",
+      "message": "network sockets are not available in browser wasm mode"
+    }
+  ]
+}`}
+	/>
+	<Callout title="Execution Skip Rule" tone="warning">
+		If preflight phase is not <code>supported</code>, the playground intentionally skips execution
+		and reports blocker details. This prevents false-positive runtime behavior.
+	</Callout>
+</DocSection>
+
+<DocSection title="Worker Probe Controls">
+	<DataTable headers={["Control", "Default Build", "wasm-vm-probe Build"]}>
+		<tr>
+			<td><code>Worker Start</code></td>
+			<td><code>unsupported_worker_start</code></td>
+			<td><code>worker_started</code></td>
+		</tr>
+		<tr>
+			<td><code>Worker Terminate</code></td>
+			<td><code>unsupported_worker_terminate</code></td>
+			<td><code>worker_terminated</code></td>
+		</tr>
+		<tr>
+			<td><code>Worker Recycle</code></td>
+			<td><code>unsupported_worker_recycle</code></td>
+			<td><code>worker_recycled</code></td>
+		</tr>
+		<tr>
+			<td><code>Worker Execute</code></td>
+			<td><code>unsupported_worker_execution</code></td>
+			<td><code>ok</code> / <code>runtime_error</code> when state is <code>ready</code></td>
+		</tr>
+		<tr>
+			<td><code>Set Timeout</code></td>
+			<td><code>unsupported_worker_timeout_enforcement</code></td>
+			<td><code>worker_timeout_configured</code> when state is <code>ready</code></td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Related Pages">
+	<ul>
+		<li>
+			See <a href="/docs/reference/">CLI and Environment</a> for native execution controls.
+		</li>
+		<li>
+			See <a href="/docs/repl/">REPL and Execution</a> for interactive native runtime workflow.
+		</li>
+		<li>
+			See <a href="/docs/roadmap-and-milestones/">Roadmap and Milestones</a> for milestone status.
+		</li>
+	</ul>
+</DocSection>

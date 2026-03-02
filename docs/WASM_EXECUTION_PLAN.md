@@ -677,6 +677,10 @@ Completed on this branch:
   (`wasm_runtime_info`, worker info, capability matrix, blocker rows), snippet
   preflight details (import roots + blocker rows), and worker probe controls
   (start/recycle/terminate/execute/timeout) for state-gate debugging.
+- latest: docs now include a dedicated browser playground reference page
+  (`website/src/pages/docs/playground.mdx`) and docs navigation wiring, with
+  explicit interpretation guidance for preflight payloads and worker control
+  phase expectations.
 - latest: `run_wasm_contract_smoke.sh` now supports
   `PYRS_WASM_SKIP_CORE_SMOKE=1` so browser-smoke lanes can run wasm-pack
   checks without re-running core compile/summary/nextest gates.
@@ -686,7 +690,7 @@ Latest host seam audit (local branch run):
 
 Remaining near-term focus:
 1. W5: increase worker runtime execution coverage in vm-probe mode (state/lifecycle edges).
-2. W6: add docs-level guidance for playground worker controls and preflight interpretation.
+2. W6: refine playground UX/error affordances from first real browser-smoke transcripts.
 3. W7: capture and publish first workflow-dispatch browser-smoke baseline artifact.
 
 Current `wasm-vm-probe` snapshot (non-gating, latest local run):
