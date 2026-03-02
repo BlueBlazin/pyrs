@@ -193,7 +193,9 @@ Branch helper:
   set `PYRS_WASM_RUN_VM_PROBE_BROWSER_STATE_GATE_SMOKE=1` to additionally run
   vm-probe state-gate smoke (`wasm-pack --node`) via dedicated
   `--test wasm_vm_probe_browser_smoke` target while browser smoke remains on
-  the default `wasm_contract` suite).
+  the default `wasm_contract` suite.
+  The vm-probe node lane requires `scripts/wasm_node_shims/env/index.js`
+  to exist and fails fast if that shim is missing).
 - wasm bridge unit-contract helper:
   `cargo nextest run --lib wasm_ --status-level fail --final-status-level fail`
   for host-executed wasm bridge/runtime unit-contract coverage.

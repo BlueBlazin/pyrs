@@ -51,6 +51,19 @@ def main() -> int:
     if not isinstance(vm_probe_state_gate_smoke_enabled, bool):
         return fail("vm_probe_state_gate_smoke_enabled must be a boolean")
 
+    vm_probe_state_gate_runner = payload.get("vm_probe_state_gate_runner")
+    if vm_probe_state_gate_smoke_enabled:
+        if vm_probe_state_gate_runner not in {"node", "browser"}:
+            return fail(
+                "vm_probe_state_gate_runner must be 'node' or 'browser' "
+                "when vm_probe_state_gate_smoke_enabled is true"
+            )
+    elif vm_probe_state_gate_runner is not None:
+        return fail(
+            "vm_probe_state_gate_runner must be null when "
+            "vm_probe_state_gate_smoke_enabled is false"
+        )
+
     git = payload.get("git")
     if not isinstance(git, dict):
         return fail("git must be an object")

@@ -46,6 +46,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Record that vm-probe terminate/recycle state-gate browser smoke was enabled.",
     )
+    parser.add_argument(
+        "--vm-probe-runner",
+        choices=("node", "browser"),
+        help="Execution runner used for vm-probe supplemental smoke.",
+    )
     return parser.parse_args()
 
 
@@ -59,6 +64,7 @@ def main() -> int:
         "browser": args.browser,
         "fallback_from": args.fallback_from,
         "vm_probe_state_gate_smoke_enabled": args.vm_probe_state_gate,
+        "vm_probe_state_gate_runner": args.vm_probe_runner if args.vm_probe_state_gate else None,
         "git": {
             "branch": git_value("rev-parse", "--abbrev-ref", "HEAD"),
             "commit": git_value("rev-parse", "HEAD"),

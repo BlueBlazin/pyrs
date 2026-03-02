@@ -136,6 +136,12 @@ run_vm_probe_state_gate_browser_smoke() {
   # keep hard signal without browser-loader deadlocks.
   local shim_root
   shim_root="$(pwd)/scripts/wasm_node_shims"
+  local env_shim_file
+  env_shim_file="${shim_root}/env/index.js"
+  if [[ ! -f "${env_shim_file}" ]]; then
+    echo "[wasm-contract] missing required node env shim: ${env_shim_file}"
+    return 1
+  fi
   if [[ -n "${NODE_PATH:-}" ]]; then
     export NODE_PATH="${shim_root}:${NODE_PATH}"
   else
@@ -157,6 +163,7 @@ emit_browser_smoke_baseline() {
   fi
   if [[ "${vm_probe_browser_smoke_enabled}" == "1" ]]; then
     args+=(--vm-probe-state-gate)
+    args+=(--vm-probe-runner "node")
   fi
   python3 scripts/generate_wasm_browser_smoke_baseline.py "${args[@]}"
 }

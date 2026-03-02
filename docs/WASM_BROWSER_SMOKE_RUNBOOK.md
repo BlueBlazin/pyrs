@@ -27,6 +27,9 @@ Notes:
 - Browser lane is fail-hard; failures must be triaged before promotion.
 - Browser lane also downloads `wasm-evidence-pack` from contract gate and
   validates the manifest/copies before running browser smoke.
+- vm-probe supplemental state-gate smoke now runs via `wasm-pack --node`
+  (not browser harness) with required shim path:
+  `scripts/wasm_node_shims/env/index.js`.
 - Local desktop/sandbox runs may block webdriver launch/download
   (`Operation not permitted`); use workflow-dispatch CI artifacts as the
   canonical browser-smoke baseline source.
@@ -70,7 +73,7 @@ Expected artifact bundles:
 - `wasm-evidence-pack`
 - `wasm-browser-smoke-artifacts` (present when browser lane executes)
   - includes `perf/wasm_browser_smoke_baseline_latest.json` with browser,
-    fallback, vm-probe-state-gate flag, and git commit metadata.
+    fallback, vm-probe-state-gate flag/runner metadata, and git commit metadata.
   - includes `perf/wasm_evidence_pack_latest/manifest.json` when core smoke
     generated a local evidence pack.
 - `wasm-browser-smoke-evidence-pack` (present when browser lane emits an
