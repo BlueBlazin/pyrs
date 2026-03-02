@@ -56,6 +56,10 @@ if [[ "${PYRS_WASM_SKIP_CORE_SMOKE:-0}" != "1" ]]; then
   python3 scripts/audit_wasm_host_seam.py \
     --out perf/wasm_host_seam_audit_latest.json
 
+  echo "[wasm-contract] wasm local evidence-pack snapshot"
+  python3 scripts/collect_wasm_evidence_pack.py \
+    --out-dir perf/wasm_evidence_pack_latest
+
   echo "[wasm-contract] nextest wasm bridge unit-contract regression"
   cargo nextest run --lib wasm_ --status-level fail --final-status-level fail
 
