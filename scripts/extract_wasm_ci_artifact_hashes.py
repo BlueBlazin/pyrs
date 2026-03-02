@@ -13,6 +13,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -45,16 +46,43 @@ FINALIZED_RE = re.compile(
 )
 
 
-def run_gh(args: list[str]) -> str:
-    proc = subprocess.run(
-        args,
-        check=False,
-        capture_output=True,
-        text=True,
+def is_transient_gh_error(message: str) -> bool:
+    lowered = message.lower()
+    return any(
+        token in lowered
+        for token in (
+            "error connecting to api.github.com",
+            "tls",
+            "timed out",
+            "timeout",
+            "connection reset",
+            "temporary failure",
+            "service unavailable",
+        )
     )
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "unknown gh error")
-    return proc.stdout
+
+
+def run_gh(args: list[str], retries: int = 3, retry_delay_seconds: float = 1.25) -> str:
+    last_error = "unknown gh error"
+    for attempt in range(1, retries + 1):
+        proc = subprocess.run(
+            args,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0:
+            return proc.stdout
+
+        message = proc.stderr.strip() or proc.stdout.strip() or "unknown gh error"
+        last_error = message
+        if attempt >= retries or not is_transient_gh_error(message):
+            raise RuntimeError(last_error)
+
+        sleep_seconds = retry_delay_seconds * attempt
+        time.sleep(sleep_seconds)
+
+    raise RuntimeError(last_error)
 
 
 def parse_records(log_text: str) -> list[ArtifactRecord]:
@@ -93,7 +121,12 @@ def format_markdown(payload: dict[str, Any]) -> str:
     run_id = payload.get("run_id")
     run_url = payload.get("run_url")
     head_sha = payload.get("head_sha")
-    lines.append(f"- workflow run: [{run_id}]({run_url})")
+    if run_id and run_url:
+        lines.append(f"- workflow run: [{run_id}]({run_url})")
+    elif run_url:
+        lines.append(f"- workflow run: {run_url}")
+    else:
+        lines.append("- workflow run: (unknown)")
     lines.append(f"- head commit: `{head_sha}`")
     lines.append("- artifact hashes:")
     for artifact in payload.get("artifacts", []):
@@ -116,6 +149,15 @@ def build_payload(
         "artifact_count": len(records),
         "artifacts": [record.to_dict() for record in records],
     }
+
+
+def infer_run_id_from_url(run_url: str | None) -> str | None:
+    if not run_url:
+        return None
+    match = re.search(r"/actions/runs/(\d+)", run_url)
+    if not match:
+        return None
+    return match.group(1)
 
 
 def parse_args() -> argparse.Namespace:
@@ -145,16 +187,20 @@ def main() -> int:
     run_url: str | None = args.run_url
     head_sha: str | None = args.head_sha
 
+    effective_run_id = args.run_id
+    if not effective_run_id and args.run_url:
+        effective_run_id = infer_run_id_from_url(args.run_url)
+
     if args.log_file:
         log_text = Path(args.log_file).read_text(encoding="utf-8")
     else:
-        assert args.run_id is not None
+        assert effective_run_id is not None
         metadata_text = run_gh(
             [
                 "gh",
                 "run",
                 "view",
-                args.run_id,
+                effective_run_id,
                 "--json",
                 "url,headSha",
             ]
@@ -162,14 +208,14 @@ def main() -> int:
         metadata = json.loads(metadata_text)
         run_url = metadata.get("url")
         head_sha = metadata.get("headSha")
-        log_text = run_gh(["gh", "run", "view", args.run_id, "--log"])
+        log_text = run_gh(["gh", "run", "view", effective_run_id, "--log"])
 
     records = parse_records(log_text)
     if not records:
         print("error: no uploaded artifact hash records found in log", file=sys.stderr)
         return 1
 
-    payload = build_payload(args.run_id, run_url, head_sha, records)
+    payload = build_payload(effective_run_id, run_url, head_sha, records)
     if args.format == "markdown":
         rendered = format_markdown(payload)
     else:
