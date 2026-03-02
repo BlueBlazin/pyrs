@@ -101,6 +101,7 @@ if ! command -v wasm-pack >/dev/null 2>&1; then
 fi
 
 vm_probe_browser_smoke_enabled=0
+vm_probe_browser_smoke_runner=""
 
 configure_browser_test_timeout() {
   local timeout_seconds="${PYRS_WASM_BROWSER_TEST_TIMEOUT_SECONDS:-180}"
@@ -129,11 +130,14 @@ run_vm_probe_state_gate_browser_smoke() {
     return 0
   fi
 
-  echo "[wasm-contract] wasm-pack node: vm-probe state-gate smoke target"
-  # vm-probe wasm binaries currently include native-host `env` imports that are
-  # shimmed in the website bundle pipeline, but not by wasm-bindgen-test's
-  # browser harness. Run vm-probe state-gate smoke under the node runner to
-  # keep hard signal without browser-loader deadlocks.
+  echo "[wasm-contract] wasm-pack ${browser}: vm-probe state-gate smoke target"
+  if wasm-pack test --headless --"${browser}" --no-default-features --features wasm-vm-probe --test wasm_vm_probe_browser_smoke; then
+    vm_probe_browser_smoke_enabled=1
+    vm_probe_browser_smoke_runner="browser"
+    return 0
+  fi
+
+  echo "[wasm-contract] ${browser} vm-probe state-gate smoke failed; trying node fallback"
   local shim_root
   shim_root="$(pwd)/scripts/wasm_node_shims"
   local env_shim_file
@@ -149,6 +153,7 @@ run_vm_probe_state_gate_browser_smoke() {
   fi
   wasm-pack test --node --no-default-features --features wasm-vm-probe --test wasm_vm_probe_browser_smoke
   vm_probe_browser_smoke_enabled=1
+  vm_probe_browser_smoke_runner="node"
   return 0
 }
 
@@ -163,7 +168,7 @@ emit_browser_smoke_baseline() {
   fi
   if [[ "${vm_probe_browser_smoke_enabled}" == "1" ]]; then
     args+=(--vm-probe-state-gate)
-    args+=(--vm-probe-runner "node")
+    args+=(--vm-probe-runner "${vm_probe_browser_smoke_runner}")
   fi
   python3 scripts/generate_wasm_browser_smoke_baseline.py "${args[@]}"
 }
