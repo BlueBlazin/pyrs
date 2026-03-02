@@ -40,21 +40,29 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 				<p class="playground-shell-title">PYRS REPL</p>
 			</div>
 
-			<div class="playground-transcript" id="playground-transcript"></div>
-
-			<form class="playground-input-row" id="playground-form" autocomplete="off">
-				<label for="playground-input" class="sr-only">Python REPL input</label>
-				<span class="playground-prompt" aria-hidden="true">&gt;&gt;&gt;</span>
-				<textarea
-					id="playground-input"
-					name="source"
-					spellcheck="false"
-					autocapitalize="off"
-					autocorrect="off"
-					rows="1"
-					placeholder="Try: 1 + 1"
-				></textarea>
-			</form>
+			<div class="playground-transcript" id="playground-transcript">
+				<form class="playground-inline-entry" id="playground-form" autocomplete="off">
+					<label for="playground-input" class="sr-only">Python REPL input</label>
+					<span class="transcript-prompt transcript-prompt-active" id="playground-active-prompt"
+						>&gt;&gt;&gt; </span
+					>
+					<div class="playground-editor-stack">
+						<pre
+							id="playground-highlight"
+							class="playground-editor-highlight"
+							aria-hidden="true"
+						></pre>
+						<textarea
+							id="playground-input"
+							name="source"
+							spellcheck="false"
+							autocapitalize="off"
+							autocorrect="off"
+							rows="1"
+						></textarea>
+					</div>
+				</form>
+			</div>
 		</section>
 
 		<div class="playground-actions">
@@ -69,6 +77,8 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		const transcriptEl = document.getElementById("playground-transcript");
 		const formEl = document.getElementById("playground-form");
 		const inputEl = document.getElementById("playground-input");
+		const highlightEl = document.getElementById("playground-highlight");
+		const activePromptEl = document.getElementById("playground-active-prompt");
 		const clearButton = document.getElementById("playground-clear");
 		const resetButton = document.getElementById("playground-reset");
 
@@ -85,6 +95,68 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		let bannerRendered = false;
 		const commandHistory = [];
 		let historyIndex = -1;
+
+		const PY_KEYWORDS = new Set([
+			"False",
+			"None",
+			"True",
+			"and",
+			"as",
+			"assert",
+			"async",
+			"await",
+			"break",
+			"class",
+			"continue",
+			"def",
+			"del",
+			"elif",
+			"else",
+			"except",
+			"finally",
+			"for",
+			"from",
+			"global",
+			"if",
+			"import",
+			"in",
+			"is",
+			"lambda",
+			"nonlocal",
+			"not",
+			"or",
+			"pass",
+			"raise",
+			"return",
+			"try",
+			"while",
+			"with",
+			"yield",
+		]);
+		const PY_BUILTIN_TYPES = new Set([
+			"int",
+			"float",
+			"bool",
+			"complex",
+			"str",
+			"bytes",
+			"bytearray",
+			"list",
+			"tuple",
+			"dict",
+			"set",
+			"frozenset",
+			"object",
+			"type",
+		]);
+		const PY_TOKEN_REGEX =
+			/(@[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)|([rRuUbBfF]{0,2}(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'))|(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?j?\b)|([A-Za-z_][A-Za-z0-9_]*)|(#.*$)/gm;
+
+		const escapeHtml = (value) =>
+			value
+				.replaceAll("&", "&amp;")
+				.replaceAll("<", "&lt;")
+				.replaceAll(">", "&gt;");
 
 		const readField = (object, key) => {
 			if (!object) return undefined;
@@ -106,47 +178,89 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 			});
 		};
 
-		const appendTranscriptLine = (text, kind = "stdout") => {
+		const appendBeforeInlineEntry = (node) => {
 			if (!(transcriptEl instanceof HTMLElement)) return;
-			const line = document.createElement("div");
-			line.className = `transcript-line transcript-line-${kind}`;
-			line.textContent = text;
-			transcriptEl.appendChild(line);
-			scrollTranscriptToEnd();
-		};
-
-		const appendPromptLine = (prompt, text) => {
-			if (!(transcriptEl instanceof HTMLElement)) return;
-			const line = document.createElement("div");
-			line.className = "transcript-line transcript-line-input";
-
-			const promptSpan = document.createElement("span");
-			promptSpan.className = "transcript-prompt";
-			promptSpan.textContent = prompt;
-
-			const codeSpan = document.createElement("span");
-			codeSpan.className = "transcript-input-text";
-			codeSpan.textContent = text;
-
-			line.appendChild(promptSpan);
-			line.appendChild(codeSpan);
-			transcriptEl.appendChild(line);
-			scrollTranscriptToEnd();
-		};
-
-		const appendPromptInput = (source) => {
-			const lines = source.split("\n");
-			lines.forEach((line, index) => {
-				appendPromptLine(index === 0 ? ">>>" : "...", line);
-			});
-		};
-
-		const appendMultilineOutput = (text, kind) => {
-			const lines = text.replace(/\r/g, "").split("\n");
-			while (lines.length > 0 && lines[lines.length - 1] === "") {
-				lines.pop();
+			if (formEl instanceof HTMLElement && formEl.parentElement === transcriptEl) {
+				transcriptEl.insertBefore(node, formEl);
+			} else {
+				transcriptEl.appendChild(node);
 			}
-			lines.forEach((line) => appendTranscriptLine(line, kind));
+			scrollTranscriptToEnd();
+		};
+
+		const highlightPython = (source) => {
+			const input = source.replace(/\r/g, "");
+			if (input.length === 0) {
+				return "";
+			}
+
+			let html = "";
+			let cursor = 0;
+			let expectNameKind = null;
+			PY_TOKEN_REGEX.lastIndex = 0;
+
+			for (const match of input.matchAll(PY_TOKEN_REGEX)) {
+				const matchText = match[0];
+				const start = match.index ?? 0;
+
+				if (start > cursor) {
+					html += escapeHtml(input.slice(cursor, start));
+				}
+
+				if (match[1]) {
+					html += `<span class="tok-decorator">${escapeHtml(matchText)}</span>`;
+					expectNameKind = null;
+				} else if (match[2]) {
+					html += `<span class="tok-string">${escapeHtml(matchText)}</span>`;
+					expectNameKind = null;
+				} else if (match[3]) {
+					html += `<span class="tok-number">${escapeHtml(matchText)}</span>`;
+					expectNameKind = null;
+				} else if (match[4]) {
+					const word = matchText;
+					if (expectNameKind === "class") {
+						html += `<span class="tok-class-name">${escapeHtml(word)}</span>`;
+						expectNameKind = null;
+					} else if (expectNameKind === "def") {
+						html += `<span class="tok-function-name">${escapeHtml(word)}</span>`;
+						expectNameKind = null;
+					} else if (PY_KEYWORDS.has(word)) {
+						html += `<span class="tok-keyword">${escapeHtml(word)}</span>`;
+						if (word === "class") {
+							expectNameKind = "class";
+						} else if (word === "def") {
+							expectNameKind = "def";
+						} else {
+							expectNameKind = null;
+						}
+					} else if (PY_BUILTIN_TYPES.has(word)) {
+						html += `<span class="tok-type-name">${escapeHtml(word)}</span>`;
+						expectNameKind = null;
+					} else {
+						html += escapeHtml(word);
+					}
+				} else if (match[5]) {
+					html += `<span class="tok-comment">${escapeHtml(matchText)}</span>`;
+					expectNameKind = null;
+				}
+
+				cursor = start + matchText.length;
+				if (matchText.includes("\n")) {
+					expectNameKind = null;
+				}
+			}
+
+			if (cursor < input.length) {
+				html += escapeHtml(input.slice(cursor));
+			}
+			return html;
+		};
+
+		const updateEditorHighlight = () => {
+			if (!(highlightEl instanceof HTMLElement) || !(inputEl instanceof HTMLTextAreaElement)) return;
+			const value = inputEl.value;
+			const rendered = highlightPython(value);
+			highlightEl.innerHTML = rendered.length > 0 ? rendered : " ";
 		};
 
 		const setStatus = (state, message) => {
@@ -170,10 +284,15 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 			}
 		};
 
+		const setActivePrompt = (continuation) => {
+			if (!(activePromptEl instanceof HTMLElement)) return;
+			activePromptEl.textContent = continuation ? "... " : ">>> ";
+		};
+
 		const setInputValue = (value) => {
 			if (!(inputEl instanceof HTMLTextAreaElement)) return;
 			inputEl.value = value;
-			resizeInput();
+			refreshEditorState();
 			const end = value.length;
 			inputEl.setSelectionRange(end, end);
 		};
@@ -181,8 +300,66 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		const resizeInput = () => {
 			if (!(inputEl instanceof HTMLTextAreaElement)) return;
 			inputEl.style.height = "0px";
-			const nextHeight = Math.min(Math.max(inputEl.scrollHeight, 40), 220);
+			const nextHeight = Math.min(Math.max(inputEl.scrollHeight, 24), 220);
 			inputEl.style.height = `${nextHeight}px`;
+			if (highlightEl instanceof HTMLElement) {
+				highlightEl.style.minHeight = `${nextHeight}px`;
+			}
+		};
+
+		const refreshEditorState = () => {
+			if (!(inputEl instanceof HTMLTextAreaElement)) return;
+			resizeInput();
+			updateEditorHighlight();
+			setActivePrompt(inputEl.value.includes("\n"));
+			if (highlightEl instanceof HTMLElement) {
+				highlightEl.scrollTop = inputEl.scrollTop;
+				highlightEl.scrollLeft = inputEl.scrollLeft;
+			}
+		};
+
+		const appendTranscriptLine = (text, kind = "stdout") => {
+			const line = document.createElement("div");
+			line.className = `transcript-line transcript-line-${kind}`;
+			line.textContent = text;
+			appendBeforeInlineEntry(line);
+		};
+
+		const appendPromptLine = (prompt, text) => {
+			const line = document.createElement("div");
+			line.className = "transcript-line transcript-line-input";
+
+			const promptSpan = document.createElement("span");
+			promptSpan.className = "transcript-prompt";
+			promptSpan.textContent = prompt;
+
+			const codeSpan = document.createElement("span");
+			codeSpan.className = "transcript-input-text";
+			const highlighted = highlightPython(text);
+			if (highlighted.length > 0) {
+				codeSpan.innerHTML = highlighted;
+			} else {
+				codeSpan.textContent = "";
+			}
+
+			line.appendChild(promptSpan);
+			line.appendChild(codeSpan);
+			appendBeforeInlineEntry(line);
+		};
+
+		const appendPromptInput = (source) => {
+			const lines = source.split("\n");
+			lines.forEach((line, index) => {
+				appendPromptLine(index === 0 ? ">>> " : "... ", line);
+			});
+		};
+
+		const appendMultilineOutput = (text, kind) => {
+			const lines = text.replace(/\r/g, "").split("\n");
+			while (lines.length > 0 && lines[lines.length - 1] === "") {
+				lines.pop();
+			}
+			lines.forEach((line) => appendTranscriptLine(line, kind));
 		};
 
 		const summarizeExecutionResult = (result) => {
@@ -220,13 +397,17 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		};
 
 		const clearTranscript = (preserveBanner = true) => {
-			if (transcriptEl instanceof HTMLElement) {
-				transcriptEl.innerHTML = "";
+			if (!(transcriptEl instanceof HTMLElement)) return;
+			for (const child of [...transcriptEl.children]) {
+				if (child !== formEl) {
+					child.remove();
+				}
 			}
 			bannerRendered = false;
 			if (preserveBanner && runtimeModule) {
 				renderStartupBanner(true);
 			}
+			scrollTranscriptToEnd();
 		};
 
 		const getReplSession = () => {
@@ -290,7 +471,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		};
 
 		const runSource = async (source) => {
-			const normalized = source.trimEnd();
+			const normalized = source.replace(/\r/g, "").trimEnd();
 			if (!normalized.trim()) return;
 
 			if (commandHistory.at(-1) !== normalized) {
@@ -322,6 +503,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 				appendTranscriptLine(message, "stderr");
 			} finally {
 				setBusy(false);
+				setActivePrompt(false);
 			}
 		};
 
@@ -363,8 +545,9 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 					}
 				}
 			});
-			inputEl.addEventListener("input", resizeInput);
-			resizeInput();
+			inputEl.addEventListener("input", refreshEditorState);
+			inputEl.addEventListener("scroll", refreshEditorState);
+			refreshEditorState();
 		}
 
 		if (formEl instanceof HTMLFormElement && inputEl instanceof HTMLTextAreaElement) {
@@ -372,7 +555,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 				event.preventDefault();
 				const source = inputEl.value;
 				inputEl.value = "";
-				resizeInput();
+				refreshEditorState();
 				await runSource(source);
 				inputEl.focus();
 			});
@@ -582,8 +765,8 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 	}
 
 	.transcript-prompt {
-		min-width: 2.35rem;
-		color: #4fc3ff;
+		min-width: 2.45rem;
+		color: rgb(46, 149, 211);
 		font-weight: 700;
 		letter-spacing: 0.03em;
 	}
@@ -591,6 +774,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 	.transcript-input-text {
 		color: #f8f2ec;
 		flex: 1;
+		min-width: 0;
 	}
 
 	.transcript-line-banner {
@@ -605,42 +789,90 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		color: #ffb7aa;
 	}
 
-	.playground-input-row {
-		display: grid;
-		grid-template-columns: auto 1fr;
-		align-items: end;
-		gap: 0.72rem;
-		padding: 0.86rem 1rem;
-		border-top: 1px solid rgba(52, 64, 86, 0.86);
-		background: linear-gradient(180deg, rgba(16, 25, 39, 0.74) 0%, rgba(11, 18, 30, 0.88) 100%);
+	.playground-inline-entry {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.62rem;
+		margin-top: 0.24rem;
 	}
 
-	.playground-prompt {
-		font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
-		font-size: 0.92rem;
-		font-weight: 700;
-		letter-spacing: 0.04em;
-		color: #4fc3ff;
-		padding-bottom: 0.5rem;
+	.transcript-prompt-active {
+		padding-top: 0.04rem;
 	}
 
-	.playground-input-row textarea {
-		width: 100%;
-		resize: none;
-		font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
-		font-size: 0.94rem;
-		line-height: 1.5;
-		background: transparent;
+	.playground-editor-stack {
+		position: relative;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.playground-editor-highlight,
+	.playground-editor-input {
+		margin: 0;
+		padding: 0;
+		font-family: inherit;
+		font-size: inherit;
+		line-height: inherit;
+		letter-spacing: inherit;
+		white-space: pre-wrap;
+		word-break: break-word;
+		tab-size: 4;
+	}
+
+	.playground-editor-highlight {
 		color: #f8f2ec;
+		pointer-events: none;
+		min-height: 1.56em;
+	}
+
+	.playground-editor-input {
+		position: absolute;
+		inset: 0;
+		width: 100%;
 		border: none;
 		outline: none;
-		padding: 0.32rem 0;
-		min-height: 2.5rem;
-		max-height: 220px;
+		resize: none;
+		overflow: hidden;
+		background: transparent;
+		color: transparent;
+		caret-color: #f8f2ec;
+		-webkit-text-fill-color: transparent;
 	}
 
-	.playground-input-row textarea::placeholder {
-		color: #8e9db3;
+	.tok-keyword {
+		color: rgb(46, 149, 211);
+		font-weight: 700;
+	}
+
+	.tok-class-name {
+		color: #ff5f87;
+		font-weight: 700;
+	}
+
+	.tok-function-name {
+		color: #ffaf00;
+		font-weight: 700;
+	}
+
+	.tok-decorator {
+		color: #87afff;
+	}
+
+	.tok-type-name {
+		color: #ffd700;
+	}
+
+	.tok-number {
+		color: #ff5faf;
+	}
+
+	.tok-string {
+		color: #00d787;
+	}
+
+	.tok-comment {
+		color: #808080;
+		font-style: italic;
 	}
 
 	.playground-actions {
@@ -728,7 +960,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		}
 
 		.transcript-prompt {
-			min-width: 2.05rem;
+			min-width: 2.15rem;
 		}
 	}
 </style>
