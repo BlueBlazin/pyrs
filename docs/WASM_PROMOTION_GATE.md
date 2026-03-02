@@ -5,6 +5,8 @@ Status: active for `codex/wasm` only.
 Purpose:
 - Define explicit promotion criteria before any WASM work can be considered for merge.
 - Keep native Linux/macOS release behavior protected while WASM remains experimental.
+- Preserve product positioning: native installed interpreter is the product;
+  WASM is demo-only and must not drive native regressions.
 
 ## Branch Safety Contract
 

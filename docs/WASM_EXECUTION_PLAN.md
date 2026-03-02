@@ -2,6 +2,12 @@
 
 Status: in progress on isolated spike branch only.
 
+## Product Positioning (Non-Negotiable)
+
+- PYRS is a production-grade native Python interpreter first (Linux/macOS installable binary/runtime).
+- WASM is a website/demo surface only.
+- WASM scope must never compromise native product correctness, performance, or release readiness.
+
 Branch policy:
 - All WASM work lives on `codex/wasm` (or descendant branches from it).
 - `master` remains untouched until explicit go/no-go approval.
