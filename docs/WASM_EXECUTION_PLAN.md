@@ -857,9 +857,10 @@ Current `wasm-vm-probe` snapshot (non-gating, latest local run):
 - latest: wasm vm-probe lane now uses wasm-native allocator shims
   (`malloc`/`calloc`/`realloc`/`free`) plus wasm-native float-formatting and
   `PyOS_strto*` parsing paths (no direct wasm libc imports for
-  `snprintf`/`strtol`/`strtoul`/`strtod`), and wasm-safe `zlib`/`bz2`/`lzma`
-  shims for the stdlib compression modules. This reduces raw wasm `env`
-  imports from `206` to `185` in the current probe baseline.
+  `snprintf`/`strtol`/`strtoul`/`strtod`), wasm-safe `zlib`/`bz2`/`lzma`
+  shims for stdlib compression modules, and wasm-safe `sqlite3` stubs for
+  stdlib database module compilation. This reduces raw wasm `env` imports from
+  `206` to `121` in the current probe baseline.
 
 ## Risk Register
 
