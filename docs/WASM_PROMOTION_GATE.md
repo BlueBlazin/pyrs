@@ -80,7 +80,7 @@ Promotion review must include:
 
 ### Latest Recorded Evidence Snapshot (2026-03-03 UTC)
 
-- workflow-dispatch run: [22594183409](https://github.com/BlueBlazin/pyrs/actions/runs/22594183409)
+- workflow-dispatch run: [22594645182](https://github.com/BlueBlazin/pyrs/actions/runs/22594645182)
 - head commit: `3bc74c8cbc1c63bf864c43640a465502d12ba852`
 - job status:
   - `wasm-contract-gate`: `success`
@@ -89,8 +89,8 @@ Promotion review must include:
   - last captured hash snapshot is from run
     [22593346662](https://github.com/BlueBlazin/pyrs/actions/runs/22593346662)
     (retained in git history),
-  - refresh hashes for run `22594183409` from a network-enabled shell:
-    `python3 scripts/extract_wasm_ci_artifact_hashes.py --run-id 22594183409 --format markdown`.
+  - refresh hashes for run `22594645182` from a network-enabled shell:
+    `python3 scripts/extract_wasm_ci_artifact_hashes.py --run-id 22594645182 --format markdown`.
 
 ## Decision Rule
 

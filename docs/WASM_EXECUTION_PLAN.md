@@ -860,7 +860,7 @@ Completed on this branch:
   default unwired blocking + vm-probe ready/configured expectations), closing
   CI drift introduced by expanded fixture coverage.
 - latest: workflow-dispatch browser smoke checkpoint
-  (`22594183409`, commit `3bc74c8c`) is green for both jobs
+  (`22594645182`, commit `3bc74c8c`) is green for both jobs
   (`wasm-contract-gate`, `wasm-browser-smoke`); promotion docs now track this
   as the latest verified dispatch snapshot.
 - latest: wasm promotion-note extraction now has a dedicated helper script
