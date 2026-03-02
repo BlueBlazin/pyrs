@@ -21,6 +21,56 @@ def ordered_unique(values: list[str]) -> list[str]:
     return ordered
 
 
+def parse_source_const_string_map(wasm_source: str) -> dict[str, str]:
+    const_map: dict[str, str] = {}
+    pattern = re.compile(r'const\s+([A-Z0-9_]+):\s*&str\s*=\s*"([^"]+)";')
+    for match in pattern.finditer(wasm_source):
+        const_map[match.group(1)] = match.group(2)
+    return const_map
+
+
+def parse_source_enum_keys(
+    wasm_source: str, enum_name: str, const_map: dict[str, str]
+) -> list[str]:
+    pattern = re.compile(
+        rf"impl\s+{re.escape(enum_name)}\s*\{{.*?fn key\(self\) -> &'static str \{{(.*?)\n\s*\}}\n",
+        flags=re.DOTALL,
+    )
+    match = pattern.search(wasm_source)
+    if not match:
+        raise ValueError(f"unable to parse key() implementation for enum {enum_name}")
+    key_body = match.group(1)
+    keys: list[str] = []
+    arm_pattern = re.compile(rf"{re.escape(enum_name)}::[A-Za-z]+\s*=>\s*([^,]+),")
+    for arm in arm_pattern.finditer(key_body):
+        raw_value = arm.group(1).strip()
+        if raw_value.startswith('"') and raw_value.endswith('"'):
+            keys.append(raw_value.strip('"'))
+            continue
+        if raw_value in const_map:
+            keys.append(const_map[raw_value])
+            continue
+        raise ValueError(
+            f"unable to resolve enum key mapping value '{raw_value}' in {enum_name}::key"
+        )
+    return ordered_unique(keys)
+
+
+def parse_source_worker_lifecycle_phase_keys(
+    default_keys: list[str], const_map: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    vm_probe_const_names = [
+        "WASM_WORKER_LIFECYCLE_PHASE_STARTED",
+        "WASM_WORKER_LIFECYCLE_PHASE_TERMINATED",
+        "WASM_WORKER_LIFECYCLE_PHASE_RECYCLED",
+    ]
+    vm_probe_keys = [
+        const_map[name] for name in vm_probe_const_names if name in const_map
+    ]
+    effective_keys = ordered_unique(default_keys + vm_probe_keys)
+    return effective_keys, vm_probe_keys
+
+
 def parse_exported_top_level_functions(wasm_source: str) -> list[str]:
     pattern = re.compile(
         r"^\s*#\[wasm_bindgen\]\s*\n\s*pub fn ([a-zA-Z0-9_]+)\(",
@@ -67,10 +117,13 @@ def parse_docs_type_sections(docs_source: str) -> dict[str, str]:
 
 
 def validate(
+    docs_source: str,
     exported_functions: list[str],
     exported_struct_fields: dict[str, list[str]],
     docs_functions: list[str],
     docs_type_sections: dict[str, str],
+    worker_lifecycle_phase_keys: list[str],
+    worker_lifecycle_phase_keys_vm_probe_extra: list[str],
 ) -> list[str]:
     errors: list[str] = []
 
@@ -104,6 +157,15 @@ def validate(
             + ", ".join(unknown_doc_type_sections)
         )
 
+    for key in worker_lifecycle_phase_keys:
+        if key not in docs_source:
+            errors.append(f"docs missing worker lifecycle phase key '{key}'")
+    for key in worker_lifecycle_phase_keys_vm_probe_extra:
+        if key not in docs_source:
+            errors.append(f"docs missing worker vm-probe lifecycle phase key '{key}'")
+    if worker_lifecycle_phase_keys_vm_probe_extra and "wasm-vm-probe" not in docs_source:
+        errors.append("docs missing wasm-vm-probe mention for lifecycle phase mode behavior")
+
     return errors
 
 
@@ -131,16 +193,29 @@ def main() -> int:
     docs_source = docs_path.read_text(encoding="utf-8")
     wasm_source = wasm_src_path.read_text(encoding="utf-8")
 
+    const_map = parse_source_const_string_map(wasm_source)
     exported_functions = parse_exported_top_level_functions(wasm_source)
     exported_struct_fields = parse_exported_struct_fields(wasm_source)
+    worker_lifecycle_phase_keys_default = parse_source_enum_keys(
+        wasm_source, "WasmWorkerLifecyclePhase", const_map
+    )
+    (
+        worker_lifecycle_phase_keys_effective,
+        worker_lifecycle_phase_keys_vm_probe_extra,
+    ) = parse_source_worker_lifecycle_phase_keys(
+        worker_lifecycle_phase_keys_default, const_map
+    )
     docs_functions = parse_docs_top_level_functions(docs_source)
     docs_type_sections = parse_docs_type_sections(docs_source)
 
     errors = validate(
+        docs_source=docs_source,
         exported_functions=exported_functions,
         exported_struct_fields=exported_struct_fields,
         docs_functions=docs_functions,
         docs_type_sections=docs_type_sections,
+        worker_lifecycle_phase_keys=worker_lifecycle_phase_keys_effective,
+        worker_lifecycle_phase_keys_vm_probe_extra=worker_lifecycle_phase_keys_vm_probe_extra,
     )
     if errors:
         print("wasm api contract surface validation failed:")
@@ -157,6 +232,9 @@ def main() -> int:
             name: fields for name, fields in sorted(exported_struct_fields.items())
         },
         "docs_type_sections": sorted(docs_type_sections.keys()),
+        "worker_lifecycle_phase_keys_default": worker_lifecycle_phase_keys_default,
+        "worker_lifecycle_phase_keys_vm_probe_extra": worker_lifecycle_phase_keys_vm_probe_extra,
+        "worker_lifecycle_phase_keys_effective": worker_lifecycle_phase_keys_effective,
     }
 
     out_path = Path(args.out)

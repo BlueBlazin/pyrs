@@ -580,6 +580,9 @@ Completed on this branch:
 - latest: worker/client docs and summary guards now enforce vm-probe lifecycle
   phase coverage in `WASM_WORKER_RUNTIME_CONTRACT.md`,
   `WASM_CLIENT_INTEGRATION_FLOW.md`, and `WASM_API_CONTRACT.md`.
+- latest: `generate_wasm_api_contract_surface_summary.py` now validates worker
+  lifecycle phase coverage (default + vm-probe extra lifecycle keys) in
+  `WASM_API_CONTRACT.md` in addition to top-level export/type field parity.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
