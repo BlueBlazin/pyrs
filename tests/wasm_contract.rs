@@ -256,6 +256,17 @@ fn expected_worker_info_backend_for_fixture(
     fixture.expected_backend.to_string()
 }
 
+fn expected_worker_info_state_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerInfoFixture,
+) -> String {
+    if vm_probe_enabled() {
+        if let Some(state) = fixture.expected_vm_probe_state {
+            return state.to_string();
+        }
+    }
+    fixture.expected_state.to_string()
+}
+
 fn expected_worker_info_execution_probe_enabled_for_fixture(
     fixture: &wasm_worker_contract::WasmWorkerInfoFixture,
 ) -> bool {
@@ -373,7 +384,7 @@ fn wasm_worker_contract_basics() {
     );
     assert_eq!(
         info.state(),
-        fixture.expected_state.to_string(),
+        expected_worker_info_state_for_fixture(fixture),
         "worker info state mismatch: {}",
         fixture.name
     );
@@ -901,7 +912,7 @@ fn wasm_worker_session_contract_is_stable() {
     );
     assert_eq!(
         info.state(),
-        fixture.expected_state.to_string(),
+        expected_worker_info_state_for_fixture(fixture),
         "worker session info state mismatch: {}",
         fixture.name
     );

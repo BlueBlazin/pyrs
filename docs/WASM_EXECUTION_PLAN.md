@@ -612,6 +612,8 @@ Completed on this branch:
   (`timeout_configuration_supported` mode-aware, and
   `timeout_enforcement_supported = false`), keeping worker-info summary
   aligned with timeout policy semantics.
+- latest: `WasmWorkerInfo.state` is now mode-aware (`"unwired"` default,
+  `"ready"` in `wasm-vm-probe`) for consistent worker-readiness signaling.
 - latest: timeout phase key parity and docs guards now include vm-probe timeout
   extras across worker-contract, worker-docs, and client-flow summary scripts.
 - latest: `generate_wasm_api_contract_surface_summary.py` now also validates

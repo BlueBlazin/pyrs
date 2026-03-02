@@ -1476,10 +1476,15 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
     } else {
         WASM_WORKER_BACKEND_UNWIRED.to_string()
     };
+    let state = if wasm_vm_runtime_enabled() {
+        WasmWorkerState::Ready.key().to_string()
+    } else {
+        current_worker_state_key()
+    };
     WasmWorkerInfo {
         supported: false,
         backend,
-        state: current_worker_state_key(),
+        state,
         interruption_model: WASM_WORKER_INTERRUPT_MODEL_RECYCLE.to_string(),
         lifecycle_supported: wasm_vm_runtime_enabled(),
         execution_probe_enabled: wasm_vm_runtime_enabled(),

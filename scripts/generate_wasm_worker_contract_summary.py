@@ -96,6 +96,7 @@ class WorkerInfoFixtureRow:
     expected_backend: str
     expected_vm_probe_backend: str | None
     expected_state: str
+    expected_vm_probe_state: str | None
     expected_interruption_model: str
     expected_lifecycle_supported: bool
     expected_vm_probe_lifecycle_supported: bool | None
@@ -342,6 +343,9 @@ def parse_worker_info_fixture_rows(source: str) -> list[WorkerInfoFixtureRow]:
                     row_body, "expected_vm_probe_backend"
                 ),
                 expected_state=parse_required_string_field(row_body, "expected_state"),
+                expected_vm_probe_state=parse_optional_string_field(
+                    row_body, "expected_vm_probe_state"
+                ),
                 expected_interruption_model=parse_required_string_field(
                     row_body, "expected_interruption_model"
                 ),
@@ -465,6 +469,7 @@ def effective_worker_info_expectation(
     row: WorkerInfoFixtureRow, vm_probe_enabled: bool
 ) -> WorkerInfoExpectation:
     backend = row.expected_backend
+    expected_state = row.expected_state
     lifecycle_supported = row.expected_lifecycle_supported
     execution_probe_enabled = row.expected_execution_probe_enabled
     execute_supported = row.expected_execute_supported
@@ -473,6 +478,8 @@ def effective_worker_info_expectation(
     if vm_probe_enabled:
         if row.expected_vm_probe_backend is not None:
             backend = row.expected_vm_probe_backend
+        if row.expected_vm_probe_state is not None:
+            expected_state = row.expected_vm_probe_state
         if row.expected_vm_probe_lifecycle_supported is not None:
             lifecycle_supported = row.expected_vm_probe_lifecycle_supported
         if row.expected_vm_probe_execution_probe_enabled is not None:
@@ -489,7 +496,7 @@ def effective_worker_info_expectation(
         name=row.name,
         expected_supported=row.expected_supported,
         backend=backend,
-        expected_state=row.expected_state,
+        expected_state=expected_state,
         expected_interruption_model=row.expected_interruption_model,
         lifecycle_supported=lifecycle_supported,
         execution_probe_enabled=execution_probe_enabled,
@@ -644,6 +651,13 @@ def parse_source_worker_info_supported_literal(worker_info_body: str) -> bool:
     return match.group(1) == "true"
 
 
+def parse_source_worker_info_uses_mode_aware_state(worker_info_body: str) -> bool:
+    return (
+        "let state = if wasm_vm_runtime_enabled()" in worker_info_body
+        and "state," in worker_info_body
+    )
+
+
 def parse_source_worker_info_uses_runtime_probe_flag(worker_info_body: str) -> bool:
     return "execution_probe_enabled: wasm_vm_runtime_enabled()" in worker_info_body
 
@@ -780,6 +794,9 @@ def main() -> int:
     source_worker_info_supported = parse_source_worker_info_supported_literal(
         source_worker_info_body
     )
+    source_worker_info_uses_mode_aware_state = (
+        parse_source_worker_info_uses_mode_aware_state(source_worker_info_body)
+    )
     source_worker_info_uses_runtime_probe_flag = (
         parse_source_worker_info_uses_runtime_probe_flag(source_worker_info_body)
     )
@@ -815,7 +832,13 @@ def main() -> int:
     source_expected_worker_execute_supported = args.vm_probe
     source_expected_worker_timeout_configuration_supported = args.vm_probe
     source_expected_worker_timeout_enforcement_supported = False
-    source_expected_worker_state = source_state_keys[0]
+    source_ready_worker_state = next(
+        (key for key in source_state_keys if key == "ready"),
+        source_state_keys[0],
+    )
+    source_expected_worker_state = (
+        source_ready_worker_state if args.vm_probe else source_state_keys[0]
+    )
     source_expected_worker_interruption_model = source_const_map[
         "WASM_WORKER_INTERRUPT_MODEL_RECYCLE"
     ]
@@ -971,6 +994,10 @@ def main() -> int:
     if not source_worker_info_uses_runtime_probe_flag:
         errors.append(
             "wasm_worker_info should set execution_probe_enabled from wasm_vm_runtime_enabled()"
+        )
+    if not source_worker_info_uses_mode_aware_state:
+        errors.append(
+            "wasm_worker_info should derive state from a wasm_vm_runtime_enabled() mode-aware branch"
         )
     if not source_worker_info_uses_lifecycle_supported_flag:
         errors.append(
@@ -1279,6 +1306,7 @@ def main() -> int:
             "execute_supported": source_expected_worker_execute_supported,
             "timeout_configuration_supported": source_expected_worker_timeout_configuration_supported,
             "timeout_enforcement_supported": source_expected_worker_timeout_enforcement_supported,
+            "uses_mode_aware_state": source_worker_info_uses_mode_aware_state,
             "uses_runtime_probe_flag": source_worker_info_uses_runtime_probe_flag,
             "uses_lifecycle_supported_flag": source_worker_info_uses_lifecycle_supported_flag,
             "uses_execute_supported_flag": source_worker_info_uses_execute_supported_flag,
