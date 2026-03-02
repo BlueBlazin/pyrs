@@ -1,5 +1,8 @@
 ---
 import SiteLayout from "../layouts/SiteLayout.astro";
+
+const baseUrl = import.meta.env.BASE_URL || "/";
+const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 ---
 
 <SiteLayout
@@ -107,8 +110,7 @@ print(x)</textarea>
 		const outputEl = document.getElementById("playground-output");
 		const sourceEl = document.getElementById("playground-source");
 
-		const baseUrl = import.meta.env.BASE_URL || "/";
-		const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
+		const wasmEntrypoint = {JSON.stringify(wasmEntrypoint)};
 
 		let runtimeModule = null;
 		let workerSession = null;

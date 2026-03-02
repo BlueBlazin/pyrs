@@ -1,6 +1,9 @@
 ---
 import SiteLayout from "../layouts/SiteLayout.astro";
 import HighlightChip from "../components/ui/HighlightChip.astro";
+
+const baseUrl = import.meta.env.BASE_URL || "/";
+const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 ---
 
 <SiteLayout
@@ -61,8 +64,7 @@ import HighlightChip from "../components/ui/HighlightChip.astro";
 		const clearButton = document.getElementById("playground-clear");
 		const resetButton = document.getElementById("playground-reset");
 
-		const baseUrl = import.meta.env.BASE_URL || "/";
-		const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
+		const wasmEntrypoint = {JSON.stringify(wasmEntrypoint)};
 
 		let runtimeModule = null;
 		let runtimeLoadPromise = null;
