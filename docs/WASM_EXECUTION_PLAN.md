@@ -882,6 +882,16 @@ Completed on this branch:
   - `tests/wasm_contract.rs::wasm_worker_session_recovers_after_external_terminate_then_start`
   This closes a prior contract gap where only `terminate -> recycle` recovery
   paths were fixture-backed.
+- latest: worker-info lifecycle behavior now has explicit contract coverage for
+  external `start` / `terminate` / `recycle` transitions:
+  - `tests/wasm_contract.rs::wasm_worker_info_tracks_external_lifecycle_state_transitions`
+  locking `wasm_worker_info()` state and capability flag updates to the shared
+  global worker state machine.
+- latest: session-contract summary gate now fails fast if the
+  `terminate -> start` recovery coverage tests are missing from
+  `tests/wasm_contract.rs`
+  (`scripts/generate_wasm_session_contract_summary.py`), preventing silent
+  deletion of these lifecycle recovery contracts.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
