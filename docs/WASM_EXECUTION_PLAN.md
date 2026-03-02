@@ -847,6 +847,10 @@ Completed on this branch:
   reset behavior after external lifecycle mutations (`start`/`terminate`/
   `recycle`) via
   `tests/wasm_contract.rs::wasm_worker_session_timeout_tracks_external_lifecycle_resets`.
+- latest: worker session state-gate fixture coverage now includes external
+  `start` triggers in addition to `terminate`/`recycle`
+  (`session_state_gate_after_start`), with default-vs-vm-probe phase/state
+  expectations locked in `tests/fixtures/wasm_worker_contract.rs`.
 - latest: workflow-dispatch browser smoke on current head
   (`22582347683`, commit `176f14f`) is green for both jobs
   (`wasm-contract-gate`, `wasm-browser-smoke`); artifact IDs and SHA256

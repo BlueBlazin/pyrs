@@ -1692,6 +1692,7 @@ fn wasm_worker_session_followups_track_shared_state_after_external_lifecycle_cha
 
         let lifecycle_fixture = lifecycle_fixture_for_action(fixture.trigger_action);
         let trigger_result = match fixture.trigger_action {
+            "start" => wasm_worker_start(),
             "terminate" => wasm_worker_terminate(),
             "recycle" => wasm_worker_recycle(),
             other => panic!("unknown state gate trigger_action: {other}"),
