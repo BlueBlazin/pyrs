@@ -44,15 +44,17 @@ def classify_import(name: str) -> str:
     return "other"
 
 
-def parse_exported_names(env_shim_path: Path) -> set[str]:
+def parse_exported_names(env_shim_path: Path) -> tuple[set[str], str]:
     if not env_shim_path.is_file():
-        return set()
+        return set(), "missing"
     source = env_shim_path.read_text(encoding="utf-8")
+    if "module.exports = new Proxy" in source:
+        return set(), "dynamic_proxy"
     exported_functions = set(
         re.findall(r"export function ([A-Za-z_][A-Za-z0-9_]*)\(", source)
     )
     exported_consts = set(re.findall(r"export const ([A-Za-z_][A-Za-z0-9_]*)\s*=", source))
-    return exported_functions | exported_consts
+    return exported_functions | exported_consts, "explicit_exports"
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,8 +95,11 @@ def main() -> int:
         names.sort()
 
     shim_path = Path(args.env_shim)
-    shim_exports = parse_exported_names(shim_path)
-    shim_missing = sorted(name for name in env_funcs if name not in shim_exports)
+    shim_exports, shim_mode = parse_exported_names(shim_path)
+    if shim_mode == "dynamic_proxy":
+        shim_missing = []
+    else:
+        shim_missing = sorted(name for name in env_funcs if name not in shim_exports)
 
     summary = {
         "wasm": str(wasm_path),
@@ -107,6 +112,7 @@ def main() -> int:
             "shim_exported_symbols": len(shim_exports),
             "shim_missing_symbols": len(shim_missing),
         },
+        "shim_mode": shim_mode,
         "groups": {
             group: {"count": len(names), "symbols": names}
             for group, names in sorted(grouped.items())
