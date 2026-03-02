@@ -67,6 +67,23 @@ watch_run_with_fallback() {
   return 1
 }
 
+fetch_run_log_with_retries() {
+  local run_id="$1"
+  local out_path="$2"
+  local max_attempts=6
+  local attempt=1
+  while [[ "${attempt}" -le "${max_attempts}" ]]; do
+    if gh run view "${run_id}" --log > "${out_path}"; then
+      if [[ -s "${out_path}" ]]; then
+        return 0
+      fi
+    fi
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
 branch_ref="codex/wasm"
 workflow_name="wasm-track.yml"
 run_id=""
@@ -192,7 +209,7 @@ hash_json="${download_dir}/wasm-artifact-hashes.json"
 hash_md="${download_dir}/wasm-artifact-hashes.md"
 run_log="${download_dir}/workflow-run.log"
 echo "[wasm-browser-dispatch] extracting artifact hash summary"
-if gh run view "${run_id}" --log > "${run_log}"; then
+if fetch_run_log_with_retries "${run_id}" "${run_log}"; then
   if python3 scripts/extract_wasm_ci_artifact_hashes.py \
     --run-id "${run_id}" \
     --run-url "${run_url}" \
