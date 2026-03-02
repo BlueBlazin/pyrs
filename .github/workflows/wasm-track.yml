@@ -71,7 +71,6 @@ jobs:
     needs: wasm-contract-gate
     runs-on: ubuntu-latest
     timeout-minutes: 75
-    continue-on-error: true
 
     steps:
       - name: Checkout
