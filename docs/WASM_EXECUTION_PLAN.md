@@ -191,8 +191,9 @@ Branch helper:
   set `PYRS_WASM_SKIP_CORE_SMOKE=1` to run browser smoke without repeating
   core compile/summary/nextest checks;
   set `PYRS_WASM_RUN_VM_PROBE_BROWSER_STATE_GATE_SMOKE=1` to additionally run
-  vm-probe browser smoke focused on terminate/recycle state-gating flows via
-  dedicated `--test wasm_vm_probe_browser_smoke` target).
+  vm-probe state-gate smoke (`wasm-pack --node`) via dedicated
+  `--test wasm_vm_probe_browser_smoke` target while browser smoke remains on
+  the default `wasm_contract` suite).
 - wasm bridge unit-contract helper:
   `cargo nextest run --lib wasm_ --status-level fail --final-status-level fail`
   for host-executed wasm bridge/runtime unit-contract coverage.

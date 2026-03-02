@@ -129,10 +129,19 @@ run_vm_probe_state_gate_browser_smoke() {
     return 0
   fi
 
-  echo "[wasm-contract] wasm-pack ${browser}: vm-probe browser smoke (state-gate target)"
-  # Keep vm-probe browser smoke lightweight to avoid long "Loading scripts..."
-  # stalls from the full wasm_contract browser binary in CI.
-  wasm-pack test --headless --"${browser}" --no-default-features --features wasm-vm-probe --test wasm_vm_probe_browser_smoke
+  echo "[wasm-contract] wasm-pack node: vm-probe state-gate smoke target"
+  # vm-probe wasm binaries currently include native-host `env` imports that are
+  # shimmed in the website bundle pipeline, but not by wasm-bindgen-test's
+  # browser harness. Run vm-probe state-gate smoke under the node runner to
+  # keep hard signal without browser-loader deadlocks.
+  local shim_root
+  shim_root="$(pwd)/scripts/wasm_node_shims"
+  if [[ -n "${NODE_PATH:-}" ]]; then
+    export NODE_PATH="${shim_root}:${NODE_PATH}"
+  else
+    export NODE_PATH="${shim_root}"
+  fi
+  wasm-pack test --node --no-default-features --features wasm-vm-probe --test wasm_vm_probe_browser_smoke
   vm_probe_browser_smoke_enabled=1
   return 0
 }
