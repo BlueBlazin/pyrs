@@ -183,6 +183,16 @@ keys (`worker_runtime_unwired`, `worker_runtime_failed` + module-policy capabili
   - `error = None`
   - worker VM state is reset to a fresh runtime session
 
+`wasm_worker_force_failed_state_for_tests()` (`wasm-vm-probe` only) currently returns:
+
+- `success = true`
+- `operation_id = worker_force_failed_<n>`
+- `phase = "worker_failed_forced"`
+- `state = "failed"`
+- `blocker_key = "worker_runtime_failed"`
+- `error = "wasm worker runtime entered failed state; call wasm_worker_start() or wasm_worker_recycle()"`
+- worker VM runtime state is cleared before entering the shared failed state
+
 `wasm_worker_set_timeout(timeout_ms)` currently returns:
 
 - `operation_id = worker_set_timeout_<n>`
