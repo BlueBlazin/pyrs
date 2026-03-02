@@ -289,6 +289,28 @@ fn expected_worker_info_execute_supported_for_fixture(
     fixture.expected_execute_supported
 }
 
+fn expected_worker_info_timeout_configuration_supported_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerInfoFixture,
+) -> bool {
+    if vm_probe_enabled() {
+        if let Some(supported) = fixture.expected_vm_probe_timeout_configuration_supported {
+            return supported;
+        }
+    }
+    fixture.expected_timeout_configuration_supported
+}
+
+fn expected_worker_info_timeout_enforcement_supported_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerInfoFixture,
+) -> bool {
+    if vm_probe_enabled() {
+        if let Some(supported) = fixture.expected_vm_probe_timeout_enforcement_supported {
+            return supported;
+        }
+    }
+    fixture.expected_timeout_enforcement_supported
+}
+
 #[wasm_bindgen_test]
 fn wasm_runtime_contract_basics() {
     let runtime = wasm_runtime_info();
@@ -377,6 +399,18 @@ fn wasm_worker_contract_basics() {
         info.execute_supported(),
         expected_worker_info_execute_supported_for_fixture(fixture),
         "worker info execute_supported mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.timeout_configuration_supported(),
+        expected_worker_info_timeout_configuration_supported_for_fixture(fixture),
+        "worker info timeout_configuration_supported mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.timeout_enforcement_supported(),
+        expected_worker_info_timeout_enforcement_supported_for_fixture(fixture),
+        "worker info timeout_enforcement_supported mismatch: {}",
         fixture.name
     );
 
@@ -887,6 +921,18 @@ fn wasm_worker_session_contract_is_stable() {
         info.execute_supported(),
         expected_worker_info_execute_supported_for_fixture(fixture),
         "worker session info execute_supported mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.timeout_configuration_supported(),
+        expected_worker_info_timeout_configuration_supported_for_fixture(fixture),
+        "worker session info timeout_configuration_supported mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.timeout_enforcement_supported(),
+        expected_worker_info_timeout_enforcement_supported_for_fixture(fixture),
+        "worker session info timeout_enforcement_supported mismatch: {}",
         fixture.name
     );
 

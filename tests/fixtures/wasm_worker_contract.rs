@@ -55,6 +55,10 @@ pub struct WasmWorkerInfoFixture {
     pub expected_vm_probe_execution_probe_enabled: Option<bool>,
     pub expected_execute_supported: bool,
     pub expected_vm_probe_execute_supported: Option<bool>,
+    pub expected_timeout_configuration_supported: bool,
+    pub expected_vm_probe_timeout_configuration_supported: Option<bool>,
+    pub expected_timeout_enforcement_supported: bool,
+    pub expected_vm_probe_timeout_enforcement_supported: Option<bool>,
 }
 
 pub const WASM_WORKER_INFO_FIXTURES: &[WasmWorkerInfoFixture] = &[WasmWorkerInfoFixture {
@@ -70,6 +74,10 @@ pub const WASM_WORKER_INFO_FIXTURES: &[WasmWorkerInfoFixture] = &[WasmWorkerInfo
     expected_vm_probe_execution_probe_enabled: Some(true),
     expected_execute_supported: false,
     expected_vm_probe_execute_supported: Some(true),
+    expected_timeout_configuration_supported: false,
+    expected_vm_probe_timeout_configuration_supported: Some(true),
+    expected_timeout_enforcement_supported: false,
+    expected_vm_probe_timeout_enforcement_supported: Some(false),
 }];
 
 pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[

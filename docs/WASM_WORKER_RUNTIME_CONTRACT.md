@@ -32,6 +32,8 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `lifecycle_supported = false` in default builds, `true` with `wasm-vm-probe`
 - `execution_probe_enabled = false` in default builds, `true` with `wasm-vm-probe`
 - `execute_supported = false` in default builds, `true` with `wasm-vm-probe`
+- `timeout_configuration_supported = false` in default builds, `true` with `wasm-vm-probe`
+- `timeout_enforcement_supported = false` in current milestone builds
 - `blocker_count = len(wasm_worker_blocker_keys())`
 
 `wasm_worker_timeout_policy()` currently returns:

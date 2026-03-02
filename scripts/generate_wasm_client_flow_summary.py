@@ -225,6 +225,8 @@ def validate_docs(
             "lifecycle_supported",
             "execution_probe_enabled",
             "execute_supported",
+            "timeout_configuration_supported",
+            "timeout_enforcement_supported",
         }
     ]
     for field in required_worker_info_fields:

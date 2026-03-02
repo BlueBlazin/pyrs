@@ -103,6 +103,10 @@ class WorkerInfoFixtureRow:
     expected_vm_probe_execution_probe_enabled: bool | None
     expected_execute_supported: bool
     expected_vm_probe_execute_supported: bool | None
+    expected_timeout_configuration_supported: bool
+    expected_vm_probe_timeout_configuration_supported: bool | None
+    expected_timeout_enforcement_supported: bool
+    expected_vm_probe_timeout_enforcement_supported: bool | None
 
 
 @dataclass
@@ -115,6 +119,8 @@ class WorkerInfoExpectation:
     lifecycle_supported: bool
     execution_probe_enabled: bool
     execute_supported: bool
+    timeout_configuration_supported: bool
+    timeout_enforcement_supported: bool
 
 
 def parse_const_body(source: str, const_name: str) -> str:
@@ -357,6 +363,18 @@ def parse_worker_info_fixture_rows(source: str) -> list[WorkerInfoFixtureRow]:
                 expected_vm_probe_execute_supported=parse_optional_bool_field(
                     row_body, "expected_vm_probe_execute_supported"
                 ),
+                expected_timeout_configuration_supported=parse_required_bool_field(
+                    row_body, "expected_timeout_configuration_supported"
+                ),
+                expected_vm_probe_timeout_configuration_supported=parse_optional_bool_field(
+                    row_body, "expected_vm_probe_timeout_configuration_supported"
+                ),
+                expected_timeout_enforcement_supported=parse_required_bool_field(
+                    row_body, "expected_timeout_enforcement_supported"
+                ),
+                expected_vm_probe_timeout_enforcement_supported=parse_optional_bool_field(
+                    row_body, "expected_vm_probe_timeout_enforcement_supported"
+                ),
             )
         )
     return rows
@@ -450,6 +468,8 @@ def effective_worker_info_expectation(
     lifecycle_supported = row.expected_lifecycle_supported
     execution_probe_enabled = row.expected_execution_probe_enabled
     execute_supported = row.expected_execute_supported
+    timeout_configuration_supported = row.expected_timeout_configuration_supported
+    timeout_enforcement_supported = row.expected_timeout_enforcement_supported
     if vm_probe_enabled:
         if row.expected_vm_probe_backend is not None:
             backend = row.expected_vm_probe_backend
@@ -459,6 +479,12 @@ def effective_worker_info_expectation(
             execution_probe_enabled = row.expected_vm_probe_execution_probe_enabled
         if row.expected_vm_probe_execute_supported is not None:
             execute_supported = row.expected_vm_probe_execute_supported
+        if row.expected_vm_probe_timeout_configuration_supported is not None:
+            timeout_configuration_supported = (
+                row.expected_vm_probe_timeout_configuration_supported
+            )
+        if row.expected_vm_probe_timeout_enforcement_supported is not None:
+            timeout_enforcement_supported = row.expected_vm_probe_timeout_enforcement_supported
     return WorkerInfoExpectation(
         name=row.name,
         expected_supported=row.expected_supported,
@@ -468,6 +494,8 @@ def effective_worker_info_expectation(
         lifecycle_supported=lifecycle_supported,
         execution_probe_enabled=execution_probe_enabled,
         execute_supported=execute_supported,
+        timeout_configuration_supported=timeout_configuration_supported,
+        timeout_enforcement_supported=timeout_enforcement_supported,
     )
 
 
@@ -628,6 +656,19 @@ def parse_source_worker_info_uses_execute_supported_flag(worker_info_body: str) 
     return "execute_supported: wasm_vm_runtime_enabled()" in worker_info_body
 
 
+def parse_source_worker_info_uses_timeout_configuration_flag(worker_info_body: str) -> bool:
+    return "timeout_configuration_supported: wasm_vm_runtime_enabled()" in worker_info_body
+
+
+def parse_source_worker_info_timeout_enforcement_literal(worker_info_body: str) -> bool:
+    match = re.search(r"timeout_enforcement_supported:\s*(true|false)\s*,", worker_info_body)
+    if not match:
+        raise ValueError(
+            "unable to parse timeout_enforcement_supported literal from wasm_worker_info"
+        )
+    return match.group(1) == "true"
+
+
 def validate_non_empty(name: str, values: list[str], errors: list[str]) -> None:
     if not values:
         errors.append(f"{name} must not be empty")
@@ -748,6 +789,12 @@ def main() -> int:
     source_worker_info_uses_execute_supported_flag = (
         parse_source_worker_info_uses_execute_supported_flag(source_worker_info_body)
     )
+    source_worker_info_uses_timeout_configuration_flag = (
+        parse_source_worker_info_uses_timeout_configuration_flag(source_worker_info_body)
+    )
+    source_worker_info_timeout_enforcement_supported = (
+        parse_source_worker_info_timeout_enforcement_literal(source_worker_info_body)
+    )
     source_expected_worker_blocker_keys = [
         source_worker_blocker_key,
         *source_module_policy_blocker_keys,
@@ -766,6 +813,8 @@ def main() -> int:
     source_expected_worker_lifecycle_supported = args.vm_probe
     source_expected_worker_execution_probe_enabled = args.vm_probe
     source_expected_worker_execute_supported = args.vm_probe
+    source_expected_worker_timeout_configuration_supported = args.vm_probe
+    source_expected_worker_timeout_enforcement_supported = False
     source_expected_worker_state = source_state_keys[0]
     source_expected_worker_interruption_model = source_const_map[
         "WASM_WORKER_INTERRUPT_MODEL_RECYCLE"
@@ -931,6 +980,19 @@ def main() -> int:
         errors.append(
             "wasm_worker_info should set execute_supported from wasm_vm_runtime_enabled()"
         )
+    if not source_worker_info_uses_timeout_configuration_flag:
+        errors.append(
+            "wasm_worker_info should set timeout_configuration_supported from wasm_vm_runtime_enabled()"
+        )
+    if (
+        source_worker_info_timeout_enforcement_supported
+        != source_expected_worker_timeout_enforcement_supported
+    ):
+        errors.append(
+            "wasm_worker_info timeout_enforcement_supported literal mismatch "
+            f"source={source_worker_info_timeout_enforcement_supported} "
+            f"expected={source_expected_worker_timeout_enforcement_supported}"
+        )
 
     for row in worker_info_effective_expectations:
         if row.expected_supported != source_worker_info_supported:
@@ -971,6 +1033,24 @@ def main() -> int:
                 f"{row.name}: worker info execute_supported mismatch "
                 f"fixture={row.execute_supported} "
                 f"source={source_expected_worker_execute_supported}"
+            )
+        if (
+            row.timeout_configuration_supported
+            != source_expected_worker_timeout_configuration_supported
+        ):
+            errors.append(
+                f"{row.name}: worker info timeout_configuration_supported mismatch "
+                f"fixture={row.timeout_configuration_supported} "
+                f"source={source_expected_worker_timeout_configuration_supported}"
+            )
+        if (
+            row.timeout_enforcement_supported
+            != source_expected_worker_timeout_enforcement_supported
+        ):
+            errors.append(
+                f"{row.name}: worker info timeout_enforcement_supported mismatch "
+                f"fixture={row.timeout_enforcement_supported} "
+                f"source={source_expected_worker_timeout_enforcement_supported}"
             )
 
     if unique(lifecycle_operation_prefixes) != expected_lifecycle_prefixes:
@@ -1197,9 +1277,12 @@ def main() -> int:
             "lifecycle_supported": source_expected_worker_lifecycle_supported,
             "execution_probe_enabled": source_expected_worker_execution_probe_enabled,
             "execute_supported": source_expected_worker_execute_supported,
+            "timeout_configuration_supported": source_expected_worker_timeout_configuration_supported,
+            "timeout_enforcement_supported": source_expected_worker_timeout_enforcement_supported,
             "uses_runtime_probe_flag": source_worker_info_uses_runtime_probe_flag,
             "uses_lifecycle_supported_flag": source_worker_info_uses_lifecycle_supported_flag,
             "uses_execute_supported_flag": source_worker_info_uses_execute_supported_flag,
+            "uses_timeout_configuration_flag": source_worker_info_uses_timeout_configuration_flag,
         },
         "worker_info_effective_rows": [
             {
@@ -1211,6 +1294,8 @@ def main() -> int:
                 "lifecycle_supported": row.lifecycle_supported,
                 "execution_probe_enabled": row.execution_probe_enabled,
                 "execute_supported": row.execute_supported,
+                "timeout_configuration_supported": row.timeout_configuration_supported,
+                "timeout_enforcement_supported": row.timeout_enforcement_supported,
             }
             for row in worker_info_effective_expectations
         ],

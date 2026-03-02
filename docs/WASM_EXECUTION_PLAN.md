@@ -608,6 +608,10 @@ Completed on this branch:
 - latest: `WasmWorkerInfo` now exports explicit `lifecycle_supported`
   mode signaling (`false` default, `true` in `wasm-vm-probe`) so clients can
   branch lifecycle controls without inferring from phase text.
+- latest: `WasmWorkerInfo` now also exports timeout capability signals
+  (`timeout_configuration_supported` mode-aware, and
+  `timeout_enforcement_supported = false`), keeping worker-info summary
+  aligned with timeout policy semantics.
 - latest: timeout phase key parity and docs guards now include vm-probe timeout
   extras across worker-contract, worker-docs, and client-flow summary scripts.
 - latest: `generate_wasm_api_contract_surface_summary.py` now also validates

@@ -481,6 +481,8 @@ pub struct WasmWorkerInfo {
     lifecycle_supported: bool,
     execution_probe_enabled: bool,
     execute_supported: bool,
+    timeout_configuration_supported: bool,
+    timeout_enforcement_supported: bool,
     blocker_count: usize,
 }
 
@@ -767,6 +769,16 @@ impl WasmWorkerInfo {
     #[wasm_bindgen(getter)]
     pub fn execute_supported(&self) -> bool {
         self.execute_supported
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn timeout_configuration_supported(&self) -> bool {
+        self.timeout_configuration_supported
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn timeout_enforcement_supported(&self) -> bool {
+        self.timeout_enforcement_supported
     }
 
     #[wasm_bindgen(getter)]
@@ -1472,6 +1484,8 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
         lifecycle_supported: wasm_vm_runtime_enabled(),
         execution_probe_enabled: wasm_vm_runtime_enabled(),
         execute_supported: wasm_vm_runtime_enabled(),
+        timeout_configuration_supported: wasm_vm_runtime_enabled(),
+        timeout_enforcement_supported: false,
         blocker_count: blockers.len(),
     }
 }

@@ -280,6 +280,18 @@ def main() -> int:
         errors.append(
             "docs missing vm-probe worker info execute_supported=true shape"
         )
+    if not re.search(r"timeout_configuration_supported\s*=\s*false", docs_source):
+        errors.append(
+            "docs missing default worker info timeout_configuration_supported=false shape"
+        )
+    if not re.search(r"timeout_configuration_supported[^\n]*true", docs_source):
+        errors.append(
+            "docs missing vm-probe worker info timeout_configuration_supported=true shape"
+        )
+    if not re.search(r"timeout_enforcement_supported\s*=\s*false", docs_source):
+        errors.append(
+            "docs missing worker info timeout_enforcement_supported=false shape"
+        )
     if "info().state" not in docs_source:
         errors.append("docs missing session-local info().state guidance")
     if "session-local" not in docs_source:
