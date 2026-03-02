@@ -3262,6 +3262,16 @@ mod tests {
             Some("worker_runtime_failed".to_string())
         );
 
+        let invalid_timeout = wasm_worker_set_timeout(0);
+        assert_eq!(
+            invalid_timeout.phase(),
+            "invalid_worker_timeout".to_string()
+        );
+        assert_eq!(invalid_timeout.state(), "failed".to_string());
+        assert!(!invalid_timeout.success());
+        assert!(invalid_timeout.blocker_key().is_none());
+        assert!(invalid_timeout.error().is_some());
+
         let recycle = wasm_worker_recycle();
         assert_eq!(recycle.phase(), "worker_recycled".to_string());
         assert_eq!(recycle.state(), "ready".to_string());

@@ -949,6 +949,13 @@ Completed on this branch:
   - `wasm_worker_vm_probe_failed_state_blocks_until_recovered`
   - `wasm_worker_vm_probe_failed_state_keeps_top_level_execute_available`
   (`scripts/generate_wasm_worker_contract_summary.py`).
+- latest: vm-probe failed-state timeout handling now explicitly preserves
+  invalid-timeout precedence:
+  - `wasm_worker_set_timeout(0)` in worker `state = "failed"` returns
+    `phase = "invalid_worker_timeout"` (with no worker-runtime blocker key),
+  - in-range timeout updates in the same state remain
+    `unsupported_worker_timeout_enforcement` with
+    `blocker_key = "worker_runtime_failed"`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
