@@ -715,6 +715,42 @@ def parse_source_worker_vm_probe_lifecycle_sets_shared_state(wasm_source: str) -
     return "set_current_worker_state(state);" in body
 
 
+def parse_source_failed_state_force_hook_vm_probe_only(wasm_source: str) -> bool:
+    return bool(
+        re.search(
+            r'#\[cfg\(feature = "wasm-vm-probe"\)\]\s*pub fn wasm_worker_force_failed_state_for_tests\(\)',
+            wasm_source,
+            flags=re.DOTALL,
+        )
+    )
+
+
+def parse_source_failed_state_force_hook_not_wasm_bindgen(wasm_source: str) -> bool:
+    signature = "pub fn wasm_worker_force_failed_state_for_tests() -> WasmWorkerLifecycleResult"
+    start = wasm_source.find(signature)
+    if start == -1:
+        return False
+    preamble = wasm_source[max(0, start - 256) : start]
+    return "#[wasm_bindgen]" not in preamble
+
+
+def parse_source_failed_state_force_hook_resets_vm_and_sets_failed(
+    wasm_source: str,
+) -> bool:
+    signature = "pub fn wasm_worker_force_failed_state_for_tests() -> WasmWorkerLifecycleResult"
+    try:
+        body = extract_source_fn_body(wasm_source, signature)
+    except ValueError:
+        return False
+    required_snippets = [
+        "clear_worker_vm();",
+        "set_current_worker_state(WasmWorkerState::Failed);",
+        "WASM_WORKER_BLOCKER_RUNTIME_FAILED",
+        'phase: "worker_failed_forced".to_string()',
+    ]
+    return all(snippet in body for snippet in required_snippets)
+
+
 def extract_source_fn_body(wasm_source: str, signature: str) -> str:
     start = wasm_source.find(signature)
     if start == -1:
@@ -1040,6 +1076,15 @@ def main() -> int:
     has_failed_state_force_hook = (
         "pub fn wasm_worker_force_failed_state_for_tests()" in wasm_source
     )
+    has_failed_state_force_hook_vm_probe_only = (
+        parse_source_failed_state_force_hook_vm_probe_only(wasm_source)
+    )
+    has_failed_state_force_hook_not_wasm_bindgen = (
+        parse_source_failed_state_force_hook_not_wasm_bindgen(wasm_source)
+    )
+    has_failed_state_force_hook_resets_vm_and_sets_failed = (
+        parse_source_failed_state_force_hook_resets_vm_and_sets_failed(wasm_source)
+    )
     has_failed_state_contract_surface_test = (
         "fn wasm_worker_forced_failed_state_blocks_until_start_or_recycle()"
         in contract_test_source
@@ -1335,6 +1380,18 @@ def main() -> int:
         )
     if not has_failed_state_force_hook:
         errors.append("missing wasm vm-probe failed-state test hook")
+    if not has_failed_state_force_hook_vm_probe_only:
+        errors.append(
+            "failed-state test hook must stay cfg(feature = \"wasm-vm-probe\")-gated"
+        )
+    if not has_failed_state_force_hook_not_wasm_bindgen:
+        errors.append(
+            "failed-state test hook should remain internal Rust API (no #[wasm_bindgen] export)"
+        )
+    if not has_failed_state_force_hook_resets_vm_and_sets_failed:
+        errors.append(
+            "failed-state test hook must clear worker VM and set shared worker state to failed"
+        )
     if not has_failed_state_contract_surface_test:
         errors.append(
             "missing wasm vm-probe failed-state integration contract surface test coverage"
@@ -1663,6 +1720,9 @@ def main() -> int:
             "has_failed_state_terminate_start_pre_failure_reset_assertions": has_failed_state_terminate_start_pre_failure_reset_assertions,
             "has_failed_state_recycle_reset_assertions": has_failed_state_recycle_reset_assertions,
             "has_failed_state_force_hook": has_failed_state_force_hook,
+            "has_failed_state_force_hook_vm_probe_only": has_failed_state_force_hook_vm_probe_only,
+            "has_failed_state_force_hook_not_wasm_bindgen": has_failed_state_force_hook_not_wasm_bindgen,
+            "has_failed_state_force_hook_resets_vm_and_sets_failed": has_failed_state_force_hook_resets_vm_and_sets_failed,
             "has_failed_state_contract_surface_test": has_failed_state_contract_surface_test,
             "has_failed_state_browser_surface_test": has_failed_state_browser_surface_test,
         },

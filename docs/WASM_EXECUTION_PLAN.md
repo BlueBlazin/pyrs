@@ -1030,10 +1030,11 @@ Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
 
 Remaining near-term focus:
-1. W5: increase worker runtime execution coverage in vm-probe mode (state/lifecycle edges).
-2. W6: refine playground UX/error affordances from first real browser-smoke transcripts.
-3. W7: keep workflow-dispatch browser-smoke evidence snapshots current after each
+1. W6: refine playground UX/error affordances from first real browser-smoke transcripts.
+2. W7: keep workflow-dispatch browser-smoke evidence snapshots current after each
    significant wasm contract/runtime checkpoint.
+3. W8: harden artifact-hash extraction/refresh workflow so promotion snapshots
+   can be refreshed reliably in restricted local environments.
 
 ### W6-native: Browser REPL UX Convergence Plan
 
