@@ -100,6 +100,12 @@ if ! command -v wasm-pack >/dev/null 2>&1; then
   exit 1
 fi
 
+configure_browser_test_timeout() {
+  local timeout_seconds="${PYRS_WASM_BROWSER_TEST_TIMEOUT_SECONDS:-60}"
+  export WASM_BINDGEN_TEST_TIMEOUT="${timeout_seconds}"
+  echo "[wasm-contract] wasm browser test timeout: ${WASM_BINDGEN_TEST_TIMEOUT}s"
+}
+
 run_browser_smoke() {
   local browser="$1"
   local smoke_status=0
@@ -140,6 +146,8 @@ emit_browser_smoke_baseline() {
   fi
   python3 scripts/generate_wasm_browser_smoke_baseline.py "${args[@]}"
 }
+
+configure_browser_test_timeout
 
 echo "[wasm-contract] wasm-pack detected; running optional browser smoke tests"
 if run_browser_smoke chrome; then
