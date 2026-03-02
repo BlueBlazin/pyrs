@@ -23,6 +23,7 @@ REQUIRED_ARTIFACTS = [
     "perf/wasm_client_flow_summary_latest.json",
     "perf/wasm_module_policy_summary_latest.json",
     "perf/wasm_capability_summary_latest.json",
+    "perf/wasm_playground_worker_contract_latest.json",
     "perf/wasm_host_seam_audit_latest.json",
     "perf/wasm_vm_link_blockers_latest.json",
     "perf/wasm_vm_env_import_summary_latest.json",

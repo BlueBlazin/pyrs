@@ -137,6 +137,43 @@ def main() -> int:
             f"got {shim_missing_symbols}"
         )
 
+    playground_worker_contract = find_copied_artifact(
+        copied,
+        "perf/wasm_playground_worker_contract_latest.json",
+        pack_dir,
+    )
+    if playground_worker_contract is None:
+        return fail(
+            "manifest missing copied row for "
+            "perf/wasm_playground_worker_contract_latest.json"
+        )
+    if not playground_worker_contract.is_file():
+        return fail(
+            "missing playground worker contract artifact: "
+            f"{playground_worker_contract}"
+        )
+    try:
+        playground_payload = json.loads(
+            playground_worker_contract.read_text(encoding="utf-8")
+        )
+    except json.JSONDecodeError as exc:
+        return fail(
+            "invalid playground worker contract JSON "
+            f"({playground_worker_contract}): {exc}"
+        )
+
+    if playground_payload.get("ok") is not True:
+        return fail(
+            "playground worker contract gate failed: expected ok=true, "
+            f"got {playground_payload.get('ok')}"
+        )
+    failure_count = playground_payload.get("failure_count")
+    if failure_count != 0:
+        return fail(
+            "playground worker contract gate failed: expected failure_count=0, "
+            f"got {failure_count}"
+        )
+
     print(
         "wasm evidence pack validation passed: "
         f"{len(required)} required artifacts, pack_dir={pack_dir}"

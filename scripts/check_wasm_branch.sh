@@ -59,7 +59,8 @@ python3 scripts/generate_wasm_capability_summary.py \
   --out perf/wasm_capability_summary_latest.json
 
 echo "[wasm-branch] playground worker contract check"
-node scripts/check_playground_worker_contract.mjs
+node scripts/check_playground_worker_contract.mjs \
+  --out perf/wasm_playground_worker_contract_latest.json
 
 echo "[wasm-branch] wasm host seam audit snapshot"
 python3 scripts/audit_wasm_host_seam.py \

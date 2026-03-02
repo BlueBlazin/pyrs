@@ -230,7 +230,7 @@ Branch helper:
   `python3 scripts/generate_wasm_capability_summary.py --out perf/wasm_capability_summary_latest.json`
   for fixture + source + docs parity on capability keys/support matrix.
 - playground worker contract helper:
-  `node scripts/check_playground_worker_contract.mjs`
+  `node scripts/check_playground_worker_contract.mjs --out perf/wasm_playground_worker_contract_latest.json`
   for source-level parity between `/playground` worker transport wiring and
   `website/public/workers/playground-runtime-worker.js` action handling.
 - promotion evidence-pack helper:
@@ -828,6 +828,9 @@ Completed on this branch:
   invariants via `node scripts/check_playground_worker_contract.mjs` in both
   `scripts/check_wasm_branch.sh` and
   `scripts/run_wasm_contract_smoke.sh`.
+- latest: playground worker-contract snapshots are now included in the wasm
+  evidence pack (`perf/wasm_playground_worker_contract_latest.json`) and
+  validated as a required promotion artifact (`ok=true`, `failure_count=0`).
 - latest: client/API docs now include explicit `/playground` worker RPC
   envelope and action contracts (`load`, `execute`, `reset`) in
   `docs/WASM_CLIENT_INTEGRATION_FLOW.md` and `docs/WASM_API_CONTRACT.md`,
