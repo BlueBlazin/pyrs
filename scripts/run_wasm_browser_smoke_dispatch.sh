@@ -65,12 +65,22 @@ require_cmd gh
 require_cmd python3
 
 if [[ -z "${run_id}" ]]; then
+  previous_run_id="$(
+    gh run list \
+      --workflow "${workflow_name}" \
+      --branch "${branch_ref}" \
+      --event workflow_dispatch \
+      --limit 1 \
+      --json databaseId \
+      --jq '.[0].databaseId // empty'
+  )"
+
   echo "[wasm-browser-dispatch] dispatching workflow '${workflow_name}' on ref '${branch_ref}'"
   gh workflow run "${workflow_name}" --ref "${branch_ref}"
 
   echo "[wasm-browser-dispatch] waiting for workflow_dispatch run id"
   for _ in {1..30}; do
-    run_id="$(
+    candidate_run_id="$(
       gh run list \
         --workflow "${workflow_name}" \
         --branch "${branch_ref}" \
@@ -79,7 +89,8 @@ if [[ -z "${run_id}" ]]; then
         --json databaseId \
         --jq '.[0].databaseId // empty'
     )"
-    if [[ -n "${run_id}" ]]; then
+    if [[ -n "${candidate_run_id}" ]] && [[ "${candidate_run_id}" != "${previous_run_id}" ]]; then
+      run_id="${candidate_run_id}"
       break
     fi
     sleep 2
