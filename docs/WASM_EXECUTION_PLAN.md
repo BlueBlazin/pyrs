@@ -274,6 +274,10 @@ Branch helper:
   `scripts/extract_wasm_ci_artifact_hashes.py`
   parses workflow logs (live `gh run view --log` or local log file) into
   artifact-id + sha256 records for promotion snapshots.
+- artifact-input hash summary helper:
+  `scripts/generate_wasm_artifact_input_hashes.py`
+  emits deterministic local SHA256 summary for required evidence artifacts,
+  and evidence-pack validation verifies these hashes against copied files.
 - dispatch snapshot refresh helper:
   `scripts/update_wasm_dispatch_snapshot.py`
   updates runbook/promotion/execution snapshot references to a specific

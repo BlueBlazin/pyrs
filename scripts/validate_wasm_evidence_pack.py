@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -28,6 +29,17 @@ def parse_args() -> argparse.Namespace:
 def fail(message: str) -> int:
     print(f"wasm evidence pack validation failed: {message}")
     return 1
+
+
+def sha256_of_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def resolve_copied_path(copied_to: str, pack_dir: Path) -> Path:
@@ -173,6 +185,69 @@ def main() -> int:
             "playground worker contract gate failed: expected failure_count=0, "
             f"got {failure_count}"
         )
+
+    artifact_hash_summary = find_copied_artifact(
+        copied,
+        "perf/wasm_artifact_input_hashes_latest.json",
+        pack_dir,
+    )
+    if artifact_hash_summary is None:
+        return fail(
+            "manifest missing copied row for perf/wasm_artifact_input_hashes_latest.json"
+        )
+    if not artifact_hash_summary.is_file():
+        return fail(f"missing artifact input hash summary: {artifact_hash_summary}")
+    try:
+        hash_payload = json.loads(artifact_hash_summary.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return fail(
+            f"invalid artifact input hash summary JSON ({artifact_hash_summary}): {exc}"
+        )
+
+    hash_rows = hash_payload.get("artifacts")
+    if not isinstance(hash_rows, list) or not hash_rows:
+        return fail("artifact input hash summary missing non-empty 'artifacts' array")
+
+    hash_by_path: dict[str, dict] = {}
+    for row in hash_rows:
+        if not isinstance(row, dict):
+            return fail("artifact input hash row must be an object")
+        row_path = row.get("path")
+        row_sha = row.get("sha256")
+        row_size = row.get("size_bytes")
+        if not isinstance(row_path, str) or not row_path:
+            return fail("artifact input hash row missing non-empty 'path'")
+        if not isinstance(row_sha, str) or not row_sha:
+            return fail(f"artifact input hash row missing sha256 for {row_path}")
+        if not isinstance(row_size, int) or row_size < 0:
+            return fail(f"artifact input hash row has invalid size_bytes for {row_path}")
+        if len(row_sha) != 64:
+            return fail(f"artifact input hash row has malformed sha256 for {row_path}")
+        hash_by_path[row_path] = row
+
+    expected_hash_paths = [
+        source for source in required if source != "perf/wasm_artifact_input_hashes_latest.json"
+    ]
+    for expected_path in expected_hash_paths:
+        if expected_path not in hash_by_path:
+            return fail(
+                "artifact input hash summary missing required row for "
+                f"{expected_path}"
+            )
+
+        copied_artifact = find_copied_artifact(copied, expected_path, pack_dir)
+        if copied_artifact is None or not copied_artifact.is_file():
+            return fail(
+                "artifact input hash summary references missing copied artifact: "
+                f"{expected_path}"
+            )
+        observed_sha = sha256_of_file(copied_artifact)
+        expected_sha = hash_by_path[expected_path]["sha256"]
+        if observed_sha != expected_sha:
+            return fail(
+                "artifact input hash mismatch for "
+                f"{expected_path}: expected {expected_sha}, observed {observed_sha}"
+            )
 
     print(
         "wasm evidence pack validation passed: "
