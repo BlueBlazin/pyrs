@@ -855,6 +855,10 @@ Completed on this branch:
   `start` triggers in addition to `terminate`/`recycle`
   (`session_state_gate_after_start`), with default-vs-vm-probe phase/state
   expectations locked in `tests/fixtures/wasm_worker_contract.rs`.
+- latest: `scripts/generate_wasm_session_contract_summary.py` validation now
+  treats `trigger_action = "start"` as a first-class state-gate case (with
+  default unwired blocking + vm-probe ready/configured expectations), closing
+  CI drift introduced by expanded fixture coverage.
 - latest: workflow-dispatch browser smoke on current head
   (`22582347683`, commit `176f14f`) is green for both jobs
   (`wasm-contract-gate`, `wasm-browser-smoke`); artifact IDs and SHA256

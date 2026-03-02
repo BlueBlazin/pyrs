@@ -622,7 +622,7 @@ def validate(
             )
 
     trigger_actions = {row.trigger_action for row in worker_session_state_gate_rows}
-    required_actions = {"terminate", "recycle"}
+    required_actions = {"start", "terminate", "recycle"}
     missing_actions = sorted(required_actions - trigger_actions)
     if missing_actions:
         errors.append(
@@ -775,6 +775,41 @@ def validate(
                 )
             if effective_vm_timeout_blocker_key is not None:
                 errors.append(f"{row.name}: recycle vm-probe timeout blocker must be None")
+        elif row.trigger_action == "start":
+            if row.expected_execute_phase != "unsupported_worker_execution":
+                errors.append(
+                    f"{row.name}: start default execute phase must be unsupported_worker_execution"
+                )
+            if row.expected_execute_blocker_key != "worker_runtime_unwired":
+                errors.append(
+                    f"{row.name}: start default execute blocker must be worker_runtime_unwired"
+                )
+            if row.expected_timeout_phase != "unsupported_worker_timeout_enforcement":
+                errors.append(
+                    f"{row.name}: start default timeout phase must be unsupported_worker_timeout_enforcement"
+                )
+            if row.expected_timeout_success:
+                errors.append(
+                    f"{row.name}: start default timeout success must be false"
+                )
+            if row.expected_timeout_blocker_key != "worker_runtime_unwired":
+                errors.append(
+                    f"{row.name}: start default timeout blocker must be worker_runtime_unwired"
+                )
+            if effective_vm_execute_phase != "ok":
+                errors.append(f"{row.name}: start vm-probe execute phase must be ok")
+            if effective_vm_execute_blocker_key is not None:
+                errors.append(f"{row.name}: start vm-probe execute blocker must be None")
+            if effective_vm_timeout_phase != "worker_timeout_configured":
+                errors.append(
+                    f"{row.name}: start vm-probe timeout phase must be worker_timeout_configured"
+                )
+            if not effective_vm_timeout_success:
+                errors.append(
+                    f"{row.name}: start vm-probe timeout success must be true"
+                )
+            if effective_vm_timeout_blocker_key is not None:
+                errors.append(f"{row.name}: start vm-probe timeout blocker must be None")
         else:
             errors.append(
                 f"{row.name}: unsupported trigger_action '{row.trigger_action}'"
