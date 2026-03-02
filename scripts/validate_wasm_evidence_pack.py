@@ -16,6 +16,12 @@ def parse_args() -> argparse.Namespace:
         default="perf/wasm_evidence_pack_latest",
         help="Evidence-pack directory containing manifest.json and copied artifacts.",
     )
+    parser.add_argument(
+        "--allow-missing-source",
+        action="store_true",
+        help="Allow manifest source paths to be absent in current workspace "
+        "(useful when validating a downloaded artifact bundle in CI).",
+    )
     return parser.parse_args()
 
 
@@ -57,7 +63,7 @@ def main() -> int:
 
         source_path = Path(source)
         copied_path = Path(copied_to)
-        if not source_path.is_file():
+        if not source_path.is_file() and not args.allow_missing_source:
             return fail(f"required source artifact is missing: {source}")
         if not copied_path.is_file():
             return fail(f"copied artifact is missing: {copied_to}")

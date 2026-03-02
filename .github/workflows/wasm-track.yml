@@ -121,6 +121,18 @@ jobs:
             cargo install wasm-pack --locked
           fi
 
+      - name: Download contract-gate evidence pack
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-evidence-pack
+          path: perf/wasm_evidence_pack_from_gate
+
+      - name: Validate downloaded contract-gate evidence pack
+        run: |
+          python3 scripts/validate_wasm_evidence_pack.py \
+            --pack-dir perf/wasm_evidence_pack_from_gate \
+            --allow-missing-source
+
       - name: Run optional browser smoke lane
         env:
           PYRS_WASM_SKIP_CORE_SMOKE: "1"

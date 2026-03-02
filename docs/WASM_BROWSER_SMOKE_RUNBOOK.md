@@ -25,6 +25,8 @@ Notes:
   - `wasm-contract-gate` (mandatory branch gate),
   - `wasm-browser-smoke` (manual browser lane).
 - Browser lane is fail-hard; failures must be triaged before promotion.
+- Browser lane also downloads `wasm-evidence-pack` from contract gate and
+  validates the manifest/copies before running browser smoke.
 
 ## Local Evidence Pack (Before or After Dispatch)
 
