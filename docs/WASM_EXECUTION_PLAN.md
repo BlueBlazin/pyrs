@@ -707,6 +707,9 @@ Completed on this branch:
 - latest: browser-smoke CI now validates baseline-summary shape via
   `scripts/validate_wasm_browser_smoke_baseline.py` before artifact upload, so
   missing/malformed baseline output fails the lane immediately.
+- latest: native-only integration test crates are now explicitly gated with
+  `#![cfg(not(target_arch = "wasm32"))]`, so wasm-target browser smoke compiles
+  only wasm-relevant suites instead of failing on native `pyrs::vm` imports.
 - latest: docs index now links to `/playground/` as an explicit browser-route
   entrypoint in Getting Started navigation.
 - latest: browser routes are now split by product UX vs diagnostics:

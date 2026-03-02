@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::path::PathBuf;
 
 use pyrs::{compiler, parser, runtime::Value, vm::Vm};
