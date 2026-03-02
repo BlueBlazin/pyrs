@@ -34,6 +34,8 @@ const WASM_WORKER_LIFECYCLE_PHASE_RECYCLED: &str = "worker_recycled";
 const WASM_WORKER_TIMEOUT_DEFAULT_MS: u32 = 5_000;
 const WASM_WORKER_TIMEOUT_MIN_MS: u32 = 50;
 const WASM_WORKER_TIMEOUT_MAX_MS: u32 = 120_000;
+#[cfg(feature = "wasm-vm-probe")]
+const WASM_REPL_FILENAME: &str = "<wasm-repl>";
 const WASM_WORKER_TIMEOUT_UNSUPPORTED_PHASE: &str = "unsupported_worker_timeout_enforcement";
 const WASM_WORKER_TIMEOUT_INVALID_PHASE: &str = "invalid_worker_timeout";
 const WASM_WORKER_TIMEOUT_ENFORCEMENT_UNWIRED_REASON: &str =
@@ -377,6 +379,11 @@ pub fn init_wasm_runtime() {
     PANIC_HOOK_ONCE.call_once(console_error_panic_hook::set_once);
 }
 
+#[cfg(feature = "wasm-vm-probe")]
+fn new_wasm_repl_vm() -> Vm {
+    Vm::new_with_host(Arc::new(WasmHost))
+}
+
 #[wasm_bindgen(getter_with_clone)]
 pub struct WasmSyntaxResult {
     ok: bool,
@@ -421,6 +428,14 @@ pub struct WasmCompileResult {
 pub struct WasmSession {
     snippets_checked: usize,
     last_error: Option<String>,
+}
+
+#[wasm_bindgen]
+pub struct WasmReplSession {
+    inputs_executed: usize,
+    last_error: Option<String>,
+    #[cfg(feature = "wasm-vm-probe")]
+    vm: Vm,
 }
 
 #[wasm_bindgen(getter_with_clone)]
@@ -971,6 +986,189 @@ impl WasmSession {
     #[wasm_bindgen(getter)]
     pub fn snippets_checked(&self) -> usize {
         self.snippets_checked
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn last_error(&self) -> Option<String> {
+        self.last_error.clone()
+    }
+}
+
+#[wasm_bindgen]
+impl WasmReplSession {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        init_wasm_runtime();
+        Self {
+            inputs_executed: 0,
+            last_error: None,
+            #[cfg(feature = "wasm-vm-probe")]
+            vm: new_wasm_repl_vm(),
+        }
+    }
+
+    pub fn execute_input(&mut self, source: &str) -> WasmExecutionResult {
+        self.inputs_executed += 1;
+
+        let host = WasmHost;
+        let parsed = match parse_and_compile_snippet(source) {
+            Ok(parsed) => parsed,
+            Err(compile) => {
+                let result = compile_failure_to_execution_result(
+                    compile,
+                    WasmExecutionPhase::SyntaxError.key(),
+                    WasmExecutionPhase::CompileError.key(),
+                    "repl parse/compile check failed",
+                );
+                self.last_error = result.error.clone();
+                return result;
+            }
+        };
+
+        let import_roots = collect_import_roots(&parsed.module);
+        if let Some(blocker) = snippet_blockers_from_import_roots(&import_roots, &host)
+            .into_iter()
+            .next()
+        {
+            let result = WasmExecutionResult {
+                success: false,
+                phase: WasmExecutionPhase::UnsupportedExecution.key().to_string(),
+                stdout: String::new(),
+                stderr: blocker.message.clone(),
+                error: Some(blocker.message),
+                blocker_key: Some(blocker.blocker_key),
+                line: 0,
+                column: 0,
+            };
+            self.last_error = result.error.clone();
+            return result;
+        }
+
+        if !wasm_vm_runtime_enabled() {
+            let message = wasm_execution_blocker_error(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED)
+                .unwrap_or_else(|| "wasm execution backend is not wired yet".to_string());
+            let result = WasmExecutionResult {
+                success: false,
+                phase: WasmExecutionPhase::UnsupportedExecution.key().to_string(),
+                stdout: String::new(),
+                stderr: message.clone(),
+                error: Some(message),
+                blocker_key: Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
+                line: 0,
+                column: 0,
+            };
+            self.last_error = result.error.clone();
+            return result;
+        }
+
+        #[cfg(feature = "wasm-vm-probe")]
+        {
+            self.vm.cache_source_text(WASM_REPL_FILENAME, source);
+
+            if parsed.module.body.len() == 1
+                && let crate::ast::StmtKind::Expr(expr) = &parsed.module.body[0].node
+            {
+                let expression_code =
+                    match crate::compiler::compile_expression_with_filename(expr, WASM_REPL_FILENAME)
+                    {
+                        Ok(code) => code,
+                        Err(err) => {
+                            let (message, line, column) = format_compile_error(&err);
+                            let result = WasmExecutionResult {
+                                success: false,
+                                phase: WasmExecutionPhase::CompileError.key().to_string(),
+                                stdout: String::new(),
+                                stderr: message.clone(),
+                                error: Some(message),
+                                blocker_key: None,
+                                line,
+                                column,
+                            };
+                            self.last_error = result.error.clone();
+                            return result;
+                        }
+                    };
+
+                let result = match self.vm.execute(&expression_code) {
+                    Ok(value) => {
+                        let mut stdout = String::new();
+                        if !matches!(value, crate::runtime::Value::None) {
+                            match self.vm.render_value_repr_for_display(value) {
+                                Ok(rendered) => {
+                                    stdout = rendered;
+                                }
+                                Err(err) => {
+                                    let runtime_result = runtime_error_to_execution_result(err);
+                                    self.last_error = runtime_result.error.clone();
+                                    return runtime_result;
+                                }
+                            }
+                        }
+                        WasmExecutionResult {
+                            success: true,
+                            phase: WASM_EXECUTION_PHASE_OK.to_string(),
+                            stdout,
+                            stderr: String::new(),
+                            error: None,
+                            blocker_key: None,
+                            line: 0,
+                            column: 0,
+                        }
+                    }
+                    Err(err) => runtime_error_to_execution_result(err),
+                };
+                self.last_error = result.error.clone();
+                return result;
+            }
+
+            let result = match self.vm.execute(&parsed.code) {
+                Ok(_) => WasmExecutionResult {
+                    success: true,
+                    phase: WASM_EXECUTION_PHASE_OK.to_string(),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    error: None,
+                    blocker_key: None,
+                    line: 0,
+                    column: 0,
+                },
+                Err(err) => runtime_error_to_execution_result(err),
+            };
+            self.last_error = result.error.clone();
+            return result;
+        }
+
+        #[cfg(not(feature = "wasm-vm-probe"))]
+        {
+            let message = wasm_execution_blocker_error(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED)
+                .unwrap_or_else(|| "wasm execution backend is not wired yet".to_string());
+            let result = WasmExecutionResult {
+                success: false,
+                phase: WasmExecutionPhase::UnsupportedExecution.key().to_string(),
+                stdout: String::new(),
+                stderr: message.clone(),
+                error: Some(message),
+                blocker_key: Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
+                line: 0,
+                column: 0,
+            };
+            self.last_error = result.error.clone();
+            result
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.inputs_executed = 0;
+        self.last_error = None;
+        #[cfg(feature = "wasm-vm-probe")]
+        {
+            self.vm = new_wasm_repl_vm();
+        }
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn inputs_executed(&self) -> usize {
+        self.inputs_executed
     }
 
     #[wasm_bindgen(getter)]
@@ -2276,20 +2474,23 @@ fn execute_compiled_snippet_with_vm(code: &crate::bytecode::CodeObject) -> WasmE
             line: 0,
             column: 0,
         },
-        Err(err) => {
-            let (line, column) = runtime_error_line_column(&err);
-            let message = err.message.clone();
-            WasmExecutionResult {
-                success: false,
-                phase: WASM_EXECUTION_PHASE_RUNTIME_ERROR.to_string(),
-                stdout: String::new(),
-                stderr: message.clone(),
-                error: Some(message),
-                blocker_key: None,
-                line,
-                column,
-            }
-        }
+        Err(err) => runtime_error_to_execution_result(err),
+    }
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn runtime_error_to_execution_result(err: crate::runtime::RuntimeError) -> WasmExecutionResult {
+    let (line, column) = runtime_error_line_column(&err);
+    let message = err.message.clone();
+    WasmExecutionResult {
+        success: false,
+        phase: WASM_EXECUTION_PHASE_RUNTIME_ERROR.to_string(),
+        stdout: String::new(),
+        stderr: message.clone(),
+        error: Some(message),
+        blocker_key: None,
+        line,
+        column,
     }
 }
 
@@ -2408,9 +2609,9 @@ pub fn check_compile(source: &str) -> Result<(), JsValue> {
 #[cfg(test)]
 mod tests {
     use super::{
-        WasmExecutionPhase, check_syntax, execute, execution_phase_keys, pyrs_version,
-        wasm_worker_execute, wasm_worker_info, wasm_worker_recycle, wasm_worker_start,
-        wasm_worker_terminate,
+        WasmExecutionPhase, WasmReplSession, check_syntax, execute, execution_phase_keys,
+        pyrs_version, wasm_worker_execute, wasm_worker_info, wasm_worker_recycle,
+        wasm_worker_start, wasm_worker_terminate,
     };
     #[cfg(feature = "wasm-vm-probe")]
     use super::{wasm_worker_execute_with_operation, wasm_worker_set_timeout};
@@ -2483,6 +2684,58 @@ mod tests {
         assert!(syntax_error.blocker_key().is_none());
         assert!(syntax_error.line() > 0);
         assert!(syntax_error.column() > 0);
+    }
+
+    #[test]
+    fn wasm_repl_session_mode_contract_is_stable() {
+        let mut session = WasmReplSession::new();
+        let result = session.execute_input("x = 1\n");
+        if vm_probe_enabled() {
+            assert_eq!(result.phase(), "ok".to_string());
+            assert!(result.blocker_key().is_none());
+        } else {
+            assert_eq!(result.phase(), "unsupported_execution".to_string());
+            assert_eq!(
+                result.blocker_key(),
+                Some("execution_backend_unwired".to_string())
+            );
+        }
+        assert_eq!(session.inputs_executed(), 1);
+    }
+
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
+    fn wasm_repl_session_vm_probe_persists_assignments_and_echoes_expressions() {
+        let mut session = WasmReplSession::new();
+
+        let assign = session.execute_input("x = 41\n");
+        assert_eq!(assign.phase(), "ok".to_string());
+        assert!(assign.success());
+        assert_eq!(assign.stdout(), String::new());
+
+        let expression = session.execute_input("x + 1\n");
+        assert_eq!(expression.phase(), "ok".to_string());
+        assert!(expression.success());
+        assert_eq!(expression.stdout(), "42".to_string());
+        assert!(expression.stderr().is_empty());
+    }
+
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
+    fn wasm_repl_session_reset_reinitializes_runtime_state() {
+        let mut session = WasmReplSession::new();
+        let assign = session.execute_input("x = 7\n");
+        assert!(assign.success());
+        assert_eq!(session.inputs_executed(), 1);
+
+        session.reset();
+        assert_eq!(session.inputs_executed(), 0);
+
+        let missing = session.execute_input("x\n");
+        assert_eq!(missing.phase(), "runtime_error".to_string());
+        assert!(!missing.success());
+        assert!(missing.stderr().contains("NameError"));
+        assert_eq!(session.inputs_executed(), 1);
     }
 
     #[cfg(feature = "wasm-vm-probe")]
