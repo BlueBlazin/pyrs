@@ -292,6 +292,9 @@ Current behavior is:
 - in vm-probe failed-state recovery, `start` returns worker state to `ready`
   and immediately re-enables in-range timeout configuration
   (`phase = "worker_timeout_configured"` for valid timeout updates).
+- in vm-probe failed-state recovery, `terminate` is a valid transition edge:
+  it moves worker state to `unwired`; subsequent worker execute calls remain
+  blocked until `start`/`recycle` restores `ready`.
 - there is still no true Web Worker thread orchestration in this milestone.
 
 ## Interruption Model

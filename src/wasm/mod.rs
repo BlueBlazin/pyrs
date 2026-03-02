@@ -3375,6 +3375,40 @@ mod tests {
         assert!(execute_ok.success());
     }
 
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
+    fn wasm_worker_vm_probe_failed_state_terminate_then_start_restores_worker_execute() {
+        clear_worker_vm();
+        set_current_worker_state(WasmWorkerState::Failed);
+
+        let terminated = wasm_worker_terminate();
+        assert_eq!(terminated.phase(), "worker_terminated".to_string());
+        assert_eq!(terminated.state(), "unwired".to_string());
+        assert!(terminated.success());
+
+        let blocked_while_unwired = wasm_worker_execute_with_operation("x = 1\n");
+        assert_eq!(
+            blocked_while_unwired.phase(),
+            "unsupported_worker_execution".to_string()
+        );
+        assert_eq!(blocked_while_unwired.state(), "unwired".to_string());
+        assert_eq!(
+            blocked_while_unwired.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+
+        let started = wasm_worker_start();
+        assert_eq!(started.phase(), "worker_started".to_string());
+        assert_eq!(started.state(), "ready".to_string());
+        assert!(started.success());
+
+        let resumed = wasm_worker_execute_with_operation("x = 1\n");
+        assert_eq!(resumed.phase(), "ok".to_string());
+        assert_eq!(resumed.state(), "ready".to_string());
+        assert!(resumed.success());
+        assert!(resumed.blocker_key().is_none());
+    }
+
     #[cfg(not(feature = "wasm-vm-probe"))]
     #[test]
     fn wasm_worker_default_mode_lifecycle_remains_unwired() {

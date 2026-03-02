@@ -976,6 +976,18 @@ Completed on this branch:
     `wasm_worker_vm_probe_failed_state_start_restores_timeout_configuration`
     in `src/wasm/mod.rs`
     (`scripts/generate_wasm_worker_contract_summary.py`).
+- latest: vm-probe failed-state coverage now also locks `terminate -> start`
+  worker execute recovery semantics:
+  - `wasm_worker_terminate()` from `state = "failed"` transitions to
+    `state = "unwired"`,
+  - worker execute stays blocked with
+    `blocker_key = "worker_runtime_unwired"` until restart,
+  - `wasm_worker_start()` then restores `state = "ready"` and worker execute
+    returns `phase = "ok"` for capability-allowed snippets,
+  - gate validation now requires
+    `wasm_worker_vm_probe_failed_state_terminate_then_start_restores_worker_execute`
+    in `src/wasm/mod.rs`
+    (`scripts/generate_wasm_worker_contract_summary.py`).
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
