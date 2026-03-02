@@ -26,6 +26,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 `wasm_worker_info()` returns:
 
 - `supported = false`
+- `supported = false` in default builds, `true` with `wasm-vm-probe`
 - `backend = "unwired"` in default builds, `"vm_probe"` with `wasm-vm-probe`
 - `state = "unwired"` in default builds, `"ready"` with `wasm-vm-probe`
 - `interruption_model = "worker_recycle"`

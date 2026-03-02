@@ -257,6 +257,17 @@ fn expected_worker_info_backend_for_fixture(
     fixture.expected_backend.to_string()
 }
 
+fn expected_worker_info_supported_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerInfoFixture,
+) -> bool {
+    if vm_probe_enabled() {
+        if let Some(supported) = fixture.expected_vm_probe_supported {
+            return supported;
+        }
+    }
+    fixture.expected_supported
+}
+
 fn expected_worker_info_state_for_fixture(
     fixture: &wasm_worker_contract::WasmWorkerInfoFixture,
 ) -> String {
@@ -480,7 +491,7 @@ fn wasm_worker_contract_basics() {
     let fixture = &WASM_WORKER_INFO_FIXTURES[0];
     assert_eq!(
         info.supported(),
-        fixture.expected_supported,
+        expected_worker_info_supported_for_fixture(fixture),
         "worker info supported mismatch: {}",
         fixture.name
     );

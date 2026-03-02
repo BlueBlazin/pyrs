@@ -167,6 +167,8 @@ This document defines the JS-facing contract currently exported by
 ## `WasmWorkerInfo`
 
 - `supported: bool`
+  - default build: `false`
+  - `wasm-vm-probe`: `true`
 - `backend: String` (default `"unwired"`, `wasm-vm-probe` => `"vm_probe"`)
 - `state: String` (default `"unwired"`, `wasm-vm-probe` => `"ready"`)
   - reflects current shared worker-lifecycle state for top-level worker APIs.

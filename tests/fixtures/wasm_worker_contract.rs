@@ -45,6 +45,7 @@ pub struct WasmWorkerTimeoutFixture {
 pub struct WasmWorkerInfoFixture {
     pub name: &'static str,
     pub expected_supported: bool,
+    pub expected_vm_probe_supported: Option<bool>,
     pub expected_backend: &'static str,
     pub expected_vm_probe_backend: Option<&'static str>,
     pub expected_state: &'static str,
@@ -85,6 +86,7 @@ pub struct WasmWorkerSessionStateGateFixture {
 pub const WASM_WORKER_INFO_FIXTURES: &[WasmWorkerInfoFixture] = &[WasmWorkerInfoFixture {
     name: "worker_info_runtime_contract",
     expected_supported: false,
+    expected_vm_probe_supported: Some(true),
     expected_backend: "unwired",
     expected_vm_probe_backend: Some("vm_probe"),
     expected_state: "unwired",

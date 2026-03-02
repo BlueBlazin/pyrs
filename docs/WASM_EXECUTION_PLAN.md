@@ -709,6 +709,10 @@ Completed on this branch:
   (start/terminate/recycle phase+state, execute/timeout behavior after
   terminate/recycle), so these invariants are exercised by browser wasm lib
   test lanes and compile-validated in local branch gates.
+- latest: `wasm_worker_info.supported` is now mode-aware (`false` default,
+  `true` in `wasm-vm-probe`), with fixture/test/summary/docs alignment so
+  worker readiness signals stay internally consistent with backend capability
+  flags.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

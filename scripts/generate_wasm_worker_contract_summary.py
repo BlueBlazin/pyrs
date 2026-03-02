@@ -93,6 +93,7 @@ class WorkerTimeoutExpectation:
 class WorkerInfoFixtureRow:
     name: str
     expected_supported: bool
+    expected_vm_probe_supported: bool | None
     expected_backend: str
     expected_vm_probe_backend: str | None
     expected_state: str
@@ -338,6 +339,9 @@ def parse_worker_info_fixture_rows(source: str) -> list[WorkerInfoFixtureRow]:
             WorkerInfoFixtureRow(
                 name=parse_required_string_field(row_body, "name"),
                 expected_supported=parse_required_bool_field(row_body, "expected_supported"),
+                expected_vm_probe_supported=parse_optional_bool_field(
+                    row_body, "expected_vm_probe_supported"
+                ),
                 expected_backend=parse_required_string_field(row_body, "expected_backend"),
                 expected_vm_probe_backend=parse_optional_string_field(
                     row_body, "expected_vm_probe_backend"
@@ -468,6 +472,7 @@ def effective_worker_timeout_expectation(
 def effective_worker_info_expectation(
     row: WorkerInfoFixtureRow, vm_probe_enabled: bool
 ) -> WorkerInfoExpectation:
+    expected_supported = row.expected_supported
     backend = row.expected_backend
     expected_state = row.expected_state
     lifecycle_supported = row.expected_lifecycle_supported
@@ -476,6 +481,8 @@ def effective_worker_info_expectation(
     timeout_configuration_supported = row.expected_timeout_configuration_supported
     timeout_enforcement_supported = row.expected_timeout_enforcement_supported
     if vm_probe_enabled:
+        if row.expected_vm_probe_supported is not None:
+            expected_supported = row.expected_vm_probe_supported
         if row.expected_vm_probe_backend is not None:
             backend = row.expected_vm_probe_backend
         if row.expected_vm_probe_state is not None:
@@ -494,7 +501,7 @@ def effective_worker_info_expectation(
             timeout_enforcement_supported = row.expected_vm_probe_timeout_enforcement_supported
     return WorkerInfoExpectation(
         name=row.name,
-        expected_supported=row.expected_supported,
+        expected_supported=expected_supported,
         backend=backend,
         expected_state=expected_state,
         expected_interruption_model=row.expected_interruption_model,
@@ -644,11 +651,18 @@ def parse_source_wasm_worker_info_body(wasm_source: str) -> str:
     return match.group(1)
 
 
-def parse_source_worker_info_supported_literal(worker_info_body: str) -> bool:
-    match = re.search(r"supported:\s*(true|false)\s*,", worker_info_body)
+def parse_source_worker_info_supported(worker_info_body: str, vm_probe_enabled: bool) -> bool:
+    match = re.search(r"supported:\s*([^,\n]+)\s*,", worker_info_body)
     if not match:
-        raise ValueError("unable to parse supported literal from wasm_worker_info")
-    return match.group(1) == "true"
+        raise ValueError("unable to parse supported expression from wasm_worker_info")
+    expr = match.group(1).strip()
+    if expr == "true":
+        return True
+    if expr == "false":
+        return False
+    if expr == "wasm_vm_runtime_enabled()":
+        return vm_probe_enabled
+    raise ValueError(f"unsupported worker info supported expression: {expr}")
 
 
 def parse_source_worker_info_uses_mode_aware_state(worker_info_body: str) -> bool:
@@ -856,8 +870,8 @@ def main() -> int:
     source_worker_blocker_key = parse_source_worker_blocker_key(wasm_source)
     source_module_policy_blocker_keys = parse_source_module_policy_blocker_keys(wasm_source)
     source_worker_info_body = parse_source_wasm_worker_info_body(wasm_source)
-    source_worker_info_supported = parse_source_worker_info_supported_literal(
-        source_worker_info_body
+    source_worker_info_supported = parse_source_worker_info_supported(
+        source_worker_info_body, args.vm_probe
     )
     source_worker_info_uses_mode_aware_state = (
         parse_source_worker_info_uses_mode_aware_state(source_worker_info_body)

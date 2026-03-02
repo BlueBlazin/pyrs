@@ -1495,7 +1495,7 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
         WASM_WORKER_BACKEND_UNWIRED.to_string()
     };
     WasmWorkerInfo {
-        supported: false,
+        supported: wasm_vm_runtime_enabled(),
         backend,
         state: current_worker_state_key(),
         interruption_model: WASM_WORKER_INTERRUPT_MODEL_RECYCLE.to_string(),
