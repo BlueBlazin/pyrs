@@ -200,6 +200,10 @@ def validate_docs(
     for field in worker_session_fields:
         if field not in docs_source:
             errors.append(f"docs missing WasmWorkerSession telemetry field '{field}'")
+    if "info().state" not in docs_source:
+        errors.append("docs missing session-local info().state guidance")
+    if "session-local" not in docs_source:
+        errors.append("docs missing session-local wording for worker session state behavior")
 
     return errors
 

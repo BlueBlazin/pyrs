@@ -243,6 +243,10 @@ def main() -> int:
         errors.append(
             "docs missing vm-probe worker info execute_supported=true shape"
         )
+    if "info().state" not in docs_source:
+        errors.append("docs missing session-local info().state guidance")
+    if "session-local" not in docs_source:
+        errors.append("docs missing session-local wording for worker session state behavior")
     if f'state = "{worker_default_state}"' not in docs_source:
         errors.append(
             "docs missing worker execute-with-operation/default state shape "

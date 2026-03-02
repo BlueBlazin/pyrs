@@ -591,6 +591,9 @@ Completed on this branch:
   `terminate` vm-probe `unwired`) alongside existing execute contract rows.
 - latest: `WasmWorkerSession.info()` is now session-local state aware and
   reports lifecycle-derived state after start/terminate/recycle calls.
+- latest: worker/client docs summary validators now require explicit
+  session-local `info().state` guidance tokens, preventing silent drift in
+  session-state integration docs.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
