@@ -956,6 +956,10 @@ Completed on this branch:
   - in-range timeout updates in the same state remain
     `unsupported_worker_timeout_enforcement` with
     `blocker_key = "worker_runtime_failed"`.
+- latest: worker-contract summary validation now also enforces failed-state
+  invalid-timeout precedence assertions in vm-probe unit contracts
+  (`wasm_worker_set_timeout(0)` => `invalid_worker_timeout` with no blocker
+  key), preventing silent regression of timeout precedence in `failed` state.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
