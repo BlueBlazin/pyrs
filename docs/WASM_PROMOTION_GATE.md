@@ -20,8 +20,11 @@ All of the following must be green for the candidate commit:
    - runs `scripts/check_wasm_branch.sh`,
    - verifies native check + wasm target check + vm-probe wasm lane,
    - verifies fixture/docs/source contract summaries and host-seam audit.
-2. Existing native mandatory lanes (`parity-gate`, release/nightly lanes) remain green.
-3. No new CI flakes attributable to WASM codepaths.
+2. When browser smoke is explicitly requested (`workflow_dispatch`):
+   - `wasm-track / wasm-browser-smoke` must be reviewed for pass/fail and logs,
+   - failures block promotion unless they are triaged and explicitly waived.
+3. Existing native mandatory lanes (`parity-gate`, release/nightly lanes) remain green.
+4. No new CI flakes attributable to WASM codepaths.
 
 ## Technical Go/No-Go Checklist
 

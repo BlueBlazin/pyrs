@@ -230,7 +230,8 @@ Branch helper:
 - CI lane helper:
   `.github/workflows/wasm-track.yml`
   runs branch-level wasm contract gating (`scripts/check_wasm_branch.sh`) and
-  uploads wasm contract evidence artifacts.
+  uploads wasm contract evidence artifacts. It also includes optional
+  `wasm-browser-smoke` coverage on manual `workflow_dispatch`.
 - promotion decision rubric:
   `docs/WASM_PROMOTION_GATE.md`
   defines explicit go/no-go criteria before any merge candidacy decision.
@@ -663,6 +664,10 @@ Completed on this branch:
   (`.github/workflows/wasm-track.yml`) running `scripts/check_wasm_branch.sh`
   plus artifact upload, and explicit promotion go/no-go criteria are now
   codified in `docs/WASM_PROMOTION_GATE.md`.
+- latest: W7 CI now includes an optional `wasm-browser-smoke` job on manual
+  dispatch; it installs `wasm-pack` and executes
+  `scripts/run_wasm_contract_smoke.sh` with browser and vm-probe state-gate
+  smoke flags enabled, while keeping the mandatory gate lane deterministic.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
