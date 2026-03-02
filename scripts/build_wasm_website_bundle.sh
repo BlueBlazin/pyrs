@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${REPO_ROOT}"
+
 if ! command -v wasm-pack >/dev/null 2>&1; then
   echo "wasm-pack is required. Install with: cargo install wasm-pack --locked" >&2
   exit 1

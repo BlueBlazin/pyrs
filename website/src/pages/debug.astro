@@ -537,7 +537,8 @@ print(x)</textarea>
 				const message = error instanceof Error ? error.message : String(error);
 				setStatus("Failed to load runtime", true);
 				setOutput(
-					`Unable to load wasm runtime from ${wasmEntrypoint}\n\n${message}`
+					`Unable to load wasm runtime from ${wasmEntrypoint}\n\n${message}\n\n` +
+						`Hint: run ./scripts/build_wasm_website_bundle.sh from repo root to generate website/public/wasm assets.`
 				);
 			}
 		};

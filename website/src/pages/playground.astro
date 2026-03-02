@@ -248,6 +248,14 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 					const message = error instanceof Error ? error.message : String(error);
 					setStatus("error", "Runtime failed to load");
 					appendTranscriptLine(message, "stderr");
+					appendTranscriptLine(
+						"# missing wasm assets? run: ./scripts/build_wasm_website_bundle.sh",
+						"meta",
+					);
+					appendTranscriptLine(
+						`# expected wasm entrypoint: ${wasmEntrypoint}`,
+						"meta",
+					);
 					return false;
 				} finally {
 					runtimeLoadPromise = null;

@@ -18,9 +18,13 @@ import Callout from "../../components/docs/Callout.astro";
 <DocSection title="Quick Start">
 	<CodeBlock
 		label="Open and run"
-		code={`# 1) Open /playground
-# 2) Wait for runtime status to show loaded
-# 3) Type directly into the REPL input and press Enter`}
+		code={`# 1) Build browser wasm assets (repo root)
+./scripts/build_wasm_website_bundle.sh
+
+# 2) Start website dev server
+pnpm --dir website dev
+
+# 3) Open /playground, wait for runtime loaded, and run input`}
 	/>
 	<Callout title="Input model" tone="note">
 		Press <code>Enter</code> to execute. Use <code>Shift</code> + <code>Enter</code> for multiline input.
