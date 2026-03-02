@@ -56,6 +56,9 @@ echo "[wasm-branch] wasm host seam audit snapshot"
 python3 scripts/audit_wasm_host_seam.py \
   --out perf/wasm_host_seam_audit_latest.json
 
+echo "[wasm-branch] nextest wasm bridge unit-contract regression"
+cargo nextest run --lib wasm_ --status-level fail --final-status-level fail
+
 echo "[wasm-branch] nextest host capability regression"
 cargo nextest run --lib wasm_host_capability_matrix_is_explicit --status-level fail --final-status-level fail
 

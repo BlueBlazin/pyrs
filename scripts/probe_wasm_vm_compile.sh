@@ -10,6 +10,9 @@ cargo test --target wasm32-unknown-unknown --lib --no-run --features wasm-vm-pro
 echo "[wasm-vm-probe] cargo check wasm contract harness with vm probe feature"
 cargo check --target wasm32-unknown-unknown --test wasm_contract --features wasm-vm-probe
 
+echo "[wasm-vm-probe] nextest wasm bridge unit-contract regression (vm-probe)"
+cargo nextest run --lib wasm_ --features wasm-vm-probe --status-level fail --final-status-level fail
+
 echo "[wasm-vm-probe] wasm vm native-link blocker snapshot"
 python3 scripts/generate_wasm_vm_link_blockers_summary.py \
   --out perf/wasm_vm_link_blockers_latest.json

@@ -192,6 +192,9 @@ Branch helper:
   core compile/summary/nextest checks;
   set `PYRS_WASM_RUN_VM_PROBE_BROWSER_STATE_GATE_SMOKE=1` to additionally run
   vm-probe browser smoke focused on terminate/recycle state-gating flows).
+- wasm bridge unit-contract helper:
+  `cargo nextest run --lib wasm_ --status-level fail --final-status-level fail`
+  for host-executed wasm bridge/runtime unit-contract coverage.
 - wasm harness note: use targeted wasm contract compile lane
   (`cargo check --target wasm32-unknown-unknown --test wasm_contract`)
   instead of all-tests wasm compile.
@@ -684,6 +687,10 @@ Completed on this branch:
 - latest: `run_wasm_contract_smoke.sh` now supports
   `PYRS_WASM_SKIP_CORE_SMOKE=1` so browser-smoke lanes can run wasm-pack
   checks without re-running core compile/summary/nextest gates.
+- latest: wasm gate scripts now execute host wasm-bridge unit-contract tests
+  (`cargo nextest run --lib wasm_`) in both default and vm-probe lanes
+  (vm-probe path via `scripts/probe_wasm_vm_compile.sh`) instead of relying
+  only on compile-time wasm contract harness checks.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
