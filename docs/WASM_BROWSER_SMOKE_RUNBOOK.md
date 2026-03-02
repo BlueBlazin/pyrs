@@ -62,9 +62,12 @@ gh run download <run-id> --dir perf/wasm-browser-smoke-run
 
 Expected artifact bundles:
 - `wasm-contract-artifacts`
+- `wasm-evidence-pack`
 - `wasm-browser-smoke-artifacts` (present when browser lane executes)
   - includes `perf/wasm_evidence_pack_latest/manifest.json` when core smoke
     generated a local evidence pack.
+- `wasm-browser-smoke-evidence-pack` (present when browser lane emits an
+  evidence pack)
 
 ## Promotion Evidence Checklist
 

@@ -73,6 +73,14 @@ jobs:
             perf/wasm_evidence_pack_latest/manifest.json
             perf/wasm_evidence_pack_latest/*.json
 
+      - name: Upload wasm evidence-pack artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-evidence-pack
+          if-no-files-found: error
+          path: perf/wasm_evidence_pack_latest/**
+
   wasm-browser-smoke:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: wasm-contract-gate
@@ -142,3 +150,11 @@ jobs:
             perf/wasm_execute_contract_summary_vm_probe_latest.json
             perf/wasm_evidence_pack_latest/manifest.json
             perf/wasm_evidence_pack_latest/*.json
+
+      - name: Upload browser smoke evidence-pack artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-browser-smoke-evidence-pack
+          if-no-files-found: ignore
+          path: perf/wasm_evidence_pack_latest/**

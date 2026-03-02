@@ -57,6 +57,7 @@ All items below are required for a "go":
 Promotion review must include:
 
 1. Latest `wasm-track` artifact bundle from CI.
+   - include `wasm-evidence-pack` artifact (manifest + copied summaries).
 2. Latest local `scripts/check_wasm_branch.sh` output.
 3. Latest local consolidated evidence pack:
    - generated automatically by `scripts/check_wasm_branch.sh`,

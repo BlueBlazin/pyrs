@@ -244,7 +244,8 @@ Branch helper:
 - CI lane helper:
   `.github/workflows/wasm-track.yml`
   runs branch-level wasm contract gating (`scripts/check_wasm_branch.sh`) and
-  uploads wasm contract evidence artifacts. It also includes optional
+  uploads wasm contract evidence artifacts plus dedicated
+  `wasm-evidence-pack` artifacts. It also includes optional
   `wasm-browser-smoke` coverage on manual `workflow_dispatch`.
 - promotion decision rubric:
   `docs/WASM_PROMOTION_GATE.md`
