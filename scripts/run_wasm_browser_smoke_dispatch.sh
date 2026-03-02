@@ -86,6 +86,43 @@ fetch_run_log_with_retries() {
   return 1
 }
 
+extract_hashes_for_run() {
+  local run_id="$1"
+  local run_url="$2"
+  local run_head_sha="$3"
+  local output_dir="$4"
+  local hash_json="${output_dir}/wasm-artifact-hashes.json"
+  local hash_md="${output_dir}/wasm-artifact-hashes.md"
+  local run_log="${output_dir}/workflow-run.log"
+
+  echo "[wasm-browser-dispatch] extracting artifact hash summary"
+  if fetch_run_log_with_retries "${run_id}" "${run_log}"; then
+    if python3 scripts/extract_wasm_ci_artifact_hashes.py \
+      --run-id "${run_id}" \
+      --run-url "${run_url}" \
+      --head-sha "${run_head_sha}" \
+      --log-file "${run_log}" \
+      --format json \
+      --out "${hash_json}"; then
+      python3 scripts/extract_wasm_ci_artifact_hashes.py \
+        --run-id "${run_id}" \
+        --run-url "${run_url}" \
+        --head-sha "${run_head_sha}" \
+        --log-file "${run_log}" \
+        --format markdown \
+        --out "${hash_md}" >/dev/null
+      echo "[wasm-browser-dispatch] artifact hash files:"
+      echo "  - ${hash_json}"
+      echo "  - ${hash_md}"
+      echo "  - ${run_log}"
+    else
+      echo "[wasm-browser-dispatch] warning: failed to extract artifact hashes from saved run log"
+    fi
+  else
+    echo "[wasm-browser-dispatch] warning: failed to download workflow run log for hash extraction"
+  fi
+}
+
 branch_ref="codex/wasm"
 workflow_name="wasm-track.yml"
 run_id=""
@@ -197,14 +234,16 @@ if [[ "${update_docs_snapshot}" == "1" ]]; then
     --head-sha "${run_head_sha}"
 fi
 
-if [[ "${skip_download}" == "1" ]]; then
-  echo "[wasm-browser-dispatch] skipping artifact download (--skip-download)"
-  echo "[wasm-browser-dispatch] run-url: ${run_url}"
-  exit 0
-fi
-
 download_dir="${download_root}/run-${run_id}"
 mkdir -p "${download_dir}"
+
+if [[ "${skip_download}" == "1" ]]; then
+  extract_hashes_for_run "${run_id}" "${run_url}" "${run_head_sha}" "${download_dir}"
+  echo "[wasm-browser-dispatch] skipping artifact download (--skip-download)"
+  echo "[wasm-browser-dispatch] run-url: ${run_url}"
+  echo "[wasm-browser-dispatch] artifacts: ${download_dir}"
+  exit 0
+fi
 
 echo "[wasm-browser-dispatch] downloading artifacts into ${download_dir}"
 gh run download "${run_id}" --dir "${download_dir}"
@@ -220,35 +259,7 @@ fi
 echo "[wasm-browser-dispatch] validating baseline summary: ${baseline_path}"
 python3 scripts/validate_wasm_browser_smoke_baseline.py --summary "${baseline_path}"
 
-hash_json="${download_dir}/wasm-artifact-hashes.json"
-hash_md="${download_dir}/wasm-artifact-hashes.md"
-run_log="${download_dir}/workflow-run.log"
-echo "[wasm-browser-dispatch] extracting artifact hash summary"
-if fetch_run_log_with_retries "${run_id}" "${run_log}"; then
-  if python3 scripts/extract_wasm_ci_artifact_hashes.py \
-    --run-id "${run_id}" \
-    --run-url "${run_url}" \
-    --head-sha "${run_head_sha}" \
-    --log-file "${run_log}" \
-    --format json \
-    --out "${hash_json}"; then
-    python3 scripts/extract_wasm_ci_artifact_hashes.py \
-      --run-id "${run_id}" \
-      --run-url "${run_url}" \
-      --head-sha "${run_head_sha}" \
-      --log-file "${run_log}" \
-      --format markdown \
-      --out "${hash_md}" >/dev/null
-    echo "[wasm-browser-dispatch] artifact hash files:"
-    echo "  - ${hash_json}"
-    echo "  - ${hash_md}"
-    echo "  - ${run_log}"
-  else
-    echo "[wasm-browser-dispatch] warning: failed to extract artifact hashes from saved run log"
-  fi
-else
-  echo "[wasm-browser-dispatch] warning: failed to download workflow run log for hash extraction"
-fi
+extract_hashes_for_run "${run_id}" "${run_url}" "${run_head_sha}" "${download_dir}"
 
 echo "[wasm-browser-dispatch] baseline capture complete"
 echo "[wasm-browser-dispatch] run-url: ${run_url}"

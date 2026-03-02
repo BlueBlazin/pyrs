@@ -80,10 +80,12 @@ to the selected run in the same command:
 scripts/run_wasm_browser_smoke_dispatch.sh --run-id <run-id> --update-docs-snapshot
 ```
 
-On successful download/validation, the helper also writes:
+On successful helper execution, the helper also writes:
 - `<download-dir>/wasm-artifact-hashes.json`
 - `<download-dir>/wasm-artifact-hashes.md`
 - `<download-dir>/workflow-run.log`
+- in `--skip-download` mode these files are still produced (artifact bundle
+  download is the only skipped action).
 - helper dispatch selection is anchored to dispatch-time run creation and
   verifies `headSha` against your local `<ref>` commit when that ref exists
   locally, to reduce stale-run/race mis-association.
