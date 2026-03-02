@@ -33,4 +33,9 @@ wasm-bindgen \
   --out-name pyrs \
   --typescript
 
+python3 scripts/generate_wasm_env_shim.py \
+  --wasm "${WASM_INPUT}" \
+  --bindgen-js website/public/wasm/pyrs.js \
+  --out-shim website/public/wasm/pyrs_env.js
+
 echo "WASM bundle generated in website/public/wasm/ using release-wasm (size-focused profile)."
