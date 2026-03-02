@@ -18,7 +18,8 @@ pub(in crate::vm) struct Bz2DecompressorState {
     needs_input: bool,
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), link(name = "bz2"))]
+#[cfg(not(target_arch = "wasm32"))]
+#[link(name = "bz2")]
 unsafe extern "C" {
     fn BZ2_bzBuffToBuffCompress(
         dest: *mut c_char,
@@ -37,6 +38,33 @@ unsafe extern "C" {
         small: c_int,
         verbosity: c_int,
     ) -> c_int;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case)]
+unsafe fn BZ2_bzBuffToBuffCompress(
+    _dest: *mut c_char,
+    _dest_len: *mut c_uint,
+    _source: *mut c_char,
+    _source_len: c_uint,
+    _block_size_100k: c_int,
+    _verbosity: c_int,
+    _work_factor: c_int,
+) -> c_int {
+    -1
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case)]
+unsafe fn BZ2_bzBuffToBuffDecompress(
+    _dest: *mut c_char,
+    _dest_len: *mut c_uint,
+    _source: *mut c_char,
+    _source_len: c_uint,
+    _small: c_int,
+    _verbosity: c_int,
+) -> c_int {
+    -1
 }
 
 impl Vm {

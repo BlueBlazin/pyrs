@@ -57,7 +57,8 @@ struct ZStream {
     reserved: c_ulong,
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), link(name = "z"))]
+#[cfg(not(target_arch = "wasm32"))]
+#[link(name = "z")]
 unsafe extern "C" {
     fn zlibVersion() -> *const c_char;
     fn deflateInit2_(
@@ -81,6 +82,87 @@ unsafe extern "C" {
     fn inflate(strm: *mut ZStream, flush: c_int) -> c_int;
     fn inflateEnd(strm: *mut ZStream) -> c_int;
     fn crc32(crc: c_ulong, buf: *const u8, len: c_uint) -> c_ulong;
+}
+
+#[cfg(target_arch = "wasm32")]
+static ZLIB_VERSION_STUB: &[u8] = b"pyrs-wasm-zlib\0";
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case)]
+unsafe fn zlibVersion() -> *const c_char {
+    ZLIB_VERSION_STUB.as_ptr().cast::<c_char>()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case)]
+unsafe fn deflateInit2_(
+    _strm: *mut ZStream,
+    _level: c_int,
+    _method: c_int,
+    _window_bits: c_int,
+    _mem_level: c_int,
+    _strategy: c_int,
+    _version: *const c_char,
+    _stream_size: c_int,
+) -> c_int {
+    -2
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case)]
+unsafe fn deflate(_strm: *mut ZStream, _flush: c_int) -> c_int {
+    -2
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case)]
+unsafe fn deflateEnd(_strm: *mut ZStream) -> c_int {
+    Z_OK
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case)]
+unsafe fn inflateInit2_(
+    _strm: *mut ZStream,
+    _window_bits: c_int,
+    _version: *const c_char,
+    _stream_size: c_int,
+) -> c_int {
+    -2
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case)]
+unsafe fn inflate(_strm: *mut ZStream, _flush: c_int) -> c_int {
+    -2
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case)]
+unsafe fn inflateEnd(_strm: *mut ZStream) -> c_int {
+    Z_OK
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe fn crc32(crc: c_ulong, buf: *const u8, len: c_uint) -> c_ulong {
+    const POLY: u32 = 0xEDB88320;
+    if buf.is_null() || len == 0 {
+        return crc;
+    }
+    let mut state = (crc as u32) ^ 0xFFFF_FFFF;
+    // SAFETY: caller passes a valid pointer and length pair.
+    let bytes = unsafe { std::slice::from_raw_parts(buf, len as usize) };
+    for byte in bytes {
+        state ^= *byte as u32;
+        for _ in 0..8 {
+            if state & 1 != 0 {
+                state = (state >> 1) ^ POLY;
+            } else {
+                state >>= 1;
+            }
+        }
+    }
+    (state ^ 0xFFFF_FFFF) as c_ulong
 }
 
 impl Vm {
