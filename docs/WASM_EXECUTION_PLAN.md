@@ -875,6 +875,13 @@ Completed on this branch:
   (`scripts/run_wasm_browser_smoke_dispatch.sh`) that dispatches
   `wasm-track.yml`, waits for completion, downloads artifacts, and validates
   `wasm_browser_smoke_baseline_latest.json` from the run output.
+- latest: worker recovery coverage now explicitly locks `terminate -> start`
+  semantics in both top-level and session APIs:
+  - `tests/wasm_contract.rs::wasm_worker_execute_recovers_after_terminate_then_start`
+  - `tests/wasm_contract.rs::wasm_worker_timeout_configuration_recovers_after_terminate_then_start`
+  - `tests/wasm_contract.rs::wasm_worker_session_recovers_after_external_terminate_then_start`
+  This closes a prior contract gap where only `terminate -> recycle` recovery
+  paths were fixture-backed.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
