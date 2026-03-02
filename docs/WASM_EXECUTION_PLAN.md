@@ -713,6 +713,9 @@ Completed on this branch:
   `true` in `wasm-vm-probe`), with fixture/test/summary/docs alignment so
   worker readiness signals stay internally consistent with backend capability
   flags.
+- latest: `generate_wasm_worker_docs_contract_summary.py` now enforces
+  docs-level `supported = false` default and `supported = true` vm-probe
+  wording for worker info contract docs, preventing future mode-signal drift.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
