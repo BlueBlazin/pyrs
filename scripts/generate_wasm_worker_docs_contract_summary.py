@@ -240,6 +240,10 @@ def main() -> int:
         errors.append("docs missing default worker timeout unsupported_reason text")
     if "worker timeout enforcement is not wired yet" not in docs_source:
         errors.append("docs missing vm-probe worker timeout unsupported_reason text")
+    if "`wasm_worker_current_timeout_ms()`" not in docs_source:
+        errors.append("docs missing wasm_worker_current_timeout_ms() contract guidance")
+    if "resets back to `5000`" not in docs_source:
+        errors.append("docs missing worker current-timeout lifecycle reset guidance")
     if worker_backend_default not in docs_source:
         errors.append(
             f"docs missing worker backend default key '{worker_backend_default}'"
@@ -324,6 +328,8 @@ def main() -> int:
             "docs missing vm-probe worker phase "
             f"'{vm_probe_runtime_error_phase}'"
         )
+    if "does not transition worker into `failed`" not in docs_source:
+        errors.append("docs missing vm-probe runtime_error continuity guidance")
 
     if errors:
         print("wasm worker docs contract validation failed:")

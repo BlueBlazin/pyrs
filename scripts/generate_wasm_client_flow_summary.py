@@ -162,6 +162,7 @@ def validate_docs(
         "wasm_runtime_info()",
         "wasm_worker_info()",
         "wasm_worker_timeout_policy()",
+        "wasm_worker_current_timeout_ms()",
         "wasm_snippet_support(source)",
     ]
     validate_flow_order(docs_source, ordered_flow_tokens, errors)
@@ -257,6 +258,10 @@ def validate_docs(
         errors.append("docs missing worker state-ready gating guidance")
     if 'worker `state != "ready"`' not in docs_source:
         errors.append("docs missing worker state-not-ready gating guidance")
+    if "runtime_error" in docs_source and "keeps worker `state = \"ready\"`" not in docs_source:
+        errors.append(
+            "docs missing vm-probe runtime_error continuity guidance (state remains ready)"
+        )
 
     return errors
 
@@ -342,6 +347,7 @@ def main() -> int:
             "wasm_runtime_info()",
             "wasm_worker_info()",
             "wasm_worker_timeout_policy()",
+            "wasm_worker_current_timeout_ms()",
             "wasm_snippet_support(source)",
         ],
         "required_call_tokens": [
