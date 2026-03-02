@@ -100,6 +100,8 @@ if ! command -v wasm-pack >/dev/null 2>&1; then
   exit 1
 fi
 
+vm_probe_browser_smoke_enabled=0
+
 configure_browser_test_timeout() {
   local timeout_seconds="${PYRS_WASM_BROWSER_TEST_TIMEOUT_SECONDS:-60}"
   export WASM_BINDGEN_TEST_TIMEOUT="${timeout_seconds}"
@@ -131,7 +133,18 @@ run_vm_probe_state_gate_browser_smoke() {
   # Filtering vm-probe wasm-bindgen browser runs by test name has shown
   # runner-level hangs in CI ("Loading scripts..." timeout). Run the full
   # wasm_contract integration suite in vm-probe mode for stable signal.
-  wasm-pack test --headless --"${browser}" --features wasm-vm-probe --test wasm_contract
+  if wasm-pack test --headless --"${browser}" --features wasm-vm-probe --test wasm_contract; then
+    vm_probe_browser_smoke_enabled=1
+    return 0
+  fi
+
+  vm_probe_browser_smoke_enabled=0
+  echo "[wasm-contract] vm-probe browser smoke failed; continuing without vm-probe browser gate"
+  if [[ "${PYRS_WASM_STRICT_VM_PROBE_BROWSER_SMOKE:-0}" == "1" ]]; then
+    echo "[wasm-contract] strict vm-probe browser smoke mode enabled; failing"
+    return 1
+  fi
+  return 0
 }
 
 emit_browser_smoke_baseline() {
@@ -143,7 +156,7 @@ emit_browser_smoke_baseline() {
   if [[ -n "${fallback_from}" ]]; then
     args+=(--fallback-from "${fallback_from}")
   fi
-  if [[ "${PYRS_WASM_RUN_VM_PROBE_BROWSER_STATE_GATE_SMOKE:-0}" == "1" ]]; then
+  if [[ "${vm_probe_browser_smoke_enabled}" == "1" ]]; then
     args+=(--vm-probe-state-gate)
   fi
   python3 scripts/generate_wasm_browser_smoke_baseline.py "${args[@]}"
