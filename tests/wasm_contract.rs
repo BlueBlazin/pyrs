@@ -1876,6 +1876,107 @@ fn wasm_worker_session_followups_track_shared_state_after_external_lifecycle_cha
 }
 
 #[wasm_bindgen_test]
+fn wasm_worker_session_recovers_after_external_terminate_then_start() {
+    reset_top_level_worker_state_for_contract_tests();
+    let mut session = WasmWorkerSession::new();
+
+    let started = session.start();
+    assert_eq!(
+        started.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[0])
+    );
+
+    let terminated = wasm_worker_terminate();
+    assert_eq!(
+        terminated.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+
+    let blocked_execute = session.execute_with_operation("x = 1\n");
+    assert_eq!(
+        blocked_execute.phase(),
+        "unsupported_worker_execution".to_string()
+    );
+    assert_eq!(
+        blocked_execute.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+    assert_eq!(
+        blocked_execute.blocker_key(),
+        Some("worker_runtime_unwired".to_string())
+    );
+    assert_eq!(session.executes_requested(), 1);
+    assert_eq!(
+        session.last_state(),
+        Some(expected_worker_lifecycle_state_for_fixture(
+            &WASM_WORKER_LIFECYCLE_FIXTURES[1]
+        ))
+    );
+
+    let blocked_timeout = session.set_timeout_ms(5_000);
+    assert_eq!(
+        blocked_timeout.phase(),
+        "unsupported_worker_timeout_enforcement".to_string()
+    );
+    assert_eq!(
+        blocked_timeout.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+    assert_eq!(
+        blocked_timeout.blocker_key(),
+        Some("worker_runtime_unwired".to_string())
+    );
+    assert_eq!(session.timeout_updates_requested(), 1);
+    assert_eq!(session.last_timeout_ms_requested(), Some(5_000));
+    assert_eq!(
+        session.last_state(),
+        Some(expected_worker_lifecycle_state_for_fixture(
+            &WASM_WORKER_LIFECYCLE_FIXTURES[1]
+        ))
+    );
+
+    let restarted = wasm_worker_start();
+    assert_eq!(
+        restarted.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[0])
+    );
+
+    let resumed_execute = session.execute_with_operation("x = 1\n");
+    let resumed_timeout = session.set_timeout_ms(5_000);
+    if vm_probe_enabled() {
+        assert_eq!(restarted.phase(), "worker_started".to_string());
+        assert_eq!(resumed_execute.phase(), "ok".to_string());
+        assert_eq!(resumed_execute.state(), "ready".to_string());
+        assert!(resumed_execute.success());
+        assert!(resumed_execute.blocker_key().is_none());
+        assert_eq!(resumed_timeout.phase(), "worker_timeout_configured".to_string());
+        assert_eq!(resumed_timeout.state(), "ready".to_string());
+        assert!(resumed_timeout.success());
+        assert!(resumed_timeout.blocker_key().is_none());
+    } else {
+        assert_eq!(restarted.phase(), "unsupported_worker_start".to_string());
+        assert_eq!(
+            resumed_execute.phase(),
+            "unsupported_worker_execution".to_string()
+        );
+        assert_eq!(
+            resumed_execute.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+        assert_eq!(
+            resumed_timeout.phase(),
+            "unsupported_worker_timeout_enforcement".to_string()
+        );
+        assert_eq!(
+            resumed_timeout.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+    }
+    assert_eq!(session.executes_requested(), 2);
+    assert_eq!(session.timeout_updates_requested(), 2);
+}
+
+#[wasm_bindgen_test]
 fn wasm_worker_session_timeout_tracks_external_lifecycle_resets() {
     reset_top_level_worker_state_for_contract_tests();
     let mut session = WasmWorkerSession::new();
