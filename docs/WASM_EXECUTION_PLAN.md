@@ -816,6 +816,10 @@ Completed on this branch:
     terminate),
   - session snapshot telemetry (`last_phase`, `last_state`,
     `executes_requested`) remains consistent in browser lane.
+- latest: wasm contract coverage now explicitly locks lane separation between
+  top-level execute and worker lifecycle state-gates in vm-probe mode:
+  top-level `execute()` remains `phase = "ok"` after `wasm_worker_terminate()`
+  while worker execute remains blocked with `worker_runtime_unwired`.
 - latest: `scripts/run_wasm_contract_smoke.sh` now hard-fails browser smoke
   when `wasm-pack` output contains `output filename collision`, preventing
   silent regression toward Cargo’s future hard-error behavior for wasm bin/lib

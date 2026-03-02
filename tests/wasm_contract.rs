@@ -1637,6 +1637,48 @@ fn wasm_worker_timeout_configuration_requires_ready_state_after_terminate() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_top_level_execute_stays_available_when_worker_is_unwired() {
+    reset_top_level_worker_state_for_contract_tests();
+
+    let baseline = execute("v = 1\n");
+    if vm_probe_enabled() {
+        assert_eq!(baseline.phase(), "ok".to_string());
+        assert!(baseline.success());
+        assert!(baseline.blocker_key().is_none());
+    } else {
+        assert_eq!(baseline.phase(), "unsupported_execution".to_string());
+        assert!(!baseline.success());
+        assert_eq!(
+            baseline.blocker_key(),
+            Some("execution_backend_unwired".to_string())
+        );
+        return;
+    }
+
+    let terminated = wasm_worker_terminate();
+    assert_eq!(
+        terminated.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+
+    let worker_blocked = wasm_worker_execute_with_operation("v = 2\n");
+    assert_eq!(
+        worker_blocked.phase(),
+        "unsupported_worker_execution".to_string()
+    );
+    assert_eq!(worker_blocked.state(), "unwired".to_string());
+    assert_eq!(
+        worker_blocked.blocker_key(),
+        Some("worker_runtime_unwired".to_string())
+    );
+
+    let top_level_resumed = execute("v = 3\n");
+    assert_eq!(top_level_resumed.phase(), "ok".to_string());
+    assert!(top_level_resumed.success());
+    assert!(top_level_resumed.blocker_key().is_none());
+}
+
+#[wasm_bindgen_test]
 fn wasm_worker_session_followups_track_shared_state_after_external_lifecycle_change() {
     for fixture in WASM_WORKER_SESSION_STATE_GATE_FIXTURES {
         reset_top_level_worker_state_for_contract_tests();
