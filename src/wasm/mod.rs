@@ -3385,6 +3385,11 @@ mod tests {
         assert_eq!(terminated.phase(), "worker_terminated".to_string());
         assert_eq!(terminated.state(), "unwired".to_string());
         assert!(terminated.success());
+        let info_after_terminate = wasm_worker_info();
+        assert_eq!(info_after_terminate.state(), "unwired".to_string());
+        assert!(!info_after_terminate.execute_supported());
+        assert!(!info_after_terminate.timeout_configuration_supported());
+        assert!(!info_after_terminate.timeout_enforcement_supported());
 
         let blocked_while_unwired = wasm_worker_execute_with_operation("x = 1\n");
         assert_eq!(
@@ -3396,11 +3401,34 @@ mod tests {
             blocked_while_unwired.blocker_key(),
             Some("worker_runtime_unwired".to_string())
         );
+        let blocked_timeout = wasm_worker_set_timeout(5_000);
+        assert_eq!(
+            blocked_timeout.phase(),
+            "unsupported_worker_timeout_enforcement".to_string()
+        );
+        assert_eq!(blocked_timeout.state(), "unwired".to_string());
+        assert_eq!(
+            blocked_timeout.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
 
         let started = wasm_worker_start();
         assert_eq!(started.phase(), "worker_started".to_string());
         assert_eq!(started.state(), "ready".to_string());
         assert!(started.success());
+        let info_after_start = wasm_worker_info();
+        assert_eq!(info_after_start.state(), "ready".to_string());
+        assert!(info_after_start.execute_supported());
+        assert!(info_after_start.timeout_configuration_supported());
+        assert!(info_after_start.timeout_enforcement_supported());
+        let configured_timeout = wasm_worker_set_timeout(200);
+        assert_eq!(
+            configured_timeout.phase(),
+            "worker_timeout_configured".to_string()
+        );
+        assert_eq!(configured_timeout.state(), "ready".to_string());
+        assert!(configured_timeout.success());
+        assert!(configured_timeout.blocker_key().is_none());
 
         let resumed = wasm_worker_execute_with_operation("x = 1\n");
         assert_eq!(resumed.phase(), "ok".to_string());

@@ -980,10 +980,14 @@ Completed on this branch:
   worker execute recovery semantics:
   - `wasm_worker_terminate()` from `state = "failed"` transitions to
     `state = "unwired"`,
-  - worker execute stays blocked with
+  - worker execute and timeout configuration stay blocked with
     `blocker_key = "worker_runtime_unwired"` until restart,
-  - `wasm_worker_start()` then restores `state = "ready"` and worker execute
-    returns `phase = "ok"` for capability-allowed snippets,
+  - `wasm_worker_start()` then restores `state = "ready"` with
+    worker-info support flags re-enabled (`execute_supported` /
+    `timeout_configuration_supported` / `timeout_enforcement_supported`),
+  - after restart, valid timeout updates return
+    `phase = "worker_timeout_configured"` and worker execute returns
+    `phase = "ok"` for capability-allowed snippets,
   - gate validation now requires
     `wasm_worker_vm_probe_failed_state_terminate_then_start_restores_worker_execute`
     in `src/wasm/mod.rs`
