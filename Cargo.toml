@@ -6,8 +6,16 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "pyrs"
+path = "src/main.rs"
+test = false
+bench = false
+required-features = ["native-cli"]
+
 [features]
-default = []
+default = ["native-cli"]
+native-cli = []
 wasm-vm-probe = []
 
 [dependencies]

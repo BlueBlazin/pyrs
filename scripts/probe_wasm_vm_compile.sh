@@ -2,13 +2,13 @@
 set -euo pipefail
 
 echo "[wasm-vm-probe] cargo check wasm target with vm probe feature"
-cargo check --target wasm32-unknown-unknown --features wasm-vm-probe
+cargo check --target wasm32-unknown-unknown --no-default-features --features wasm-vm-probe
 
 echo "[wasm-vm-probe] cargo test wasm lib harness compile-only with vm probe feature"
-cargo test --target wasm32-unknown-unknown --lib --no-run --features wasm-vm-probe
+cargo test --target wasm32-unknown-unknown --lib --no-run --no-default-features --features wasm-vm-probe
 
 echo "[wasm-vm-probe] cargo check wasm contract harness with vm probe feature"
-cargo check --target wasm32-unknown-unknown --test wasm_contract --features wasm-vm-probe
+cargo check --target wasm32-unknown-unknown --test wasm_contract --no-default-features --features wasm-vm-probe
 
 echo "[wasm-vm-probe] nextest wasm bridge unit-contract regression (vm-probe)"
 cargo nextest run --lib wasm_ --features wasm-vm-probe --status-level fail --final-status-level fail

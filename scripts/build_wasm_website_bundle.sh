@@ -18,6 +18,7 @@ cargo build \
   --lib \
   --target wasm32-unknown-unknown \
   --profile release-wasm \
+  --no-default-features \
   --features wasm-vm-probe
 
 WASM_INPUT="target/wasm32-unknown-unknown/release-wasm/pyrs.wasm"

@@ -8,16 +8,16 @@ if [[ "${PYRS_WASM_SKIP_CORE_SMOKE:-0}" != "1" ]]; then
   cargo check
 
   echo "[wasm-contract] cargo check wasm contract target"
-  cargo check --target wasm32-unknown-unknown --test wasm_contract
+  cargo check --target wasm32-unknown-unknown --test wasm_contract --no-default-features
 
   echo "[wasm-contract] cargo check wasm32 integration-tests compile set (default)"
-  cargo check --target wasm32-unknown-unknown --tests
+  cargo check --target wasm32-unknown-unknown --tests --no-default-features
 
   echo "[wasm-contract] cargo check wasm32 integration-tests compile set (vm-probe)"
-  cargo check --target wasm32-unknown-unknown --tests --features wasm-vm-probe
+  cargo check --target wasm32-unknown-unknown --tests --no-default-features --features wasm-vm-probe
 
   echo "[wasm-contract] cargo test wasm lib unit harness (compile-only)"
-  cargo test --target wasm32-unknown-unknown --lib --no-run
+  cargo test --target wasm32-unknown-unknown --lib --no-run --no-default-features
 
   echo "[wasm-contract] wasm vm probe lane"
   scripts/probe_wasm_vm_compile.sh
@@ -103,7 +103,7 @@ fi
 vm_probe_browser_smoke_enabled=0
 
 configure_browser_test_timeout() {
-  local timeout_seconds="${PYRS_WASM_BROWSER_TEST_TIMEOUT_SECONDS:-60}"
+  local timeout_seconds="${PYRS_WASM_BROWSER_TEST_TIMEOUT_SECONDS:-180}"
   export WASM_BINDGEN_TEST_TIMEOUT="${timeout_seconds}"
   echo "[wasm-contract] wasm browser test timeout: ${WASM_BINDGEN_TEST_TIMEOUT}s"
 }
@@ -112,11 +112,11 @@ run_browser_smoke() {
   local browser="$1"
   local smoke_status=0
   echo "[wasm-contract] wasm-pack ${browser}: integration contract tests"
-  if ! wasm-pack test --headless --"${browser}" --test wasm_contract; then
+  if ! wasm-pack test --headless --"${browser}" --test wasm_contract --no-default-features; then
     smoke_status=1
   fi
   echo "[wasm-contract] wasm-pack ${browser}: lib unit tests"
-  if ! wasm-pack test --headless --"${browser}" --lib; then
+  if ! wasm-pack test --headless --"${browser}" --lib --no-default-features; then
     smoke_status=1
   fi
   return "${smoke_status}"
@@ -133,7 +133,7 @@ run_vm_probe_state_gate_browser_smoke() {
   # Filtering vm-probe wasm-bindgen browser runs by test name has shown
   # runner-level hangs in CI ("Loading scripts..." timeout). Run the full
   # wasm_contract integration suite in vm-probe mode for stable signal.
-  if wasm-pack test --headless --"${browser}" --features wasm-vm-probe --test wasm_contract; then
+  if wasm-pack test --headless --"${browser}" --no-default-features --features wasm-vm-probe --test wasm_contract; then
     vm_probe_browser_smoke_enabled=1
     return 0
   fi

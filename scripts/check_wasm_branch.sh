@@ -5,19 +5,19 @@ echo "[wasm-branch] cargo check (native)"
 cargo check
 
 echo "[wasm-branch] cargo check (wasm32-unknown-unknown)"
-cargo check --target wasm32-unknown-unknown
+cargo check --target wasm32-unknown-unknown --no-default-features
 
 echo "[wasm-branch] cargo check wasm contract harness"
-cargo check --target wasm32-unknown-unknown --test wasm_contract
+cargo check --target wasm32-unknown-unknown --test wasm_contract --no-default-features
 
 echo "[wasm-branch] cargo check wasm32 integration-tests compile set (default)"
-cargo check --target wasm32-unknown-unknown --tests
+cargo check --target wasm32-unknown-unknown --tests --no-default-features
 
 echo "[wasm-branch] cargo check wasm32 integration-tests compile set (vm-probe)"
-cargo check --target wasm32-unknown-unknown --tests --features wasm-vm-probe
+cargo check --target wasm32-unknown-unknown --tests --no-default-features --features wasm-vm-probe
 
 echo "[wasm-branch] cargo test wasm lib unit harness (compile-only)"
-cargo test --target wasm32-unknown-unknown --lib --no-run
+cargo test --target wasm32-unknown-unknown --lib --no-run --no-default-features
 
 echo "[wasm-branch] wasm vm probe lane"
 scripts/probe_wasm_vm_compile.sh
