@@ -3378,7 +3378,17 @@ mod tests {
     #[cfg(feature = "wasm-vm-probe")]
     #[test]
     fn wasm_worker_vm_probe_failed_state_terminate_then_start_restores_worker_execute() {
-        clear_worker_vm();
+        let baseline = wasm_worker_recycle();
+        assert_eq!(baseline.phase(), "worker_recycled".to_string());
+        assert_eq!(baseline.state(), "ready".to_string());
+        let preconfigured = wasm_worker_set_timeout(250);
+        assert_eq!(preconfigured.phase(), "worker_timeout_configured".to_string());
+        assert!(preconfigured.success());
+        assert_eq!(wasm_worker_current_timeout_ms(), 250);
+        let pre_assigned = wasm_worker_execute_with_operation("x = 1\n");
+        assert_eq!(pre_assigned.phase(), "ok".to_string());
+        assert!(pre_assigned.success());
+
         set_current_worker_state(WasmWorkerState::Failed);
 
         let terminated = wasm_worker_terminate();
@@ -3416,11 +3426,20 @@ mod tests {
         assert_eq!(started.phase(), "worker_started".to_string());
         assert_eq!(started.state(), "ready".to_string());
         assert!(started.success());
+        assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
         let info_after_start = wasm_worker_info();
         assert_eq!(info_after_start.state(), "ready".to_string());
         assert!(info_after_start.execute_supported());
         assert!(info_after_start.timeout_configuration_supported());
         assert!(info_after_start.timeout_enforcement_supported());
+        let missing_after_start = wasm_worker_execute_with_operation("x\n");
+        assert_eq!(missing_after_start.phase(), "runtime_error".to_string());
+        assert_eq!(missing_after_start.state(), "ready".to_string());
+        assert!(!missing_after_start.success());
+        let missing_error = missing_after_start
+            .error()
+            .expect("post-terminate/start execute should report NameError");
+        assert!(missing_error.contains("NameError"));
         let configured_timeout = wasm_worker_set_timeout(200);
         assert_eq!(
             configured_timeout.phase(),

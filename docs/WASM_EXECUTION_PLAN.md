@@ -985,6 +985,9 @@ Completed on this branch:
   - `wasm_worker_start()` then restores `state = "ready"` with
     worker-info support flags re-enabled (`execute_supported` /
     `timeout_configuration_supported` / `timeout_enforcement_supported`),
+  - pre-failure non-default timeout and worker VM bindings are cleared by the
+    `terminate -> start` edge (timeout returns to `5000` and pre-failure names
+    are no longer bound),
   - after restart, valid timeout updates return
     `phase = "worker_timeout_configured"` and worker execute returns
     `phase = "ok"` for capability-allowed snippets,
