@@ -842,21 +842,23 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 	}
 
 	.transcript-line-input {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.62rem;
+		display: grid;
+		grid-template-columns: 2.45rem minmax(0, 1fr);
+		align-items: start;
+		column-gap: 0.62rem;
 		min-height: 1.56em;
 		color: #f8f2ec;
 	}
 
 	.transcript-prompt {
-		min-width: 2.45rem;
+		display: inline-block;
 		color: rgb(46, 149, 211);
 		font-weight: 700;
 		letter-spacing: 0.03em;
 	}
 
 	.transcript-input-text {
+		display: block;
 		color: #f8f2ec;
 		flex: 1;
 		min-width: 0;
@@ -875,10 +877,14 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 	}
 
 	.playground-inline-entry {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.62rem;
+		display: grid;
+		grid-template-columns: 2.45rem minmax(0, 1fr);
+		align-items: start;
+		column-gap: 0.62rem;
 		min-height: 1.56em;
+		margin: 0;
+		padding: 0;
+		border: 0;
 	}
 
 	.playground-editor-stack {
@@ -961,7 +967,6 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		background: rgba(248, 242, 236, 0.92);
 		color: #05080d;
 		border-radius: 2px;
-		animation: tok-caret-blink 1s steps(1, end) infinite;
 	}
 
 	:global(.tok-caret-end) {
@@ -972,7 +977,6 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		vertical-align: -0.16em;
 		background: rgba(248, 242, 236, 0.92);
 		border-radius: 2px;
-		animation: tok-caret-blink 1s steps(1, end) infinite;
 	}
 
 	.playground-actions {
@@ -1038,17 +1042,6 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		to {
 			opacity: 1;
 			transform: translateY(0);
-		}
-	}
-
-	@keyframes tok-caret-blink {
-		0%,
-		49% {
-			opacity: 1;
-		}
-		50%,
-		100% {
-			opacity: 0;
 		}
 	}
 
