@@ -630,6 +630,10 @@ Completed on this branch:
   configuration require `state = "ready"` (post-terminate calls now return
   unwired unsupported phases until `start()`/`recycle()` restores readiness),
   with fixture/tests/docs/summary guards updated for deterministic behavior.
+- latest: `WasmWorkerSession` follow-up calls (`execute_with_operation`,
+  `set_timeout_ms`) now retain operation-reported shared worker state instead of
+  overriding with cached session-local state, preventing stale-state telemetry
+  after external top-level lifecycle mutations.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
