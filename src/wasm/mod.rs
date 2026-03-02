@@ -25,6 +25,12 @@ const WASM_WORKER_INTERRUPT_MODEL_RECYCLE: &str = "worker_recycle";
 const WASM_WORKER_BACKEND_UNWIRED: &str = "unwired";
 #[cfg(feature = "wasm-vm-probe")]
 const WASM_WORKER_BACKEND_VM_PROBE: &str = "vm_probe";
+#[cfg(feature = "wasm-vm-probe")]
+const WASM_WORKER_LIFECYCLE_PHASE_STARTED: &str = "worker_started";
+#[cfg(feature = "wasm-vm-probe")]
+const WASM_WORKER_LIFECYCLE_PHASE_TERMINATED: &str = "worker_terminated";
+#[cfg(feature = "wasm-vm-probe")]
+const WASM_WORKER_LIFECYCLE_PHASE_RECYCLED: &str = "worker_recycled";
 const WASM_WORKER_TIMEOUT_DEFAULT_MS: u32 = 5_000;
 const WASM_WORKER_TIMEOUT_MIN_MS: u32 = 50;
 const WASM_WORKER_TIMEOUT_MAX_MS: u32 = 120_000;
@@ -233,10 +239,24 @@ fn worker_state_keys() -> Vec<&'static str> {
 }
 
 fn worker_lifecycle_phase_keys() -> Vec<&'static str> {
-    WasmWorkerLifecyclePhase::ALL
-        .iter()
-        .map(|phase| phase.key())
-        .collect()
+    #[cfg(feature = "wasm-vm-probe")]
+    {
+        let mut keys: Vec<&'static str> = WasmWorkerLifecyclePhase::ALL
+            .iter()
+            .map(|phase| phase.key())
+            .collect();
+        keys.push(WASM_WORKER_LIFECYCLE_PHASE_STARTED);
+        keys.push(WASM_WORKER_LIFECYCLE_PHASE_TERMINATED);
+        keys.push(WASM_WORKER_LIFECYCLE_PHASE_RECYCLED);
+        keys
+    }
+    #[cfg(not(feature = "wasm-vm-probe"))]
+    {
+        WasmWorkerLifecyclePhase::ALL
+            .iter()
+            .map(|phase| phase.key())
+            .collect()
+    }
 }
 
 fn worker_execute_phase_keys() -> Vec<&'static str> {
@@ -1517,6 +1537,7 @@ pub fn wasm_worker_timeout_phase_keys() -> Array {
     keys
 }
 
+#[cfg(not(feature = "wasm-vm-probe"))]
 fn worker_unwired_result(phase: WasmWorkerLifecyclePhase) -> WasmWorkerLifecycleResult {
     let action = match phase {
         WasmWorkerLifecyclePhase::UnsupportedStart => "start",
@@ -1536,10 +1557,41 @@ fn worker_unwired_result(phase: WasmWorkerLifecyclePhase) -> WasmWorkerLifecycle
     }
 }
 
+#[cfg(feature = "wasm-vm-probe")]
+fn worker_vm_probe_lifecycle_result(
+    action: &str,
+    phase: &'static str,
+    state: WasmWorkerState,
+) -> WasmWorkerLifecycleResult {
+    WasmWorkerLifecycleResult {
+        success: true,
+        operation_id: next_worker_operation_id(action),
+        phase: phase.to_string(),
+        state: state.key().to_string(),
+        error: None,
+        blocker_key: None,
+    }
+}
+
 /// Starts worker runtime execution.
 ///
 /// Current milestone behavior:
 /// - returns `phase = "unsupported_worker_start"` until worker backend is wired.
+#[cfg(feature = "wasm-vm-probe")]
+#[wasm_bindgen]
+pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
+    worker_vm_probe_lifecycle_result(
+        "start",
+        WASM_WORKER_LIFECYCLE_PHASE_STARTED,
+        WasmWorkerState::Ready,
+    )
+}
+
+/// Starts worker runtime execution.
+///
+/// Current milestone behavior:
+/// - returns `phase = "unsupported_worker_start"` until worker backend is wired.
+#[cfg(not(feature = "wasm-vm-probe"))]
 #[wasm_bindgen]
 pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
     worker_unwired_result(WasmWorkerLifecyclePhase::UnsupportedStart)
@@ -1549,6 +1601,21 @@ pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
 ///
 /// Current milestone behavior:
 /// - returns `phase = "unsupported_worker_terminate"` until worker backend is wired.
+#[cfg(feature = "wasm-vm-probe")]
+#[wasm_bindgen]
+pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
+    worker_vm_probe_lifecycle_result(
+        "terminate",
+        WASM_WORKER_LIFECYCLE_PHASE_TERMINATED,
+        WasmWorkerState::Unwired,
+    )
+}
+
+/// Terminates worker runtime execution.
+///
+/// Current milestone behavior:
+/// - returns `phase = "unsupported_worker_terminate"` until worker backend is wired.
+#[cfg(not(feature = "wasm-vm-probe"))]
 #[wasm_bindgen]
 pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
     worker_unwired_result(WasmWorkerLifecyclePhase::UnsupportedTerminate)
@@ -1558,6 +1625,21 @@ pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
 ///
 /// Current milestone behavior:
 /// - returns `phase = "unsupported_worker_recycle"` until worker backend is wired.
+#[cfg(feature = "wasm-vm-probe")]
+#[wasm_bindgen]
+pub fn wasm_worker_recycle() -> WasmWorkerLifecycleResult {
+    worker_vm_probe_lifecycle_result(
+        "recycle",
+        WASM_WORKER_LIFECYCLE_PHASE_RECYCLED,
+        WasmWorkerState::Ready,
+    )
+}
+
+/// Recycles worker runtime execution state.
+///
+/// Current milestone behavior:
+/// - returns `phase = "unsupported_worker_recycle"` until worker backend is wired.
+#[cfg(not(feature = "wasm-vm-probe"))]
 #[wasm_bindgen]
 pub fn wasm_worker_recycle() -> WasmWorkerLifecycleResult {
     worker_unwired_result(WasmWorkerLifecyclePhase::UnsupportedRecycle)
@@ -1784,9 +1866,7 @@ fn compile_failure_to_execution_result(
     fallback_error: &str,
 ) -> WasmExecutionResult {
     let error = compile.error;
-    let stderr = error
-        .clone()
-        .unwrap_or_else(|| fallback_error.to_string());
+    let stderr = error.clone().unwrap_or_else(|| fallback_error.to_string());
     let phase = if compile.phase == "syntax_error" {
         syntax_phase_key.to_string()
     } else {
@@ -2312,10 +2392,7 @@ mod tests {
     #[test]
     fn wasm_worker_execute_blocked_import_sets_capability_blocker_key() {
         let blocked = wasm_worker_execute("import socket\n");
-        assert_eq!(
-            blocked.phase(),
-            "unsupported_worker_execution".to_string()
-        );
+        assert_eq!(blocked.phase(), "unsupported_worker_execution".to_string());
         assert_eq!(blocked.blocker_key(), Some("network_sockets".to_string()));
     }
 }

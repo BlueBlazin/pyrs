@@ -5,7 +5,11 @@ pub struct WasmWorkerLifecycleFixture {
     pub expected_phase: &'static str,
     pub expected_state: &'static str,
     pub expected_success: bool,
-    pub expected_blocker_key: &'static str,
+    pub expected_blocker_key: Option<&'static str>,
+    pub expected_vm_probe_phase: Option<&'static str>,
+    pub expected_vm_probe_state: Option<&'static str>,
+    pub expected_vm_probe_success: Option<bool>,
+    pub expected_vm_probe_blocker_key: Option<Option<&'static str>>,
 }
 
 pub struct WasmWorkerExecuteFixture {
@@ -58,7 +62,7 @@ pub const WASM_WORKER_INFO_FIXTURES: &[WasmWorkerInfoFixture] = &[WasmWorkerInfo
     expected_vm_probe_execution_probe_enabled: Some(true),
     expected_execute_supported: false,
     expected_vm_probe_execute_supported: Some(true),
-},];
+}];
 
 pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[
     WasmWorkerLifecycleFixture {
@@ -68,7 +72,11 @@ pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[
         expected_phase: "unsupported_worker_start",
         expected_state: "unwired",
         expected_success: false,
-        expected_blocker_key: "worker_runtime_unwired",
+        expected_blocker_key: Some("worker_runtime_unwired"),
+        expected_vm_probe_phase: Some("worker_started"),
+        expected_vm_probe_state: Some("ready"),
+        expected_vm_probe_success: Some(true),
+        expected_vm_probe_blocker_key: Some(None),
     },
     WasmWorkerLifecycleFixture {
         name: "worker_terminate_unwired",
@@ -77,7 +85,11 @@ pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[
         expected_phase: "unsupported_worker_terminate",
         expected_state: "unwired",
         expected_success: false,
-        expected_blocker_key: "worker_runtime_unwired",
+        expected_blocker_key: Some("worker_runtime_unwired"),
+        expected_vm_probe_phase: Some("worker_terminated"),
+        expected_vm_probe_state: Some("unwired"),
+        expected_vm_probe_success: Some(true),
+        expected_vm_probe_blocker_key: Some(None),
     },
     WasmWorkerLifecycleFixture {
         name: "worker_recycle_unwired",
@@ -86,7 +98,11 @@ pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[
         expected_phase: "unsupported_worker_recycle",
         expected_state: "unwired",
         expected_success: false,
-        expected_blocker_key: "worker_runtime_unwired",
+        expected_blocker_key: Some("worker_runtime_unwired"),
+        expected_vm_probe_phase: Some("worker_recycled"),
+        expected_vm_probe_state: Some("ready"),
+        expected_vm_probe_success: Some(true),
+        expected_vm_probe_blocker_key: Some(None),
     },
 ];
 
@@ -230,6 +246,9 @@ pub const WASM_WORKER_LIFECYCLE_PHASE_KEYS: &[&str] = &[
     "unsupported_worker_terminate",
     "unsupported_worker_recycle",
 ];
+
+pub const WASM_WORKER_LIFECYCLE_PHASE_KEYS_VM_PROBE_EXTRA: &[&str] =
+    &["worker_started", "worker_terminated", "worker_recycled"];
 
 pub const WASM_WORKER_EXECUTE_PHASE_KEYS: &[&str] = &[
     "syntax_error",

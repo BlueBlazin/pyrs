@@ -40,6 +40,31 @@ class WorkerExecuteExpectation:
 
 
 @dataclass
+class WorkerLifecycleFixtureRow:
+    name: str
+    action: str
+    phase: str
+    state: str
+    success: bool
+    blocker_key: str | None
+    vm_probe_phase: str | None
+    vm_probe_state: str | None
+    vm_probe_success: bool | None
+    vm_probe_blocker_key: str | None
+    has_vm_probe_blocker_override: bool
+
+
+@dataclass
+class WorkerLifecycleExpectation:
+    name: str
+    action: str
+    phase: str
+    state: str
+    success: bool
+    blocker_key: str | None
+
+
+@dataclass
 class WorkerInfoFixtureRow:
     name: str
     expected_supported: bool
@@ -166,7 +191,7 @@ def parse_optional_bool_field(body: str, field: str) -> bool | None:
 
 def parse_worker_execute_fixture_rows(source: str) -> list[WorkerExecuteFixtureRow]:
     body = parse_const_body(source, "WASM_WORKER_EXECUTE_FIXTURES")
-    pattern = re.compile(r"WasmWorkerExecuteFixture\s*\{(.*?)\n\s*\},", re.DOTALL)
+    pattern = re.compile(r"WasmWorkerExecuteFixture\s*\{(.*?)\n\s*\},?", re.DOTALL)
     rows: list[WorkerExecuteFixtureRow] = []
     for match in pattern.finditer(body):
         row_body = match.group(1)
@@ -205,9 +230,37 @@ def parse_worker_execute_fixture_rows(source: str) -> list[WorkerExecuteFixtureR
     return rows
 
 
+def parse_worker_lifecycle_fixture_rows(source: str) -> list[WorkerLifecycleFixtureRow]:
+    body = parse_const_body(source, "WASM_WORKER_LIFECYCLE_FIXTURES")
+    pattern = re.compile(r"WasmWorkerLifecycleFixture\s*\{(.*?)\n\s*\},?", re.DOTALL)
+    rows: list[WorkerLifecycleFixtureRow] = []
+    for match in pattern.finditer(body):
+        row_body = match.group(1)
+        (
+            has_vm_probe_blocker_override,
+            vm_probe_blocker_key,
+        ) = parse_optional_optional_string_field(row_body, "expected_vm_probe_blocker_key")
+        rows.append(
+            WorkerLifecycleFixtureRow(
+                name=parse_required_string_field(row_body, "name"),
+                action=parse_required_string_field(row_body, "action"),
+                phase=parse_required_string_field(row_body, "expected_phase"),
+                state=parse_required_string_field(row_body, "expected_state"),
+                success=parse_required_bool_field(row_body, "expected_success"),
+                blocker_key=parse_optional_string_field(row_body, "expected_blocker_key"),
+                vm_probe_phase=parse_optional_string_field(row_body, "expected_vm_probe_phase"),
+                vm_probe_state=parse_optional_string_field(row_body, "expected_vm_probe_state"),
+                vm_probe_success=parse_optional_bool_field(row_body, "expected_vm_probe_success"),
+                vm_probe_blocker_key=vm_probe_blocker_key,
+                has_vm_probe_blocker_override=has_vm_probe_blocker_override,
+            )
+        )
+    return rows
+
+
 def parse_worker_info_fixture_rows(source: str) -> list[WorkerInfoFixtureRow]:
     body = parse_const_body(source, "WASM_WORKER_INFO_FIXTURES")
-    pattern = re.compile(r"WasmWorkerInfoFixture\s*\{(.*?)\n\s*\},", re.DOTALL)
+    pattern = re.compile(r"WasmWorkerInfoFixture\s*\{(.*?)\n\s*\},?", re.DOTALL)
     rows: list[WorkerInfoFixtureRow] = []
     for match in pattern.finditer(body):
         row_body = match.group(1)
@@ -266,6 +319,32 @@ def effective_worker_execute_expectation(
         expect_error=expect_error,
         expected_success=expected_success,
         expect_line_column=expect_line_column,
+    )
+
+
+def effective_worker_lifecycle_expectation(
+    row: WorkerLifecycleFixtureRow, vm_probe_enabled: bool
+) -> WorkerLifecycleExpectation:
+    phase = row.phase
+    state = row.state
+    success = row.success
+    blocker_key = row.blocker_key
+    if vm_probe_enabled:
+        if row.vm_probe_phase is not None:
+            phase = row.vm_probe_phase
+        if row.vm_probe_state is not None:
+            state = row.vm_probe_state
+        if row.vm_probe_success is not None:
+            success = row.vm_probe_success
+        if row.has_vm_probe_blocker_override:
+            blocker_key = row.vm_probe_blocker_key
+    return WorkerLifecycleExpectation(
+        name=row.name,
+        action=row.action,
+        phase=phase,
+        state=state,
+        success=success,
+        blocker_key=blocker_key,
     )
 
 
@@ -352,6 +431,17 @@ def parse_source_worker_execute_phase_keys(
     if vm_probe_enabled:
         keys.append(const_map["WASM_EXECUTION_PHASE_OK"])
         keys.append(const_map["WASM_EXECUTION_PHASE_RUNTIME_ERROR"])
+    return keys
+
+
+def parse_source_worker_lifecycle_phase_keys(
+    wasm_source: str, const_map: dict[str, str], vm_probe_enabled: bool
+) -> list[str]:
+    keys = parse_source_enum_keys(wasm_source, "WasmWorkerLifecyclePhase", const_map)
+    if vm_probe_enabled:
+        keys.append(const_map["WASM_WORKER_LIFECYCLE_PHASE_STARTED"])
+        keys.append(const_map["WASM_WORKER_LIFECYCLE_PHASE_TERMINATED"])
+        keys.append(const_map["WASM_WORKER_LIFECYCLE_PHASE_RECYCLED"])
     return keys
 
 
@@ -475,6 +565,9 @@ def main() -> int:
     lifecycle_phase_keys = parse_string_array(
         fixture_source, "WASM_WORKER_LIFECYCLE_PHASE_KEYS"
     )
+    lifecycle_phase_keys_vm_probe_extra = parse_string_array(
+        fixture_source, "WASM_WORKER_LIFECYCLE_PHASE_KEYS_VM_PROBE_EXTRA"
+    )
     execute_phase_keys = parse_string_array(fixture_source, "WASM_WORKER_EXECUTE_PHASE_KEYS")
     timeout_phase_keys = parse_string_array(fixture_source, "WASM_WORKER_TIMEOUT_PHASE_KEYS")
     worker_blocker_keys = parse_string_array(
@@ -491,9 +584,10 @@ def main() -> int:
         fixture_source, "WASM_WORKER_TIMEOUT_FIXTURES"
     )
 
-    lifecycle_blocker_keys = parse_required_blocker_keys(
-        fixture_source, "WASM_WORKER_LIFECYCLE_FIXTURES"
-    )
+    lifecycle_rows = parse_worker_lifecycle_fixture_rows(fixture_source)
+    lifecycle_effective_expectations = [
+        effective_worker_lifecycle_expectation(row, args.vm_probe) for row in lifecycle_rows
+    ]
     execute_rows = parse_worker_execute_fixture_rows(fixture_source)
     execute_effective_expectations = [
         effective_worker_execute_expectation(row, args.vm_probe) for row in execute_rows
@@ -515,8 +609,8 @@ def main() -> int:
     source_state_keys = parse_source_enum_keys(
         wasm_source, "WasmWorkerState", source_const_map
     )
-    source_lifecycle_phase_keys = parse_source_enum_keys(
-        wasm_source, "WasmWorkerLifecyclePhase", source_const_map
+    source_lifecycle_phase_keys = parse_source_worker_lifecycle_phase_keys(
+        wasm_source, source_const_map, args.vm_probe
     )
     source_execute_phase_keys = parse_source_worker_execute_phase_keys(
         wasm_source, source_const_map, args.vm_probe
@@ -573,6 +667,9 @@ def main() -> int:
             if action == "set_timeout"
         ]
     )
+    lifecycle_phase_keys_effective = list(lifecycle_phase_keys)
+    if args.vm_probe:
+        lifecycle_phase_keys_effective.extend(lifecycle_phase_keys_vm_probe_extra)
     execute_phase_keys_effective = list(execute_phase_keys)
     if args.vm_probe:
         execute_phase_keys_effective.extend(
@@ -585,6 +682,12 @@ def main() -> int:
     errors: list[str] = []
     validate_non_empty("WASM_WORKER_STATE_KEYS", state_keys, errors)
     validate_non_empty("WASM_WORKER_LIFECYCLE_PHASE_KEYS", lifecycle_phase_keys, errors)
+    if args.vm_probe:
+        validate_non_empty(
+            "WASM_WORKER_LIFECYCLE_PHASE_KEYS_VM_PROBE_EXTRA",
+            lifecycle_phase_keys_vm_probe_extra,
+            errors,
+        )
     validate_non_empty("WASM_WORKER_EXECUTE_PHASE_KEYS", execute_phase_keys, errors)
     validate_non_empty("WASM_WORKER_TIMEOUT_PHASE_KEYS", timeout_phase_keys, errors)
     validate_non_empty("WASM_WORKER_BLOCKER_KEYS", worker_blocker_keys, errors)
@@ -611,6 +714,11 @@ def main() -> int:
 
     validate_unique("WASM_WORKER_STATE_KEYS", state_keys, errors)
     validate_unique("WASM_WORKER_LIFECYCLE_PHASE_KEYS", lifecycle_phase_keys, errors)
+    validate_unique(
+        "WASM_WORKER_LIFECYCLE_PHASE_KEYS_VM_PROBE_EXTRA",
+        lifecycle_phase_keys_vm_probe_extra,
+        errors,
+    )
     validate_unique("WASM_WORKER_EXECUTE_PHASE_KEYS", execute_phase_keys, errors)
     validate_unique("WASM_WORKER_TIMEOUT_PHASE_KEYS", timeout_phase_keys, errors)
     validate_unique("WASM_WORKER_BLOCKER_KEYS", worker_blocker_keys, errors)
@@ -640,15 +748,15 @@ def main() -> int:
             "worker state key order mismatch "
             f"fixtures={state_keys} source={source_state_keys}"
         )
-    if set(lifecycle_phase_keys) != set(source_lifecycle_phase_keys):
+    if set(lifecycle_phase_keys_effective) != set(source_lifecycle_phase_keys):
         errors.append(
             "worker lifecycle phase key set mismatch "
-            f"fixtures={unique(lifecycle_phase_keys)} source={source_lifecycle_phase_keys}"
+            f"fixtures={unique(lifecycle_phase_keys_effective)} source={source_lifecycle_phase_keys}"
         )
-    if lifecycle_phase_keys != source_lifecycle_phase_keys:
+    if lifecycle_phase_keys_effective != source_lifecycle_phase_keys:
         errors.append(
             "worker lifecycle phase key order mismatch "
-            f"fixtures={lifecycle_phase_keys} source={source_lifecycle_phase_keys}"
+            f"fixtures={lifecycle_phase_keys_effective} source={source_lifecycle_phase_keys}"
         )
     if set(execute_phase_keys_effective) != set(source_execute_phase_keys):
         errors.append(
@@ -740,11 +848,47 @@ def main() -> int:
             f"fixtures={unique(timeout_operation_prefixes)} source={expected_timeout_prefixes}"
         )
 
-    if any(key != source_worker_blocker_key for key in lifecycle_blocker_keys):
-        errors.append(
-            "worker lifecycle fixture blocker keys must all equal source worker blocker key "
-            f"'{source_worker_blocker_key}'"
-        )
+    for row in lifecycle_effective_expectations:
+        if row.action not in {"start", "terminate", "recycle"}:
+            errors.append(f"{row.name}: unknown lifecycle action '{row.action}'")
+        if row.state not in source_state_keys:
+            errors.append(
+                f"{row.name}: lifecycle state '{row.state}' must be one of {source_state_keys}"
+            )
+        if row.phase.startswith("unsupported_worker_"):
+            if row.success:
+                errors.append(
+                    f"{row.name}: unsupported lifecycle phase must set expected_success=false"
+                )
+            if row.blocker_key != source_worker_blocker_key:
+                errors.append(
+                    f"{row.name}: unsupported lifecycle phase must use blocker "
+                    f"'{source_worker_blocker_key}'"
+                )
+        elif row.phase in {"worker_started", "worker_terminated", "worker_recycled"}:
+            if not row.success:
+                errors.append(
+                    f"{row.name}: vm-probe lifecycle phase '{row.phase}' must set expected_success=true"
+                )
+            if row.blocker_key is not None:
+                errors.append(
+                    f"{row.name}: vm-probe lifecycle phase '{row.phase}' must set expected_blocker_key=None"
+                )
+        else:
+            errors.append(
+                f"{row.name}: unsupported lifecycle phase value '{row.phase}' in fixture expectations"
+            )
+
+        expected_action_phase = {
+            "start": {"unsupported_worker_start", "worker_started"},
+            "terminate": {"unsupported_worker_terminate", "worker_terminated"},
+            "recycle": {"unsupported_worker_recycle", "worker_recycled"},
+        }[row.action]
+        if row.phase not in expected_action_phase:
+            errors.append(
+                f"{row.name}: lifecycle action '{row.action}' should map phase into "
+                f"{sorted(expected_action_phase)}, got '{row.phase}'"
+            )
 
     if len(execute_effective_expectations) != len(execute_blocker_keys):
         errors.append("worker execute fixture phase/blocker row count mismatch")
@@ -827,11 +971,24 @@ def main() -> int:
         "wasm_source": str(wasm_source_path),
         "mode": "vm_probe" if args.vm_probe else "default",
         "worker_state_keys": state_keys,
-        "lifecycle_phase_keys": lifecycle_phase_keys,
+        "lifecycle_phase_keys": lifecycle_phase_keys_effective,
+        "lifecycle_phase_keys_default": lifecycle_phase_keys,
+        "lifecycle_phase_keys_vm_probe_extra": lifecycle_phase_keys_vm_probe_extra,
         "execute_phase_keys": execute_phase_keys,
         "execute_phase_keys_effective": execute_phase_keys_effective,
         "timeout_phase_keys": timeout_phase_keys,
         "worker_blocker_keys": worker_blocker_keys,
+        "lifecycle_effective_rows": [
+            {
+                "name": row.name,
+                "action": row.action,
+                "phase": row.phase,
+                "state": row.state,
+                "success": row.success,
+                "blocker_key": row.blocker_key,
+            }
+            for row in lifecycle_effective_expectations
+        ],
         "execute_fixture_phases": execute_fixture_phase_set,
         "execute_effective_rows": [
             {
@@ -888,7 +1045,7 @@ def main() -> int:
         },
         "counts": {
             "worker_state_keys": len(state_keys),
-            "lifecycle_phase_keys": len(lifecycle_phase_keys),
+            "lifecycle_phase_keys": len(lifecycle_phase_keys_effective),
             "execute_phase_keys": len(execute_phase_keys_effective),
             "timeout_phase_keys": len(timeout_phase_keys),
             "worker_blocker_keys": len(worker_blocker_keys),

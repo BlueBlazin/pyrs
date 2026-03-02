@@ -1,38 +1,38 @@
 #![cfg(target_arch = "wasm32")]
 
+#[path = "fixtures/wasm_capability_matrix.rs"]
+mod wasm_capability_matrix;
 #[path = "fixtures/wasm_contract_snippets.rs"]
 mod wasm_contract_snippets;
 #[path = "fixtures/wasm_module_policy.rs"]
 mod wasm_module_policy;
-#[path = "fixtures/wasm_capability_matrix.rs"]
-mod wasm_capability_matrix;
 #[path = "fixtures/wasm_worker_contract.rs"]
 mod wasm_worker_contract;
 
 use crate::wasm_capability_matrix::WASM_CAPABILITY_FIXTURES;
 use crate::wasm_contract_snippets::{
-    WasmContractSnippetFixture, WASM_CONTRACT_SNIPPET_FIXTURES, WASM_EXECUTION_PHASE_KEYS,
-    WASM_SUPPORT_PHASE_KEYS,
+    WASM_CONTRACT_SNIPPET_FIXTURES, WASM_EXECUTION_PHASE_KEYS, WASM_SUPPORT_PHASE_KEYS,
+    WasmContractSnippetFixture,
 };
 use crate::wasm_module_policy::WASM_MODULE_POLICY_FIXTURES;
 use crate::wasm_worker_contract::{
-    WasmWorkerExecuteFixture, WASM_WORKER_BLOCKER_KEYS, WASM_WORKER_EXECUTE_FIXTURES,
-    WASM_WORKER_EXECUTE_PHASE_KEYS, WASM_WORKER_INFO_FIXTURES, WASM_WORKER_LIFECYCLE_FIXTURES,
-    WASM_WORKER_LIFECYCLE_PHASE_KEYS, WASM_WORKER_STATE_KEYS, WASM_WORKER_TIMEOUT_FIXTURES,
-    WASM_WORKER_TIMEOUT_PHASE_KEYS,
+    WASM_WORKER_BLOCKER_KEYS, WASM_WORKER_EXECUTE_FIXTURES, WASM_WORKER_EXECUTE_PHASE_KEYS,
+    WASM_WORKER_INFO_FIXTURES, WASM_WORKER_LIFECYCLE_FIXTURES, WASM_WORKER_LIFECYCLE_PHASE_KEYS,
+    WASM_WORKER_LIFECYCLE_PHASE_KEYS_VM_PROBE_EXTRA, WASM_WORKER_STATE_KEYS,
+    WASM_WORKER_TIMEOUT_FIXTURES, WASM_WORKER_TIMEOUT_PHASE_KEYS, WasmWorkerExecuteFixture,
 };
 use js_sys::Reflect;
 use pyrs::wasm::{
-    WasmCapabilityReport, WasmSession, WasmWorkerSession, check_compile_result, check_syntax_result, execute,
-    wasm_api_version, wasm_capabilities, wasm_capability_error, wasm_capability_keys,
-    wasm_execution_blocker_error, wasm_execution_blocker_keys, wasm_execution_blockers,
-    wasm_execution_phase_keys, wasm_module_policy_entries, wasm_module_support, wasm_runtime_info,
-    wasm_snippet_blockers, wasm_snippet_import_roots, wasm_snippet_support,
-    wasm_worker_blocker_error, wasm_worker_blocker_keys, wasm_worker_blockers, wasm_worker_execute,
-    wasm_worker_execute_phase_keys, wasm_worker_execute_with_operation, wasm_worker_info,
-    wasm_worker_lifecycle_phase_keys, wasm_worker_recycle, wasm_worker_set_timeout,
-    wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate,
-    wasm_worker_timeout_phase_keys, wasm_worker_timeout_policy,
+    WasmCapabilityReport, WasmSession, WasmWorkerSession, check_compile_result,
+    check_syntax_result, execute, wasm_api_version, wasm_capabilities, wasm_capability_error,
+    wasm_capability_keys, wasm_execution_blocker_error, wasm_execution_blocker_keys,
+    wasm_execution_blockers, wasm_execution_phase_keys, wasm_module_policy_entries,
+    wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_import_roots,
+    wasm_snippet_support, wasm_worker_blocker_error, wasm_worker_blocker_keys,
+    wasm_worker_blockers, wasm_worker_execute, wasm_worker_execute_phase_keys,
+    wasm_worker_execute_with_operation, wasm_worker_info, wasm_worker_lifecycle_phase_keys,
+    wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start, wasm_worker_state_keys,
+    wasm_worker_terminate, wasm_worker_timeout_phase_keys, wasm_worker_timeout_policy,
 };
 use std::collections::HashSet;
 use wasm_bindgen_test::*;
@@ -114,6 +114,50 @@ fn expected_worker_execute_phase_for_fixture(fixture: &WasmWorkerExecuteFixture)
     fixture.expected_phase.to_string()
 }
 
+fn expected_worker_lifecycle_phase_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerLifecycleFixture,
+) -> String {
+    if vm_probe_enabled() {
+        if let Some(phase) = fixture.expected_vm_probe_phase {
+            return phase.to_string();
+        }
+    }
+    fixture.expected_phase.to_string()
+}
+
+fn expected_worker_lifecycle_state_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerLifecycleFixture,
+) -> String {
+    if vm_probe_enabled() {
+        if let Some(state) = fixture.expected_vm_probe_state {
+            return state.to_string();
+        }
+    }
+    fixture.expected_state.to_string()
+}
+
+fn expected_worker_lifecycle_success_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerLifecycleFixture,
+) -> bool {
+    if vm_probe_enabled() {
+        if let Some(success) = fixture.expected_vm_probe_success {
+            return success;
+        }
+    }
+    fixture.expected_success
+}
+
+fn expected_worker_lifecycle_blocker_key_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerLifecycleFixture,
+) -> Option<String> {
+    if vm_probe_enabled() {
+        if let Some(override_blocker) = fixture.expected_vm_probe_blocker_key {
+            return override_blocker.map(str::to_string);
+        }
+    }
+    fixture.expected_blocker_key.map(str::to_string)
+}
+
 fn expected_worker_execute_blocker_key_for_fixture(
     fixture: &WasmWorkerExecuteFixture,
 ) -> Option<String> {
@@ -152,7 +196,9 @@ fn expected_worker_execute_line_column_for_fixture(fixture: &WasmWorkerExecuteFi
     fixture.expect_line_column
 }
 
-fn expected_worker_info_backend_for_fixture(fixture: &wasm_worker_contract::WasmWorkerInfoFixture) -> String {
+fn expected_worker_info_backend_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerInfoFixture,
+) -> String {
     if vm_probe_enabled() {
         if let Some(backend) = fixture.expected_vm_probe_backend {
             return backend.to_string();
@@ -441,6 +487,14 @@ fn wasm_worker_enum_keys_are_stable() {
         .iter()
         .map(|value| (*value).to_string())
         .collect();
+    let mut expected_phases = expected_phases;
+    if vm_probe_enabled() {
+        expected_phases.extend(
+            WASM_WORKER_LIFECYCLE_PHASE_KEYS_VM_PROBE_EXTRA
+                .iter()
+                .map(|value| (*value).to_string()),
+        );
+    }
     assert_eq!(lifecycle_phases, expected_phases);
     let lifecycle_phase_set: HashSet<String> = lifecycle_phases.iter().cloned().collect();
     assert_eq!(lifecycle_phase_set.len(), expected_phases.len());
@@ -497,38 +551,45 @@ fn wasm_worker_lifecycle_stub_contract_is_stable() {
 
         assert_eq!(
             result.phase(),
-            fixture.expected_phase,
+            expected_worker_lifecycle_phase_for_fixture(fixture),
             "worker lifecycle phase mismatch: {}",
             fixture.name
         );
         assert_eq!(
             result.state(),
-            fixture.expected_state,
+            expected_worker_lifecycle_state_for_fixture(fixture),
             "worker lifecycle state mismatch: {}",
             fixture.name
         );
         assert_eq!(
             result.success(),
-            fixture.expected_success,
+            expected_worker_lifecycle_success_for_fixture(fixture),
             "worker lifecycle success mismatch: {}",
             fixture.name
         );
+        let expected_blocker = expected_worker_lifecycle_blocker_key_for_fixture(fixture);
         assert_eq!(
-            result
-                .blocker_key()
-                .expect("worker lifecycle blocker key should be present"),
-            fixture.expected_blocker_key.to_string(),
+            result.blocker_key(),
+            expected_blocker,
             "worker lifecycle blocker key mismatch: {}",
             fixture.name
         );
-        let error = result
-            .error()
-            .expect("worker lifecycle error should be present");
-        assert!(
-            error.contains("not wired"),
-            "worker lifecycle error mismatch: {}",
-            fixture.name
-        );
+        if vm_probe_enabled() {
+            assert!(
+                result.error().is_none(),
+                "worker lifecycle vm-probe result should not have error: {}",
+                fixture.name
+            );
+        } else {
+            let error = result
+                .error()
+                .expect("worker lifecycle error should be present");
+            assert!(
+                error.contains("not wired"),
+                "worker lifecycle error mismatch: {}",
+                fixture.name
+            );
+        }
         let operation_id = result.operation_id();
         assert!(
             operation_id.starts_with(fixture.expected_operation_prefix),
@@ -724,42 +785,79 @@ fn wasm_worker_session_contract_is_stable() {
     );
 
     let start = session.start();
-    assert_eq!(start.phase(), "unsupported_worker_start");
+    assert_eq!(
+        start.phase(),
+        expected_worker_lifecycle_phase_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[0])
+    );
     assert_eq!(session.starts_requested(), 1);
     assert_eq!(session.last_operation_id(), Some(start.operation_id()));
     assert_eq!(
         session
             .last_phase()
             .expect("last phase after worker start should exist"),
-        "unsupported_worker_start".to_string()
+        expected_worker_lifecycle_phase_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[0])
     );
-    assert_eq!(session.last_state(), Some("unwired".to_string()));
+    assert_eq!(
+        session.last_state(),
+        Some(expected_worker_lifecycle_state_for_fixture(
+            &WASM_WORKER_LIFECYCLE_FIXTURES[0]
+        ))
+    );
+    if vm_probe_enabled() {
+        assert!(session.last_error().is_none());
+    } else {
+        assert!(session.last_error().is_some());
+    }
 
     let terminate = session.terminate();
-    assert_eq!(terminate.phase(), "unsupported_worker_terminate");
+    assert_eq!(
+        terminate.phase(),
+        expected_worker_lifecycle_phase_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
     assert_eq!(session.terminates_requested(), 1);
     assert_eq!(session.last_operation_id(), Some(terminate.operation_id()));
     assert_eq!(
         session
             .last_phase()
             .expect("last phase after worker terminate should exist"),
-        "unsupported_worker_terminate".to_string()
+        expected_worker_lifecycle_phase_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
     );
-    assert_eq!(session.last_state(), Some("unwired".to_string()));
-    assert!(session.last_error().is_some());
+    assert_eq!(
+        session.last_state(),
+        Some(expected_worker_lifecycle_state_for_fixture(
+            &WASM_WORKER_LIFECYCLE_FIXTURES[1]
+        ))
+    );
+    if vm_probe_enabled() {
+        assert!(session.last_error().is_none());
+    } else {
+        assert!(session.last_error().is_some());
+    }
 
     let recycle = session.recycle();
-    assert_eq!(recycle.phase(), "unsupported_worker_recycle");
+    assert_eq!(
+        recycle.phase(),
+        expected_worker_lifecycle_phase_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+    );
     assert_eq!(session.recycles_requested(), 1);
     assert_eq!(session.last_operation_id(), Some(recycle.operation_id()));
     assert_eq!(
         session
             .last_phase()
             .expect("last phase after worker recycle should exist"),
-        "unsupported_worker_recycle".to_string()
+        expected_worker_lifecycle_phase_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
     );
-    assert_eq!(session.last_state(), Some("unwired".to_string()));
-    assert!(session.last_error().is_some());
+    assert_eq!(
+        session.last_state(),
+        Some(expected_worker_lifecycle_state_for_fixture(
+            &WASM_WORKER_LIFECYCLE_FIXTURES[2]
+        ))
+    );
+    if vm_probe_enabled() {
+        assert!(session.last_error().is_none());
+    } else {
+        assert!(session.last_error().is_some());
+    }
 
     let execute = session.execute("x = 1\n");
     if vm_probe_enabled() {
@@ -928,7 +1026,10 @@ fn wasm_worker_session_execute_with_operation_contract_is_stable() {
     assert!(second.blocker_key().is_none());
     let second_snapshot = session.snapshot();
     assert_eq!(second_snapshot.executes_requested(), 2);
-    assert_eq!(second_snapshot.last_phase(), Some("syntax_error".to_string()));
+    assert_eq!(
+        second_snapshot.last_phase(),
+        Some("syntax_error".to_string())
+    );
     assert_eq!(second_snapshot.last_state(), Some("unwired".to_string()));
 }
 
