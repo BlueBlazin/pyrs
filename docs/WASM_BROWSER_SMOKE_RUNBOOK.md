@@ -72,6 +72,12 @@ The helper script prints both run URL and downloaded artifact path:
 scripts/run_wasm_browser_smoke_dispatch.sh --run-id <run-id>
 ```
 
+If artifact downloads are unavailable in your environment, use:
+
+```bash
+scripts/run_wasm_browser_smoke_dispatch.sh --run-id <run-id> --skip-download
+```
+
 ## Download Artifacts
 
 Download all artifacts:

@@ -14,6 +14,7 @@ Options:
   --run-id <id>         Existing run id to watch/download (skip dispatch)
   --out-dir <dir>       Download root directory
                         (default: perf/wasm-browser-smoke-run)
+  --skip-download       Skip artifact download + baseline validation
   -h, --help            Show this help
 EOF
 }
@@ -30,6 +31,7 @@ branch_ref="codex/wasm"
 workflow_name="wasm-track.yml"
 run_id=""
 download_root="perf/wasm-browser-smoke-run"
+skip_download=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -48,6 +50,10 @@ while [[ $# -gt 0 ]]; do
     --out-dir)
       download_root="$2"
       shift 2
+      ;;
+    --skip-download)
+      skip_download=1
+      shift
       ;;
     -h|--help)
       usage
@@ -109,6 +115,12 @@ run_url="$(
   gh run view "${run_id}" --json url --jq '.url'
 )"
 echo "[wasm-browser-dispatch] run complete: ${run_url}"
+
+if [[ "${skip_download}" == "1" ]]; then
+  echo "[wasm-browser-dispatch] skipping artifact download (--skip-download)"
+  echo "[wasm-browser-dispatch] run-url: ${run_url}"
+  exit 0
+fi
 
 download_dir="${download_root}/run-${run_id}"
 mkdir -p "${download_dir}"
