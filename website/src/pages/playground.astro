@@ -260,7 +260,15 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		const updateEditorHighlight = () => {
 			if (!(highlightEl instanceof HTMLElement) || !(inputEl instanceof HTMLTextAreaElement)) return;
 			const value = inputEl.value;
-			const rendered = highlightPython(value);
+			const selectionStart = Math.max(0, inputEl.selectionStart ?? value.length);
+			const cursorIndex = Math.min(selectionStart, value.length);
+			const hasFocus = document.activeElement === inputEl && !inputEl.disabled;
+			const beforeCursor = value.slice(0, cursorIndex);
+			const afterCursor = value.slice(cursorIndex);
+			const rendered =
+				highlightPython(beforeCursor) +
+				(hasFocus ? '<span class="tok-caret" aria-hidden="true"></span>' : "") +
+				highlightPython(afterCursor);
 			highlightEl.innerHTML = rendered.length > 0 ? rendered : " ";
 		};
 
@@ -548,6 +556,11 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 			});
 			inputEl.addEventListener("input", refreshEditorState);
 			inputEl.addEventListener("scroll", refreshEditorState);
+			inputEl.addEventListener("click", refreshEditorState);
+			inputEl.addEventListener("keyup", refreshEditorState);
+			inputEl.addEventListener("select", refreshEditorState);
+			inputEl.addEventListener("focus", refreshEditorState);
+			inputEl.addEventListener("blur", refreshEditorState);
 			refreshEditorState();
 		}
 
@@ -794,6 +807,11 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		display: flex;
 		align-items: flex-start;
 		gap: 0.62rem;
+		min-height: 1.56em;
+	}
+
+	.transcript-line + .playground-inline-entry,
+	.playground-inline-entry + .transcript-line {
 		margin-top: 0.24rem;
 	}
 
@@ -836,44 +854,55 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		overflow: hidden;
 		background: transparent;
 		color: transparent;
-		caret-color: #f8f2ec;
+		caret-color: transparent;
 		-webkit-text-fill-color: transparent;
 	}
 
-	.tok-keyword {
+	:global(.tok-keyword) {
 		color: rgb(46, 149, 211);
 		font-weight: 700;
 	}
 
-	.tok-class-name {
+	:global(.tok-class-name) {
 		color: #ff5f87;
 		font-weight: 700;
 	}
 
-	.tok-function-name {
+	:global(.tok-function-name) {
 		color: #ffaf00;
 		font-weight: 700;
 	}
 
-	.tok-decorator {
+	:global(.tok-decorator) {
 		color: #87afff;
 	}
 
-	.tok-type-name {
+	:global(.tok-type-name) {
 		color: #ffd700;
 	}
 
-	.tok-number {
+	:global(.tok-number) {
 		color: #ff5faf;
 	}
 
-	.tok-string {
+	:global(.tok-string) {
 		color: #00d787;
 	}
 
-	.tok-comment {
+	:global(.tok-comment) {
 		color: #808080;
 		font-style: italic;
+	}
+
+	:global(.tok-caret) {
+		display: inline-block;
+		width: 0.64ch;
+		min-width: 0.64ch;
+		height: 1.18em;
+		vertical-align: -0.16em;
+		background: rgba(248, 242, 236, 0.92);
+		border-radius: 2px;
+		animation: tok-caret-blink 1s steps(1, end) infinite;
 	}
 
 	.playground-actions {
@@ -939,6 +968,17 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		to {
 			opacity: 1;
 			transform: translateY(0);
+		}
+	}
+
+	@keyframes tok-caret-blink {
+		0%,
+		49% {
+			opacity: 1;
+		}
+		50%,
+		100% {
+			opacity: 0;
 		}
 	}
 
