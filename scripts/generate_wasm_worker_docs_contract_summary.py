@@ -238,8 +238,6 @@ def main() -> int:
         )
     if "wasm worker runtime is not wired yet" not in docs_source:
         errors.append("docs missing default worker timeout unsupported_reason text")
-    if "worker timeout enforcement is not wired yet" not in docs_source:
-        errors.append("docs missing vm-probe worker timeout unsupported_reason text")
     if "`wasm_worker_current_timeout_ms()`" not in docs_source:
         errors.append("docs missing wasm_worker_current_timeout_ms() contract guidance")
     if "resets back to `5000`" not in docs_source:
@@ -298,7 +296,11 @@ def main() -> int:
         )
     if not re.search(r"timeout_enforcement_supported\s*=\s*false", docs_source):
         errors.append(
-            "docs missing worker info timeout_enforcement_supported=false shape"
+            "docs missing default worker info timeout_enforcement_supported=false shape"
+        )
+    if not re.search(r"timeout_enforcement_supported[^\n]*true", docs_source):
+        errors.append(
+            "docs missing vm-probe worker info timeout_enforcement_supported=true shape"
         )
     if "info().state" not in docs_source:
         errors.append("docs missing info().state guidance")

@@ -608,21 +608,24 @@ fn wasm_worker_timeout_policy_contract_is_stable() {
         "timeout configuration support should track wasm-vm-probe mode"
     );
     assert!(policy.recycle_on_timeout());
-    assert!(!policy.enforcement_supported());
+    assert_eq!(
+        policy.enforcement_supported(),
+        vm_probe_enabled(),
+        "timeout enforcement support should track wasm-vm-probe mode"
+    );
     assert_eq!(
         policy.unsupported_phase(),
         "unsupported_worker_timeout_enforcement".to_string()
     );
-    let reason = policy
-        .unsupported_reason()
-        .expect("timeout policy should expose unsupported reason");
     if vm_probe_enabled() {
-        assert!(reason.contains("enforcement"));
-        assert!(reason.contains("configuration-only"));
+        assert!(policy.unsupported_reason().is_none());
     } else {
+        let reason = policy
+            .unsupported_reason()
+            .expect("default timeout policy should expose unsupported reason");
         assert!(reason.contains("runtime"));
+        assert!(reason.contains("not wired"));
     }
-    assert!(reason.contains("not wired"));
 }
 
 #[wasm_bindgen_test]

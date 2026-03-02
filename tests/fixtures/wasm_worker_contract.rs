@@ -101,7 +101,7 @@ pub const WASM_WORKER_INFO_FIXTURES: &[WasmWorkerInfoFixture] = &[WasmWorkerInfo
     expected_timeout_configuration_supported: false,
     expected_vm_probe_timeout_configuration_supported: Some(true),
     expected_timeout_enforcement_supported: false,
-    expected_vm_probe_timeout_enforcement_supported: Some(false),
+    expected_vm_probe_timeout_enforcement_supported: Some(true),
 }];
 
 pub const WASM_WORKER_LIFECYCLE_FIXTURES: &[WasmWorkerLifecycleFixture] = &[

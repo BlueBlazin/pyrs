@@ -28,12 +28,12 @@ This document defines the JS-facing contract currently exported by
   - Returns worker-runtime contract status summary.
   - `lifecycle_supported` is `true` only in `wasm-vm-probe` builds.
   - `timeout_configuration_supported` is `true` only in `wasm-vm-probe` builds.
-  - `timeout_enforcement_supported` remains `false` in current milestone API contract.
+  - `timeout_enforcement_supported` is `true` only in `wasm-vm-probe` builds.
 - `wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy`
   - Returns timeout/recycle contract metadata for worker execution.
   - `configuration_supported` is `true` only in `wasm-vm-probe` builds
     (in-range timeout configuration acceptance).
-  - `enforcement_supported` remains `false` in current milestone builds.
+  - `enforcement_supported` is `true` only in `wasm-vm-probe` builds.
 - `wasm_worker_timeout_phase_keys() -> Array`
   - Returns canonical timeout phase keys.
   - default keys:
@@ -197,7 +197,7 @@ This document defines the JS-facing contract currently exported by
 - `execution_probe_enabled: bool` (`true` only in `wasm-vm-probe` builds)
 - `execute_supported: bool` (`true` only in `wasm-vm-probe` builds)
 - `timeout_configuration_supported: bool` (`true` only in `wasm-vm-probe` builds)
-- `timeout_enforcement_supported: bool` (currently `false`)
+- `timeout_enforcement_supported: bool` (default `false`, `wasm-vm-probe` => `true`)
 - `blocker_count: usize`
 
 ## `WasmWorkerTimeoutPolicy`
@@ -207,15 +207,11 @@ This document defines the JS-facing contract currently exported by
 - `max_timeout_ms: u32` (currently `120000`)
 - `configuration_supported: bool` (default `false`, `wasm-vm-probe` => `true`)
 - `recycle_on_timeout: bool` (currently `true`)
-- `enforcement_supported: bool` (currently `false`)
+- `enforcement_supported: bool` (default `false`, `wasm-vm-probe` => `true`)
 - `unsupported_phase: String` (currently `"unsupported_worker_timeout_enforcement"`)
 - `unsupported_reason: Option<String>`
   - default: `"wasm worker runtime is not wired yet"`
-  - `wasm-vm-probe`:
-    `"worker timeout enforcement is not wired yet (wasm-vm-probe currently supports configuration-only updates)"`
-  - note: `wasm-vm-probe` worker execute paths now apply configured deadline
-    guards and recycle on timeout, while API-level enforcement flags remain
-    conservative in this milestone contract.
+  - `wasm-vm-probe`: `None` (timeout enforcement is wired in probe mode)
 
 ## `WasmWorkerTimeoutResult`
 

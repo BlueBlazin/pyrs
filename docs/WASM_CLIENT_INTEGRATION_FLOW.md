@@ -78,13 +78,13 @@ are explicit contract lifecycle controls.
     - `unsupported_worker_timeout_enforcement` with
       `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`
       when worker `state != "ready"`,
-    - API-level timeout enforcement flags remain conservative (`false`) in this milestone,
-    - worker execute paths still apply configured deadline guards and recycle
-      worker runtime state on timeout,
+    - timeout enforcement is enabled in `wasm-vm-probe` worker execute paths,
+    - timeout runtime errors recycle worker runtime state and reset timeout to
+      the default (`5000`),
     - when configured, `wasm_worker_current_timeout_ms()` reflects the new value.
   - expected policy shape:
     - default build: `configuration_supported = false`, `enforcement_supported = false`
-    - `wasm-vm-probe`: `configuration_supported = true`, `enforcement_supported = false`
+    - `wasm-vm-probe`: `configuration_supported = true`, `enforcement_supported = true`
 - `wasm_worker_execute_with_operation(source)` -> same phases plus
   `operation_id = worker_execute_<n>`
 

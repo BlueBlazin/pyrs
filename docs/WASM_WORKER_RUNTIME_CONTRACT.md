@@ -35,7 +35,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `execution_probe_enabled = false` in default builds, `true` with `wasm-vm-probe`
 - `execute_supported = false` in default builds, `true` with `wasm-vm-probe`
 - `timeout_configuration_supported = false` in default builds, `true` with `wasm-vm-probe`
-- `timeout_enforcement_supported = false` in current milestone API contract
+- `timeout_enforcement_supported = false` in default builds, `true` with `wasm-vm-probe`
 - `blocker_count = len(wasm_worker_blocker_keys())`
 
 Top-level lifecycle calls now mutate shared worker state, and
@@ -48,12 +48,11 @@ Top-level lifecycle calls now mutate shared worker state, and
 - `max_timeout_ms = 120000`
 - `configuration_supported = false` in default builds, `true` with `wasm-vm-probe`
 - `recycle_on_timeout = true`
-- `enforcement_supported = false` (API contract remains conservative in current milestone)
+- `enforcement_supported = false` in default builds, `true` with `wasm-vm-probe`
 - `unsupported_phase = "unsupported_worker_timeout_enforcement"`
 - `unsupported_reason`:
   - default build: `"wasm worker runtime is not wired yet"`
-  - `wasm-vm-probe`:
-    `"worker timeout enforcement is not wired yet (wasm-vm-probe currently supports configuration-only updates)"`
+  - `wasm-vm-probe`: `None` (timeout enforcement is wired in probe mode)
 
 `wasm_worker_current_timeout_ms()` currently returns:
 
@@ -206,9 +205,8 @@ keys (`worker_runtime_unwired`, `worker_runtime_failed` + module-policy capabili
       - `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`
       - `error` matches blocker-specific worker-runtime message
 
-`worker_timeout_configured` updates the worker timeout in vm-probe mode while
-API-level `enforcement_supported` still remains conservative (`false`) in the
-current milestone contract.
+`worker_timeout_configured` updates the worker timeout in vm-probe mode, and
+runtime executes enforce the configured timeout while worker `state = "ready"`.
 
 `wasm_worker_execute(source)` currently returns:
 

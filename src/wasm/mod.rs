@@ -41,7 +41,6 @@ const WASM_WORKER_TIMEOUT_MAX_MS: u32 = 120_000;
 const WASM_REPL_FILENAME: &str = "<wasm-repl>";
 const WASM_WORKER_TIMEOUT_UNSUPPORTED_PHASE: &str = "unsupported_worker_timeout_enforcement";
 const WASM_WORKER_TIMEOUT_INVALID_PHASE: &str = "invalid_worker_timeout";
-const WASM_WORKER_TIMEOUT_ENFORCEMENT_UNWIRED_REASON: &str = "worker timeout enforcement is not wired yet (wasm-vm-probe currently supports configuration-only updates)";
 #[cfg(feature = "wasm-vm-probe")]
 const WASM_WORKER_TIMEOUT_CONFIGURED_PHASE: &str = "worker_timeout_configured";
 #[cfg(feature = "wasm-vm-probe")]
@@ -363,12 +362,8 @@ fn reset_worker_timeout_ms() {
 }
 
 fn worker_timeout_policy_unsupported_reason() -> String {
-    if wasm_vm_runtime_enabled() {
-        WASM_WORKER_TIMEOUT_ENFORCEMENT_UNWIRED_REASON.to_string()
-    } else {
-        wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
-            .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string())
-    }
+    wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
+        .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string())
 }
 
 fn worker_unavailable_blocker_key_for_state(state: WasmWorkerState) -> &'static str {
@@ -1774,7 +1769,7 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
         execution_probe_enabled: wasm_vm_runtime_enabled(),
         execute_supported: wasm_vm_runtime_enabled(),
         timeout_configuration_supported: wasm_vm_runtime_enabled(),
-        timeout_enforcement_supported: false,
+        timeout_enforcement_supported: wasm_vm_runtime_enabled(),
         blocker_count: blockers.len(),
     }
 }
@@ -1788,11 +1783,15 @@ pub fn wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy {
         max_timeout_ms: WASM_WORKER_TIMEOUT_MAX_MS,
         configuration_supported: wasm_vm_runtime_enabled(),
         recycle_on_timeout: true,
-        enforcement_supported: false,
+        enforcement_supported: wasm_vm_runtime_enabled(),
         unsupported_phase: WasmWorkerTimeoutPhase::UnsupportedEnforcement
             .key()
             .to_string(),
-        unsupported_reason: Some(worker_timeout_policy_unsupported_reason()),
+        unsupported_reason: if wasm_vm_runtime_enabled() {
+            None
+        } else {
+            Some(worker_timeout_policy_unsupported_reason())
+        },
     }
 }
 

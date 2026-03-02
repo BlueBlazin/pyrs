@@ -632,21 +632,21 @@ Completed on this branch:
 - latest: worker timeout contracts are now dual-mode aware: default in-range
   updates remain `unsupported_worker_timeout_enforcement`, while
   `wasm-vm-probe` in-range updates return `worker_timeout_configured` with
-  success/no blocker (configuration-only, enforcement still unwired).
+  success/no blocker and runtime timeout enforcement on worker executes.
 - latest: `WasmWorkerTimeoutPolicy` now exports explicit
   `configuration_supported` mode signaling (`false` default,
   `true` in `wasm-vm-probe`) and docs/client-flow validations enforce usage of
-  that capability flag separately from `enforcement_supported`.
+  that capability flag alongside mode-aware `enforcement_supported`.
 - latest: timeout-policy `unsupported_reason` is now mode-aware: default builds
-  report worker-runtime unwired status, while `wasm-vm-probe` reports
-  enforcement-unwired (configuration-only support) status.
+  report worker-runtime unwired status, while `wasm-vm-probe` reports no
+  unsupported reason (`None`) because enforcement is wired in probe mode.
 - latest: `WasmWorkerInfo` now exports explicit `lifecycle_supported`
   mode signaling (`false` default, `true` in `wasm-vm-probe`) so clients can
   branch lifecycle controls without inferring from phase text.
 - latest: `WasmWorkerInfo` now also exports timeout capability signals
-  (`timeout_configuration_supported` mode-aware, and
-  `timeout_enforcement_supported = false`), keeping worker-info summary
-  aligned with timeout policy semantics.
+  (`timeout_configuration_supported` and `timeout_enforcement_supported`
+  both mode-aware), keeping worker-info summary aligned with timeout policy
+  semantics.
 - latest: `WasmWorkerInfo.state` is now mode-aware (`"unwired"` default,
   `"ready"` in `wasm-vm-probe`) for consistent worker-readiness signaling.
 - latest: timeout phase key parity and docs guards now include vm-probe timeout

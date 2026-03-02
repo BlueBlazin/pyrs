@@ -758,13 +758,19 @@ def parse_source_worker_info_uses_timeout_configuration_flag(worker_info_body: s
     return "timeout_configuration_supported: wasm_vm_runtime_enabled()" in worker_info_body
 
 
-def parse_source_worker_info_timeout_enforcement_literal(worker_info_body: str) -> bool:
-    match = re.search(r"timeout_enforcement_supported:\s*(true|false)\s*,", worker_info_body)
-    if not match:
-        raise ValueError(
-            "unable to parse timeout_enforcement_supported literal from wasm_worker_info"
-        )
-    return match.group(1) == "true"
+def parse_source_worker_info_timeout_enforcement_flag(
+    worker_info_body: str, vm_probe: bool
+) -> bool:
+    literal_match = re.search(
+        r"timeout_enforcement_supported:\s*(true|false)\s*,", worker_info_body
+    )
+    if literal_match:
+        return literal_match.group(1) == "true"
+    if "timeout_enforcement_supported: wasm_vm_runtime_enabled()" in worker_info_body:
+        return vm_probe
+    raise ValueError(
+        "unable to parse timeout_enforcement_supported field from wasm_worker_info"
+    )
 
 
 def validate_non_empty(name: str, values: list[str], errors: list[str]) -> None:
@@ -898,7 +904,9 @@ def main() -> int:
         parse_source_worker_info_uses_timeout_configuration_flag(source_worker_info_body)
     )
     source_worker_info_timeout_enforcement_supported = (
-        parse_source_worker_info_timeout_enforcement_literal(source_worker_info_body)
+        parse_source_worker_info_timeout_enforcement_flag(
+            source_worker_info_body, args.vm_probe
+        )
     )
     source_worker_unwired_lifecycle_sets_shared_state = (
         parse_source_worker_unwired_lifecycle_sets_shared_state(wasm_source)
@@ -934,7 +942,7 @@ def main() -> int:
     source_expected_worker_execution_probe_enabled = args.vm_probe
     source_expected_worker_execute_supported = args.vm_probe
     source_expected_worker_timeout_configuration_supported = args.vm_probe
-    source_expected_worker_timeout_enforcement_supported = False
+    source_expected_worker_timeout_enforcement_supported = args.vm_probe
     source_ready_worker_state = next(
         (key for key in source_state_keys if key == "ready"),
         source_state_keys[0],
@@ -1143,7 +1151,7 @@ def main() -> int:
         != source_expected_worker_timeout_enforcement_supported
     ):
         errors.append(
-            "wasm_worker_info timeout_enforcement_supported literal mismatch "
+            "wasm_worker_info timeout_enforcement_supported mismatch "
             f"source={source_worker_info_timeout_enforcement_supported} "
             f"expected={source_expected_worker_timeout_enforcement_supported}"
         )
