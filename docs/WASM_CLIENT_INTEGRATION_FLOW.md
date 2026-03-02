@@ -54,6 +54,12 @@ are currently explicit stubs.
   - default build: unsupported phase sets `blocker_key = "worker_runtime_unwired"`
   - `wasm-vm-probe` build: capability-allowed snippets can return `ok` or
     `runtime_error`
+- `wasm_worker_set_timeout(timeout_ms)` -> `phase` in:
+  - `invalid_worker_timeout` for out-of-range values
+  - default in-range: `unsupported_worker_timeout_enforcement`
+    (`blocker_key = "worker_runtime_unwired"`)
+  - `wasm-vm-probe` in-range: `worker_timeout_configured`
+    (`blocker_key = None`, configuration-only; enforcement still unwired)
 - `wasm_worker_execute_with_operation(source)` -> same phases plus
   `operation_id = worker_execute_<n>`
 
@@ -62,7 +68,7 @@ Use this to keep UI behavior deterministic before worker backend wiring.
 For worker-specific diagnostics UI, call `wasm_worker_blockers()` to get stable
 structured key/message rows without hardcoding blocker text.
 Use `wasm_worker_timeout_policy()` to keep timeout controls aligned with the
-current worker recycle model and unsupported timeout-enforcement phase.
+current worker recycle model and timeout phase semantics.
 Use `wasm_worker_timeout_phase_keys()` to branch timeout UI on canonical phase
 enums instead of string literals.
 Use `operation_id` fields from lifecycle/timeout results (and from

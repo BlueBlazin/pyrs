@@ -30,6 +30,11 @@ This document defines the JS-facing contract currently exported by
   - Returns timeout/recycle contract metadata for worker execution.
 - `wasm_worker_timeout_phase_keys() -> Array`
   - Returns canonical timeout phase keys.
+  - default keys:
+    - `unsupported_worker_timeout_enforcement`
+    - `invalid_worker_timeout`
+  - `wasm-vm-probe` adds:
+    - `worker_timeout_configured`
 - `wasm_worker_state_keys() -> Array`
   - Returns canonical worker runtime state keys.
 - `wasm_worker_lifecycle_phase_keys() -> Array`
@@ -62,8 +67,9 @@ This document defines the JS-facing contract currently exported by
     (`phase = "worker_recycled"`, `state = "ready"`).
 - `wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult`
   - Worker timeout update contract with deterministic phases:
-    - `unsupported_worker_timeout_enforcement` (in-range while unwired)
     - `invalid_worker_timeout` (out-of-range value)
+    - default in-range: `unsupported_worker_timeout_enforcement`
+    - `wasm-vm-probe` in-range: `worker_timeout_configured`
 - `wasm_worker_execute(source: &str) -> WasmExecutionResult`
   - Default worker execute phases:
     - `syntax_error`
@@ -173,6 +179,8 @@ This document defines the JS-facing contract currently exported by
 - `success: bool`
 - `operation_id: String` (shape: `worker_set_timeout_<n>`)
 - `phase: String` (`"unsupported_worker_timeout_enforcement"`, `"invalid_worker_timeout"`)
+  - default: `"unsupported_worker_timeout_enforcement"`, `"invalid_worker_timeout"`
+  - `wasm-vm-probe`: also `"worker_timeout_configured"` (in-range config acceptance)
 - `state: String` (currently `"unwired"`)
 - `timeout_ms: u32`
 - `error: Option<String>`

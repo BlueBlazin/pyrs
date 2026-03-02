@@ -45,8 +45,12 @@ This document defines the browser worker-runtime contract currently exposed by:
 
 `wasm_worker_timeout_phase_keys()` currently includes:
 
-- `unsupported_worker_timeout_enforcement`
-- `invalid_worker_timeout`
+- default build:
+  - `unsupported_worker_timeout_enforcement`
+  - `invalid_worker_timeout`
+- `wasm-vm-probe` build:
+  - all default keys, plus:
+  - `worker_timeout_configured`
 
 `wasm_worker_state_keys()` currently includes:
 
@@ -152,12 +156,21 @@ keys (`worker_runtime_unwired` + module-policy capability keys).
 `wasm_worker_set_timeout(timeout_ms)` currently returns:
 
 - `operation_id = worker_set_timeout_<n>`
-- `phase = "unsupported_worker_timeout_enforcement"` for in-range values
-  (`50..=120000` ms),
 - `phase = "invalid_worker_timeout"` for out-of-range values.
+- for in-range values (`50..=120000` ms):
+  - default build:
+    - `phase = "unsupported_worker_timeout_enforcement"`
+    - `success = false`
+    - `blocker_key = "worker_runtime_unwired"`
+    - `error = "wasm worker runtime is not wired yet"`
+  - `wasm-vm-probe` build:
+    - `phase = "worker_timeout_configured"`
+    - `success = true`
+    - `blocker_key = None`
+    - `error = None`
 
-For in-range values, `blocker_key = "worker_runtime_unwired"` while worker
-enforcement remains unwired.
+`worker_timeout_configured` is configuration-only in vm-probe mode; timeout
+enforcement still remains unwired (`enforcement_supported = false`).
 
 `wasm_worker_execute(source)` currently returns:
 

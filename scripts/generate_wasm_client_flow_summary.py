@@ -71,6 +71,17 @@ def parse_source_worker_lifecycle_phase_keys(
     return effective_keys, vm_probe_keys
 
 
+def parse_source_worker_timeout_phase_keys(
+    default_keys: list[str], const_map: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    vm_probe_const_names = ["WASM_WORKER_TIMEOUT_CONFIGURED_PHASE"]
+    vm_probe_keys = [
+        const_map[name] for name in vm_probe_const_names if name in const_map
+    ]
+    effective_keys = ordered_unique(default_keys + vm_probe_keys)
+    return effective_keys, vm_probe_keys
+
+
 def parse_source_worker_session_fields(wasm_source: str) -> list[str]:
     match = re.search(
         r"pub struct WasmWorkerSession \{(.*?)\n\}",
@@ -123,7 +134,7 @@ def validate_docs(
     worker_lifecycle_phase_keys: list[str],
     worker_lifecycle_phase_keys_vm_probe_extra: list[str],
     worker_execute_phase_keys: list[str],
-    worker_timeout_invalid_phase: str,
+    worker_timeout_phase_keys: list[str],
     worker_unwired_blocker_key: str,
     vm_probe_ok_phase: str,
     vm_probe_runtime_error_phase: str,
@@ -176,8 +187,9 @@ def validate_docs(
     for key in worker_execute_phase_keys:
         if key not in docs_source:
             errors.append(f"docs missing worker execute phase key '{key}'")
-    if worker_timeout_invalid_phase not in docs_source:
-        errors.append(f"docs missing worker timeout phase key '{worker_timeout_invalid_phase}'")
+    for key in worker_timeout_phase_keys:
+        if key not in docs_source:
+            errors.append(f"docs missing worker timeout phase key '{key}'")
 
     if worker_unwired_blocker_key not in docs_source:
         errors.append(f"docs missing worker unwired blocker key '{worker_unwired_blocker_key}'")
@@ -247,11 +259,16 @@ def main() -> int:
     worker_execute_phase_keys = parse_source_enum_keys(
         wasm_source, "WasmWorkerExecutePhase", const_map
     )
-    worker_timeout_phase_keys = parse_source_enum_keys(wasm_source, "WasmWorkerTimeoutPhase", const_map)
+    worker_timeout_phase_keys_default = parse_source_enum_keys(
+        wasm_source, "WasmWorkerTimeoutPhase", const_map
+    )
+    (
+        worker_timeout_phase_keys,
+        worker_timeout_phase_keys_vm_probe_extra,
+    ) = parse_source_worker_timeout_phase_keys(worker_timeout_phase_keys_default, const_map)
     worker_unwired_blocker_key = const_map["WASM_WORKER_BLOCKER_RUNTIME_UNWIRED"]
     vm_probe_ok_phase = const_map["WASM_EXECUTION_PHASE_OK"]
     vm_probe_runtime_error_phase = const_map["WASM_EXECUTION_PHASE_RUNTIME_ERROR"]
-    worker_timeout_invalid_phase = const_map["WASM_WORKER_TIMEOUT_INVALID_PHASE"]
     worker_info_fields = parse_source_worker_info_fields(wasm_source)
     worker_session_fields = parse_source_worker_session_fields(wasm_source)
 
@@ -261,7 +278,7 @@ def main() -> int:
         worker_lifecycle_phase_keys=worker_lifecycle_phase_keys,
         worker_lifecycle_phase_keys_vm_probe_extra=worker_lifecycle_phase_keys_vm_probe_extra,
         worker_execute_phase_keys=worker_execute_phase_keys,
-        worker_timeout_invalid_phase=worker_timeout_invalid_phase,
+        worker_timeout_phase_keys=worker_timeout_phase_keys,
         worker_unwired_blocker_key=worker_unwired_blocker_key,
         vm_probe_ok_phase=vm_probe_ok_phase,
         vm_probe_runtime_error_phase=vm_probe_runtime_error_phase,
@@ -306,7 +323,9 @@ def main() -> int:
         "worker_lifecycle_phase_keys_vm_probe_extra": worker_lifecycle_phase_keys_vm_probe_extra,
         "worker_lifecycle_phase_keys_effective": worker_lifecycle_phase_keys,
         "worker_execute_phase_keys": worker_execute_phase_keys,
-        "worker_timeout_phase_keys": worker_timeout_phase_keys,
+        "worker_timeout_phase_keys_default": worker_timeout_phase_keys_default,
+        "worker_timeout_phase_keys_vm_probe_extra": worker_timeout_phase_keys_vm_probe_extra,
+        "worker_timeout_phase_keys_effective": worker_timeout_phase_keys,
         "worker_unwired_blocker_key": worker_unwired_blocker_key,
         "vm_probe_worker_phases": [vm_probe_ok_phase, vm_probe_runtime_error_phase],
         "worker_info_fields": worker_info_fields,

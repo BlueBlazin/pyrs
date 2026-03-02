@@ -65,6 +65,31 @@ class WorkerLifecycleExpectation:
 
 
 @dataclass
+class WorkerTimeoutFixtureRow:
+    name: str
+    timeout_ms: int
+    phase: str
+    state: str
+    success: bool
+    blocker_key: str | None
+    vm_probe_phase: str | None
+    vm_probe_state: str | None
+    vm_probe_success: bool | None
+    vm_probe_blocker_key: str | None
+    has_vm_probe_blocker_override: bool
+
+
+@dataclass
+class WorkerTimeoutExpectation:
+    name: str
+    timeout_ms: int
+    phase: str
+    state: str
+    success: bool
+    blocker_key: str | None
+
+
+@dataclass
 class WorkerInfoFixtureRow:
     name: str
     expected_supported: bool
@@ -189,6 +214,13 @@ def parse_optional_bool_field(body: str, field: str) -> bool | None:
     raise ValueError(f"missing optional bool field '{field}' with Some(bool) or None")
 
 
+def parse_required_u32_field(body: str, field: str) -> int:
+    match = re.search(rf"{re.escape(field)}:\s*([0-9_]+)", body)
+    if not match:
+        raise ValueError(f"missing required u32 field '{field}'")
+    return int(match.group(1).replace("_", ""))
+
+
 def parse_worker_execute_fixture_rows(source: str) -> list[WorkerExecuteFixtureRow]:
     body = parse_const_body(source, "WASM_WORKER_EXECUTE_FIXTURES")
     pattern = re.compile(r"WasmWorkerExecuteFixture\s*\{(.*?)\n\s*\},?", re.DOTALL)
@@ -225,6 +257,34 @@ def parse_worker_execute_fixture_rows(source: str) -> list[WorkerExecuteFixtureR
                 vm_probe_success=vm_probe_success,
                 expect_line_column=expect_line_column,
                 vm_probe_expect_line_column=vm_probe_expect_line_column,
+            )
+        )
+    return rows
+
+
+def parse_worker_timeout_fixture_rows(source: str) -> list[WorkerTimeoutFixtureRow]:
+    body = parse_const_body(source, "WASM_WORKER_TIMEOUT_FIXTURES")
+    pattern = re.compile(r"WasmWorkerTimeoutFixture\s*\{(.*?)\n\s*\},?", re.DOTALL)
+    rows: list[WorkerTimeoutFixtureRow] = []
+    for match in pattern.finditer(body):
+        row_body = match.group(1)
+        (
+            has_vm_probe_blocker_override,
+            vm_probe_blocker_key,
+        ) = parse_optional_optional_string_field(row_body, "expected_vm_probe_blocker_key")
+        rows.append(
+            WorkerTimeoutFixtureRow(
+                name=parse_required_string_field(row_body, "name"),
+                timeout_ms=parse_required_u32_field(row_body, "timeout_ms"),
+                phase=parse_required_string_field(row_body, "expected_phase"),
+                state=parse_required_string_field(row_body, "expected_state"),
+                success=parse_required_bool_field(row_body, "expected_success"),
+                blocker_key=parse_optional_string_field(row_body, "expected_blocker_key"),
+                vm_probe_phase=parse_optional_string_field(row_body, "expected_vm_probe_phase"),
+                vm_probe_state=parse_optional_string_field(row_body, "expected_vm_probe_state"),
+                vm_probe_success=parse_optional_bool_field(row_body, "expected_vm_probe_success"),
+                vm_probe_blocker_key=vm_probe_blocker_key,
+                has_vm_probe_blocker_override=has_vm_probe_blocker_override,
             )
         )
     return rows
@@ -348,6 +408,32 @@ def effective_worker_lifecycle_expectation(
     )
 
 
+def effective_worker_timeout_expectation(
+    row: WorkerTimeoutFixtureRow, vm_probe_enabled: bool
+) -> WorkerTimeoutExpectation:
+    phase = row.phase
+    state = row.state
+    success = row.success
+    blocker_key = row.blocker_key
+    if vm_probe_enabled:
+        if row.vm_probe_phase is not None:
+            phase = row.vm_probe_phase
+        if row.vm_probe_state is not None:
+            state = row.vm_probe_state
+        if row.vm_probe_success is not None:
+            success = row.vm_probe_success
+        if row.has_vm_probe_blocker_override:
+            blocker_key = row.vm_probe_blocker_key
+    return WorkerTimeoutExpectation(
+        name=row.name,
+        timeout_ms=row.timeout_ms,
+        phase=phase,
+        state=state,
+        success=success,
+        blocker_key=blocker_key,
+    )
+
+
 def effective_worker_info_expectation(
     row: WorkerInfoFixtureRow, vm_probe_enabled: bool
 ) -> WorkerInfoExpectation:
@@ -442,6 +528,15 @@ def parse_source_worker_lifecycle_phase_keys(
         keys.append(const_map["WASM_WORKER_LIFECYCLE_PHASE_STARTED"])
         keys.append(const_map["WASM_WORKER_LIFECYCLE_PHASE_TERMINATED"])
         keys.append(const_map["WASM_WORKER_LIFECYCLE_PHASE_RECYCLED"])
+    return keys
+
+
+def parse_source_worker_timeout_phase_keys(
+    wasm_source: str, const_map: dict[str, str], vm_probe_enabled: bool
+) -> list[str]:
+    keys = parse_source_enum_keys(wasm_source, "WasmWorkerTimeoutPhase", const_map)
+    if vm_probe_enabled:
+        keys.append(const_map["WASM_WORKER_TIMEOUT_CONFIGURED_PHASE"])
     return keys
 
 
@@ -570,6 +665,9 @@ def main() -> int:
     )
     execute_phase_keys = parse_string_array(fixture_source, "WASM_WORKER_EXECUTE_PHASE_KEYS")
     timeout_phase_keys = parse_string_array(fixture_source, "WASM_WORKER_TIMEOUT_PHASE_KEYS")
+    timeout_phase_keys_vm_probe_extra = parse_string_array(
+        fixture_source, "WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA"
+    )
     worker_blocker_keys = parse_string_array(
         fixture_source, "WASM_WORKER_BLOCKER_KEYS"
     )
@@ -592,14 +690,12 @@ def main() -> int:
     execute_effective_expectations = [
         effective_worker_execute_expectation(row, args.vm_probe) for row in execute_rows
     ]
+    timeout_rows = parse_worker_timeout_fixture_rows(fixture_source)
+    timeout_effective_expectations = [
+        effective_worker_timeout_expectation(row, args.vm_probe) for row in timeout_rows
+    ]
     execute_fixture_phases = [row.phase for row in execute_effective_expectations]
     execute_blocker_keys = [row.blocker_key for row in execute_effective_expectations]
-    timeout_fixture_phases = parse_expected_phases(
-        fixture_source, "WASM_WORKER_TIMEOUT_FIXTURES"
-    )
-    timeout_blocker_keys = parse_optional_blocker_keys(
-        fixture_source, "WASM_WORKER_TIMEOUT_FIXTURES"
-    )
     worker_info_rows = parse_worker_info_fixture_rows(fixture_source)
     worker_info_effective_expectations = [
         effective_worker_info_expectation(row, args.vm_probe) for row in worker_info_rows
@@ -615,8 +711,8 @@ def main() -> int:
     source_execute_phase_keys = parse_source_worker_execute_phase_keys(
         wasm_source, source_const_map, args.vm_probe
     )
-    source_timeout_phase_keys = parse_source_enum_keys(
-        wasm_source, "WasmWorkerTimeoutPhase", source_const_map
+    source_timeout_phase_keys = parse_source_worker_timeout_phase_keys(
+        wasm_source, source_const_map, args.vm_probe
     )
     source_lifecycle_actions = parse_source_lifecycle_actions(wasm_source)
     source_operation_actions = parse_source_operation_actions(wasm_source)
@@ -678,6 +774,9 @@ def main() -> int:
                 source_const_map["WASM_EXECUTION_PHASE_RUNTIME_ERROR"],
             ]
         )
+    timeout_phase_keys_effective = list(timeout_phase_keys)
+    if args.vm_probe:
+        timeout_phase_keys_effective.extend(timeout_phase_keys_vm_probe_extra)
 
     errors: list[str] = []
     validate_non_empty("WASM_WORKER_STATE_KEYS", state_keys, errors)
@@ -690,6 +789,12 @@ def main() -> int:
         )
     validate_non_empty("WASM_WORKER_EXECUTE_PHASE_KEYS", execute_phase_keys, errors)
     validate_non_empty("WASM_WORKER_TIMEOUT_PHASE_KEYS", timeout_phase_keys, errors)
+    if args.vm_probe:
+        validate_non_empty(
+            "WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA",
+            timeout_phase_keys_vm_probe_extra,
+            errors,
+        )
     validate_non_empty("WASM_WORKER_BLOCKER_KEYS", worker_blocker_keys, errors)
     validate_non_empty(
         "WASM_WORKER_LIFECYCLE_FIXTURES.expected_operation_prefix",
@@ -721,6 +826,11 @@ def main() -> int:
     )
     validate_unique("WASM_WORKER_EXECUTE_PHASE_KEYS", execute_phase_keys, errors)
     validate_unique("WASM_WORKER_TIMEOUT_PHASE_KEYS", timeout_phase_keys, errors)
+    validate_unique(
+        "WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA",
+        timeout_phase_keys_vm_probe_extra,
+        errors,
+    )
     validate_unique("WASM_WORKER_BLOCKER_KEYS", worker_blocker_keys, errors)
 
     validate_prefix_shape(
@@ -768,14 +878,14 @@ def main() -> int:
             "worker execute phase key order mismatch "
             f"fixtures={execute_phase_keys_effective} source={source_execute_phase_keys}"
         )
-    if set(timeout_phase_keys) != set(source_timeout_phase_keys):
+    if set(timeout_phase_keys_effective) != set(source_timeout_phase_keys):
         errors.append(
-            f"worker timeout phase key set mismatch fixtures={unique(timeout_phase_keys)} source={source_timeout_phase_keys}"
+            f"worker timeout phase key set mismatch fixtures={unique(timeout_phase_keys_effective)} source={source_timeout_phase_keys}"
         )
-    if timeout_phase_keys != source_timeout_phase_keys:
+    if timeout_phase_keys_effective != source_timeout_phase_keys:
         errors.append(
             "worker timeout phase key order mismatch "
-            f"fixtures={timeout_phase_keys} source={source_timeout_phase_keys}"
+            f"fixtures={timeout_phase_keys_effective} source={source_timeout_phase_keys}"
         )
     if set(worker_blocker_keys) != set(source_expected_worker_blocker_keys):
         errors.append(
@@ -947,18 +1057,43 @@ def main() -> int:
             f"fixtures={execute_fixture_phase_set} source={source_execute_phase_keys}"
         )
 
-    if len(timeout_fixture_phases) != len(timeout_blocker_keys):
-        errors.append("worker timeout fixture phase/blocker row count mismatch")
-    else:
-        for phase, blocker_key in zip(timeout_fixture_phases, timeout_blocker_keys, strict=True):
-            if phase == "unsupported_worker_timeout_enforcement":
-                if blocker_key != source_worker_blocker_key:
-                    errors.append(
-                        "worker timeout unsupported phase must use source blocker key "
-                        f"'{source_worker_blocker_key}'"
-                    )
-            elif phase == "invalid_worker_timeout" and blocker_key is not None:
-                errors.append("worker timeout invalid phase must not set expected_blocker_key")
+    for row in timeout_effective_expectations:
+        if row.state not in source_state_keys:
+            errors.append(
+                f"{row.name}: timeout state '{row.state}' must be one of {source_state_keys}"
+            )
+        if row.phase == "unsupported_worker_timeout_enforcement":
+            if row.success:
+                errors.append(
+                    f"{row.name}: unsupported timeout phase must set expected_success=false"
+                )
+            if row.blocker_key != source_worker_blocker_key:
+                errors.append(
+                    f"{row.name}: unsupported timeout phase must use blocker "
+                    f"'{source_worker_blocker_key}'"
+                )
+        elif row.phase == "invalid_worker_timeout":
+            if row.success:
+                errors.append(
+                    f"{row.name}: invalid timeout phase must set expected_success=false"
+                )
+            if row.blocker_key is not None:
+                errors.append(
+                    f"{row.name}: invalid timeout phase must set expected_blocker_key=None"
+                )
+        elif row.phase == "worker_timeout_configured":
+            if not row.success:
+                errors.append(
+                    f"{row.name}: configured timeout phase must set expected_success=true"
+                )
+            if row.blocker_key is not None:
+                errors.append(
+                    f"{row.name}: configured timeout phase must set expected_blocker_key=None"
+                )
+        else:
+            errors.append(
+                f"{row.name}: unsupported timeout phase value '{row.phase}' in fixture expectations"
+            )
 
     if errors:
         print("wasm worker contract summary validation failed:")
@@ -976,7 +1111,9 @@ def main() -> int:
         "lifecycle_phase_keys_vm_probe_extra": lifecycle_phase_keys_vm_probe_extra,
         "execute_phase_keys": execute_phase_keys,
         "execute_phase_keys_effective": execute_phase_keys_effective,
-        "timeout_phase_keys": timeout_phase_keys,
+        "timeout_phase_keys_default": timeout_phase_keys,
+        "timeout_phase_keys_vm_probe_extra": timeout_phase_keys_vm_probe_extra,
+        "timeout_phase_keys_effective": timeout_phase_keys_effective,
         "worker_blocker_keys": worker_blocker_keys,
         "lifecycle_effective_rows": [
             {
@@ -1000,6 +1137,17 @@ def main() -> int:
                 "expect_line_column": row.expect_line_column,
             }
             for row in execute_effective_expectations
+        ],
+        "timeout_effective_rows": [
+            {
+                "name": row.name,
+                "timeout_ms": row.timeout_ms,
+                "phase": row.phase,
+                "state": row.state,
+                "success": row.success,
+                "blocker_key": row.blocker_key,
+            }
+            for row in timeout_effective_expectations
         ],
         "source_key_sets": {
             "state": source_state_keys,
@@ -1047,7 +1195,7 @@ def main() -> int:
             "worker_state_keys": len(state_keys),
             "lifecycle_phase_keys": len(lifecycle_phase_keys_effective),
             "execute_phase_keys": len(execute_phase_keys_effective),
-            "timeout_phase_keys": len(timeout_phase_keys),
+            "timeout_phase_keys": len(timeout_phase_keys_effective),
             "worker_blocker_keys": len(worker_blocker_keys),
             "worker_info_rows": len(worker_info_rows),
             "lifecycle_prefix_entries": len(lifecycle_operation_prefixes),

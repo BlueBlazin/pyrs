@@ -36,6 +36,10 @@ pub struct WasmWorkerTimeoutFixture {
     pub expected_state: &'static str,
     pub expected_success: bool,
     pub expected_blocker_key: Option<&'static str>,
+    pub expected_vm_probe_phase: Option<&'static str>,
+    pub expected_vm_probe_state: Option<&'static str>,
+    pub expected_vm_probe_success: Option<bool>,
+    pub expected_vm_probe_blocker_key: Option<Option<&'static str>>,
 }
 
 pub struct WasmWorkerInfoFixture {
@@ -193,6 +197,10 @@ pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[
         expected_state: "unwired",
         expected_success: false,
         expected_blocker_key: None,
+        expected_vm_probe_phase: None,
+        expected_vm_probe_state: None,
+        expected_vm_probe_success: None,
+        expected_vm_probe_blocker_key: None,
     },
     WasmWorkerTimeoutFixture {
         name: "worker_timeout_unwired_min",
@@ -202,6 +210,10 @@ pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[
         expected_state: "unwired",
         expected_success: false,
         expected_blocker_key: Some("worker_runtime_unwired"),
+        expected_vm_probe_phase: Some("worker_timeout_configured"),
+        expected_vm_probe_state: Some("unwired"),
+        expected_vm_probe_success: Some(true),
+        expected_vm_probe_blocker_key: Some(None),
     },
     WasmWorkerTimeoutFixture {
         name: "worker_timeout_unwired_default",
@@ -211,6 +223,10 @@ pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[
         expected_state: "unwired",
         expected_success: false,
         expected_blocker_key: Some("worker_runtime_unwired"),
+        expected_vm_probe_phase: Some("worker_timeout_configured"),
+        expected_vm_probe_state: Some("unwired"),
+        expected_vm_probe_success: Some(true),
+        expected_vm_probe_blocker_key: Some(None),
     },
     WasmWorkerTimeoutFixture {
         name: "worker_timeout_unwired_max",
@@ -220,6 +236,10 @@ pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[
         expected_state: "unwired",
         expected_success: false,
         expected_blocker_key: Some("worker_runtime_unwired"),
+        expected_vm_probe_phase: Some("worker_timeout_configured"),
+        expected_vm_probe_state: Some("unwired"),
+        expected_vm_probe_success: Some(true),
+        expected_vm_probe_blocker_key: Some(None),
     },
     WasmWorkerTimeoutFixture {
         name: "worker_timeout_invalid_high",
@@ -229,6 +249,10 @@ pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[
         expected_state: "unwired",
         expected_success: false,
         expected_blocker_key: None,
+        expected_vm_probe_phase: None,
+        expected_vm_probe_state: None,
+        expected_vm_probe_success: None,
+        expected_vm_probe_blocker_key: None,
     },
 ];
 
@@ -260,6 +284,8 @@ pub const WASM_WORKER_TIMEOUT_PHASE_KEYS: &[&str] = &[
     "unsupported_worker_timeout_enforcement",
     "invalid_worker_timeout",
 ];
+
+pub const WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA: &[&str] = &["worker_timeout_configured"];
 
 pub const WASM_WORKER_BLOCKER_KEYS: &[&str] = &[
     "worker_runtime_unwired",

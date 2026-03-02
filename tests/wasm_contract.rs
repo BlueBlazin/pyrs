@@ -19,7 +19,8 @@ use crate::wasm_worker_contract::{
     WASM_WORKER_BLOCKER_KEYS, WASM_WORKER_EXECUTE_FIXTURES, WASM_WORKER_EXECUTE_PHASE_KEYS,
     WASM_WORKER_INFO_FIXTURES, WASM_WORKER_LIFECYCLE_FIXTURES, WASM_WORKER_LIFECYCLE_PHASE_KEYS,
     WASM_WORKER_LIFECYCLE_PHASE_KEYS_VM_PROBE_EXTRA, WASM_WORKER_STATE_KEYS,
-    WASM_WORKER_TIMEOUT_FIXTURES, WASM_WORKER_TIMEOUT_PHASE_KEYS, WasmWorkerExecuteFixture,
+    WASM_WORKER_TIMEOUT_FIXTURES, WASM_WORKER_TIMEOUT_PHASE_KEYS,
+    WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA, WasmWorkerExecuteFixture,
 };
 use js_sys::Reflect;
 use pyrs::wasm::{
@@ -198,6 +199,50 @@ fn expected_worker_execute_line_column_for_fixture(fixture: &WasmWorkerExecuteFi
         }
     }
     fixture.expect_line_column
+}
+
+fn expected_worker_timeout_phase_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerTimeoutFixture,
+) -> String {
+    if vm_probe_enabled() {
+        if let Some(phase) = fixture.expected_vm_probe_phase {
+            return phase.to_string();
+        }
+    }
+    fixture.expected_phase.to_string()
+}
+
+fn expected_worker_timeout_state_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerTimeoutFixture,
+) -> String {
+    if vm_probe_enabled() {
+        if let Some(state) = fixture.expected_vm_probe_state {
+            return state.to_string();
+        }
+    }
+    fixture.expected_state.to_string()
+}
+
+fn expected_worker_timeout_success_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerTimeoutFixture,
+) -> bool {
+    if vm_probe_enabled() {
+        if let Some(success) = fixture.expected_vm_probe_success {
+            return success;
+        }
+    }
+    fixture.expected_success
+}
+
+fn expected_worker_timeout_blocker_key_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerTimeoutFixture,
+) -> Option<String> {
+    if vm_probe_enabled() {
+        if let Some(override_blocker) = fixture.expected_vm_probe_blocker_key {
+            return override_blocker.map(str::to_string);
+        }
+    }
+    fixture.expected_blocker_key.map(str::to_string)
 }
 
 fn expected_worker_info_backend_for_fixture(
@@ -393,21 +438,22 @@ fn wasm_worker_timeout_set_contract_is_stable() {
     let mut operation_ids = HashSet::new();
     for fixture in WASM_WORKER_TIMEOUT_FIXTURES {
         let result = wasm_worker_set_timeout(fixture.timeout_ms);
+        let expected_phase = expected_worker_timeout_phase_for_fixture(fixture);
         assert_eq!(
             result.phase(),
-            fixture.expected_phase,
+            expected_phase,
             "worker timeout phase mismatch: {}",
             fixture.name
         );
         assert_eq!(
             result.state(),
-            fixture.expected_state,
+            expected_worker_timeout_state_for_fixture(fixture),
             "worker timeout state mismatch: {}",
             fixture.name
         );
         assert_eq!(
             result.success(),
-            fixture.expected_success,
+            expected_worker_timeout_success_for_fixture(fixture),
             "worker timeout success mismatch: {}",
             fixture.name
         );
@@ -417,31 +463,46 @@ fn wasm_worker_timeout_set_contract_is_stable() {
             "worker timeout value mismatch: {}",
             fixture.name
         );
-        let expected_blocker_key = fixture.expected_blocker_key.map(str::to_string);
+        let expected_blocker_key = expected_worker_timeout_blocker_key_for_fixture(fixture);
         assert_eq!(
             result.blocker_key(),
             expected_blocker_key,
             "worker timeout blocker key mismatch: {}",
             fixture.name
         );
-        assert!(
-            result.error().is_some(),
-            "worker timeout error should be populated: {}",
-            fixture.name
-        );
-        let message = result
-            .error()
-            .expect("worker timeout error message should be populated");
-        if fixture.expected_phase == "invalid_worker_timeout" {
+        if expected_phase == "worker_timeout_configured" {
             assert!(
-                message.contains("between"),
-                "invalid timeout error should include range details: {}",
+                result.error().is_none(),
+                "configured timeout should not set error: {}",
                 fixture.name
             );
         } else {
             assert!(
-                message.contains("not wired"),
-                "unsupported timeout error should include unwired details: {}",
+                result.error().is_some(),
+                "worker timeout error should be populated: {}",
+                fixture.name
+            );
+            let message = result
+                .error()
+                .expect("worker timeout error message should be populated");
+            if expected_phase == "invalid_worker_timeout" {
+                assert!(
+                    message.contains("between"),
+                    "invalid timeout error should include range details: {}",
+                    fixture.name
+                );
+            } else {
+                assert!(
+                    message.contains("not wired"),
+                    "unsupported timeout error should include unwired details: {}",
+                    fixture.name
+                );
+            }
+        }
+        if expected_phase == "invalid_worker_timeout" {
+            assert!(
+                result.error().is_some(),
+                "invalid timeout should include range error: {}",
                 fixture.name
             );
         }
@@ -533,10 +594,17 @@ fn wasm_worker_enum_keys_are_stable() {
             .expect("worker timeout phase key should be string");
         timeout_phases.push(phase);
     }
-    let expected_timeout_phases: Vec<String> = WASM_WORKER_TIMEOUT_PHASE_KEYS
+    let mut expected_timeout_phases: Vec<String> = WASM_WORKER_TIMEOUT_PHASE_KEYS
         .iter()
         .map(|value| (*value).to_string())
         .collect();
+    if vm_probe_enabled() {
+        expected_timeout_phases.extend(
+            WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA
+                .iter()
+                .map(|value| (*value).to_string()),
+        );
+    }
     assert_eq!(timeout_phases, expected_timeout_phases);
     let timeout_phase_set: HashSet<String> = timeout_phases.iter().cloned().collect();
     assert_eq!(timeout_phase_set.len(), expected_timeout_phases.len());
@@ -934,9 +1002,10 @@ fn wasm_worker_session_contract_is_stable() {
     assert!(session.last_error().is_some());
 
     let timeout = session.set_timeout_ms(5_000);
+    let timeout_fixture = &WASM_WORKER_TIMEOUT_FIXTURES[2];
     assert_eq!(
         timeout.phase(),
-        "unsupported_worker_timeout_enforcement".to_string()
+        expected_worker_timeout_phase_for_fixture(timeout_fixture)
     );
     assert_eq!(session.timeout_updates_requested(), 2);
     assert_eq!(session.last_timeout_ms_requested(), Some(5_000));
@@ -945,10 +1014,16 @@ fn wasm_worker_session_contract_is_stable() {
         session
             .last_phase()
             .expect("last phase after worker timeout update should exist"),
-        "unsupported_worker_timeout_enforcement".to_string()
+        expected_worker_timeout_phase_for_fixture(timeout_fixture)
     );
     assert_eq!(session.last_state(), Some(expected_session_state_after_recycle()));
-    assert!(session.last_error().is_some());
+    if vm_probe_enabled() {
+        assert!(session.last_error().is_none());
+        assert!(timeout.error().is_none());
+    } else {
+        assert!(session.last_error().is_some());
+        assert!(timeout.error().is_some());
+    }
     let pre_reset_snapshot = session.snapshot();
     assert_eq!(pre_reset_snapshot.starts_requested(), 1);
     assert_eq!(pre_reset_snapshot.terminates_requested(), 1);
@@ -958,13 +1033,17 @@ fn wasm_worker_session_contract_is_stable() {
     assert_eq!(pre_reset_snapshot.last_timeout_ms_requested(), Some(5_000));
     assert_eq!(
         pre_reset_snapshot.last_phase(),
-        Some("unsupported_worker_timeout_enforcement".to_string())
+        Some(expected_worker_timeout_phase_for_fixture(timeout_fixture))
     );
     assert_eq!(
         pre_reset_snapshot.last_state(),
         Some(expected_session_state_after_recycle())
     );
-    assert!(pre_reset_snapshot.last_error().is_some());
+    if vm_probe_enabled() {
+        assert!(pre_reset_snapshot.last_error().is_none());
+    } else {
+        assert!(pre_reset_snapshot.last_error().is_some());
+    }
 
     session.reset();
     assert_eq!(session.starts_requested(), 0);

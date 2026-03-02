@@ -91,6 +91,17 @@ def parse_source_worker_lifecycle_phase_keys(
     return effective_keys, vm_probe_keys
 
 
+def parse_source_worker_timeout_phase_keys(
+    default_keys: list[str], const_map: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    vm_probe_const_names = ["WASM_WORKER_TIMEOUT_CONFIGURED_PHASE"]
+    vm_probe_keys = [
+        const_map[name] for name in vm_probe_const_names if name in const_map
+    ]
+    effective_keys = ordered_unique(default_keys + vm_probe_keys)
+    return effective_keys, vm_probe_keys
+
+
 def parse_source_module_policy_blocker_keys(wasm_source: str) -> list[str]:
     match = re.search(
         r"const\s+WASM_MODULE_BLOCKER_POLICY:[^=]*=\s*\[(.*?)\];",
@@ -155,8 +166,14 @@ def main() -> int:
     worker_execute_phases = parse_source_enum_keys(
         wasm_source, "WasmWorkerExecutePhase", const_map
     )
-    worker_timeout_phases = parse_source_enum_keys(
+    worker_timeout_phases_default = parse_source_enum_keys(
         wasm_source, "WasmWorkerTimeoutPhase", const_map
+    )
+    (
+        worker_timeout_phases,
+        worker_timeout_phases_vm_probe_extra,
+    ) = parse_source_worker_timeout_phase_keys(
+        worker_timeout_phases_default, const_map
     )
     worker_unwired_blocker = parse_source_const_string(
         wasm_source, "WASM_WORKER_BLOCKER_RUNTIME_UNWIRED"
@@ -274,7 +291,9 @@ def main() -> int:
         "worker_lifecycle_phase_keys_vm_probe_extra": worker_lifecycle_phase_keys_vm_probe_extra,
         "worker_lifecycle_phase_keys_effective": worker_lifecycle_phase_keys,
         "worker_execute_phases": worker_execute_phases,
-        "worker_timeout_phases": worker_timeout_phases,
+        "worker_timeout_phases_default": worker_timeout_phases_default,
+        "worker_timeout_phases_vm_probe_extra": worker_timeout_phases_vm_probe_extra,
+        "worker_timeout_phases_effective": worker_timeout_phases,
         "worker_unwired_blocker_key": worker_unwired_blocker,
         "worker_interruption_model": worker_interruption_model,
         "worker_backend": {

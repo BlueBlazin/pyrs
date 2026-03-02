@@ -36,6 +36,8 @@ const WASM_WORKER_TIMEOUT_MIN_MS: u32 = 50;
 const WASM_WORKER_TIMEOUT_MAX_MS: u32 = 120_000;
 const WASM_WORKER_TIMEOUT_UNSUPPORTED_PHASE: &str = "unsupported_worker_timeout_enforcement";
 const WASM_WORKER_TIMEOUT_INVALID_PHASE: &str = "invalid_worker_timeout";
+#[cfg(feature = "wasm-vm-probe")]
+const WASM_WORKER_TIMEOUT_CONFIGURED_PHASE: &str = "worker_timeout_configured";
 const WASM_MODULE_BLOCKER_POLICY: [(&str, &str); 10] = [
     ("_ctypes", "dynamic_library_load"),
     ("ctypes", "dynamic_library_load"),
@@ -280,10 +282,22 @@ fn worker_execute_phase_keys() -> Vec<&'static str> {
 }
 
 fn worker_timeout_phase_keys() -> Vec<&'static str> {
-    WasmWorkerTimeoutPhase::ALL
-        .iter()
-        .map(|phase| phase.key())
-        .collect()
+    #[cfg(feature = "wasm-vm-probe")]
+    {
+        let mut keys: Vec<&'static str> = WasmWorkerTimeoutPhase::ALL
+            .iter()
+            .map(|phase| phase.key())
+            .collect();
+        keys.push(WASM_WORKER_TIMEOUT_CONFIGURED_PHASE);
+        keys
+    }
+    #[cfg(not(feature = "wasm-vm-probe"))]
+    {
+        WasmWorkerTimeoutPhase::ALL
+            .iter()
+            .map(|phase| phase.key())
+            .collect()
+    }
 }
 
 fn current_worker_state() -> WasmWorkerState {
@@ -1459,8 +1473,9 @@ pub fn wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy {
 /// Applies a requested timeout policy update for worker execution.
 ///
 /// Current milestone behavior:
-/// - in-range values report `unsupported_worker_timeout_enforcement`,
-/// - out-of-range values report `invalid_worker_timeout`.
+/// - out-of-range values report `invalid_worker_timeout`,
+/// - default builds report `unsupported_worker_timeout_enforcement` for in-range values,
+/// - `wasm-vm-probe` builds report `worker_timeout_configured` for in-range values.
 #[wasm_bindgen]
 pub fn wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult {
     if !(WASM_WORKER_TIMEOUT_MIN_MS..=WASM_WORKER_TIMEOUT_MAX_MS).contains(&timeout_ms) {
@@ -1476,6 +1491,21 @@ pub fn wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult {
             )),
             blocker_key: None,
         };
+    }
+
+    if wasm_vm_runtime_enabled() {
+        #[cfg(feature = "wasm-vm-probe")]
+        {
+            return WasmWorkerTimeoutResult {
+                success: true,
+                operation_id: next_worker_operation_id("set_timeout"),
+                phase: WASM_WORKER_TIMEOUT_CONFIGURED_PHASE.to_string(),
+                state: current_worker_state_key(),
+                timeout_ms,
+                error: None,
+                blocker_key: None,
+            };
+        }
     }
 
     let blocker_key = WASM_WORKER_BLOCKER_RUNTIME_UNWIRED.to_string();
