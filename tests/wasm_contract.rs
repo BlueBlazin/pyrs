@@ -1773,6 +1773,80 @@ fn wasm_top_level_execute_stays_available_when_worker_is_unwired() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_worker_info_tracks_external_lifecycle_state_transitions() {
+    reset_top_level_worker_state_for_contract_tests();
+
+    let baseline_info = wasm_worker_info();
+    assert_eq!(
+        baseline_info.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+    );
+    assert_eq!(baseline_info.execute_supported(), vm_probe_enabled());
+    assert_eq!(
+        baseline_info.timeout_configuration_supported(),
+        vm_probe_enabled()
+    );
+    assert_eq!(
+        baseline_info.timeout_enforcement_supported(),
+        vm_probe_enabled()
+    );
+
+    let started = wasm_worker_start();
+    assert_eq!(
+        started.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[0])
+    );
+    let info_after_start = wasm_worker_info();
+    assert_eq!(
+        info_after_start.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[0])
+    );
+    assert_eq!(info_after_start.execute_supported(), vm_probe_enabled());
+    assert_eq!(
+        info_after_start.timeout_configuration_supported(),
+        vm_probe_enabled()
+    );
+    assert_eq!(
+        info_after_start.timeout_enforcement_supported(),
+        vm_probe_enabled()
+    );
+
+    let terminated = wasm_worker_terminate();
+    assert_eq!(
+        terminated.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+    let info_after_terminate = wasm_worker_info();
+    assert_eq!(
+        info_after_terminate.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
+    assert!(!info_after_terminate.execute_supported());
+    assert!(!info_after_terminate.timeout_configuration_supported());
+    assert!(!info_after_terminate.timeout_enforcement_supported());
+
+    let recycled = wasm_worker_recycle();
+    assert_eq!(
+        recycled.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+    );
+    let info_after_recycle = wasm_worker_info();
+    assert_eq!(
+        info_after_recycle.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+    );
+    assert_eq!(info_after_recycle.execute_supported(), vm_probe_enabled());
+    assert_eq!(
+        info_after_recycle.timeout_configuration_supported(),
+        vm_probe_enabled()
+    );
+    assert_eq!(
+        info_after_recycle.timeout_enforcement_supported(),
+        vm_probe_enabled()
+    );
+}
+
+#[wasm_bindgen_test]
 fn wasm_worker_session_followups_track_shared_state_after_external_lifecycle_change() {
     for fixture in WASM_WORKER_SESSION_STATE_GATE_FIXTURES {
         reset_top_level_worker_state_for_contract_tests();
