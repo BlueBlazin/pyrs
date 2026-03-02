@@ -868,7 +868,8 @@ Completed on this branch:
   artifact hash capture is reproducible and less manual.
 - latest: `scripts/run_wasm_browser_smoke_dispatch.sh` now writes bundled
   artifact hash snapshots (`wasm-artifact-hashes.json` and `.md`) alongside
-  downloaded run artifacts after baseline validation.
+  downloaded run artifacts after baseline validation, using a saved
+  `workflow-run.log` parse path for deterministic extraction.
 - latest: browser-smoke capture now has an operator helper script
   (`scripts/run_wasm_browser_smoke_dispatch.sh`) that dispatches
   `wasm-track.yml`, waits for completion, downloads artifacts, and validates

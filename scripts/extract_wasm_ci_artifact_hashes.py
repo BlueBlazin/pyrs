@@ -124,6 +124,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--run-id", help="GitHub Actions run id to query via gh CLI.")
     parser.add_argument("--log-file", help="Local log file to parse instead of gh run logs.")
+    parser.add_argument("--run-url", help="Run URL metadata when using --log-file.")
+    parser.add_argument("--head-sha", help="Head SHA metadata when using --log-file.")
     parser.add_argument(
         "--format",
         choices=("json", "markdown"),
@@ -140,8 +142,8 @@ def main() -> int:
         print("error: provide --run-id or --log-file", file=sys.stderr)
         return 1
 
-    run_url: str | None = None
-    head_sha: str | None = None
+    run_url: str | None = args.run_url
+    head_sha: str | None = args.head_sha
 
     if args.log_file:
         log_text = Path(args.log_file).read_text(encoding="utf-8")
