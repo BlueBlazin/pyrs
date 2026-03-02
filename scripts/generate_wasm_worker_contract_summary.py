@@ -655,6 +655,30 @@ def parse_source_worker_info_uses_mode_aware_state(worker_info_body: str) -> boo
     return "state: current_worker_state_key()," in worker_info_body
 
 
+def parse_source_worker_unwired_lifecycle_sets_shared_state(wasm_source: str) -> bool:
+    match = re.search(
+        r"fn worker_unwired_result\(.*?\) -> WasmWorkerLifecycleResult \{(.*?)\n\}",
+        wasm_source,
+        flags=re.DOTALL,
+    )
+    if not match:
+        raise ValueError("unable to parse worker_unwired_result function body")
+    body = match.group(1)
+    return "set_current_worker_state(WasmWorkerState::Unwired);" in body
+
+
+def parse_source_worker_vm_probe_lifecycle_sets_shared_state(wasm_source: str) -> bool:
+    match = re.search(
+        r"fn worker_vm_probe_lifecycle_result\(.*?\) -> WasmWorkerLifecycleResult \{(.*?)\n\}",
+        wasm_source,
+        flags=re.DOTALL,
+    )
+    if not match:
+        raise ValueError("unable to parse worker_vm_probe_lifecycle_result function body")
+    body = match.group(1)
+    return "set_current_worker_state(state);" in body
+
+
 def parse_source_worker_info_uses_runtime_probe_flag(worker_info_body: str) -> bool:
     return "execution_probe_enabled: wasm_vm_runtime_enabled()" in worker_info_body
 
@@ -808,6 +832,12 @@ def main() -> int:
     )
     source_worker_info_timeout_enforcement_supported = (
         parse_source_worker_info_timeout_enforcement_literal(source_worker_info_body)
+    )
+    source_worker_unwired_lifecycle_sets_shared_state = (
+        parse_source_worker_unwired_lifecycle_sets_shared_state(wasm_source)
+    )
+    source_worker_vm_probe_lifecycle_sets_shared_state = (
+        parse_source_worker_vm_probe_lifecycle_sets_shared_state(wasm_source)
     )
     source_expected_worker_blocker_keys = [
         source_worker_blocker_key,
@@ -995,6 +1025,14 @@ def main() -> int:
     if not source_worker_info_uses_mode_aware_state:
         errors.append(
             "wasm_worker_info should source state from current_worker_state_key()"
+        )
+    if not source_worker_unwired_lifecycle_sets_shared_state:
+        errors.append(
+            "worker_unwired_result should set shared worker state to WasmWorkerState::Unwired"
+        )
+    if not source_worker_vm_probe_lifecycle_sets_shared_state:
+        errors.append(
+            "worker_vm_probe_lifecycle_result should set shared worker state to input state"
         )
     if not source_worker_info_uses_lifecycle_supported_flag:
         errors.append(
@@ -1304,6 +1342,8 @@ def main() -> int:
             "timeout_configuration_supported": source_expected_worker_timeout_configuration_supported,
             "timeout_enforcement_supported": source_expected_worker_timeout_enforcement_supported,
             "uses_mode_aware_state": source_worker_info_uses_mode_aware_state,
+            "unwired_lifecycle_sets_shared_state": source_worker_unwired_lifecycle_sets_shared_state,
+            "vm_probe_lifecycle_sets_shared_state": source_worker_vm_probe_lifecycle_sets_shared_state,
             "uses_runtime_probe_flag": source_worker_info_uses_runtime_probe_flag,
             "uses_lifecycle_supported_flag": source_worker_info_uses_lifecycle_supported_flag,
             "uses_execute_supported_flag": source_worker_info_uses_execute_supported_flag,

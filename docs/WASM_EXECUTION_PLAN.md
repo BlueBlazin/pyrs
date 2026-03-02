@@ -136,7 +136,7 @@ Exit criteria:
 
 ## Milestone W5: Worker Runtime + Interruption Model
 
-Current state: pending.
+Current state: in progress.
 
 Deliverables:
 - Run interpreter in a Web Worker.
@@ -622,6 +622,9 @@ Completed on this branch:
 - latest: `generate_wasm_session_contract_summary.py` now validates timeout
   fixture semantics too (invalid-timeout vs unsupported-enforcement rows and
   vm-probe `worker_timeout_configured` overrides), not just execute/lifecycle rows.
+- latest: top-level worker lifecycle calls now mutate shared worker state and
+  `wasm_worker_info().state` reflects the current top-level lifecycle state;
+  worker contract tests/docs and summary checks now guard this behavior.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
