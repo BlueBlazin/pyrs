@@ -691,6 +691,11 @@ Completed on this branch:
   (`cargo nextest run --lib wasm_`) in both default and vm-probe lanes
   (vm-probe path via `scripts/probe_wasm_vm_compile.sh`) instead of relying
   only on compile-time wasm contract harness checks.
+- latest: `src/wasm/mod.rs` unit-contract coverage now includes explicit worker
+  lifecycle state-gate assertions for both default and vm-probe modes
+  (start/terminate/recycle phase+state, execute/timeout behavior after
+  terminate/recycle), so these invariants are exercised by browser wasm lib
+  test lanes and compile-validated in local branch gates.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

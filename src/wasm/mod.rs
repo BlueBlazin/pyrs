@@ -2406,8 +2406,11 @@ pub fn check_compile(source: &str) -> Result<(), JsValue> {
 mod tests {
     use super::{
         WasmExecutionPhase, check_syntax, execute, execution_phase_keys, pyrs_version,
-        wasm_worker_execute,
+        wasm_worker_execute, wasm_worker_info, wasm_worker_recycle, wasm_worker_start,
+        wasm_worker_terminate,
     };
+    #[cfg(feature = "wasm-vm-probe")]
+    use super::{wasm_worker_execute_with_operation, wasm_worker_set_timeout};
 
     fn vm_probe_enabled() -> bool {
         cfg!(feature = "wasm-vm-probe")
@@ -2528,5 +2531,97 @@ mod tests {
         let blocked = wasm_worker_execute("import socket\n");
         assert_eq!(blocked.phase(), "unsupported_worker_execution".to_string());
         assert_eq!(blocked.blocker_key(), Some("network_sockets".to_string()));
+    }
+
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
+    fn wasm_worker_vm_probe_state_gates_follow_lifecycle_transitions() {
+        let start = wasm_worker_start();
+        assert_eq!(start.phase(), "worker_started".to_string());
+        assert_eq!(start.state(), "ready".to_string());
+        assert!(start.success());
+        assert!(start.blocker_key().is_none());
+
+        let info_after_start = wasm_worker_info();
+        assert_eq!(info_after_start.state(), "ready".to_string());
+        assert!(info_after_start.execute_supported());
+        assert!(info_after_start.timeout_configuration_supported());
+
+        let terminate = wasm_worker_terminate();
+        assert_eq!(terminate.phase(), "worker_terminated".to_string());
+        assert_eq!(terminate.state(), "unwired".to_string());
+        assert!(terminate.success());
+
+        let blocked_execute = wasm_worker_execute_with_operation("x = 1\n");
+        assert_eq!(
+            blocked_execute.phase(),
+            "unsupported_worker_execution".to_string()
+        );
+        assert_eq!(blocked_execute.state(), "unwired".to_string());
+        assert_eq!(
+            blocked_execute.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+
+        let blocked_timeout = wasm_worker_set_timeout(5_000);
+        assert_eq!(
+            blocked_timeout.phase(),
+            "unsupported_worker_timeout_enforcement".to_string()
+        );
+        assert_eq!(blocked_timeout.state(), "unwired".to_string());
+        assert_eq!(
+            blocked_timeout.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+
+        let recycle = wasm_worker_recycle();
+        assert_eq!(recycle.phase(), "worker_recycled".to_string());
+        assert_eq!(recycle.state(), "ready".to_string());
+        assert!(recycle.success());
+
+        let resumed_execute = wasm_worker_execute_with_operation("x = 1\n");
+        assert_eq!(resumed_execute.phase(), "ok".to_string());
+        assert_eq!(resumed_execute.state(), "ready".to_string());
+        assert!(resumed_execute.success());
+        assert!(resumed_execute.blocker_key().is_none());
+
+        let resumed_timeout = wasm_worker_set_timeout(5_000);
+        assert_eq!(resumed_timeout.phase(), "worker_timeout_configured".to_string());
+        assert_eq!(resumed_timeout.state(), "ready".to_string());
+        assert!(resumed_timeout.success());
+        assert!(resumed_timeout.blocker_key().is_none());
+    }
+
+    #[cfg(not(feature = "wasm-vm-probe"))]
+    #[test]
+    fn wasm_worker_default_mode_lifecycle_remains_unwired() {
+        let start = wasm_worker_start();
+        assert_eq!(start.phase(), "unsupported_worker_start".to_string());
+        assert_eq!(start.state(), "unwired".to_string());
+        assert!(!start.success());
+        assert_eq!(start.blocker_key(), Some("worker_runtime_unwired".to_string()));
+
+        let terminate = wasm_worker_terminate();
+        assert_eq!(terminate.phase(), "unsupported_worker_terminate".to_string());
+        assert_eq!(terminate.state(), "unwired".to_string());
+        assert!(!terminate.success());
+        assert_eq!(
+            terminate.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+
+        let recycle = wasm_worker_recycle();
+        assert_eq!(recycle.phase(), "unsupported_worker_recycle".to_string());
+        assert_eq!(recycle.state(), "unwired".to_string());
+        assert!(!recycle.success());
+        assert_eq!(
+            recycle.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+
+        let info = wasm_worker_info();
+        assert_eq!(info.state(), "unwired".to_string());
+        assert!(!info.execute_supported());
+        assert!(!info.timeout_configuration_supported());
     }
 }
