@@ -739,6 +739,43 @@ Remaining near-term focus:
 2. W6: refine playground UX/error affordances from first real browser-smoke transcripts.
 3. W7: capture and publish first workflow-dispatch browser-smoke baseline artifact.
 
+### W6-native: Browser REPL UX Convergence Plan
+
+Goal:
+- make `/playground` feel like a native `pyrs` REPL first, while keeping
+  wasm-loading diagnostics available outside the transcript surface.
+
+Milestones:
+1. Transcript model convergence
+   - remove synthetic transcript status lines (for example
+     `# loading wasm runtime`, `# runtime loaded (...)`).
+   - remove command numbering/meta separators (`#1`, `#2`, etc.).
+   - ensure successful statement execution without output produces no extra
+     synthetic line noise.
+2. Shell framing convergence
+   - terminal-first layout with minimal chrome and full-width transcript/input.
+   - prompt-forward interaction (`>>>` primary prompt, `...` continuation).
+   - native-like startup banner shape rendered once per session bootstrap.
+3. Input interaction convergence
+   - enter executes, shift+enter inserts newline, arrow-up/down history recall.
+   - preserve multiline replay into transcript with prompt continuity.
+   - keep focus behavior deterministic after each run/reset.
+4. Status/diagnostics separation
+   - keep runtime loading state in dedicated UI status indicator (outside
+     transcript).
+   - keep detailed diagnostics and worker probes on `/debug`, not in product
+     REPL transcript.
+5. Visual parity pass
+   - align typography, spacing, and color emphasis with native terminal feel.
+   - avoid nested “box-within-box” patterns in the REPL interaction surface.
+
+Acceptance criteria:
+- first visit auto-loads runtime without transcript status spam.
+- transcript contains only REPL prompts, user input, runtime stdout/stderr,
+  and native-style banner text.
+- no synthetic “phase/blocker/line-column” meta lines in happy path.
+- clear/reset actions keep a clean REPL narrative (not debug-log narrative).
+
 Current `wasm-vm-probe` snapshot (non-gating, latest local run):
 - compile status: `scripts/probe_wasm_vm_compile.sh` now completes without
   compile errors.
