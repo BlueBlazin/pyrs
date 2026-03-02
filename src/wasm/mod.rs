@@ -44,6 +44,8 @@ const WASM_WORKER_TIMEOUT_INVALID_PHASE: &str = "invalid_worker_timeout";
 const WASM_WORKER_TIMEOUT_ENFORCEMENT_UNWIRED_REASON: &str = "worker timeout enforcement is not wired yet (wasm-vm-probe currently supports configuration-only updates)";
 #[cfg(feature = "wasm-vm-probe")]
 const WASM_WORKER_TIMEOUT_CONFIGURED_PHASE: &str = "worker_timeout_configured";
+#[cfg(feature = "wasm-vm-probe")]
+const WASM_WORKER_TIMEOUT_EXCEEDED_PREFIX: &str = "execution timeout exceeded";
 const WASM_MODULE_BLOCKER_POLICY: [(&str, &str); 10] = [
     ("_ctypes", "dynamic_library_load"),
     ("ctypes", "dynamic_library_load"),
@@ -2558,8 +2560,14 @@ pub fn wasm_execution_blocker_error(blocker_key: &str) -> Option<String> {
 fn execute_compiled_snippet_with_vm(
     vm: &mut Vm,
     code: &crate::bytecode::CodeObject,
-) -> (WasmExecutionResult, bool) {
-    match vm.execute(code) {
+    timeout_ms: Option<u32>,
+) -> (WasmExecutionResult, bool, bool) {
+    let execution = if let Some(timeout_ms) = timeout_ms {
+        vm.execute_with_timeout_ms(code, timeout_ms)
+    } else {
+        vm.execute(code)
+    };
+    match execution {
         Ok(_) => (
             WasmExecutionResult {
                 success: true,
@@ -2572,10 +2580,16 @@ fn execute_compiled_snippet_with_vm(
                 column: 0,
             },
             false,
+            false,
         ),
         Err(err) => {
-            let internal_failure = err.exception.is_none();
-            (runtime_error_to_execution_result(err), internal_failure)
+            let timeout_exceeded = runtime_error_is_execution_timeout(&err);
+            let internal_failure = err.exception.is_none() && !timeout_exceeded;
+            (
+                runtime_error_to_execution_result(err),
+                internal_failure,
+                timeout_exceeded,
+            )
         }
     }
 }
@@ -2585,7 +2599,8 @@ fn execute_compiled_snippet_with_fresh_vm(
     code: &crate::bytecode::CodeObject,
 ) -> WasmExecutionResult {
     let mut vm = Vm::new_with_host(Arc::new(WasmHost));
-    let (result, _internal_failure) = execute_compiled_snippet_with_vm(&mut vm, code);
+    let (result, _internal_failure, _timeout_exceeded) =
+        execute_compiled_snippet_with_vm(&mut vm, code, None);
     result
 }
 
@@ -2595,7 +2610,8 @@ fn execute_compiled_snippet_with_worker_vm(
 ) -> WasmExecutionResult {
     ensure_worker_vm_initialized();
     set_current_worker_state(WasmWorkerState::Busy);
-    let (result, internal_failure) = WASM_WORKER_VM.with(|slot| {
+    let timeout_ms = current_worker_timeout_ms();
+    let (result, internal_failure, timeout_exceeded) = WASM_WORKER_VM.with(|slot| {
         let mut worker_vm = slot.borrow_mut();
         let Some(vm) = worker_vm.as_mut() else {
             let error = worker_unavailable_error_for_state(WasmWorkerState::Failed);
@@ -2613,13 +2629,18 @@ fn execute_compiled_snippet_with_worker_vm(
                     column: 0,
                 },
                 true,
+                false,
             );
         };
-        execute_compiled_snippet_with_vm(vm, code)
+        execute_compiled_snippet_with_vm(vm, code, Some(timeout_ms))
     });
     if internal_failure {
         clear_worker_vm();
         set_current_worker_state(WasmWorkerState::Failed);
+    } else if timeout_exceeded {
+        reset_worker_timeout_ms();
+        reset_worker_vm();
+        set_current_worker_state(WasmWorkerState::Ready);
     } else if current_worker_state() == WasmWorkerState::Busy {
         set_current_worker_state(WasmWorkerState::Ready);
     }
@@ -2640,6 +2661,11 @@ fn runtime_error_to_execution_result(err: crate::runtime::RuntimeError) -> WasmE
         line,
         column,
     }
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn runtime_error_is_execution_timeout(err: &crate::runtime::RuntimeError) -> bool {
+    err.message.starts_with(WASM_WORKER_TIMEOUT_EXCEEDED_PREFIX)
 }
 
 #[cfg(feature = "wasm-vm-probe")]
@@ -3148,6 +3174,43 @@ mod tests {
 
         let info = wasm_worker_info();
         assert_eq!(info.state(), "ready".to_string());
+    }
+
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
+    fn wasm_worker_vm_probe_timeout_recycles_worker_runtime_state() {
+        let recycle = wasm_worker_recycle();
+        assert_eq!(recycle.phase(), "worker_recycled".to_string());
+        assert_eq!(recycle.state(), "ready".to_string());
+
+        let configured = wasm_worker_set_timeout(50);
+        assert_eq!(configured.phase(), "worker_timeout_configured".to_string());
+        assert!(configured.success());
+        assert_eq!(wasm_worker_current_timeout_ms(), 50);
+
+        let assigned = wasm_worker_execute_with_operation("x = 123\n");
+        assert_eq!(assigned.phase(), "ok".to_string());
+        assert_eq!(assigned.state(), "ready".to_string());
+        assert!(assigned.success());
+
+        let timed_out = wasm_worker_execute_with_operation("while True:\n    pass\n");
+        assert_eq!(timed_out.phase(), "runtime_error".to_string());
+        assert_eq!(timed_out.state(), "ready".to_string());
+        assert!(!timed_out.success());
+        let timeout_error = timed_out
+            .error()
+            .expect("timeout execution should report runtime error");
+        assert!(timeout_error.contains("execution timeout exceeded"));
+
+        assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+
+        let missing_after_timeout = wasm_worker_execute_with_operation("x\n");
+        assert_eq!(missing_after_timeout.phase(), "runtime_error".to_string());
+        assert_eq!(missing_after_timeout.state(), "ready".to_string());
+        let missing_error = missing_after_timeout
+            .error()
+            .expect("post-timeout execution should report NameError");
+        assert!(missing_error.contains("NameError"));
     }
 
     #[cfg(feature = "wasm-vm-probe")]

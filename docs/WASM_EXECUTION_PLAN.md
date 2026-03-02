@@ -759,6 +759,14 @@ Completed on this branch:
   - subsequent capability-allowed executes continue in the same worker VM
     session state,
   covered by both native wasm unit tests and wasm browser-contract tests.
+- latest: vm-probe worker execution now applies configured timeout guards via
+  VM execution deadlines:
+  - worker executes run with `wasm_worker_current_timeout_ms()` when in
+    `state = "ready"`,
+  - timeout runtime errors are treated as recoverable (no transition to
+    `failed` state),
+  - timeout-triggered recycle resets worker VM state and timeout value to
+    default (`5000` ms), preserving deterministic recovery semantics.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

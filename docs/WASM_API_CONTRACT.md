@@ -28,7 +28,7 @@ This document defines the JS-facing contract currently exported by
   - Returns worker-runtime contract status summary.
   - `lifecycle_supported` is `true` only in `wasm-vm-probe` builds.
   - `timeout_configuration_supported` is `true` only in `wasm-vm-probe` builds.
-  - `timeout_enforcement_supported` remains `false` in current milestone builds.
+  - `timeout_enforcement_supported` remains `false` in current milestone API contract.
 - `wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy`
   - Returns timeout/recycle contract metadata for worker execution.
   - `configuration_supported` is `true` only in `wasm-vm-probe` builds
@@ -46,6 +46,7 @@ This document defines the JS-facing contract currently exported by
   - Default is `5000`.
   - Resets to `5000` on worker lifecycle reset calls (`start`, `terminate`,
     `recycle`) in both default and `wasm-vm-probe` builds.
+  - In `wasm-vm-probe`, timeout-triggered worker recycle also resets to `5000`.
 - `wasm_worker_state_keys() -> Array`
   - Returns canonical worker runtime state keys.
 - `wasm_worker_lifecycle_phase_keys() -> Array`
@@ -101,6 +102,10 @@ This document defines the JS-facing contract currently exported by
       - return `unsupported_worker_execution` when worker `state != "ready"`.
     - `runtime_error` does not force `state = "failed"`; subsequent capability-allowed
       executes continue using the same ready worker session.
+    - Timeout runtime errors are treated as recoverable worker events:
+      - shared worker state returns to `ready`,
+      - worker VM state is recycled,
+      - `wasm_worker_current_timeout_ms()` resets to `5000`.
   - `blocker_key` is:
     - `None` for parse/compile failures and vm-probe runtime execution results,
     - `Some("<capability_key>")` when parse+compile-valid source imports a known
@@ -208,6 +213,9 @@ This document defines the JS-facing contract currently exported by
   - default: `"wasm worker runtime is not wired yet"`
   - `wasm-vm-probe`:
     `"worker timeout enforcement is not wired yet (wasm-vm-probe currently supports configuration-only updates)"`
+  - note: `wasm-vm-probe` worker execute paths now apply configured deadline
+    guards and recycle on timeout, while API-level enforcement flags remain
+    conservative in this milestone contract.
 
 ## `WasmWorkerTimeoutResult`
 

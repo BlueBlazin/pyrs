@@ -35,7 +35,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `execution_probe_enabled = false` in default builds, `true` with `wasm-vm-probe`
 - `execute_supported = false` in default builds, `true` with `wasm-vm-probe`
 - `timeout_configuration_supported = false` in default builds, `true` with `wasm-vm-probe`
-- `timeout_enforcement_supported = false` in current milestone builds
+- `timeout_enforcement_supported = false` in current milestone API contract
 - `blocker_count = len(wasm_worker_blocker_keys())`
 
 Top-level lifecycle calls now mutate shared worker state, and
@@ -48,7 +48,7 @@ Top-level lifecycle calls now mutate shared worker state, and
 - `max_timeout_ms = 120000`
 - `configuration_supported = false` in default builds, `true` with `wasm-vm-probe`
 - `recycle_on_timeout = true`
-- `enforcement_supported = false`
+- `enforcement_supported = false` (API contract remains conservative in current milestone)
 - `unsupported_phase = "unsupported_worker_timeout_enforcement"`
 - `unsupported_reason`:
   - default build: `"wasm worker runtime is not wired yet"`
@@ -61,7 +61,9 @@ Top-level lifecycle calls now mutate shared worker state, and
 - in `wasm-vm-probe`, in-range `wasm_worker_set_timeout(...)` updates this
   value when `state = "ready"`,
 - resets back to `5000` on lifecycle reset calls (`start`, `terminate`,
-  `recycle`) in both default and `wasm-vm-probe` builds.
+  `recycle`) in both default and `wasm-vm-probe` builds,
+- in `wasm-vm-probe`, timeout-triggered worker recycle also resets this value
+  back to `5000`.
 
 `wasm_worker_timeout_phase_keys()` currently includes:
 
@@ -204,10 +206,9 @@ keys (`worker_runtime_unwired`, `worker_runtime_failed` + module-policy capabili
       - `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`
       - `error` matches blocker-specific worker-runtime message
 
-`worker_timeout_configured` is configuration-only in vm-probe mode; timeout
-enforcement still remains unwired (`enforcement_supported = false`).
-Use `configuration_supported` from `wasm_worker_timeout_policy()` for timeout-UI
-controls, and `enforcement_supported` for hard runtime-enforcement guarantees.
+`worker_timeout_configured` updates the worker timeout in vm-probe mode while
+API-level `enforcement_supported` still remains conservative (`false`) in the
+current milestone contract.
 
 `wasm_worker_execute(source)` currently returns:
 
@@ -229,6 +230,8 @@ controls, and `enforcement_supported` for hard runtime-enforcement guarantees.
       - execution uses a persistent worker VM (state survives across calls)
       - `runtime_error` does not transition worker into `failed`; follow-up
         capability-allowed executes continue in `state = "ready"`
+      - timeout runtime errors recycle worker VM state, keep shared worker state
+        at `ready`, and reset `wasm_worker_current_timeout_ms()` to `5000`
     - when `state != "ready"`:
       - `phase = "unsupported_worker_execution"`
       - `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`
