@@ -73,6 +73,13 @@ Expected artifact bundles:
 - `wasm-browser-smoke-evidence-pack` (present when browser lane emits an
   evidence pack)
 
+Optional local validation after download:
+
+```bash
+python3 scripts/validate_wasm_browser_smoke_baseline.py \
+  --summary perf/wasm-browser-smoke-run/wasm-browser-smoke-artifacts/wasm_browser_smoke_baseline_latest.json
+```
+
 ## Promotion Evidence Checklist
 
 Before marking browser-smoke baseline captured:

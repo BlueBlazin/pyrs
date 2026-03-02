@@ -704,6 +704,9 @@ Completed on this branch:
   summary artifact (`perf/wasm_browser_smoke_baseline_latest.json`) from
   `scripts/run_wasm_contract_smoke.sh`, and CI uploads it with
   `wasm-browser-smoke-artifacts` for promotion evidence tracking.
+- latest: browser-smoke CI now validates baseline-summary shape via
+  `scripts/validate_wasm_browser_smoke_baseline.py` before artifact upload, so
+  missing/malformed baseline output fails the lane immediately.
 - latest: docs index now links to `/playground/` as an explicit browser-route
   entrypoint in Getting Started navigation.
 - latest: browser routes are now split by product UX vs diagnostics:

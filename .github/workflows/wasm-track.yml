@@ -141,6 +141,11 @@ jobs:
           PYRS_WASM_RUN_VM_PROBE_BROWSER_STATE_GATE_SMOKE: "1"
         run: scripts/run_wasm_contract_smoke.sh
 
+      - name: Validate browser smoke baseline summary
+        run: |
+          python3 scripts/validate_wasm_browser_smoke_baseline.py \
+            --summary perf/wasm_browser_smoke_baseline_latest.json
+
       - name: Upload browser smoke artifacts
         if: always()
         uses: actions/upload-artifact@v4
