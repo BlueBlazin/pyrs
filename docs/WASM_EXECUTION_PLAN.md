@@ -149,7 +149,7 @@ Exit criteria:
 
 ## Milestone W6: Website Integration
 
-Current state: pending.
+Current state: in progress.
 
 Deliverables:
 - Add `/playground` route in Astro.
@@ -648,6 +648,10 @@ Completed on this branch:
   state (instead of session-local override), and mixed-flow tests/docs/session
   summaries were updated so external top-level lifecycle changes are reflected
   immediately in session info state.
+- latest: website W6 bootstrap landed with a `/playground` Astro route and
+  lazy wasm module loading flow (`/wasm/pyrs.js`) isolated to that page; top
+  navigation now exposes the playground route while non-playground pages remain
+  static-first.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

@@ -1,0 +1,309 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+---
+
+<SiteLayout
+	title="PYRS Playground | WASM Probe"
+	description="Browser playground for wasm-backed PYRS execution probes."
+	navContext="playground"
+	noindex={true}
+>
+	<section class="playground-page">
+		<header class="playground-header">
+			<p class="playground-kicker">WASM Playground (Experimental)</p>
+			<h1>Run PYRS in your browser</h1>
+			<p>
+				This route lazy-loads the wasm bundle only on <code>/playground</code>. It is an
+				experimental probe surface for `codex/wasm` and not part of the production runtime
+				contract yet.
+			</p>
+		</header>
+
+		<section class="playground-card playground-controls">
+			<div class="playground-toolbar">
+				<button id="playground-init" type="button">Load Runtime</button>
+				<button id="playground-run" type="button" disabled>Run Snippet</button>
+				<span id="playground-status" aria-live="polite">Runtime not loaded</span>
+			</div>
+			<label for="playground-source">Python snippet</label>
+			<textarea id="playground-source" spellcheck="false">x = 1
+print(x)</textarea>
+		</section>
+
+		<section class="playground-card">
+			<h2>Output</h2>
+			<pre id="playground-output">Load runtime to begin.</pre>
+		</section>
+
+		<section class="playground-card">
+			<h2>Bundle Expectations</h2>
+			<ul>
+				<li>Expected entrypoint: <code>/wasm/pyrs.js</code></li>
+				<li>Expected wasm binary: <code>/wasm/pyrs_bg.wasm</code></li>
+				<li>Generate with wasm-pack and publish assets into <code>website/public/wasm/</code></li>
+			</ul>
+		</section>
+	</section>
+
+	<script is:inline>
+		const initButton = document.getElementById("playground-init");
+		const runButton = document.getElementById("playground-run");
+		const statusEl = document.getElementById("playground-status");
+		const outputEl = document.getElementById("playground-output");
+		const sourceEl = document.getElementById("playground-source");
+
+		const baseUrl = import.meta.env.BASE_URL || "/";
+		const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
+
+		let runtimeModule = null;
+
+		const readField = (object, key) => {
+			if (!object) return undefined;
+			const value = object[key];
+			if (typeof value === "function") {
+				try {
+					return value.call(object);
+				} catch {
+					return undefined;
+				}
+			}
+			return value;
+		};
+
+		const setStatus = (message, isError = false) => {
+			if (!statusEl || !(statusEl instanceof HTMLElement)) return;
+			statusEl.textContent = message;
+			statusEl.dataset.status = isError ? "error" : "ok";
+		};
+
+		const setOutput = (message) => {
+			if (!outputEl || !(outputEl instanceof HTMLElement)) return;
+			outputEl.textContent = message;
+		};
+
+		const loadRuntime = async () => {
+			if (runtimeModule) {
+				setStatus("Runtime already loaded");
+				return;
+			}
+			setStatus("Loading runtime...");
+			try {
+				const mod = await import(/* @vite-ignore */ wasmEntrypoint);
+				const init = mod.default;
+				if (typeof init !== "function") {
+					throw new Error("missing wasm-pack default init export");
+				}
+				await init();
+				if (typeof mod.init_wasm_runtime === "function") {
+					mod.init_wasm_runtime();
+				}
+				runtimeModule = mod;
+				if (runButton instanceof HTMLButtonElement) {
+					runButton.disabled = false;
+				}
+				setStatus("Runtime loaded");
+				setOutput("Runtime loaded. Edit snippet and run.");
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				setStatus("Failed to load runtime", true);
+				setOutput(
+					`Unable to load wasm runtime from ${wasmEntrypoint}\n\n${message}`
+				);
+			}
+		};
+
+		const runSnippet = () => {
+			if (!runtimeModule) {
+				setStatus("Runtime not loaded", true);
+				return;
+			}
+			if (!sourceEl || !(sourceEl instanceof HTMLTextAreaElement)) return;
+			const source = sourceEl.value;
+			try {
+				const support = runtimeModule.wasm_snippet_support(source);
+				const supportPhase = readField(support, "phase");
+				if (supportPhase && supportPhase !== "supported") {
+					const supportError = readField(support, "error") || "Unsupported snippet";
+					const supportLine = readField(support, "line") || 0;
+					const supportColumn = readField(support, "column") || 0;
+					setStatus(`Snippet blocked (${supportPhase})`, true);
+					setOutput(
+						JSON.stringify(
+							{
+								phase: supportPhase,
+								error: supportError,
+								line: supportLine,
+								column: supportColumn,
+							},
+							null,
+							2
+						)
+					);
+					return;
+				}
+
+				const result = runtimeModule.execute(source);
+				const payload = {
+					phase: readField(result, "phase"),
+					success: readField(result, "success"),
+					stdout: readField(result, "stdout"),
+					stderr: readField(result, "stderr"),
+					error: readField(result, "error"),
+					blocker_key: readField(result, "blocker_key"),
+					line: readField(result, "line"),
+					column: readField(result, "column"),
+				};
+				setStatus("Snippet executed");
+				setOutput(JSON.stringify(payload, null, 2));
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				setStatus("Execution failed", true);
+				setOutput(message);
+			}
+		};
+
+		if (initButton instanceof HTMLButtonElement) {
+			initButton.addEventListener("click", () => {
+				loadRuntime();
+			});
+		}
+
+		if (runButton instanceof HTMLButtonElement) {
+			runButton.addEventListener("click", () => {
+				runSnippet();
+			});
+		}
+	</script>
+</SiteLayout>
+
+<style>
+	.playground-page {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		padding: 0.4rem 0;
+	}
+
+	.playground-header h1 {
+		margin: 0;
+		font-size: clamp(1.7rem, 2.6vw, 2.4rem);
+		letter-spacing: -0.02em;
+	}
+
+	.playground-header p {
+		margin: 0.6rem 0 0;
+		max-width: 74ch;
+		color: #beaa9f;
+		line-height: 1.58;
+	}
+
+	.playground-kicker {
+		margin: 0;
+		font-size: 0.74rem;
+		font-weight: 700;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+		color: #e1b38f;
+	}
+
+	.playground-card {
+		border: 1px solid #432d22;
+		border-radius: 0.9rem;
+		background: linear-gradient(180deg, rgba(21, 13, 11, 0.96), rgba(13, 9, 8, 0.94));
+		padding: 1rem 1rem 1.1rem;
+	}
+
+	.playground-card h2 {
+		margin: 0;
+		font-size: 1rem;
+	}
+
+	.playground-controls {
+		display: flex;
+		flex-direction: column;
+		gap: 0.74rem;
+	}
+
+	.playground-toolbar {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.56rem;
+		align-items: center;
+	}
+
+	.playground-toolbar button {
+		border: 1px solid #6a4535;
+		background: #251713;
+		color: #f7eee8;
+		border-radius: 0.52rem;
+		padding: 0.42rem 0.72rem;
+		font: inherit;
+		font-size: 0.86rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.playground-toolbar button:disabled {
+		cursor: not-allowed;
+		opacity: 0.58;
+	}
+
+	.playground-toolbar span {
+		font-size: 0.83rem;
+		color: #beaa9f;
+	}
+
+	.playground-toolbar span[data-status="error"] {
+		color: #ffb9a6;
+	}
+
+	.playground-toolbar span[data-status="ok"] {
+		color: #c5e7d2;
+	}
+
+	.playground-controls label {
+		font-size: 0.84rem;
+		font-weight: 600;
+		color: #dcc9be;
+	}
+
+	.playground-controls textarea {
+		min-height: 160px;
+		padding: 0.8rem;
+		border-radius: 0.7rem;
+		border: 1px solid #573b2f;
+		background: #0c0908;
+		color: #f7eee8;
+		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.84rem;
+		line-height: 1.45;
+		resize: vertical;
+	}
+
+	.playground-card pre {
+		margin: 0.7rem 0 0;
+		padding: 0.75rem;
+		border-radius: 0.62rem;
+		border: 1px solid #3a2820;
+		background: #070505;
+		color: #e8dfd8;
+		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.8rem;
+		line-height: 1.44;
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+
+	.playground-card ul {
+		margin: 0.75rem 0 0;
+		padding-left: 1.1rem;
+		color: #beaa9f;
+		line-height: 1.5;
+	}
+
+	.playground-card code {
+		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.84em;
+		color: #f0d1bd;
+	}
+</style>
