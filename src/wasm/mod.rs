@@ -477,6 +477,7 @@ pub struct WasmWorkerTimeoutPolicy {
     default_timeout_ms: u32,
     min_timeout_ms: u32,
     max_timeout_ms: u32,
+    configuration_supported: bool,
     recycle_on_timeout: bool,
     enforcement_supported: bool,
     unsupported_phase: String,
@@ -772,6 +773,11 @@ impl WasmWorkerTimeoutPolicy {
     #[wasm_bindgen(getter)]
     pub fn max_timeout_ms(&self) -> u32 {
         self.max_timeout_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn configuration_supported(&self) -> bool {
+        self.configuration_supported
     }
 
     #[wasm_bindgen(getter)]
@@ -1461,6 +1467,7 @@ pub fn wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy {
         default_timeout_ms: WASM_WORKER_TIMEOUT_DEFAULT_MS,
         min_timeout_ms: WASM_WORKER_TIMEOUT_MIN_MS,
         max_timeout_ms: WASM_WORKER_TIMEOUT_MAX_MS,
+        configuration_supported: wasm_vm_runtime_enabled(),
         recycle_on_timeout: true,
         enforcement_supported: false,
         unsupported_phase: WasmWorkerTimeoutPhase::UnsupportedEnforcement

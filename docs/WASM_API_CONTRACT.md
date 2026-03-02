@@ -28,6 +28,9 @@ This document defines the JS-facing contract currently exported by
   - Returns worker-runtime contract status summary.
 - `wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy`
   - Returns timeout/recycle contract metadata for worker execution.
+  - `configuration_supported` is `true` only in `wasm-vm-probe` builds
+    (in-range timeout configuration acceptance).
+  - `enforcement_supported` remains `false` in current milestone builds.
 - `wasm_worker_timeout_phase_keys() -> Array`
   - Returns canonical timeout phase keys.
   - default keys:
@@ -169,6 +172,7 @@ This document defines the JS-facing contract currently exported by
 - `default_timeout_ms: u32` (currently `5000`)
 - `min_timeout_ms: u32` (currently `50`)
 - `max_timeout_ms: u32` (currently `120000`)
+- `configuration_supported: bool` (default `false`, `wasm-vm-probe` => `true`)
 - `recycle_on_timeout: bool` (currently `true`)
 - `enforcement_supported: bool` (currently `false`)
 - `unsupported_phase: String` (currently `"unsupported_worker_timeout_enforcement"`)

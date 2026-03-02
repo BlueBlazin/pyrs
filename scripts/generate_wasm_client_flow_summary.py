@@ -108,6 +108,19 @@ def parse_source_worker_info_fields(wasm_source: str) -> list[str]:
     return ordered_unique(fields)
 
 
+def parse_source_worker_timeout_policy_fields(wasm_source: str) -> list[str]:
+    match = re.search(
+        r"pub struct WasmWorkerTimeoutPolicy \{(.*?)\n\}",
+        wasm_source,
+        flags=re.DOTALL,
+    )
+    if not match:
+        raise ValueError("unable to parse WasmWorkerTimeoutPolicy fields")
+    body = match.group(1)
+    fields = re.findall(r"^\s*([a-z_]+):", body, flags=re.MULTILINE)
+    return ordered_unique(fields)
+
+
 def parse_source_exported_functions(wasm_source: str) -> set[str]:
     return set(re.findall(r"^\s*pub fn ([a-zA-Z0-9_]+)\(", wasm_source, flags=re.MULTILINE))
 
@@ -139,6 +152,7 @@ def validate_docs(
     vm_probe_ok_phase: str,
     vm_probe_runtime_error_phase: str,
     worker_info_fields: list[str],
+    worker_timeout_policy_fields: list[str],
     worker_session_fields: list[str],
 ) -> list[str]:
     errors: list[str] = []
@@ -209,6 +223,17 @@ def validate_docs(
         if field not in docs_source:
             errors.append(f"docs missing WasmWorkerInfo field token '{field}'")
 
+    required_worker_timeout_policy_fields = [
+        field
+        for field in worker_timeout_policy_fields
+        if field in {"default_timeout_ms", "configuration_supported", "enforcement_supported"}
+    ]
+    for field in required_worker_timeout_policy_fields:
+        if field not in docs_source:
+            errors.append(
+                f"docs missing WasmWorkerTimeoutPolicy field token '{field}'"
+            )
+
     for field in worker_session_fields:
         if field not in docs_source:
             errors.append(f"docs missing WasmWorkerSession telemetry field '{field}'")
@@ -270,6 +295,7 @@ def main() -> int:
     vm_probe_ok_phase = const_map["WASM_EXECUTION_PHASE_OK"]
     vm_probe_runtime_error_phase = const_map["WASM_EXECUTION_PHASE_RUNTIME_ERROR"]
     worker_info_fields = parse_source_worker_info_fields(wasm_source)
+    worker_timeout_policy_fields = parse_source_worker_timeout_policy_fields(wasm_source)
     worker_session_fields = parse_source_worker_session_fields(wasm_source)
 
     errors = validate_docs(
@@ -283,6 +309,7 @@ def main() -> int:
         vm_probe_ok_phase=vm_probe_ok_phase,
         vm_probe_runtime_error_phase=vm_probe_runtime_error_phase,
         worker_info_fields=worker_info_fields,
+        worker_timeout_policy_fields=worker_timeout_policy_fields,
         worker_session_fields=worker_session_fields,
     )
     if errors:
@@ -329,6 +356,7 @@ def main() -> int:
         "worker_unwired_blocker_key": worker_unwired_blocker_key,
         "vm_probe_worker_phases": [vm_probe_ok_phase, vm_probe_runtime_error_phase],
         "worker_info_fields": worker_info_fields,
+        "worker_timeout_policy_fields": worker_timeout_policy_fields,
         "worker_session_fields": worker_session_fields,
     }
 

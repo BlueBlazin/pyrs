@@ -228,6 +228,14 @@ def main() -> int:
         errors.append(f"docs missing timeout min value '{timeout_min_ms}'")
     if str(timeout_max_ms) not in docs_source:
         errors.append(f"docs missing timeout max value '{timeout_max_ms}'")
+    if not re.search(r"configuration_supported\s*=\s*false", docs_source):
+        errors.append(
+            "docs missing default worker timeout policy configuration_supported=false shape"
+        )
+    if not re.search(r"configuration_supported[^\n]*true", docs_source):
+        errors.append(
+            "docs missing vm-probe worker timeout policy configuration_supported=true shape"
+        )
     if worker_backend_default not in docs_source:
         errors.append(
             f"docs missing worker backend default key '{worker_backend_default}'"

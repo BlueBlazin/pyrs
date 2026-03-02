@@ -12,6 +12,8 @@ This guide defines the recommended browser call order for current wasm APIs.
 3. `wasm_worker_info()`
    - use `backend` + `supported` + `execution_probe_enabled` + `execute_supported` for worker-runtime/readiness UI state.
 4. `wasm_worker_timeout_policy()`
+   - gate timeout controls on `configuration_supported`;
+   - treat `enforcement_supported` as the separate hard-enforcement capability.
 5. Optional: `wasm_worker_set_timeout(timeout_ms)` for UI timeout controls.
 6. `wasm_snippet_support(source)`
 7. Optional: `wasm_snippet_import_roots(source)` to display dependency roots.
@@ -60,6 +62,9 @@ are currently explicit stubs.
     (`blocker_key = "worker_runtime_unwired"`)
   - `wasm-vm-probe` in-range: `worker_timeout_configured`
     (`blocker_key = None`, configuration-only; enforcement still unwired)
+  - expected policy shape:
+    - default build: `configuration_supported = false`, `enforcement_supported = false`
+    - `wasm-vm-probe`: `configuration_supported = true`, `enforcement_supported = false`
 - `wasm_worker_execute_with_operation(source)` -> same phases plus
   `operation_id = worker_execute_<n>`
 
@@ -100,10 +105,12 @@ const runtime = pyrs.wasm_runtime_info();
 const worker = pyrs.wasm_worker_info();
 const timeoutPolicy = pyrs.wasm_worker_timeout_policy();
 
-const timeoutResult = pyrs.wasm_worker_set_timeout(timeoutPolicy.default_timeout_ms);
-if (timeoutResult.phase === "invalid_worker_timeout") {
-  showError(timeoutResult.error);
-  return;
+if (timeoutPolicy.configuration_supported) {
+  const timeoutResult = pyrs.wasm_worker_set_timeout(timeoutPolicy.default_timeout_ms);
+  if (timeoutResult.phase === "invalid_worker_timeout") {
+    showError(timeoutResult.error);
+    return;
+  }
 }
 
 const support = pyrs.wasm_snippet_support(code);

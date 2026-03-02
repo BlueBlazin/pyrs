@@ -38,6 +38,7 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `default_timeout_ms = 5000`
 - `min_timeout_ms = 50`
 - `max_timeout_ms = 120000`
+- `configuration_supported = false` in default builds, `true` with `wasm-vm-probe`
 - `recycle_on_timeout = true`
 - `enforcement_supported = false`
 - `unsupported_phase = "unsupported_worker_timeout_enforcement"`
@@ -171,6 +172,8 @@ keys (`worker_runtime_unwired` + module-policy capability keys).
 
 `worker_timeout_configured` is configuration-only in vm-probe mode; timeout
 enforcement still remains unwired (`enforcement_supported = false`).
+Use `configuration_supported` from `wasm_worker_timeout_policy()` for timeout-UI
+controls, and `enforcement_supported` for hard runtime-enforcement guarantees.
 
 `wasm_worker_execute(source)` currently returns:
 

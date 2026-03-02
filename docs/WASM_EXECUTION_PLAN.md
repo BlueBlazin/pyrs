@@ -598,6 +598,10 @@ Completed on this branch:
   updates remain `unsupported_worker_timeout_enforcement`, while
   `wasm-vm-probe` in-range updates return `worker_timeout_configured` with
   success/no blocker (configuration-only, enforcement still unwired).
+- latest: `WasmWorkerTimeoutPolicy` now exports explicit
+  `configuration_supported` mode signaling (`false` default,
+  `true` in `wasm-vm-probe`) and docs/client-flow validations enforce usage of
+  that capability flag separately from `enforcement_supported`.
 - latest: timeout phase key parity and docs guards now include vm-probe timeout
   extras across worker-contract, worker-docs, and client-flow summary scripts.
 - latest: `generate_wasm_api_contract_surface_summary.py` now also validates

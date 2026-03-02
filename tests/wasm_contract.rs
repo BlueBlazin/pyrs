@@ -421,6 +421,11 @@ fn wasm_worker_timeout_policy_contract_is_stable() {
     assert_eq!(policy.default_timeout_ms(), 5_000);
     assert_eq!(policy.min_timeout_ms(), 50);
     assert_eq!(policy.max_timeout_ms(), 120_000);
+    assert_eq!(
+        policy.configuration_supported(),
+        vm_probe_enabled(),
+        "timeout configuration support should track wasm-vm-probe mode"
+    );
     assert!(policy.recycle_on_timeout());
     assert!(!policy.enforcement_supported());
     assert_eq!(
