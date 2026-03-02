@@ -486,6 +486,7 @@ def validate(
     has_terminate_start_timeout_recovery_test: bool,
     has_terminate_start_session_recovery_test: bool,
     has_worker_info_lifecycle_transition_test: bool,
+    has_worker_session_sequence_test: bool,
 ) -> list[str]:
     errors: list[str] = []
 
@@ -545,6 +546,10 @@ def validate(
     if not has_worker_info_lifecycle_transition_test:
         errors.append(
             "missing wasm contract test fn wasm_worker_info_tracks_external_lifecycle_state_transitions"
+        )
+    if not has_worker_session_sequence_test:
+        errors.append(
+            "missing wasm contract test fn wasm_worker_session_followups_track_multi_step_external_sequences"
         )
 
     top_ok_rows = [
@@ -1180,6 +1185,10 @@ def main() -> int:
         "fn wasm_worker_info_tracks_external_lifecycle_state_transitions()"
         in wasm_contract_test_source
     )
+    has_worker_session_sequence_test = (
+        "fn wasm_worker_session_followups_track_multi_step_external_sequences()"
+        in wasm_contract_test_source
+    )
 
     errors = validate(
         top_level_rows,
@@ -1197,6 +1206,7 @@ def main() -> int:
         has_terminate_start_timeout_recovery_test,
         has_terminate_start_session_recovery_test,
         has_worker_info_lifecycle_transition_test,
+        has_worker_session_sequence_test,
     )
     if errors:
         print("wasm session contract summary validation failed:")
@@ -1220,6 +1230,7 @@ def main() -> int:
             "terminate_start_timeout_recovery_test": has_terminate_start_timeout_recovery_test,
             "terminate_start_session_recovery_test": has_terminate_start_session_recovery_test,
             "worker_info_lifecycle_transition_test": has_worker_info_lifecycle_transition_test,
+            "worker_session_sequence_test": has_worker_session_sequence_test,
         },
         "counts": {
             "top_level_rows": len(top_level_rows),
