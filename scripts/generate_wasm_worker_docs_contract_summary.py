@@ -264,6 +264,14 @@ def main() -> int:
         errors.append(
             "docs missing vm-probe worker info execution_probe_enabled=true shape"
         )
+    if not re.search(r"lifecycle_supported\s*=\s*false", docs_source):
+        errors.append(
+            "docs missing default worker info lifecycle_supported=false shape"
+        )
+    if not re.search(r"lifecycle_supported[^\n]*true", docs_source):
+        errors.append(
+            "docs missing vm-probe worker info lifecycle_supported=true shape"
+        )
     if not re.search(r"execute_supported\s*=\s*false", docs_source):
         errors.append(
             "docs missing default worker info execute_supported=false shape"

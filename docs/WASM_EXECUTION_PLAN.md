@@ -605,6 +605,9 @@ Completed on this branch:
 - latest: timeout-policy `unsupported_reason` is now mode-aware: default builds
   report worker-runtime unwired status, while `wasm-vm-probe` reports
   enforcement-unwired (configuration-only support) status.
+- latest: `WasmWorkerInfo` now exports explicit `lifecycle_supported`
+  mode signaling (`false` default, `true` in `wasm-vm-probe`) so clients can
+  branch lifecycle controls without inferring from phase text.
 - latest: timeout phase key parity and docs guards now include vm-probe timeout
   extras across worker-contract, worker-docs, and client-flow summary scripts.
 - latest: `generate_wasm_api_contract_surface_summary.py` now also validates

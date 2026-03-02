@@ -267,6 +267,17 @@ fn expected_worker_info_execution_probe_enabled_for_fixture(
     fixture.expected_execution_probe_enabled
 }
 
+fn expected_worker_info_lifecycle_supported_for_fixture(
+    fixture: &wasm_worker_contract::WasmWorkerInfoFixture,
+) -> bool {
+    if vm_probe_enabled() {
+        if let Some(supported) = fixture.expected_vm_probe_lifecycle_supported {
+            return supported;
+        }
+    }
+    fixture.expected_lifecycle_supported
+}
+
 fn expected_worker_info_execute_supported_for_fixture(
     fixture: &wasm_worker_contract::WasmWorkerInfoFixture,
 ) -> bool {
@@ -354,6 +365,12 @@ fn wasm_worker_contract_basics() {
         info.execution_probe_enabled(),
         expected_worker_info_execution_probe_enabled_for_fixture(fixture),
         "worker info execution_probe_enabled mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.lifecycle_supported(),
+        expected_worker_info_lifecycle_supported_for_fixture(fixture),
+        "worker info lifecycle_supported mismatch: {}",
         fixture.name
     );
     assert_eq!(
@@ -858,6 +875,12 @@ fn wasm_worker_session_contract_is_stable() {
         info.execution_probe_enabled(),
         expected_worker_info_execution_probe_enabled_for_fixture(fixture),
         "worker session info execution_probe_enabled mismatch: {}",
+        fixture.name
+    );
+    assert_eq!(
+        info.lifecycle_supported(),
+        expected_worker_info_lifecycle_supported_for_fixture(fixture),
+        "worker session info lifecycle_supported mismatch: {}",
         fixture.name
     );
     assert_eq!(

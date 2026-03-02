@@ -26,6 +26,7 @@ This document defines the JS-facing contract currently exported by
   - Returns bridge/runtime status summary.
 - `wasm_worker_info() -> WasmWorkerInfo`
   - Returns worker-runtime contract status summary.
+  - `lifecycle_supported` is `true` only in `wasm-vm-probe` builds.
 - `wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy`
   - Returns timeout/recycle contract metadata for worker execution.
   - `configuration_supported` is `true` only in `wasm-vm-probe` builds
@@ -163,6 +164,7 @@ This document defines the JS-facing contract currently exported by
 - `backend: String` (default `"unwired"`, `wasm-vm-probe` => `"vm_probe"`)
 - `state: String` (currently `"unwired"`)
 - `interruption_model: String` (currently `"worker_recycle"`)
+- `lifecycle_supported: bool` (`true` only in `wasm-vm-probe` builds)
 - `execution_probe_enabled: bool` (`true` only in `wasm-vm-probe` builds)
 - `execute_supported: bool` (`true` only in `wasm-vm-probe` builds)
 - `blocker_count: usize`

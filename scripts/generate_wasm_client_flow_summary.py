@@ -217,7 +217,15 @@ def validate_docs(
     required_worker_info_fields = [
         field
         for field in worker_info_fields
-        if field in {"supported", "backend", "state", "execution_probe_enabled", "execute_supported"}
+        if field
+        in {
+            "supported",
+            "backend",
+            "state",
+            "lifecycle_supported",
+            "execution_probe_enabled",
+            "execute_supported",
+        }
     ]
     for field in required_worker_info_fields:
         if field not in docs_source:

@@ -478,6 +478,7 @@ pub struct WasmWorkerInfo {
     backend: String,
     state: String,
     interruption_model: String,
+    lifecycle_supported: bool,
     execution_probe_enabled: bool,
     execute_supported: bool,
     blocker_count: usize,
@@ -751,6 +752,11 @@ impl WasmWorkerInfo {
     #[wasm_bindgen(getter)]
     pub fn interruption_model(&self) -> String {
         self.interruption_model.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn lifecycle_supported(&self) -> bool {
+        self.lifecycle_supported
     }
 
     #[wasm_bindgen(getter)]
@@ -1463,6 +1469,7 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
         backend,
         state: current_worker_state_key(),
         interruption_model: WASM_WORKER_INTERRUPT_MODEL_RECYCLE.to_string(),
+        lifecycle_supported: wasm_vm_runtime_enabled(),
         execution_probe_enabled: wasm_vm_runtime_enabled(),
         execute_supported: wasm_vm_runtime_enabled(),
         blocker_count: blockers.len(),

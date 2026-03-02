@@ -10,7 +10,7 @@ This guide defines the recommended browser call order for current wasm APIs.
 2. `wasm_runtime_info()`
    - use `execution_backend` + `supports_execution` for backend-readiness UI state.
 3. `wasm_worker_info()`
-   - use `backend` + `supported` + `execution_probe_enabled` + `execute_supported` for worker-runtime/readiness UI state.
+   - use `backend` + `supported` + `lifecycle_supported` + `execution_probe_enabled` + `execute_supported` for worker-runtime/readiness UI state.
 4. `wasm_worker_timeout_policy()`
    - gate timeout controls on `configuration_supported`;
    - treat `enforcement_supported` as the separate hard-enforcement capability.
