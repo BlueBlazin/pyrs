@@ -53,6 +53,9 @@ print(x)</textarea>
 				<button id="playground-worker-recycle" type="button" disabled>Worker Recycle</button>
 				<button id="playground-worker-terminate" type="button" disabled>Worker Terminate</button>
 				<button id="playground-worker-execute" type="button" disabled>Worker Execute</button>
+				<button id="playground-worker-reset-session" type="button" disabled>
+					Reset Session Telemetry
+				</button>
 			</div>
 			<div class="playground-worker-timeout">
 				<label for="playground-worker-timeout-ms">Worker timeout (ms)</label>
@@ -99,6 +102,7 @@ print(x)</textarea>
 		const workerRecycleButton = document.getElementById("playground-worker-recycle");
 		const workerTerminateButton = document.getElementById("playground-worker-terminate");
 		const workerExecuteButton = document.getElementById("playground-worker-execute");
+		const workerResetSessionButton = document.getElementById("playground-worker-reset-session");
 		const workerTimeoutInput = document.getElementById("playground-worker-timeout-ms");
 		const workerTimeoutSetButton = document.getElementById("playground-worker-timeout-set");
 		const outputEl = document.getElementById("playground-output");
@@ -108,6 +112,7 @@ print(x)</textarea>
 		const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 
 		let runtimeModule = null;
+		let workerSession = null;
 
 		const readField = (object, key) => {
 			if (!object) return undefined;
@@ -177,13 +182,52 @@ print(x)</textarea>
 			if (workerTimeoutInput instanceof HTMLInputElement) {
 				workerTimeoutInput.disabled = !enabled;
 			}
+			if (workerResetSessionButton instanceof HTMLButtonElement) {
+				workerResetSessionButton.disabled = !enabled;
+			}
 		};
+
+		const resolveWorkerSession = () => {
+			if (!runtimeModule) return null;
+			if (workerSession) return workerSession;
+			if (typeof runtimeModule.WasmWorkerSession === "function") {
+				workerSession = new runtimeModule.WasmWorkerSession();
+			}
+			return workerSession;
+		};
+
+		const toWorkerInfoObject = (info) => ({
+			backend: readField(info, "backend"),
+			state: readField(info, "state"),
+			lifecycle_supported: readField(info, "lifecycle_supported"),
+			execution_probe_enabled: readField(info, "execution_probe_enabled"),
+			execute_supported: readField(info, "execute_supported"),
+			timeout_configuration_supported: readField(info, "timeout_configuration_supported"),
+			timeout_enforcement_supported: readField(info, "timeout_enforcement_supported"),
+			blocker_count: readField(info, "blocker_count"),
+		});
+
+		const toWorkerSessionSnapshotObject = (snapshot) => ({
+			starts_requested: readField(snapshot, "starts_requested"),
+			terminates_requested: readField(snapshot, "terminates_requested"),
+			recycles_requested: readField(snapshot, "recycles_requested"),
+			executes_requested: readField(snapshot, "executes_requested"),
+			timeout_updates_requested: readField(snapshot, "timeout_updates_requested"),
+			last_timeout_ms_requested: readField(snapshot, "last_timeout_ms_requested"),
+			last_operation_id: readField(snapshot, "last_operation_id"),
+			last_phase: readField(snapshot, "last_phase"),
+			last_state: readField(snapshot, "last_state"),
+			last_error: readField(snapshot, "last_error"),
+		});
 
 		const collectRuntimeSnapshot = () => {
 			if (!runtimeModule) return null;
 
 			const runtimeInfo = runtimeModule.wasm_runtime_info?.();
 			const workerInfo = runtimeModule.wasm_worker_info?.();
+			const session = resolveWorkerSession();
+			const workerSessionInfo = session?.info?.();
+			const workerSessionSnapshot = session?.snapshot?.();
 			const timeoutPolicy = runtimeModule.wasm_worker_timeout_policy?.();
 			const capabilityReport = runtimeModule.wasm_capabilities?.();
 			const capabilityKeys = toArray(runtimeModule.wasm_capability_keys?.()).map((item) =>
@@ -233,22 +277,13 @@ print(x)</textarea>
 					execution_status: readField(runtimeInfo, "execution_status"),
 					execution_blocker_count: readField(runtimeInfo, "execution_blocker_count"),
 				},
-				worker: {
-					backend: readField(workerInfo, "backend"),
-					state: readField(workerInfo, "state"),
-					lifecycle_supported: readField(workerInfo, "lifecycle_supported"),
-					execution_probe_enabled: readField(workerInfo, "execution_probe_enabled"),
-					execute_supported: readField(workerInfo, "execute_supported"),
-					timeout_configuration_supported: readField(
-						workerInfo,
-						"timeout_configuration_supported"
-					),
-					timeout_enforcement_supported: readField(
-						workerInfo,
-						"timeout_enforcement_supported"
-					),
-					blocker_count: readField(workerInfo, "blocker_count"),
-				},
+				worker: toWorkerInfoObject(workerInfo),
+				worker_session_info: workerSessionInfo
+					? toWorkerInfoObject(workerSessionInfo)
+					: null,
+				worker_session_snapshot: workerSessionSnapshot
+					? toWorkerSessionSnapshotObject(workerSessionSnapshot)
+					: null,
 				timeout_policy: {
 					default_timeout_ms: readField(timeoutPolicy, "default_timeout_ms"),
 					min_timeout_ms: readField(timeoutPolicy, "min_timeout_ms"),
@@ -332,7 +367,8 @@ print(x)</textarea>
 				return;
 			}
 			try {
-				const result = operation();
+				const session = resolveWorkerSession();
+				const result = operation(session);
 				const payload = {
 					operation: opName,
 					success: readField(result, "success"),
@@ -341,6 +377,9 @@ print(x)</textarea>
 					state: readField(result, "state"),
 					error: readField(result, "error"),
 					blocker_key: readField(result, "blocker_key"),
+					session_snapshot: session
+						? toWorkerSessionSnapshotObject(session.snapshot())
+						: null,
 				};
 				inspectRuntime();
 				setStatus(`Worker ${opName} completed`);
@@ -360,7 +399,10 @@ print(x)</textarea>
 			if (!sourceEl || !(sourceEl instanceof HTMLTextAreaElement)) return;
 			try {
 				const source = sourceEl.value;
-				const result = runtimeModule.wasm_worker_execute_with_operation(source);
+				const session = resolveWorkerSession();
+				const result = session
+					? session.execute_with_operation(source)
+					: runtimeModule.wasm_worker_execute_with_operation(source);
 				const payload = {
 					operation: "execute",
 					operation_id: readField(result, "operation_id"),
@@ -373,6 +415,9 @@ print(x)</textarea>
 					blocker_key: readField(result, "blocker_key"),
 					line: readField(result, "line"),
 					column: readField(result, "column"),
+					session_snapshot: session
+						? toWorkerSessionSnapshotObject(session.snapshot())
+						: null,
 				};
 				inspectRuntime();
 				setStatus("Worker execute completed");
@@ -398,7 +443,10 @@ print(x)</textarea>
 				return;
 			}
 			try {
-				const result = runtimeModule.wasm_worker_set_timeout(timeoutMs);
+				const session = resolveWorkerSession();
+				const result = session
+					? session.set_timeout_ms(timeoutMs)
+					: runtimeModule.wasm_worker_set_timeout(timeoutMs);
 				const payload = {
 					operation: "set_timeout",
 					success: readField(result, "success"),
@@ -408,6 +456,9 @@ print(x)</textarea>
 					timeout_ms: readField(result, "timeout_ms"),
 					error: readField(result, "error"),
 					blocker_key: readField(result, "blocker_key"),
+					session_snapshot: session
+						? toWorkerSessionSnapshotObject(session.snapshot())
+						: null,
 				};
 				inspectRuntime();
 				setStatus("Worker timeout call completed");
@@ -417,6 +468,31 @@ print(x)</textarea>
 				setStatus("Worker timeout call failed", true);
 				setWorkerOutput(message);
 			}
+		};
+
+		const runWorkerResetSession = () => {
+			if (!runtimeModule) {
+				setStatus("Runtime not loaded", true);
+				return;
+			}
+			const session = resolveWorkerSession();
+			if (!session || typeof session.reset !== "function") {
+				setStatus("Worker session API unavailable", true);
+				return;
+			}
+			session.reset();
+			inspectRuntime();
+			setStatus("Worker session telemetry reset");
+			setWorkerOutput(
+				JSON.stringify(
+					{
+						operation: "session_reset",
+						session_snapshot: toWorkerSessionSnapshotObject(session.snapshot()),
+					},
+					null,
+					2
+				)
+			);
 		};
 
 		const loadRuntime = async () => {
@@ -436,6 +512,8 @@ print(x)</textarea>
 					mod.init_wasm_runtime();
 				}
 				runtimeModule = mod;
+				workerSession = null;
+				resolveWorkerSession();
 				if (runButton instanceof HTMLButtonElement) {
 					runButton.disabled = false;
 				}
@@ -527,19 +605,25 @@ print(x)</textarea>
 
 		if (workerStartButton instanceof HTMLButtonElement) {
 			workerStartButton.addEventListener("click", () => {
-				runWorkerLifecycle("start", () => runtimeModule.wasm_worker_start());
+				runWorkerLifecycle("start", (session) =>
+					session ? session.start() : runtimeModule.wasm_worker_start()
+				);
 			});
 		}
 
 		if (workerRecycleButton instanceof HTMLButtonElement) {
 			workerRecycleButton.addEventListener("click", () => {
-				runWorkerLifecycle("recycle", () => runtimeModule.wasm_worker_recycle());
+				runWorkerLifecycle("recycle", (session) =>
+					session ? session.recycle() : runtimeModule.wasm_worker_recycle()
+				);
 			});
 		}
 
 		if (workerTerminateButton instanceof HTMLButtonElement) {
 			workerTerminateButton.addEventListener("click", () => {
-				runWorkerLifecycle("terminate", () => runtimeModule.wasm_worker_terminate());
+				runWorkerLifecycle("terminate", (session) =>
+					session ? session.terminate() : runtimeModule.wasm_worker_terminate()
+				);
 			});
 		}
 
@@ -552,6 +636,12 @@ print(x)</textarea>
 		if (workerTimeoutSetButton instanceof HTMLButtonElement) {
 			workerTimeoutSetButton.addEventListener("click", () => {
 				runWorkerSetTimeout();
+			});
+		}
+
+		if (workerResetSessionButton instanceof HTMLButtonElement) {
+			workerResetSessionButton.addEventListener("click", () => {
+				runWorkerResetSession();
 			});
 		}
 	</script>

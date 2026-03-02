@@ -689,6 +689,10 @@ Completed on this branch:
   (`wasm_runtime_info`, worker info, capability matrix, blocker rows), snippet
   preflight details (import roots + blocker rows), and worker probe controls
   (start/recycle/terminate/execute/timeout) for state-gate debugging.
+- latest: playground worker controls now route through `WasmWorkerSession`
+  when available, exposing `worker_session_info`/`worker_session_snapshot`
+  telemetry in runtime inspector output and supporting session-telemetry reset
+  without mutating shared worker lifecycle state.
 - latest: docs now include a dedicated browser playground reference page
   (`website/src/pages/docs/playground.mdx`) and docs navigation wiring, with
   explicit interpretation guidance for preflight payloads and worker control

@@ -59,6 +59,13 @@ import Callout from "../../components/docs/Callout.astro";
 			<td>Use these for worker controls and state-gate interpretation.</td>
 		</tr>
 		<tr>
+			<td>Worker Session</td>
+			<td>
+				<code>worker_session_info</code>, <code>worker_session_snapshot</code>
+			</td>
+			<td>Tracks per-session telemetry counters and last operation metadata.</td>
+		</tr>
+		<tr>
 			<td>Capabilities</td>
 			<td><code>key</code>, <code>supported</code>, <code>error</code></td>
 			<td>Unsupported capabilities are explicit and map directly to blocker keys.</td>
@@ -113,6 +120,11 @@ import Callout from "../../components/docs/Callout.astro";
 			<td><code>Set Timeout</code></td>
 			<td><code>unsupported_worker_timeout_enforcement</code></td>
 			<td><code>worker_timeout_configured</code> when state is <code>ready</code></td>
+		</tr>
+		<tr>
+			<td><code>Reset Session Telemetry</code></td>
+			<td>Resets session counters/snapshot while preserving shared worker state.</td>
+			<td>Resets session counters/snapshot while preserving shared worker state.</td>
 		</tr>
 	</DataTable>
 </DocSection>
