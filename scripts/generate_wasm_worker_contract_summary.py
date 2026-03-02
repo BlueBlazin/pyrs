@@ -948,6 +948,14 @@ def main() -> int:
             source_worker_info_body, args.vm_probe
         )
     )
+    has_failed_state_worker_recovery_test = (
+        "fn wasm_worker_vm_probe_failed_state_blocks_until_recovered()"
+        in wasm_source
+    )
+    has_failed_state_top_level_isolation_test = (
+        "fn wasm_worker_vm_probe_failed_state_keeps_top_level_execute_available()"
+        in wasm_source
+    )
     source_worker_unwired_lifecycle_sets_shared_state = (
         parse_source_worker_unwired_lifecycle_sets_shared_state(wasm_source)
     )
@@ -1197,6 +1205,14 @@ def main() -> int:
     if not source_worker_info_timeout_enforcement_is_state_aware:
         errors.append(
             "wasm_worker_info should gate timeout_enforcement_supported on worker_runtime_ready()"
+        )
+    if not has_failed_state_worker_recovery_test:
+        errors.append(
+            "missing wasm vm-probe failed-state worker recovery test coverage"
+        )
+    if not has_failed_state_top_level_isolation_test:
+        errors.append(
+            "missing wasm vm-probe failed-state top-level execute isolation test coverage"
         )
     if (
         source_worker_info_timeout_enforcement_supported
@@ -1508,6 +1524,8 @@ def main() -> int:
             "execute_support_is_state_aware": source_worker_info_execute_support_is_state_aware,
             "timeout_configuration_is_state_aware": source_worker_info_timeout_configuration_is_state_aware,
             "timeout_enforcement_is_state_aware": source_worker_info_timeout_enforcement_is_state_aware,
+            "has_failed_state_worker_recovery_test": has_failed_state_worker_recovery_test,
+            "has_failed_state_top_level_isolation_test": has_failed_state_top_level_isolation_test,
         },
         "worker_info_effective_rows": [
             {

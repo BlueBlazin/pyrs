@@ -944,6 +944,11 @@ Completed on this branch:
   - top-level `execute()` remains available (`phase = "ok"`) in the same
     failed-state window,
   - `wasm_worker_start()` recovery restores worker-mode execute paths.
+- latest: worker-contract summary validation now enforces presence of both
+  vm-probe failed-state regression tests in `src/wasm/mod.rs`:
+  - `wasm_worker_vm_probe_failed_state_blocks_until_recovered`
+  - `wasm_worker_vm_probe_failed_state_keeps_top_level_execute_available`
+  (`scripts/generate_wasm_worker_contract_summary.py`).
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
