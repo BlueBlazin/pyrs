@@ -231,6 +231,9 @@ Branch helper:
   `perf/wasm_evidence_pack_latest/` with a manifest for review handoff.
   `scripts/check_wasm_branch.sh` and `scripts/run_wasm_contract_smoke.sh`
   now emit this evidence pack automatically when core smoke is enabled.
+- evidence-pack validator helper:
+  `python3 scripts/validate_wasm_evidence_pack.py --pack-dir perf/wasm_evidence_pack_latest`
+  to enforce manifest + copied-artifact completeness in local and CI gates.
 - vm-compile probe helper (non-gating):
   `scripts/probe_wasm_vm_compile.sh`
   to surface current wasm-vm compile blockers under opt-in `wasm-vm-probe`.

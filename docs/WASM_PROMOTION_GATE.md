@@ -61,6 +61,8 @@ Promotion review must include:
 3. Latest local consolidated evidence pack:
    - generated automatically by `scripts/check_wasm_branch.sh`,
    - or run `python3 scripts/collect_wasm_evidence_pack.py` directly,
+   - validate with
+     `python3 scripts/validate_wasm_evidence_pack.py --pack-dir perf/wasm_evidence_pack_latest`,
    - attach `perf/wasm_evidence_pack_latest/manifest.json` and copied artifacts.
 4. Documented capability limitations and known gaps for browser mode.
 5. Rollback plan (commit range and revert strategy) if post-merge regressions appear.

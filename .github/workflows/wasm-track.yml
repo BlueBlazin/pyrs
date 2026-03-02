@@ -45,6 +45,11 @@ jobs:
       - name: Run wasm branch gate
         run: scripts/check_wasm_branch.sh
 
+      - name: Validate local wasm evidence pack
+        run: |
+          python3 scripts/validate_wasm_evidence_pack.py \
+            --pack-dir perf/wasm_evidence_pack_latest
+
       - name: Upload wasm contract artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -65,6 +70,8 @@ jobs:
             perf/wasm_vm_link_blockers_latest.json
             perf/wasm_worker_contract_summary_vm_probe_latest.json
             perf/wasm_execute_contract_summary_vm_probe_latest.json
+            perf/wasm_evidence_pack_latest/manifest.json
+            perf/wasm_evidence_pack_latest/*.json
 
   wasm-browser-smoke:
     if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -133,3 +140,5 @@ jobs:
             perf/wasm_vm_link_blockers_latest.json
             perf/wasm_worker_contract_summary_vm_probe_latest.json
             perf/wasm_execute_contract_summary_vm_probe_latest.json
+            perf/wasm_evidence_pack_latest/manifest.json
+            perf/wasm_evidence_pack_latest/*.json

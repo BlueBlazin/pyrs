@@ -60,6 +60,10 @@ echo "[wasm-branch] wasm local evidence-pack snapshot"
 python3 scripts/collect_wasm_evidence_pack.py \
   --out-dir perf/wasm_evidence_pack_latest
 
+echo "[wasm-branch] wasm local evidence-pack validation"
+python3 scripts/validate_wasm_evidence_pack.py \
+  --pack-dir perf/wasm_evidence_pack_latest
+
 echo "[wasm-branch] nextest wasm bridge unit-contract regression"
 cargo nextest run --lib wasm_ --status-level fail --final-status-level fail
 
