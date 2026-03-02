@@ -2786,6 +2786,7 @@ mod tests {
         pyrs_version, wasm_worker_current_timeout_ms, wasm_worker_execute, wasm_worker_info,
         wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start, wasm_worker_terminate,
     };
+    use std::collections::HashSet;
     #[cfg(feature = "wasm-vm-probe")]
     use super::{
         WasmWorkerState, clear_worker_vm, set_current_worker_state,
@@ -3228,6 +3229,7 @@ mod tests {
     fn wasm_worker_vm_probe_failed_state_blocks_until_recovered() {
         clear_worker_vm();
         set_current_worker_state(WasmWorkerState::Failed);
+        let mut operation_ids = HashSet::new();
         let failed_info = wasm_worker_info();
         assert_eq!(failed_info.state(), "failed".to_string());
         assert!(!failed_info.execute_supported());
@@ -3244,6 +3246,9 @@ mod tests {
             blocked_execute.blocker_key(),
             Some("worker_runtime_failed".to_string())
         );
+        let blocked_execute_id = blocked_execute.operation_id();
+        assert!(blocked_execute_id.starts_with("worker_execute_"));
+        assert!(operation_ids.insert(blocked_execute_id));
         assert!(
             blocked_execute
                 .error()
@@ -3261,6 +3266,9 @@ mod tests {
             blocked_timeout.blocker_key(),
             Some("worker_runtime_failed".to_string())
         );
+        let blocked_timeout_id = blocked_timeout.operation_id();
+        assert!(blocked_timeout_id.starts_with("worker_set_timeout_"));
+        assert!(operation_ids.insert(blocked_timeout_id));
 
         let invalid_timeout = wasm_worker_set_timeout(0);
         assert_eq!(
@@ -3271,11 +3279,17 @@ mod tests {
         assert!(!invalid_timeout.success());
         assert!(invalid_timeout.blocker_key().is_none());
         assert!(invalid_timeout.error().is_some());
+        let invalid_timeout_id = invalid_timeout.operation_id();
+        assert!(invalid_timeout_id.starts_with("worker_set_timeout_"));
+        assert!(operation_ids.insert(invalid_timeout_id));
 
         let recycle = wasm_worker_recycle();
         assert_eq!(recycle.phase(), "worker_recycled".to_string());
         assert_eq!(recycle.state(), "ready".to_string());
         assert!(recycle.success());
+        let recycle_id = recycle.operation_id();
+        assert!(recycle_id.starts_with("worker_recycle_"));
+        assert!(operation_ids.insert(recycle_id));
         let recovered_info = wasm_worker_info();
         assert_eq!(recovered_info.state(), "ready".to_string());
         assert!(recovered_info.execute_supported());
@@ -3287,6 +3301,9 @@ mod tests {
         assert_eq!(resumed_execute.state(), "ready".to_string());
         assert!(resumed_execute.success());
         assert!(resumed_execute.blocker_key().is_none());
+        let resumed_execute_id = resumed_execute.operation_id();
+        assert!(resumed_execute_id.starts_with("worker_execute_"));
+        assert!(operation_ids.insert(resumed_execute_id));
     }
 
     #[cfg(feature = "wasm-vm-probe")]

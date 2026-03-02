@@ -956,6 +956,13 @@ Completed on this branch:
   - in-range timeout updates in the same state remain
     `unsupported_worker_timeout_enforcement` with
     `blocker_key = "worker_runtime_failed"`.
+- latest: vm-probe failed-state recovery coverage now also locks operation-id
+  telemetry shape and uniqueness across blocked/recovery calls:
+  - execute operations keep `worker_execute_` prefixes,
+  - timeout operations keep `worker_set_timeout_` prefixes (including
+    invalid-timeout paths),
+  - lifecycle recovery keeps `worker_recycle_` prefix,
+  - all operation IDs in the failed->recovered sequence are unique.
 - latest: worker-contract summary validation now also enforces failed-state
   invalid-timeout precedence assertions in vm-probe unit contracts
   (`wasm_worker_set_timeout(0)` => `invalid_worker_timeout` with no blocker
