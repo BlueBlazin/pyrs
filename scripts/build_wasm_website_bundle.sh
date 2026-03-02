@@ -10,15 +10,21 @@ if ! command -v wasm-pack >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v wasm-bindgen >/dev/null 2>&1; then
+  echo "wasm-bindgen-cli not found; installing with cargo..." >&2
+  cargo install wasm-bindgen-cli --locked
+fi
+
 if [ -d website/public/wasm ]; then
   rm -rf website/public/wasm
 fi
 
 wasm-pack build \
+  --mode no-install \
+  --dev \
   --target web \
   --out-dir website/public/wasm \
   --out-name pyrs \
-  --release \
   -- \
   --profile release-wasm \
   --features wasm-vm-probe
