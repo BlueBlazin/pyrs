@@ -57,21 +57,24 @@ are explicit contract lifecycle controls.
     - `worker_started`
     - `worker_terminated`
     - `worker_recycled`
-  - default build: unsupported phase sets `blocker_key = "worker_runtime_unwired"`
+  - default build: unsupported phase sets
+    `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`
   - `wasm-vm-probe` build:
     - capability-allowed snippets return `ok` or `runtime_error` only when
       worker `state = "ready"`,
     - capability-allowed snippets run on a persistent worker VM while `state = "ready"`,
     - when worker `state != "ready"`, capability-allowed snippets return
-      `unsupported_worker_execution` with `blocker_key = "worker_runtime_unwired"`.
+      `unsupported_worker_execution` with
+      `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`.
 - `wasm_worker_set_timeout(timeout_ms)` -> `phase` in:
   - `invalid_worker_timeout` for out-of-range values
   - default in-range: `unsupported_worker_timeout_enforcement`
-    (`blocker_key = "worker_runtime_unwired"`)
+    (`blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`)
   - `wasm-vm-probe` in-range:
     - `worker_timeout_configured` when worker `state = "ready"`,
     - `unsupported_worker_timeout_enforcement` with
-      `blocker_key = "worker_runtime_unwired"` when worker `state != "ready"`,
+      `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`
+      when worker `state != "ready"`,
     - configuration-only; enforcement still unwired.
   - expected policy shape:
     - default build: `configuration_supported = false`, `enforcement_supported = false`

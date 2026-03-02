@@ -58,7 +58,9 @@ Current wasm bridge exports for capability handling:
 - `wasm_snippet_import_roots(source)`:
   returns canonical root imports for parse+compile-valid snippets.
 - `wasm_worker_info()` / `wasm_worker_blocker_keys()` / `wasm_worker_blocker_error()`:
-  expose worker-runtime contract blockers while worker execution remains unwired.
+  expose worker-runtime contract blockers (`worker_runtime_unwired`,
+  `worker_runtime_failed`, plus capability blockers) across default and vm-probe
+  execution modes.
 - `wasm_worker_timeout_policy()`:
   exports timeout/recycle contract metadata while enforcement remains unwired.
 - `wasm_worker_timeout_phase_keys()` / `wasm_worker_set_timeout(timeout_ms)`:
@@ -66,7 +68,8 @@ Current wasm bridge exports for capability handling:
 - `wasm_worker_blockers()`:
   returns structured worker blocker entries (`key`, `message`) for worker UX.
 - `wasm_worker_start()` / `wasm_worker_terminate()` / `wasm_worker_recycle()`:
-  expose stable lifecycle stub phases while worker backend is unwired.
+  expose stable lifecycle phases for worker control in default and vm-probe
+  modes.
 - `wasm_worker_state_keys()` / `wasm_worker_lifecycle_phase_keys()`:
   expose canonical worker contract enums for UI/client branching.
 

@@ -23,6 +23,7 @@ const WASM_EXECUTION_PHASE_OK: &str = "ok";
 #[cfg(feature = "wasm-vm-probe")]
 const WASM_EXECUTION_PHASE_RUNTIME_ERROR: &str = "runtime_error";
 const WASM_WORKER_BLOCKER_RUNTIME_UNWIRED: &str = "worker_runtime_unwired";
+const WASM_WORKER_BLOCKER_RUNTIME_FAILED: &str = "worker_runtime_failed";
 const WASM_WORKER_INTERRUPT_MODEL_RECYCLE: &str = "worker_recycle";
 const WASM_WORKER_BACKEND_UNWIRED: &str = "unwired";
 #[cfg(feature = "wasm-vm-probe")]
@@ -92,7 +93,10 @@ fn wasm_vm_runtime_enabled() -> bool {
 }
 
 fn worker_blocker_keys() -> Vec<&'static str> {
-    let mut keys = vec![WASM_WORKER_BLOCKER_RUNTIME_UNWIRED];
+    let mut keys = vec![
+        WASM_WORKER_BLOCKER_RUNTIME_UNWIRED,
+        WASM_WORKER_BLOCKER_RUNTIME_FAILED,
+    ];
     keys.extend(module_policy_blocker_keys());
     keys
 }
@@ -351,6 +355,25 @@ fn worker_timeout_policy_unsupported_reason() -> String {
         wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
             .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string())
     }
+}
+
+fn worker_unavailable_blocker_key_for_state(state: WasmWorkerState) -> &'static str {
+    if state == WasmWorkerState::Failed {
+        WASM_WORKER_BLOCKER_RUNTIME_FAILED
+    } else {
+        WASM_WORKER_BLOCKER_RUNTIME_UNWIRED
+    }
+}
+
+fn worker_unavailable_error_for_state(state: WasmWorkerState) -> String {
+    let blocker_key = worker_unavailable_blocker_key_for_state(state);
+    wasm_worker_blocker_error(blocker_key).unwrap_or_else(|| {
+        if blocker_key == WASM_WORKER_BLOCKER_RUNTIME_FAILED {
+            "wasm worker runtime entered failed state".to_string()
+        } else {
+            "wasm worker runtime is not wired yet".to_string()
+        }
+    })
 }
 
 /// Minimal WASM bridge surface used during compile-isolation bring-up.
@@ -1702,6 +1725,12 @@ pub fn wasm_worker_blocker_error(blocker_key: &str) -> Option<String> {
     if blocker_key == WASM_WORKER_BLOCKER_RUNTIME_UNWIRED {
         return Some("wasm worker runtime is not wired yet".to_string());
     }
+    if blocker_key == WASM_WORKER_BLOCKER_RUNTIME_FAILED {
+        return Some(
+            "wasm worker runtime entered failed state; call wasm_worker_start() or wasm_worker_recycle()"
+                .to_string(),
+        );
+    }
     wasm_execution_blocker_error(blocker_key)
 }
 
@@ -1776,9 +1805,9 @@ pub fn wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult {
     }
 
     if !worker_runtime_ready() {
-        let blocker_key = WASM_WORKER_BLOCKER_RUNTIME_UNWIRED.to_string();
-        let message = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
-            .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
+        let state = current_worker_state();
+        let blocker_key = worker_unavailable_blocker_key_for_state(state).to_string();
+        let message = worker_unavailable_error_for_state(state);
         return WasmWorkerTimeoutResult {
             success: false,
             operation_id: next_worker_operation_id("set_timeout"),
@@ -2331,14 +2360,16 @@ fn execute_snippet_with_contract(
     }
 
     if contract.requires_worker_ready_state() && !worker_runtime_ready() {
-        let message = contract.unwired_error_message();
+        let state = current_worker_state();
+        let blocker_key = worker_unavailable_blocker_key_for_state(state).to_string();
+        let message = worker_unavailable_error_for_state(state);
         return WasmExecutionResult {
             success: false,
             phase: contract.unsupported_phase_key().to_string(),
             stdout: String::new(),
             stderr: message.clone(),
             error: Some(message),
-            blocker_key: Some(contract.unwired_blocker_key().to_string()),
+            blocker_key: Some(blocker_key),
             line: 0,
             column: 0,
         };
@@ -2503,19 +2534,25 @@ pub fn wasm_execution_blocker_error(blocker_key: &str) -> Option<String> {
 fn execute_compiled_snippet_with_vm(
     vm: &mut Vm,
     code: &crate::bytecode::CodeObject,
-) -> WasmExecutionResult {
+) -> (WasmExecutionResult, bool) {
     match vm.execute(code) {
-        Ok(_) => WasmExecutionResult {
-            success: true,
-            phase: WASM_EXECUTION_PHASE_OK.to_string(),
-            stdout: String::new(),
-            stderr: String::new(),
-            error: None,
-            blocker_key: None,
-            line: 0,
-            column: 0,
-        },
-        Err(err) => runtime_error_to_execution_result(err),
+        Ok(_) => (
+            WasmExecutionResult {
+                success: true,
+                phase: WASM_EXECUTION_PHASE_OK.to_string(),
+                stdout: String::new(),
+                stderr: String::new(),
+                error: None,
+                blocker_key: None,
+                line: 0,
+                column: 0,
+            },
+            false,
+        ),
+        Err(err) => {
+            let internal_failure = err.exception.is_none();
+            (runtime_error_to_execution_result(err), internal_failure)
+        }
     }
 }
 
@@ -2524,7 +2561,8 @@ fn execute_compiled_snippet_with_fresh_vm(
     code: &crate::bytecode::CodeObject,
 ) -> WasmExecutionResult {
     let mut vm = Vm::new_with_host(Arc::new(WasmHost));
-    execute_compiled_snippet_with_vm(&mut vm, code)
+    let (result, _internal_failure) = execute_compiled_snippet_with_vm(&mut vm, code);
+    result
 }
 
 #[cfg(feature = "wasm-vm-probe")]
@@ -2533,14 +2571,32 @@ fn execute_compiled_snippet_with_worker_vm(
 ) -> WasmExecutionResult {
     ensure_worker_vm_initialized();
     set_current_worker_state(WasmWorkerState::Busy);
-    let result = WASM_WORKER_VM.with(|slot| {
+    let (result, internal_failure) = WASM_WORKER_VM.with(|slot| {
         let mut worker_vm = slot.borrow_mut();
-        let vm = worker_vm
-            .as_mut()
-            .expect("worker vm must be initialized before execute");
+        let Some(vm) = worker_vm.as_mut() else {
+            let error = worker_unavailable_error_for_state(WasmWorkerState::Failed);
+            return (
+                WasmExecutionResult {
+                    success: false,
+                    phase: WasmWorkerExecutePhase::UnsupportedExecution
+                        .key()
+                        .to_string(),
+                    stdout: String::new(),
+                    stderr: error.clone(),
+                    error: Some(error),
+                    blocker_key: Some(WASM_WORKER_BLOCKER_RUNTIME_FAILED.to_string()),
+                    line: 0,
+                    column: 0,
+                },
+                true,
+            );
+        };
         execute_compiled_snippet_with_vm(vm, code)
     });
-    if current_worker_state() == WasmWorkerState::Busy {
+    if internal_failure {
+        clear_worker_vm();
+        set_current_worker_state(WasmWorkerState::Failed);
+    } else if current_worker_state() == WasmWorkerState::Busy {
         set_current_worker_state(WasmWorkerState::Ready);
     }
     result
@@ -2682,7 +2738,10 @@ mod tests {
         wasm_worker_start, wasm_worker_terminate,
     };
     #[cfg(feature = "wasm-vm-probe")]
-    use super::{wasm_worker_execute_with_operation, wasm_worker_set_timeout};
+    use super::{
+        WasmWorkerState, clear_worker_vm, set_current_worker_state,
+        wasm_worker_execute_with_operation, wasm_worker_set_timeout,
+    };
 
     fn vm_probe_enabled() -> bool {
         cfg!(feature = "wasm-vm-probe")
@@ -2977,6 +3036,52 @@ mod tests {
             "expected NameError after terminate/start reset, got: {}",
             missing_after_start.stderr()
         );
+    }
+
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
+    fn wasm_worker_vm_probe_failed_state_blocks_until_recovered() {
+        clear_worker_vm();
+        set_current_worker_state(WasmWorkerState::Failed);
+
+        let blocked_execute = wasm_worker_execute_with_operation("x = 1\n");
+        assert_eq!(
+            blocked_execute.phase(),
+            "unsupported_worker_execution".to_string()
+        );
+        assert_eq!(blocked_execute.state(), "failed".to_string());
+        assert_eq!(
+            blocked_execute.blocker_key(),
+            Some("worker_runtime_failed".to_string())
+        );
+        assert!(
+            blocked_execute
+                .error()
+                .expect("failed-state execute should have error")
+                .contains("failed state")
+        );
+
+        let blocked_timeout = wasm_worker_set_timeout(5_000);
+        assert_eq!(
+            blocked_timeout.phase(),
+            "unsupported_worker_timeout_enforcement".to_string()
+        );
+        assert_eq!(blocked_timeout.state(), "failed".to_string());
+        assert_eq!(
+            blocked_timeout.blocker_key(),
+            Some("worker_runtime_failed".to_string())
+        );
+
+        let recycle = wasm_worker_recycle();
+        assert_eq!(recycle.phase(), "worker_recycled".to_string());
+        assert_eq!(recycle.state(), "ready".to_string());
+        assert!(recycle.success());
+
+        let resumed_execute = wasm_worker_execute_with_operation("x = 1\n");
+        assert_eq!(resumed_execute.phase(), "ok".to_string());
+        assert_eq!(resumed_execute.state(), "ready".to_string());
+        assert!(resumed_execute.success());
+        assert!(resumed_execute.blocker_key().is_none());
     }
 
     #[cfg(not(feature = "wasm-vm-probe"))]

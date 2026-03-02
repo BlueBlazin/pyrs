@@ -366,6 +366,7 @@ pub const WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA: &[&str] = &["worker_tim
 
 pub const WASM_WORKER_BLOCKER_KEYS: &[&str] = &[
     "worker_runtime_unwired",
+    "worker_runtime_failed",
     "dynamic_library_load",
     "network_sockets",
     "process_spawn",

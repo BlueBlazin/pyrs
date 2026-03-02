@@ -98,6 +98,7 @@ Top-level lifecycle calls now mutate shared worker state, and
 `wasm_worker_blocker_keys()` currently returns:
 
 - `worker_runtime_unwired`
+- `worker_runtime_failed`
 - module-policy capability keys currently emitted by worker preflight:
   - `dynamic_library_load`
   - `network_sockets`
@@ -107,11 +108,13 @@ Top-level lifecycle calls now mutate shared worker state, and
 `wasm_worker_blocker_error(key)` currently returns:
 
 - `"wasm worker runtime is not wired yet"` for `worker_runtime_unwired`,
+- `"wasm worker runtime entered failed state; call wasm_worker_start() or wasm_worker_recycle()"`
+  for `worker_runtime_failed`,
 - capability-specific unsupported messages (same message family as
   `wasm_execution_blocker_error`) for known capability keys.
 
 `wasm_worker_blockers()` currently returns structured rows for all worker blocker
-keys (`worker_runtime_unwired` + module-policy capability keys).
+keys (`worker_runtime_unwired`, `worker_runtime_failed` + module-policy capability keys).
 
 `wasm_worker_start()` currently returns:
 
@@ -176,8 +179,9 @@ keys (`worker_runtime_unwired` + module-policy capability keys).
   - default build:
     - `phase = "unsupported_worker_timeout_enforcement"`
     - `success = false`
-    - `blocker_key = "worker_runtime_unwired"`
-    - `error = "wasm worker runtime is not wired yet"`
+    - `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`
+      (depending on current worker state)
+    - `error` matches blocker-specific worker-runtime message
   - `wasm-vm-probe` build:
     - when `state = "ready"`:
       - `phase = "worker_timeout_configured"`
@@ -187,8 +191,8 @@ keys (`worker_runtime_unwired` + module-policy capability keys).
     - when `state != "ready"`:
       - `phase = "unsupported_worker_timeout_enforcement"`
       - `success = false`
-      - `blocker_key = "worker_runtime_unwired"`
-      - `error = "wasm worker runtime is not wired yet"`
+      - `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`
+      - `error` matches blocker-specific worker-runtime message
 
 `worker_timeout_configured` is configuration-only in vm-probe mode; timeout
 enforcement still remains unwired (`enforcement_supported = false`).
@@ -205,7 +209,8 @@ controls, and `enforcement_supported` for hard runtime-enforcement guarantees.
 - parse+compile-valid snippets without blocked imports:
   - default build:
     - `phase = "unsupported_worker_execution"`
-    - `blocker_key = "worker_runtime_unwired"`
+    - `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`
+      (depending on current worker state)
   - `wasm-vm-probe` build:
     - when `state = "ready"`:
       - `phase = "ok"` on VM success
@@ -214,7 +219,7 @@ controls, and `enforcement_supported` for hard runtime-enforcement guarantees.
       - execution uses a persistent worker VM (state survives across calls)
     - when `state != "ready"`:
       - `phase = "unsupported_worker_execution"`
-      - `blocker_key = "worker_runtime_unwired"`
+      - `blocker_key = "worker_runtime_unwired"` or `"worker_runtime_failed"`
 
 `wasm_worker_execute_with_operation(source)` mirrors
 `wasm_worker_execute(source)` and also returns:

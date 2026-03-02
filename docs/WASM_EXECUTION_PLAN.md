@@ -521,6 +521,9 @@ Completed on this branch:
 - latest: `wasm-vm-probe` worker execution now uses a persistent worker VM while
   `state = "ready"`; worker lifecycle controls now apply runtime resets
   deterministically (`start`/`recycle` reset VM state, `terminate` clears it).
+- latest: worker non-ready gating now distinguishes `worker_runtime_unwired`
+  from `worker_runtime_failed`; vm-probe worker execute paths enter `failed`
+  state for internal runtime failures and require `start`/`recycle` recovery.
 - latest: native wasm unit tests in `src/wasm/mod.rs` are now feature-aware for
   `wasm-vm-probe` (phase-key exports and baseline execute/worker-execute
   behavior), reducing hidden drift when vm-probe-enabled native test lanes are

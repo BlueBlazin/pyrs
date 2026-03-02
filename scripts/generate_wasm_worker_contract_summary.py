@@ -611,14 +611,15 @@ def parse_source_operation_actions(wasm_source: str) -> list[str]:
     return unique(re.findall(r'next_worker_operation_id\("([^"]+)"\)', wasm_source))
 
 
-def parse_source_worker_blocker_key(wasm_source: str) -> str:
-    match = re.search(
-        r'const\s+WASM_WORKER_BLOCKER_RUNTIME_UNWIRED:\s*&str\s*=\s*"([^"]+)";',
+def parse_source_worker_runtime_blocker_keys(wasm_source: str) -> list[str]:
+    matches = re.finditer(
+        r'const\s+WASM_WORKER_BLOCKER_RUNTIME_[A-Z_]+:\s*&str\s*=\s*"([^"]+)";',
         wasm_source,
     )
-    if not match:
-        raise ValueError("unable to parse WASM_WORKER_BLOCKER_RUNTIME_UNWIRED from wasm source")
-    return match.group(1)
+    keys = [match.group(1) for match in matches]
+    if not keys:
+        raise ValueError("unable to parse worker runtime blocker keys from wasm source")
+    return keys
 
 
 def parse_source_module_policy_blocker_keys(wasm_source: str) -> list[str]:
@@ -871,7 +872,8 @@ def main() -> int:
     )
     source_lifecycle_actions = parse_source_lifecycle_actions(wasm_source)
     source_operation_actions = parse_source_operation_actions(wasm_source)
-    source_worker_blocker_key = parse_source_worker_blocker_key(wasm_source)
+    source_worker_runtime_blocker_keys = parse_source_worker_runtime_blocker_keys(wasm_source)
+    source_worker_blocker_key = source_worker_runtime_blocker_keys[0]
     source_module_policy_blocker_keys = parse_source_module_policy_blocker_keys(wasm_source)
     source_worker_info_body = parse_source_wasm_worker_info_body(wasm_source)
     source_worker_info_supported = parse_source_worker_info_supported(
@@ -914,11 +916,11 @@ def main() -> int:
         parse_source_contract_mode_declares_ready_state_guard(wasm_source)
     )
     source_expected_worker_blocker_keys = [
-        source_worker_blocker_key,
+        *source_worker_runtime_blocker_keys,
         *source_module_policy_blocker_keys,
     ]
     allowed_execute_unsupported_blocker_keys = sorted(
-        {source_worker_blocker_key, *source_module_policy_blocker_keys}
+        {*source_worker_runtime_blocker_keys, *source_module_policy_blocker_keys}
     )
     source_worker_backend_default = source_const_map["WASM_WORKER_BACKEND_UNWIRED"]
     source_worker_backend_vm_probe = source_const_map.get(
@@ -1419,6 +1421,7 @@ def main() -> int:
             "timeout_phase": source_timeout_phase_keys,
         },
         "source_worker_blocker_key": source_worker_blocker_key,
+        "source_worker_runtime_blocker_keys": source_worker_runtime_blocker_keys,
         "source_module_policy_blocker_keys": source_module_policy_blocker_keys,
         "source_expected_worker_blocker_keys": source_expected_worker_blocker_keys,
         "source_worker_info": {
