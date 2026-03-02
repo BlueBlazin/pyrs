@@ -674,6 +674,9 @@ Completed on this branch:
   `scripts/run_wasm_contract_smoke.sh` with browser and vm-probe state-gate
   smoke flags enabled (`PYRS_WASM_SKIP_CORE_SMOKE=1` in CI to avoid duplicate
   core checks), while keeping the mandatory gate lane deterministic.
+- latest: manual `wasm-browser-smoke` dispatch now fails hard on smoke
+  regressions (no `continue-on-error`), so promotion evidence cannot silently
+  ignore browser-lane failures.
 - latest: docs index now links to `/playground/` as an explicit browser-route
   entrypoint in Getting Started navigation.
 - latest: `/playground` now surfaces runtime contract introspection
