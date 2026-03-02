@@ -2,7 +2,7 @@
 
 use pyrs::wasm::{
     execute, wasm_runtime_info, wasm_worker_info, wasm_worker_recycle, wasm_worker_set_timeout,
-    wasm_worker_start, wasm_worker_terminate,
+    wasm_worker_start, wasm_worker_terminate, wasm_worker_execute_with_operation,
 };
 use wasm_bindgen_test::*;
 
@@ -63,4 +63,29 @@ fn vm_probe_worker_state_gate_roundtrip() {
     assert_eq!(resumed_timeout.state(), "ready".to_string());
     assert!(resumed_timeout.success());
     assert_eq!(wasm_worker_info().state(), "ready".to_string());
+}
+
+#[wasm_bindgen_test]
+fn vm_probe_worker_timeout_path_uses_wasm_clock() {
+    let recycle = wasm_worker_recycle();
+    assert_eq!(recycle.phase(), "worker_recycled".to_string());
+    assert_eq!(recycle.state(), "ready".to_string());
+
+    let configured = wasm_worker_set_timeout(50);
+    assert_eq!(configured.phase(), "worker_timeout_configured".to_string());
+    assert_eq!(configured.state(), "ready".to_string());
+    assert!(configured.success());
+
+    let timed_out = wasm_worker_execute_with_operation("while True:\n    pass\n");
+    assert_eq!(timed_out.phase(), "runtime_error".to_string());
+    assert_eq!(timed_out.state(), "ready".to_string());
+    assert!(!timed_out.success());
+    let timeout_error = timed_out
+        .error()
+        .expect("timeout execution should report runtime error");
+    assert!(
+        timeout_error.contains("execution timeout exceeded"),
+        "expected timeout marker in runtime error, got: {}",
+        timeout_error
+    );
 }

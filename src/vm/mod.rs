@@ -38,6 +38,9 @@ use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(target_arch = "wasm32")]
+use js_sys::Date;
+
 use self::capi_registry::{CapiObjectRegistry, CapiPtrProvenance, CapiRefKind};
 use self::containers::{
     dict_contains_key_checked, dict_get_value, dict_remove_value, dict_set_value,
@@ -81,6 +84,11 @@ struct Block {
 unsafe extern "C" {
     fn free(ptr: *mut c_void);
 }
+
+#[cfg(target_arch = "wasm32")]
+type VmExecutionDeadline = f64;
+#[cfg(not(target_arch = "wasm32"))]
+type VmExecutionDeadline = Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TraceFrame {
@@ -1185,7 +1193,7 @@ pub struct Vm {
     traceback_caret_enabled: bool,
     instruction_step_limit: Option<u64>,
     instruction_steps: u64,
-    execution_deadline: Option<Instant>,
+    execution_deadline: Option<VmExecutionDeadline>,
 }
 
 impl Drop for Vm {
@@ -3841,6 +3849,32 @@ impl Vm {
         result
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn deadline_from_timeout_ms(timeout_ms: u32) -> Option<VmExecutionDeadline> {
+        Instant::now().checked_add(Duration::from_millis(timeout_ms as u64))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn deadline_from_timeout_ms(timeout_ms: u32) -> Option<VmExecutionDeadline> {
+        Some(Date::now() + timeout_ms as f64)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn deadline_reached(deadline: VmExecutionDeadline) -> bool {
+        Instant::now() >= deadline
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn deadline_reached(deadline: VmExecutionDeadline) -> bool {
+        Date::now() >= deadline
+    }
+
+    fn execution_deadline_reached(&self) -> bool {
+        self.execution_deadline
+            .map(Self::deadline_reached)
+            .unwrap_or(false)
+    }
+
     pub fn execute_with_timeout_ms(
         &mut self,
         code: &CodeObject,
@@ -3850,8 +3884,7 @@ impl Vm {
             return self.execute(code);
         }
         let previous_deadline = self.execution_deadline;
-        self.execution_deadline =
-            Instant::now().checked_add(Duration::from_millis(timeout_ms as u64));
+        self.execution_deadline = Self::deadline_from_timeout_ms(timeout_ms);
         let result = self.execute(code);
         self.execution_deadline = previous_deadline;
         result

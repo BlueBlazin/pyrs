@@ -976,9 +976,7 @@ impl Vm {
                     )));
                 }
             }
-            if let Some(deadline) = self.execution_deadline
-                && std::time::Instant::now() >= deadline
-            {
+            if self.execution_deadline_reached() {
                 let frame = self.frames.last().expect("frame exists");
                 return Err(RuntimeError::new(format!(
                     "execution timeout exceeded at {}:{} in {} ({:?})",
