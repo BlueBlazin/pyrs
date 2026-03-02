@@ -187,7 +187,9 @@ Branch helper:
 - `scripts/check_wasm_branch.sh` runs the current minimum checkpoint validation set.
 - `scripts/run_wasm_contract_smoke.sh` runs local wasm contract smoke checks
   (compile-only by default; set `PYRS_WASM_RUN_BROWSER_SMOKE=1` for optional
-  browser run via `wasm-pack` covering both `--test wasm_contract` and `--lib`).
+  browser run via `wasm-pack` covering both `--test wasm_contract` and `--lib`;
+  set `PYRS_WASM_RUN_VM_PROBE_BROWSER_STATE_GATE_SMOKE=1` to additionally run
+  vm-probe browser smoke focused on terminate/recycle state-gating flows).
 - wasm harness note: use targeted wasm contract compile lane
   (`cargo check --target wasm32-unknown-unknown --test wasm_contract`)
   instead of all-tests wasm compile.

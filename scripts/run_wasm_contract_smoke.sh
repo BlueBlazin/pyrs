@@ -81,12 +81,26 @@ run_browser_smoke() {
   wasm-pack test --headless --"${browser}" -- --lib
 }
 
+run_vm_probe_state_gate_browser_smoke() {
+  local browser="$1"
+  if [[ "${PYRS_WASM_RUN_VM_PROBE_BROWSER_STATE_GATE_SMOKE:-0}" != "1" ]]; then
+    echo "[wasm-contract] vm-probe state-gate browser smoke disabled (set PYRS_WASM_RUN_VM_PROBE_BROWSER_STATE_GATE_SMOKE=1 to enable)"
+    return 0
+  fi
+
+  echo "[wasm-contract] wasm-pack ${browser}: vm-probe state-gate smoke (terminate/recycle flow)"
+  wasm-pack test --headless --"${browser}" --features wasm-vm-probe -- --test wasm_contract after_terminate
+  wasm-pack test --headless --"${browser}" --features wasm-vm-probe -- --test wasm_contract shared_state_after_external_lifecycle_change
+}
+
 echo "[wasm-contract] wasm-pack detected; running optional browser smoke tests"
 if run_browser_smoke chrome; then
+  run_vm_probe_state_gate_browser_smoke chrome
   echo "[wasm-contract] browser smoke tests passed"
   exit 0
 fi
 
 echo "[wasm-contract] chrome smoke failed; trying firefox"
 run_browser_smoke firefox
+run_vm_probe_state_gate_browser_smoke firefox
 echo "[wasm-contract] browser smoke tests passed (firefox)"
