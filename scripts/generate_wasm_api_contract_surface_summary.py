@@ -71,6 +71,17 @@ def parse_source_worker_lifecycle_phase_keys(
     return effective_keys, vm_probe_keys
 
 
+def parse_source_worker_timeout_phase_keys(
+    default_keys: list[str], const_map: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    vm_probe_const_names = ["WASM_WORKER_TIMEOUT_CONFIGURED_PHASE"]
+    vm_probe_keys = [
+        const_map[name] for name in vm_probe_const_names if name in const_map
+    ]
+    effective_keys = ordered_unique(default_keys + vm_probe_keys)
+    return effective_keys, vm_probe_keys
+
+
 def parse_exported_top_level_functions(wasm_source: str) -> list[str]:
     pattern = re.compile(
         r"^\s*#\[wasm_bindgen\]\s*\n\s*pub fn ([a-zA-Z0-9_]+)\(",
@@ -124,6 +135,8 @@ def validate(
     docs_type_sections: dict[str, str],
     worker_lifecycle_phase_keys: list[str],
     worker_lifecycle_phase_keys_vm_probe_extra: list[str],
+    worker_timeout_phase_keys: list[str],
+    worker_timeout_phase_keys_vm_probe_extra: list[str],
 ) -> list[str]:
     errors: list[str] = []
 
@@ -165,6 +178,12 @@ def validate(
             errors.append(f"docs missing worker vm-probe lifecycle phase key '{key}'")
     if worker_lifecycle_phase_keys_vm_probe_extra and "wasm-vm-probe" not in docs_source:
         errors.append("docs missing wasm-vm-probe mention for lifecycle phase mode behavior")
+    for key in worker_timeout_phase_keys:
+        if key not in docs_source:
+            errors.append(f"docs missing worker timeout phase key '{key}'")
+    for key in worker_timeout_phase_keys_vm_probe_extra:
+        if key not in docs_source:
+            errors.append(f"docs missing worker vm-probe timeout phase key '{key}'")
 
     return errors
 
@@ -205,6 +224,15 @@ def main() -> int:
     ) = parse_source_worker_lifecycle_phase_keys(
         worker_lifecycle_phase_keys_default, const_map
     )
+    worker_timeout_phase_keys_default = parse_source_enum_keys(
+        wasm_source, "WasmWorkerTimeoutPhase", const_map
+    )
+    (
+        worker_timeout_phase_keys_effective,
+        worker_timeout_phase_keys_vm_probe_extra,
+    ) = parse_source_worker_timeout_phase_keys(
+        worker_timeout_phase_keys_default, const_map
+    )
     docs_functions = parse_docs_top_level_functions(docs_source)
     docs_type_sections = parse_docs_type_sections(docs_source)
 
@@ -216,6 +244,8 @@ def main() -> int:
         docs_type_sections=docs_type_sections,
         worker_lifecycle_phase_keys=worker_lifecycle_phase_keys_effective,
         worker_lifecycle_phase_keys_vm_probe_extra=worker_lifecycle_phase_keys_vm_probe_extra,
+        worker_timeout_phase_keys=worker_timeout_phase_keys_effective,
+        worker_timeout_phase_keys_vm_probe_extra=worker_timeout_phase_keys_vm_probe_extra,
     )
     if errors:
         print("wasm api contract surface validation failed:")
@@ -235,6 +265,9 @@ def main() -> int:
         "worker_lifecycle_phase_keys_default": worker_lifecycle_phase_keys_default,
         "worker_lifecycle_phase_keys_vm_probe_extra": worker_lifecycle_phase_keys_vm_probe_extra,
         "worker_lifecycle_phase_keys_effective": worker_lifecycle_phase_keys_effective,
+        "worker_timeout_phase_keys_default": worker_timeout_phase_keys_default,
+        "worker_timeout_phase_keys_vm_probe_extra": worker_timeout_phase_keys_vm_probe_extra,
+        "worker_timeout_phase_keys_effective": worker_timeout_phase_keys_effective,
     }
 
     out_path = Path(args.out)

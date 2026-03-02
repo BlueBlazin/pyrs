@@ -600,6 +600,9 @@ Completed on this branch:
   success/no blocker (configuration-only, enforcement still unwired).
 - latest: timeout phase key parity and docs guards now include vm-probe timeout
   extras across worker-contract, worker-docs, and client-flow summary scripts.
+- latest: `generate_wasm_api_contract_surface_summary.py` now also validates
+  worker timeout phase coverage (default + vm-probe timeout extras) in
+  `WASM_API_CONTRACT.md`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
