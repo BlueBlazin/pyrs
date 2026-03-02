@@ -58,6 +58,9 @@ if [[ "${PYRS_WASM_SKIP_CORE_SMOKE:-0}" != "1" ]]; then
   python3 scripts/generate_wasm_capability_summary.py \
     --out perf/wasm_capability_summary_latest.json
 
+  echo "[wasm-contract] playground worker contract check"
+  node scripts/check_playground_worker_contract.mjs
+
   echo "[wasm-contract] wasm host seam audit snapshot"
   python3 scripts/audit_wasm_host_seam.py \
     --out perf/wasm_host_seam_audit_latest.json

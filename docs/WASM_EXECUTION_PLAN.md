@@ -229,6 +229,10 @@ Branch helper:
 - capability summary helper:
   `python3 scripts/generate_wasm_capability_summary.py --out perf/wasm_capability_summary_latest.json`
   for fixture + source + docs parity on capability keys/support matrix.
+- playground worker contract helper:
+  `node scripts/check_playground_worker_contract.mjs`
+  for source-level parity between `/playground` worker transport wiring and
+  `website/public/workers/playground-runtime-worker.js` action handling.
 - promotion evidence-pack helper:
   `python3 scripts/collect_wasm_evidence_pack.py`
   to bundle required local wasm artifact snapshots under
@@ -820,6 +824,10 @@ Completed on this branch:
   - REPL transcript/highlighting behavior remains unchanged while execution is
     isolated from UI event-loop work,
   - reset now targets worker-side session state directly.
+- latest: local wasm gates now enforce playground worker transport contract
+  invariants via `node scripts/check_playground_worker_contract.mjs` in both
+  `scripts/check_wasm_branch.sh` and
+  `scripts/run_wasm_contract_smoke.sh`.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
