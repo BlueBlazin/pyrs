@@ -197,6 +197,9 @@ enforcement remains unwired.
 Session state behavior:
 
 - `last_state` is lifecycle-derived (`start`/`terminate`/`recycle` results).
+- `info().state` is session-local: once lifecycle calls run, `info()` reflects
+  the session’s most recent lifecycle state (instead of always top-level
+  unwired state).
 - `execute_with_operation` and `set_timeout_ms` preserve that session state in
   their returned/stateful telemetry fields.
 - in `wasm-vm-probe`, calling `recycle()` before execute/timeout yields

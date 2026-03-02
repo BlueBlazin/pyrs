@@ -589,6 +589,8 @@ Completed on this branch:
 - latest: `generate_wasm_session_contract_summary.py` now validates worker
   lifecycle fixture state prerequisites (`recycle` vm-probe `ready`,
   `terminate` vm-probe `unwired`) alongside existing execute contract rows.
+- latest: `WasmWorkerSession.info()` is now session-local state aware and
+  reports lifecycle-derived state after start/terminate/recycle calls.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

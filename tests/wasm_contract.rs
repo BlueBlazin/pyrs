@@ -812,6 +812,11 @@ fn wasm_worker_session_contract_is_stable() {
     } else {
         assert!(session.last_error().is_some());
     }
+    let info_after_start = session.info();
+    assert_eq!(
+        info_after_start.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[0])
+    );
 
     let terminate = session.terminate();
     assert_eq!(
@@ -837,6 +842,11 @@ fn wasm_worker_session_contract_is_stable() {
     } else {
         assert!(session.last_error().is_some());
     }
+    let info_after_terminate = session.info();
+    assert_eq!(
+        info_after_terminate.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[1])
+    );
 
     let recycle = session.recycle();
     assert_eq!(
@@ -862,6 +872,11 @@ fn wasm_worker_session_contract_is_stable() {
     } else {
         assert!(session.last_error().is_some());
     }
+    let info_after_recycle = session.info();
+    assert_eq!(
+        info_after_recycle.state(),
+        expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+    );
 
     let execute = session.execute("x = 1\n");
     if vm_probe_enabled() {
