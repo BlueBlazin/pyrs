@@ -20,6 +20,12 @@ From repo root:
 gh workflow run wasm-track.yml --ref codex/wasm
 ```
 
+Or use the one-shot helper (dispatch + watch + download + baseline validation):
+
+```bash
+scripts/run_wasm_browser_smoke_dispatch.sh --ref codex/wasm
+```
+
 Notes:
 - Manual dispatch runs both jobs:
   - `wasm-contract-gate` (mandatory branch gate),
@@ -58,6 +64,12 @@ Watch a specific run:
 
 ```bash
 gh run watch <run-id>
+```
+
+The helper script prints both run URL and downloaded artifact path:
+
+```bash
+scripts/run_wasm_browser_smoke_dispatch.sh --run-id <run-id>
 ```
 
 ## Download Artifacts

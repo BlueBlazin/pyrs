@@ -266,6 +266,10 @@ Branch helper:
 - browser-smoke dispatch runbook:
   `docs/WASM_BROWSER_SMOKE_RUNBOOK.md`
   documents repeatable `gh` workflow-dispatch + artifact capture steps.
+- browser-smoke dispatch helper:
+  `scripts/run_wasm_browser_smoke_dispatch.sh`
+  runs one-shot workflow dispatch/watch/download flow with baseline-summary
+  validation so browser evidence capture is deterministic.
 
 ## Merge Decision Rubric
 
@@ -835,6 +839,10 @@ Completed on this branch:
   envelope and action contracts (`load`, `execute`, `reset`) in
   `docs/WASM_CLIENT_INTEGRATION_FLOW.md` and `docs/WASM_API_CONTRACT.md`,
   with both docs summary generators re-run to keep source/doc gates current.
+- latest: browser-smoke capture now has an operator helper script
+  (`scripts/run_wasm_browser_smoke_dispatch.sh`) that dispatches
+  `wasm-track.yml`, waits for completion, downloads artifacts, and validates
+  `wasm_browser_smoke_baseline_latest.json` from the run output.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).
