@@ -12,6 +12,8 @@ Options:
   --ref <branch>        Git ref/branch for workflow dispatch (default: codex/wasm)
   --workflow <name>     Workflow file or name (default: wasm-track.yml)
   --run-id <id>         Existing run id to watch/download (skip dispatch)
+  --update-docs-snapshot
+                        Refresh wasm docs snapshot refs to the selected run id
   --out-dir <dir>       Download root directory
                         (default: perf/wasm-browser-smoke-run)
   --skip-download       Skip artifact download + baseline validation
@@ -89,6 +91,7 @@ workflow_name="wasm-track.yml"
 run_id=""
 download_root="perf/wasm-browser-smoke-run"
 skip_download=0
+update_docs_snapshot=0
 expected_ref_sha=""
 dispatched_run=0
 
@@ -109,6 +112,10 @@ while [[ $# -gt 0 ]]; do
     --out-dir)
       download_root="$2"
       shift 2
+      ;;
+    --update-docs-snapshot)
+      update_docs_snapshot=1
+      shift
       ;;
     --skip-download)
       skip_download=1
@@ -181,6 +188,14 @@ if [[ "${dispatched_run}" == "1" ]] && [[ -n "${expected_ref_sha}" ]] && [[ "${r
   exit 1
 fi
 echo "[wasm-browser-dispatch] run complete: ${run_url}"
+
+if [[ "${update_docs_snapshot}" == "1" ]]; then
+  echo "[wasm-browser-dispatch] refreshing wasm docs snapshot for run ${run_id}"
+  python3 scripts/update_wasm_dispatch_snapshot.py \
+    --run-id "${run_id}" \
+    --run-url "${run_url}" \
+    --head-sha "${run_head_sha}"
+fi
 
 if [[ "${skip_download}" == "1" ]]; then
   echo "[wasm-browser-dispatch] skipping artifact download (--skip-download)"

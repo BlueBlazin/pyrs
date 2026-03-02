@@ -73,6 +73,13 @@ The helper script prints both run URL and downloaded artifact path:
 scripts/run_wasm_browser_smoke_dispatch.sh --run-id <run-id>
 ```
 
+To refresh wasm docs snapshot references (runbook/promotion/execution docs)
+to the selected run in the same command:
+
+```bash
+scripts/run_wasm_browser_smoke_dispatch.sh --run-id <run-id> --update-docs-snapshot
+```
+
 On successful download/validation, the helper also writes:
 - `<download-dir>/wasm-artifact-hashes.json`
 - `<download-dir>/wasm-artifact-hashes.md`
@@ -85,6 +92,13 @@ If artifact downloads are unavailable in your environment, use:
 
 ```bash
 scripts/run_wasm_browser_smoke_dispatch.sh --run-id <run-id> --skip-download
+```
+
+If you only want to update docs snapshot references without downloading
+artifacts, combine both options:
+
+```bash
+scripts/run_wasm_browser_smoke_dispatch.sh --run-id <run-id> --skip-download --update-docs-snapshot
 ```
 
 ## Download Artifacts
