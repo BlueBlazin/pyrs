@@ -13,6 +13,8 @@ import Callout from "../../components/docs/Callout.astro";
 <DocSection>
 	The browser playground lives at <a href="/playground/"><code>/playground</code></a>.
 	It auto-loads the wasm runtime and provides a minimal REPL-focused interface.
+	Runtime execution is handled in a dedicated Web Worker so command execution
+	does not run on the page UI thread.
 </DocSection>
 
 <DocSection title="Quick Start">
@@ -71,10 +73,6 @@ pnpm --dir website dev
 		<tr>
 			<td>stderr</td>
 			<td>Runtime errors, compile/syntax failures, or unsupported capability messages.</td>
-		</tr>
-		<tr>
-			<td>meta</td>
-			<td>Session hints and execution phase markers.</td>
 		</tr>
 	</DataTable>
 </DocSection>

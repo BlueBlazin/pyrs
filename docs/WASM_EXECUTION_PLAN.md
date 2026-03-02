@@ -812,6 +812,14 @@ Completed on this branch:
   when `wasm-pack` output contains `output filename collision`, preventing
   silent regression toward Cargo’s future hard-error behavior for wasm bin/lib
   artifact name conflicts.
+- latest: `/playground` runtime execution now runs through a dedicated browser
+  Web Worker transport (`website/public/workers/playground-runtime-worker.js`)
+  so wasm load/execute/reset calls are off-main-thread:
+  - main-thread UI uses request/response worker RPC (`load`, `execute`,
+    `reset`) instead of direct `WasmReplSession`/`WasmSession` calls,
+  - REPL transcript/highlighting behavior remains unchanged while execution is
+    isolated from UI event-loop work,
+  - reset now targets worker-side session state directly.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

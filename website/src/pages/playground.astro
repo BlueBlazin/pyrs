@@ -4,6 +4,7 @@ import HighlightChip from "../components/ui/HighlightChip.astro";
 
 const baseUrl = import.meta.env.BASE_URL || "/";
 const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
+const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runtime-worker.js`;
 ---
 
 <SiteLayout
@@ -12,7 +13,11 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 	navContext="playground"
 	noindex={true}
 >
-	<section class="playground-page" data-wasm-entrypoint={wasmEntrypoint}>
+	<section
+		class="playground-page"
+		data-wasm-entrypoint={wasmEntrypoint}
+		data-worker-entrypoint={workerEntrypoint}
+	>
 		<header class="playground-header">
 			<div class="playground-kicker-row">
 				<p class="playground-kicker">WASM Playground</p>
@@ -89,10 +94,16 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 			pageRoot instanceof HTMLElement && pageRoot.dataset.wasmEntrypoint
 				? pageRoot.dataset.wasmEntrypoint
 				: "/wasm/pyrs.js";
+		const workerEntrypoint =
+			pageRoot instanceof HTMLElement && pageRoot.dataset.workerEntrypoint
+				? pageRoot.dataset.workerEntrypoint
+				: "/workers/playground-runtime-worker.js";
 
-		let runtimeModule = null;
+		let runtimeWorker = null;
+		let runtimeWorkerReady = false;
 		let runtimeLoadPromise = null;
-		let replSession = null;
+		let nextWorkerRequestId = 1;
+		const workerPendingRequests = new Map();
 		let lastRuntimeInfo = null;
 		let bannerRendered = false;
 		const commandHistory = [];
@@ -454,7 +465,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		};
 
 		const renderStartupBanner = (force = false) => {
-			if (!runtimeModule) return;
+			if (!runtimeWorkerReady) return;
 			if (bannerRendered && !force) return;
 			const version = String(readField(lastRuntimeInfo, "pyrs_version") || "dev");
 			const backend = String(readField(lastRuntimeInfo, "execution_backend") || "wasm");
@@ -474,49 +485,98 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 				}
 			}
 			bannerRendered = false;
-			if (preserveBanner && runtimeModule) {
+			if (preserveBanner && runtimeWorkerReady) {
 				renderStartupBanner(true);
 			}
 			scrollTranscriptToEnd();
 		};
 
-		const getReplSession = () => {
-			if (!runtimeModule) return null;
-			if (replSession) return replSession;
-			if (typeof runtimeModule.WasmReplSession === "function") {
-				replSession = new runtimeModule.WasmReplSession();
-				return replSession;
+		const rejectAllWorkerRequests = (message) => {
+			for (const pending of workerPendingRequests.values()) {
+				pending.reject(new Error(message));
 			}
-			if (typeof runtimeModule.WasmSession === "function") {
-				replSession = new runtimeModule.WasmSession();
-				return replSession;
+			workerPendingRequests.clear();
+		};
+
+		const ensureRuntimeWorker = () => {
+			if (runtimeWorker) return runtimeWorker;
+			if (typeof Worker !== "function") {
+				setStatus("error", "Web Worker is not supported in this browser");
+				appendTranscriptLine("Web Worker is unavailable in this browser.", "stderr");
+				return null;
 			}
-			return null;
+
+			const worker = new Worker(workerEntrypoint, { type: "module" });
+			worker.addEventListener("message", (event) => {
+				const payload = event.data;
+				if (!payload || typeof payload !== "object") {
+					return;
+				}
+				const requestId = Number(payload.requestId);
+				if (!Number.isFinite(requestId)) {
+					return;
+				}
+				const pending = workerPendingRequests.get(requestId);
+				if (!pending) {
+					return;
+				}
+				workerPendingRequests.delete(requestId);
+				pending.resolve(payload);
+			});
+			worker.addEventListener("error", (event) => {
+				const message = event.message || "runtime worker crashed";
+				runtimeWorkerReady = false;
+				rejectAllWorkerRequests(message);
+				setStatus("error", "Runtime worker failed");
+				appendTranscriptLine(`Runtime worker error: ${message}`, "stderr");
+			});
+			worker.addEventListener("messageerror", () => {
+				runtimeWorkerReady = false;
+				rejectAllWorkerRequests("runtime worker returned an invalid response");
+				setStatus("error", "Runtime worker response decoding failed");
+				appendTranscriptLine("Runtime worker response decoding failed.", "stderr");
+			});
+			runtimeWorker = worker;
+			return worker;
+		};
+
+		const sendWorkerRequest = (action, payload = {}) => {
+			const worker = ensureRuntimeWorker();
+			if (!worker) {
+				return Promise.reject(new Error("runtime worker is unavailable"));
+			}
+			const requestId = nextWorkerRequestId++;
+			return new Promise((resolve, reject) => {
+				workerPendingRequests.set(requestId, { resolve, reject });
+				try {
+					worker.postMessage({ requestId, action, ...payload });
+				} catch (error) {
+					workerPendingRequests.delete(requestId);
+					reject(error instanceof Error ? error : new Error(String(error)));
+				}
+			});
 		};
 
 		const ensureRuntimeLoaded = async () => {
-			if (runtimeModule) return true;
+			if (runtimeWorkerReady) return true;
 			if (runtimeLoadPromise) return runtimeLoadPromise;
 
 			runtimeLoadPromise = (async () => {
 				setStatus("loading", "Loading runtime…");
 				try {
-					const moduleRef = await import(wasmEntrypoint);
-					if (typeof moduleRef.default === "function") {
-						await moduleRef.default();
-					}
-					if (typeof moduleRef.init_wasm_runtime === "function") {
-						moduleRef.init_wasm_runtime();
+					const response = await sendWorkerRequest("load", { wasmEntrypoint });
+					if (!response.ok) {
+						const message =
+							typeof response.error === "string" && response.error.length > 0
+								? response.error
+								: "runtime failed to load";
+						setStatus("error", "Runtime failed to load");
+						appendTranscriptLine(`Runtime load error: ${message}`, "stderr");
+						return false;
 					}
 
-					runtimeModule = moduleRef;
-					replSession = null;
-					getReplSession();
-
-					lastRuntimeInfo =
-						typeof moduleRef.wasm_runtime_info === "function"
-							? moduleRef.wasm_runtime_info()
-							: null;
+					runtimeWorkerReady = true;
+					lastRuntimeInfo = response.runtimeInfo || null;
 					const backend = String(readField(lastRuntimeInfo, "execution_backend") || "wasm");
 					const executionEnabled = Boolean(readField(lastRuntimeInfo, "supports_execution"));
 					setStatus(
@@ -529,6 +589,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 					return true;
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
+					runtimeWorkerReady = false;
 					setStatus("error", "Runtime failed to load");
 					appendTranscriptLine(`Runtime load error: ${message}`, "stderr");
 					return false;
@@ -552,23 +613,24 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 
 			setBusy(true);
 			const loaded = await ensureRuntimeLoaded();
-			if (!loaded || !runtimeModule) {
+			if (!loaded) {
 				setBusy(false);
 				return;
 			}
 
 			try {
-				const session = getReplSession();
-				if (session && typeof session.execute_input === "function") {
-					renderExecutionResult(session.execute_input(normalized));
-				} else if (session && typeof session.execute === "function") {
-					renderExecutionResult(session.execute(normalized));
-				} else if (typeof runtimeModule.execute === "function") {
-					renderExecutionResult(runtimeModule.execute(normalized));
+				const response = await sendWorkerRequest("execute", { source: normalized });
+				if (response.ok && response.result) {
+					renderExecutionResult(response.result);
 				} else {
-					appendTranscriptLine("Runtime execute entrypoint is unavailable.", "stderr");
+					const message =
+						typeof response.error === "string" && response.error.length > 0
+							? response.error
+							: "Runtime execute entrypoint is unavailable.";
+					appendTranscriptLine(message, "stderr");
 				}
 			} catch (error) {
+				runtimeWorkerReady = false;
 				const message = error instanceof Error ? error.message : String(error);
 				appendTranscriptLine(message, "stderr");
 			} finally {
@@ -660,19 +722,44 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		}
 
 		if (resetButton instanceof HTMLButtonElement) {
-			resetButton.addEventListener("click", () => {
-				const session = getReplSession();
-				if (session && typeof session.reset === "function") {
-					session.reset();
-				} else {
-					replSession = null;
-					getReplSession();
+			resetButton.addEventListener("click", async () => {
+				setBusy(true);
+				const loaded = await ensureRuntimeLoaded();
+				if (!loaded) {
+					setBusy(false);
+					focusInputAtEnd();
+					return;
+				}
+				try {
+					const response = await sendWorkerRequest("reset");
+					if (!response.ok) {
+						const message =
+							typeof response.error === "string" && response.error.length > 0
+								? response.error
+								: "Runtime session reset failed.";
+						appendTranscriptLine(message, "stderr");
+					}
+				} catch (error) {
+					runtimeWorkerReady = false;
+					const message = error instanceof Error ? error.message : String(error);
+					appendTranscriptLine(message, "stderr");
 				}
 				clearTranscript(true);
-				setStatus("ready", "Runtime ready");
+				const backend = String(readField(lastRuntimeInfo, "execution_backend") || "wasm");
+				setStatus("ready", `Runtime ready (${backend})`);
+				setBusy(false);
 				focusInputAtEnd();
 			});
 		}
+
+		window.addEventListener("beforeunload", () => {
+			if (runtimeWorker) {
+				rejectAllWorkerRequests("runtime worker terminated");
+				runtimeWorker.terminate();
+				runtimeWorker = null;
+				runtimeWorkerReady = false;
+			}
+		});
 
 		ensureRuntimeLoaded().then(() => {
 			focusInputAtEnd();
