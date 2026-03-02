@@ -794,6 +794,13 @@ Completed on this branch:
     `failed` state),
   - timeout-triggered recycle resets worker VM state and timeout value to
     default (`5000` ms), preserving deterministic recovery semantics.
+- latest: browser vm-probe smoke coverage now includes:
+  - timeout-state assertions via `wasm_worker_current_timeout_ms()` (configured
+    timeout visible before execute and reset to default after timeout-triggered
+    recycle),
+  - cross-path state-gate validation that top-level `execute()` remains
+    functional while worker state is `unwired` (worker execute blocked,
+    top-level execute still `phase = "ok"`).
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

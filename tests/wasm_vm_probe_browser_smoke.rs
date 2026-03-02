@@ -1,8 +1,9 @@
 #![cfg(all(target_arch = "wasm32", feature = "wasm-vm-probe"))]
 
 use pyrs::wasm::{
-    execute, wasm_runtime_info, wasm_worker_info, wasm_worker_recycle, wasm_worker_set_timeout,
-    wasm_worker_start, wasm_worker_terminate, wasm_worker_execute_with_operation,
+    execute, wasm_runtime_info, wasm_worker_current_timeout_ms, wasm_worker_execute_with_operation,
+    wasm_worker_info, wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start,
+    wasm_worker_terminate,
 };
 use wasm_bindgen_test::*;
 
@@ -75,6 +76,7 @@ fn vm_probe_worker_timeout_path_uses_wasm_clock() {
     assert_eq!(configured.phase(), "worker_timeout_configured".to_string());
     assert_eq!(configured.state(), "ready".to_string());
     assert!(configured.success());
+    assert_eq!(wasm_worker_current_timeout_ms(), 50);
 
     let timed_out = wasm_worker_execute_with_operation("while True:\n    pass\n");
     assert_eq!(timed_out.phase(), "runtime_error".to_string());
@@ -88,4 +90,39 @@ fn vm_probe_worker_timeout_path_uses_wasm_clock() {
         "expected timeout marker in runtime error, got: {}",
         timeout_error
     );
+    assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+}
+
+#[wasm_bindgen_test]
+fn vm_probe_top_level_execute_survives_worker_terminated_state() {
+    let recycle = wasm_worker_recycle();
+    assert_eq!(recycle.phase(), "worker_recycled".to_string());
+    assert_eq!(recycle.state(), "ready".to_string());
+
+    let terminate = wasm_worker_terminate();
+    assert_eq!(terminate.phase(), "worker_terminated".to_string());
+    assert_eq!(terminate.state(), "unwired".to_string());
+    assert!(terminate.success());
+
+    let blocked_worker = wasm_worker_execute_with_operation("1 + 1");
+    assert_eq!(
+        blocked_worker.phase(),
+        "unsupported_worker_execution".to_string()
+    );
+    assert_eq!(blocked_worker.state(), "unwired".to_string());
+    assert!(!blocked_worker.success());
+    assert_eq!(
+        blocked_worker.blocker_key(),
+        Some("worker_runtime_unwired".to_string())
+    );
+
+    let top_level = execute("40 + 2");
+    assert_eq!(top_level.phase(), "ok".to_string());
+    assert!(top_level.success());
+    assert!(top_level.error().is_none());
+
+    let restore = wasm_worker_recycle();
+    assert_eq!(restore.phase(), "worker_recycled".to_string());
+    assert_eq!(restore.state(), "ready".to_string());
+    assert!(restore.success());
 }
