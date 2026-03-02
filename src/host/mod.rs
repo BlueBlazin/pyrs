@@ -320,7 +320,10 @@ mod tests {
             host.unsupported_message(HostCapability::ProcessArgs)
                 .is_none()
         );
-        assert!(host.unsupported_message(HostCapability::ClockTime).is_none());
+        assert!(
+            host.unsupported_message(HostCapability::ClockTime)
+                .is_none()
+        );
     }
 
     #[test]

@@ -35,7 +35,7 @@ This guide defines the recommended browser call order for current wasm APIs.
 ## Worker Branch (Current)
 
 `wasm_worker_start()`, `wasm_worker_terminate()`, and `wasm_worker_recycle()`
-are currently explicit stubs.
+are explicit contract lifecycle controls.
 
 - default build:
   - `wasm_worker_start()` -> `phase = "unsupported_worker_start"`
@@ -47,6 +47,8 @@ are currently explicit stubs.
   - `wasm_worker_terminate()` -> `phase = "worker_terminated"` (`state = "unwired"`)
   - `wasm_worker_recycle()` -> `phase = "worker_recycled"` (`state = "ready"`)
   - lifecycle calls return `success = true`, `blocker_key = None`, `error = None`
+  - `start`/`recycle` reset worker runtime state to a fresh VM session
+  - `terminate` clears worker runtime state
 - `wasm_worker_execute(source)` -> `phase` in:
   - `syntax_error`
   - `compile_error`
@@ -59,6 +61,7 @@ are currently explicit stubs.
   - `wasm-vm-probe` build:
     - capability-allowed snippets return `ok` or `runtime_error` only when
       worker `state = "ready"`,
+    - capability-allowed snippets run on a persistent worker VM while `state = "ready"`,
     - when worker `state != "ready"`, capability-allowed snippets return
       `unsupported_worker_execution` with `blocker_key = "worker_runtime_unwired"`.
 - `wasm_worker_set_timeout(timeout_ms)` -> `phase` in:

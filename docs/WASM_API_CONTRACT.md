@@ -61,16 +61,19 @@ This document defines the JS-facing contract currently exported by
     (`phase = "unsupported_worker_start"`).
   - `wasm-vm-probe`: lifecycle probe success
     (`phase = "worker_started"`, `state = "ready"`).
+  - `wasm-vm-probe`: start resets worker VM runtime state.
 - `wasm_worker_terminate() -> WasmWorkerLifecycleResult`
   - default build: unsupported unwired lifecycle result
     (`phase = "unsupported_worker_terminate"`).
   - `wasm-vm-probe`: lifecycle probe success
     (`phase = "worker_terminated"`, `state = "unwired"`).
+  - `wasm-vm-probe`: terminate clears worker VM runtime state.
 - `wasm_worker_recycle() -> WasmWorkerLifecycleResult`
   - default build: unsupported unwired lifecycle result
     (`phase = "unsupported_worker_recycle"`).
   - `wasm-vm-probe`: lifecycle probe success
     (`phase = "worker_recycled"`, `state = "ready"`).
+  - `wasm-vm-probe`: recycle resets worker VM runtime state.
 - `wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult`
   - Worker timeout update contract with deterministic phases:
     - `invalid_worker_timeout` (out-of-range value)
@@ -85,6 +88,7 @@ This document defines the JS-facing contract currently exported by
     - `unsupported_worker_execution`
   - `wasm-vm-probe` worker execute phases:
     - same parse/compile/capability-preflight phases as default,
+    - worker executes use a persistent worker VM while `state = "ready"`,
     - capability-allowed snippets:
       - return `ok` or `runtime_error` when worker `state = "ready"`,
       - return `unsupported_worker_execution` when worker `state != "ready"`.

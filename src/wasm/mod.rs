@@ -1,3 +1,5 @@
+#[cfg(feature = "wasm-vm-probe")]
+use std::cell::RefCell;
 use std::collections::HashSet;
 #[cfg(feature = "wasm-vm-probe")]
 use std::sync::Arc;
@@ -38,8 +40,7 @@ const WASM_WORKER_TIMEOUT_MAX_MS: u32 = 120_000;
 const WASM_REPL_FILENAME: &str = "<wasm-repl>";
 const WASM_WORKER_TIMEOUT_UNSUPPORTED_PHASE: &str = "unsupported_worker_timeout_enforcement";
 const WASM_WORKER_TIMEOUT_INVALID_PHASE: &str = "invalid_worker_timeout";
-const WASM_WORKER_TIMEOUT_ENFORCEMENT_UNWIRED_REASON: &str =
-    "worker timeout enforcement is not wired yet (wasm-vm-probe currently supports configuration-only updates)";
+const WASM_WORKER_TIMEOUT_ENFORCEMENT_UNWIRED_REASON: &str = "worker timeout enforcement is not wired yet (wasm-vm-probe currently supports configuration-only updates)";
 #[cfg(feature = "wasm-vm-probe")]
 const WASM_WORKER_TIMEOUT_CONFIGURED_PHASE: &str = "worker_timeout_configured";
 const WASM_MODULE_BLOCKER_POLICY: [(&str, &str); 10] = [
@@ -367,6 +368,10 @@ pub fn wasm_api_version() -> u32 {
 static PANIC_HOOK_ONCE: Once = Once::new();
 static NEXT_WASM_WORKER_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
 static CURRENT_WASM_WORKER_STATE: AtomicU8 = AtomicU8::new(worker_state_baseline() as u8);
+#[cfg(feature = "wasm-vm-probe")]
+thread_local! {
+    static WASM_WORKER_VM: RefCell<Option<Vm>> = const { RefCell::new(None) };
+}
 
 fn next_worker_operation_id(action: &str) -> String {
     let id = NEXT_WASM_WORKER_OPERATION_ID.fetch_add(1, Ordering::Relaxed);
@@ -382,6 +387,29 @@ pub fn init_wasm_runtime() {
 #[cfg(feature = "wasm-vm-probe")]
 fn new_wasm_repl_vm() -> Vm {
     Vm::new_with_host(Arc::new(WasmHost))
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn clear_worker_vm() {
+    WASM_WORKER_VM.with(|slot| {
+        *slot.borrow_mut() = None;
+    });
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn reset_worker_vm() {
+    WASM_WORKER_VM.with(|slot| {
+        *slot.borrow_mut() = Some(new_wasm_repl_vm());
+    });
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn ensure_worker_vm_initialized() {
+    WASM_WORKER_VM.with(|slot| {
+        if slot.borrow().is_none() {
+            *slot.borrow_mut() = Some(new_wasm_repl_vm());
+        }
+    });
 }
 
 #[wasm_bindgen(getter_with_clone)]
@@ -1068,26 +1096,27 @@ impl WasmReplSession {
             if parsed.module.body.len() == 1
                 && let crate::ast::StmtKind::Expr(expr) = &parsed.module.body[0].node
             {
-                let expression_code =
-                    match crate::compiler::compile_expression_with_filename(expr, WASM_REPL_FILENAME)
-                    {
-                        Ok(code) => code,
-                        Err(err) => {
-                            let (message, line, column) = format_compile_error(&err);
-                            let result = WasmExecutionResult {
-                                success: false,
-                                phase: WasmExecutionPhase::CompileError.key().to_string(),
-                                stdout: String::new(),
-                                stderr: message.clone(),
-                                error: Some(message),
-                                blocker_key: None,
-                                line,
-                                column,
-                            };
-                            self.last_error = result.error.clone();
-                            return result;
-                        }
-                    };
+                let expression_code = match crate::compiler::compile_expression_with_filename(
+                    expr,
+                    WASM_REPL_FILENAME,
+                ) {
+                    Ok(code) => code,
+                    Err(err) => {
+                        let (message, line, column) = format_compile_error(&err);
+                        let result = WasmExecutionResult {
+                            success: false,
+                            phase: WasmExecutionPhase::CompileError.key().to_string(),
+                            stdout: String::new(),
+                            stderr: message.clone(),
+                            error: Some(message),
+                            blocker_key: None,
+                            line,
+                            column,
+                        };
+                        self.last_error = result.error.clone();
+                        return result;
+                    }
+                };
 
                 let result = match self.vm.execute(&expression_code) {
                     Ok(value) => {
@@ -1895,6 +1924,8 @@ fn worker_vm_probe_lifecycle_result(
 #[cfg(feature = "wasm-vm-probe")]
 #[wasm_bindgen]
 pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
+    set_current_worker_state(WasmWorkerState::Starting);
+    reset_worker_vm();
     worker_vm_probe_lifecycle_result(
         "start",
         WASM_WORKER_LIFECYCLE_PHASE_STARTED,
@@ -1920,6 +1951,8 @@ pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
 #[cfg(feature = "wasm-vm-probe")]
 #[wasm_bindgen]
 pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
+    set_current_worker_state(WasmWorkerState::Terminating);
+    clear_worker_vm();
     worker_vm_probe_lifecycle_result(
         "terminate",
         WASM_WORKER_LIFECYCLE_PHASE_TERMINATED,
@@ -1945,6 +1978,8 @@ pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
 #[cfg(feature = "wasm-vm-probe")]
 #[wasm_bindgen]
 pub fn wasm_worker_recycle() -> WasmWorkerLifecycleResult {
+    set_current_worker_state(WasmWorkerState::Starting);
+    reset_worker_vm();
     worker_vm_probe_lifecycle_result(
         "recycle",
         WASM_WORKER_LIFECYCLE_PHASE_RECYCLED,
@@ -2312,7 +2347,11 @@ fn execute_snippet_with_contract(
     if wasm_vm_runtime_enabled() {
         #[cfg(feature = "wasm-vm-probe")]
         {
-            return execute_compiled_snippet_with_vm(&parsed.code);
+            return if contract.requires_worker_ready_state() {
+                execute_compiled_snippet_with_worker_vm(&parsed.code)
+            } else {
+                execute_compiled_snippet_with_fresh_vm(&parsed.code)
+            };
         }
     }
 
@@ -2461,8 +2500,10 @@ pub fn wasm_execution_blocker_error(blocker_key: &str) -> Option<String> {
 }
 
 #[cfg(feature = "wasm-vm-probe")]
-fn execute_compiled_snippet_with_vm(code: &crate::bytecode::CodeObject) -> WasmExecutionResult {
-    let mut vm = Vm::new_with_host(Arc::new(WasmHost));
+fn execute_compiled_snippet_with_vm(
+    vm: &mut Vm,
+    code: &crate::bytecode::CodeObject,
+) -> WasmExecutionResult {
     match vm.execute(code) {
         Ok(_) => WasmExecutionResult {
             success: true,
@@ -2476,6 +2517,33 @@ fn execute_compiled_snippet_with_vm(code: &crate::bytecode::CodeObject) -> WasmE
         },
         Err(err) => runtime_error_to_execution_result(err),
     }
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn execute_compiled_snippet_with_fresh_vm(
+    code: &crate::bytecode::CodeObject,
+) -> WasmExecutionResult {
+    let mut vm = Vm::new_with_host(Arc::new(WasmHost));
+    execute_compiled_snippet_with_vm(&mut vm, code)
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn execute_compiled_snippet_with_worker_vm(
+    code: &crate::bytecode::CodeObject,
+) -> WasmExecutionResult {
+    ensure_worker_vm_initialized();
+    set_current_worker_state(WasmWorkerState::Busy);
+    let result = WASM_WORKER_VM.with(|slot| {
+        let mut worker_vm = slot.borrow_mut();
+        let vm = worker_vm
+            .as_mut()
+            .expect("worker vm must be initialized before execute");
+        execute_compiled_snippet_with_vm(vm, code)
+    });
+    if current_worker_state() == WasmWorkerState::Busy {
+        set_current_worker_state(WasmWorkerState::Ready);
+    }
+    result
 }
 
 #[cfg(feature = "wasm-vm-probe")]
@@ -2842,10 +2910,73 @@ mod tests {
         assert!(resumed_execute.blocker_key().is_none());
 
         let resumed_timeout = wasm_worker_set_timeout(5_000);
-        assert_eq!(resumed_timeout.phase(), "worker_timeout_configured".to_string());
+        assert_eq!(
+            resumed_timeout.phase(),
+            "worker_timeout_configured".to_string()
+        );
         assert_eq!(resumed_timeout.state(), "ready".to_string());
         assert!(resumed_timeout.success());
         assert!(resumed_timeout.blocker_key().is_none());
+    }
+
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
+    fn wasm_worker_vm_probe_runtime_state_persists_until_recycle_or_start() {
+        let recycle = wasm_worker_recycle();
+        assert_eq!(recycle.phase(), "worker_recycled".to_string());
+        assert_eq!(recycle.state(), "ready".to_string());
+
+        let assign = wasm_worker_execute("x = 41\n");
+        assert_eq!(assign.phase(), "ok".to_string());
+        assert!(assign.success());
+
+        let assert_present = wasm_worker_execute("assert x == 41\n");
+        assert_eq!(assert_present.phase(), "ok".to_string());
+        assert!(assert_present.success());
+
+        let recycled = wasm_worker_recycle();
+        assert_eq!(recycled.phase(), "worker_recycled".to_string());
+        assert_eq!(recycled.state(), "ready".to_string());
+
+        let missing_after_recycle = wasm_worker_execute("x\n");
+        assert_eq!(missing_after_recycle.phase(), "runtime_error".to_string());
+        assert!(!missing_after_recycle.success());
+        assert!(
+            missing_after_recycle.stderr().contains("NameError"),
+            "expected NameError after recycle reset, got: {}",
+            missing_after_recycle.stderr()
+        );
+
+        let reassign = wasm_worker_execute("x = 9\n");
+        assert_eq!(reassign.phase(), "ok".to_string());
+        assert!(reassign.success());
+
+        let terminate = wasm_worker_terminate();
+        assert_eq!(terminate.phase(), "worker_terminated".to_string());
+        assert_eq!(terminate.state(), "unwired".to_string());
+
+        let blocked_while_terminated = wasm_worker_execute("x\n");
+        assert_eq!(
+            blocked_while_terminated.phase(),
+            "unsupported_worker_execution".to_string()
+        );
+        assert_eq!(
+            blocked_while_terminated.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+
+        let start = wasm_worker_start();
+        assert_eq!(start.phase(), "worker_started".to_string());
+        assert_eq!(start.state(), "ready".to_string());
+
+        let missing_after_start = wasm_worker_execute("x\n");
+        assert_eq!(missing_after_start.phase(), "runtime_error".to_string());
+        assert!(!missing_after_start.success());
+        assert!(
+            missing_after_start.stderr().contains("NameError"),
+            "expected NameError after terminate/start reset, got: {}",
+            missing_after_start.stderr()
+        );
     }
 
     #[cfg(not(feature = "wasm-vm-probe"))]
@@ -2855,10 +2986,16 @@ mod tests {
         assert_eq!(start.phase(), "unsupported_worker_start".to_string());
         assert_eq!(start.state(), "unwired".to_string());
         assert!(!start.success());
-        assert_eq!(start.blocker_key(), Some("worker_runtime_unwired".to_string()));
+        assert_eq!(
+            start.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
 
         let terminate = wasm_worker_terminate();
-        assert_eq!(terminate.phase(), "unsupported_worker_terminate".to_string());
+        assert_eq!(
+            terminate.phase(),
+            "unsupported_worker_terminate".to_string()
+        );
         assert_eq!(terminate.state(), "unwired".to_string());
         assert!(!terminate.success());
         assert_eq!(

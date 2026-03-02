@@ -129,6 +129,7 @@ keys (`worker_runtime_unwired` + module-policy capability keys).
   - `state = "ready"`
   - `blocker_key = None`
   - `error = None`
+  - worker VM state is reset to a fresh runtime session
 
 `wasm_worker_terminate()` currently returns:
 
@@ -146,6 +147,7 @@ keys (`worker_runtime_unwired` + module-policy capability keys).
   - `state = "unwired"`
   - `blocker_key = None`
   - `error = None`
+  - worker VM runtime state is cleared
 
 `wasm_worker_recycle()` currently returns:
 
@@ -163,6 +165,7 @@ keys (`worker_runtime_unwired` + module-policy capability keys).
   - `state = "ready"`
   - `blocker_key = None`
   - `error = None`
+  - worker VM state is reset to a fresh runtime session
 
 `wasm_worker_set_timeout(timeout_ms)` currently returns:
 
@@ -208,6 +211,7 @@ controls, and `enforcement_supported` for hard runtime-enforcement guarantees.
       - `phase = "ok"` on VM success
       - `phase = "runtime_error"` on VM runtime failure
       - `blocker_key = None`
+      - execution uses a persistent worker VM (state survives across calls)
     - when `state != "ready"`:
       - `phase = "unsupported_worker_execution"`
       - `blocker_key = "worker_runtime_unwired"`
@@ -243,7 +247,7 @@ Session state behavior:
 - in `wasm-vm-probe`, calling `recycle()` before execute/timeout yields
   `last_state = "ready"` for those follow-up operations.
 
-## State Model (Planned)
+## State Model
 
 Future states should evolve without breaking existing consumers:
 
@@ -254,13 +258,15 @@ Future states should evolve without breaking existing consumers:
 5. `terminating`
 6. `failed`
 
-The transition from true worker lifecycle orchestration is still a future
-milestone. Current behavior is:
+Current behavior is:
 
-- default builds stay unwired with explicit unsupported lifecycle phases,
-- `wasm-vm-probe` builds expose deterministic lifecycle probe phases
-  (`worker_started` / `worker_terminated` / `worker_recycled`) so UI paths can
-  validate control flow without a real worker thread.
+- default builds stay unwired with explicit unsupported lifecycle phases.
+- `wasm-vm-probe` builds expose deterministic lifecycle phases
+  (`worker_started` / `worker_terminated` / `worker_recycled`) and run
+  capability-allowed snippets on a persistent worker VM.
+- `start` and `recycle` reinitialize worker VM runtime state; `terminate`
+  clears worker runtime state.
+- there is still no true Web Worker thread orchestration in this milestone.
 
 ## Interruption Model
 

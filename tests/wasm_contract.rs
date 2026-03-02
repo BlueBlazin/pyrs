@@ -17,11 +17,10 @@ use crate::wasm_contract_snippets::{
 use crate::wasm_module_policy::WASM_MODULE_POLICY_FIXTURES;
 use crate::wasm_worker_contract::{
     WASM_WORKER_BLOCKER_KEYS, WASM_WORKER_EXECUTE_FIXTURES, WASM_WORKER_EXECUTE_PHASE_KEYS,
-    WASM_WORKER_INFO_FIXTURES, WASM_WORKER_LIFECYCLE_FIXTURES,
-    WASM_WORKER_LIFECYCLE_PHASE_KEYS, WASM_WORKER_LIFECYCLE_PHASE_KEYS_VM_PROBE_EXTRA,
-    WASM_WORKER_SESSION_STATE_GATE_FIXTURES, WASM_WORKER_STATE_KEYS, WASM_WORKER_TIMEOUT_FIXTURES,
-    WASM_WORKER_TIMEOUT_PHASE_KEYS, WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA,
-    WasmWorkerExecuteFixture,
+    WASM_WORKER_INFO_FIXTURES, WASM_WORKER_LIFECYCLE_FIXTURES, WASM_WORKER_LIFECYCLE_PHASE_KEYS,
+    WASM_WORKER_LIFECYCLE_PHASE_KEYS_VM_PROBE_EXTRA, WASM_WORKER_SESSION_STATE_GATE_FIXTURES,
+    WASM_WORKER_STATE_KEYS, WASM_WORKER_TIMEOUT_FIXTURES, WASM_WORKER_TIMEOUT_PHASE_KEYS,
+    WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA, WasmWorkerExecuteFixture,
 };
 use js_sys::Reflect;
 use pyrs::wasm::{
@@ -1212,7 +1211,10 @@ fn wasm_worker_session_contract_is_stable() {
         .last_operation_id()
         .expect("last operation id after worker execute should exist");
     assert!(execute_operation_id.starts_with("worker_execute_"));
-    assert_eq!(session.last_state(), Some(expected_session_state_after_recycle()));
+    assert_eq!(
+        session.last_state(),
+        Some(expected_session_state_after_recycle())
+    );
     if vm_probe_enabled() {
         assert_eq!(
             session
@@ -1248,7 +1250,10 @@ fn wasm_worker_session_contract_is_stable() {
             .expect("last phase after worker timeout update should exist"),
         "invalid_worker_timeout".to_string()
     );
-    assert_eq!(session.last_state(), Some(expected_session_state_after_recycle()));
+    assert_eq!(
+        session.last_state(),
+        Some(expected_session_state_after_recycle())
+    );
     assert!(session.last_error().is_some());
 
     let timeout = session.set_timeout_ms(5_000);
@@ -1266,7 +1271,10 @@ fn wasm_worker_session_contract_is_stable() {
             .expect("last phase after worker timeout update should exist"),
         expected_worker_timeout_phase_for_fixture(timeout_fixture)
     );
-    assert_eq!(session.last_state(), Some(expected_session_state_after_recycle()));
+    assert_eq!(
+        session.last_state(),
+        Some(expected_session_state_after_recycle())
+    );
     if vm_probe_enabled() {
         assert!(session.last_error().is_none());
         assert!(timeout.error().is_none());
@@ -1556,7 +1564,9 @@ fn wasm_worker_session_followups_track_shared_state_after_external_lifecycle_cha
         );
         assert_eq!(
             session.last_state(),
-            Some(expected_worker_session_gate_execute_state_for_fixture(fixture)),
+            Some(expected_worker_session_gate_execute_state_for_fixture(
+                fixture
+            )),
             "state gate execute last_state mismatch: {}",
             fixture.name
         );
@@ -1588,7 +1598,9 @@ fn wasm_worker_session_followups_track_shared_state_after_external_lifecycle_cha
         );
         assert_eq!(
             session.last_state(),
-            Some(expected_worker_session_gate_timeout_state_for_fixture(fixture)),
+            Some(expected_worker_session_gate_timeout_state_for_fixture(
+                fixture
+            )),
             "state gate timeout last_state mismatch: {}",
             fixture.name
         );
