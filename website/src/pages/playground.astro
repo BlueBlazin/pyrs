@@ -22,12 +22,24 @@ import SiteLayout from "../layouts/SiteLayout.astro";
 		<section class="playground-card playground-controls">
 			<div class="playground-toolbar">
 				<button id="playground-init" type="button">Load Runtime</button>
+				<button id="playground-inspect" type="button" disabled>Inspect Runtime</button>
+				<button id="playground-analyze" type="button" disabled>Analyze Snippet</button>
 				<button id="playground-run" type="button" disabled>Run Snippet</button>
 				<span id="playground-status" aria-live="polite">Runtime not loaded</span>
 			</div>
 			<label for="playground-source">Python snippet</label>
 			<textarea id="playground-source" spellcheck="false">x = 1
 print(x)</textarea>
+		</section>
+
+		<section class="playground-card">
+			<h2>Runtime Contract Snapshot</h2>
+			<pre id="playground-runtime">Load runtime to inspect contract metadata.</pre>
+		</section>
+
+		<section class="playground-card">
+			<h2>Snippet Preflight</h2>
+			<pre id="playground-preflight">Analyze snippet to view import roots and blocker mapping.</pre>
 		</section>
 
 		<section class="playground-card">
@@ -47,8 +59,12 @@ print(x)</textarea>
 
 	<script is:inline>
 		const initButton = document.getElementById("playground-init");
+		const inspectButton = document.getElementById("playground-inspect");
+		const analyzeButton = document.getElementById("playground-analyze");
 		const runButton = document.getElementById("playground-run");
 		const statusEl = document.getElementById("playground-status");
+		const runtimeEl = document.getElementById("playground-runtime");
+		const preflightEl = document.getElementById("playground-preflight");
 		const outputEl = document.getElementById("playground-output");
 		const sourceEl = document.getElementById("playground-source");
 
@@ -70,15 +86,182 @@ print(x)</textarea>
 			return value;
 		};
 
+		const toArray = (value) => {
+			if (value == null) return [];
+			if (Array.isArray(value)) return value;
+			try {
+				return Array.from(value);
+			} catch {
+				return [];
+			}
+		};
+
 		const setStatus = (message, isError = false) => {
 			if (!statusEl || !(statusEl instanceof HTMLElement)) return;
 			statusEl.textContent = message;
 			statusEl.dataset.status = isError ? "error" : "ok";
 		};
 
+		const setRuntimeSnapshot = (message) => {
+			if (!runtimeEl || !(runtimeEl instanceof HTMLElement)) return;
+			runtimeEl.textContent = message;
+		};
+
+		const setPreflight = (message) => {
+			if (!preflightEl || !(preflightEl instanceof HTMLElement)) return;
+			preflightEl.textContent = message;
+		};
+
 		const setOutput = (message) => {
 			if (!outputEl || !(outputEl instanceof HTMLElement)) return;
 			outputEl.textContent = message;
+		};
+
+		const collectRuntimeSnapshot = () => {
+			if (!runtimeModule) return null;
+
+			const runtimeInfo = runtimeModule.wasm_runtime_info?.();
+			const workerInfo = runtimeModule.wasm_worker_info?.();
+			const timeoutPolicy = runtimeModule.wasm_worker_timeout_policy?.();
+			const capabilityReport = runtimeModule.wasm_capabilities?.();
+			const capabilityKeys = toArray(runtimeModule.wasm_capability_keys?.()).map((item) =>
+				String(item)
+			);
+			const executionPhaseKeys = toArray(runtimeModule.wasm_execution_phase_keys?.()).map(
+				(item) => String(item)
+			);
+			const workerStateKeys = toArray(runtimeModule.wasm_worker_state_keys?.()).map((item) =>
+				String(item)
+			);
+			const workerExecutePhaseKeys = toArray(
+				runtimeModule.wasm_worker_execute_phase_keys?.()
+			).map((item) => String(item));
+			const executionBlockers = toArray(runtimeModule.wasm_execution_blockers?.()).map(
+				(entry) => ({
+					key: readField(entry, "key"),
+					message: readField(entry, "message"),
+				})
+			);
+			const workerBlockers = toArray(runtimeModule.wasm_worker_blockers?.()).map(
+				(entry) => ({
+					key: readField(entry, "key"),
+					message: readField(entry, "message"),
+				})
+			);
+
+			const capabilities = capabilityKeys.map((key) => {
+				const supported = Boolean(readField(capabilityReport, key));
+				const error = supported
+					? null
+					: runtimeModule.wasm_capability_error?.(key) ?? null;
+				return {
+					key,
+					supported,
+					error,
+				};
+			});
+
+			return {
+				runtime: {
+					api_version: readField(runtimeInfo, "api_version"),
+					pyrs_version: readField(runtimeInfo, "pyrs_version"),
+					supports_parse_compile: readField(runtimeInfo, "supports_parse_compile"),
+					supports_execution: readField(runtimeInfo, "supports_execution"),
+					execution_backend: readField(runtimeInfo, "execution_backend"),
+					execution_status: readField(runtimeInfo, "execution_status"),
+					execution_blocker_count: readField(runtimeInfo, "execution_blocker_count"),
+				},
+				worker: {
+					backend: readField(workerInfo, "backend"),
+					state: readField(workerInfo, "state"),
+					lifecycle_supported: readField(workerInfo, "lifecycle_supported"),
+					execution_probe_enabled: readField(workerInfo, "execution_probe_enabled"),
+					execute_supported: readField(workerInfo, "execute_supported"),
+					timeout_configuration_supported: readField(
+						workerInfo,
+						"timeout_configuration_supported"
+					),
+					timeout_enforcement_supported: readField(
+						workerInfo,
+						"timeout_enforcement_supported"
+					),
+					blocker_count: readField(workerInfo, "blocker_count"),
+				},
+				timeout_policy: {
+					default_timeout_ms: readField(timeoutPolicy, "default_timeout_ms"),
+					min_timeout_ms: readField(timeoutPolicy, "min_timeout_ms"),
+					max_timeout_ms: readField(timeoutPolicy, "max_timeout_ms"),
+					configuration_supported: readField(timeoutPolicy, "configuration_supported"),
+					enforcement_supported: readField(timeoutPolicy, "enforcement_supported"),
+					recycle_on_timeout: readField(timeoutPolicy, "recycle_on_timeout"),
+					unsupported_phase: readField(timeoutPolicy, "unsupported_phase"),
+					unsupported_reason: readField(timeoutPolicy, "unsupported_reason"),
+				},
+				capabilities,
+				execution_phase_keys: executionPhaseKeys,
+				worker_state_keys: workerStateKeys,
+				worker_execute_phase_keys: workerExecutePhaseKeys,
+				execution_blockers: executionBlockers,
+				worker_blockers: workerBlockers,
+			};
+		};
+
+		const inspectRuntime = () => {
+			if (!runtimeModule) {
+				setStatus("Runtime not loaded", true);
+				return null;
+			}
+			const snapshot = collectRuntimeSnapshot();
+			if (!snapshot) {
+				setStatus("Runtime snapshot unavailable", true);
+				setRuntimeSnapshot("Runtime snapshot unavailable.");
+				return null;
+			}
+			setRuntimeSnapshot(JSON.stringify(snapshot, null, 2));
+			setStatus("Runtime snapshot refreshed");
+			return snapshot;
+		};
+
+		const analyzeSnippet = () => {
+			if (!runtimeModule) {
+				setStatus("Runtime not loaded", true);
+				return null;
+			}
+			if (!sourceEl || !(sourceEl instanceof HTMLTextAreaElement)) return null;
+			const source = sourceEl.value;
+
+			const support = runtimeModule.wasm_snippet_support(source);
+			const blockers = toArray(runtimeModule.wasm_snippet_blockers(source)).map((entry) => ({
+				module: readField(entry, "module"),
+				blocker_key: readField(entry, "blocker_key"),
+				message: readField(entry, "message"),
+			}));
+			const importRoots = toArray(runtimeModule.wasm_snippet_import_roots(source)).map(
+				(item) => String(item)
+			);
+
+			const payload = {
+				supported: readField(support, "supported"),
+				phase: readField(support, "phase"),
+				error: readField(support, "error"),
+				line: readField(support, "line"),
+				column: readField(support, "column"),
+				imported_module_count: readField(support, "imported_module_count"),
+				blocker_count: readField(support, "blocker_count"),
+				first_blocker_module: readField(support, "first_blocker_module"),
+				first_blocker_key: readField(support, "first_blocker_key"),
+				first_blocker_message: readField(support, "first_blocker_message"),
+				import_roots: importRoots,
+				blockers,
+			};
+
+			setPreflight(JSON.stringify(payload, null, 2));
+			if (payload.phase === "supported") {
+				setStatus("Snippet preflight passed");
+			} else {
+				setStatus(`Snippet blocked (${payload.phase || "unsupported"})`, true);
+			}
+			return payload;
 		};
 
 		const loadRuntime = async () => {
@@ -101,8 +284,15 @@ print(x)</textarea>
 				if (runButton instanceof HTMLButtonElement) {
 					runButton.disabled = false;
 				}
+				if (inspectButton instanceof HTMLButtonElement) {
+					inspectButton.disabled = false;
+				}
+				if (analyzeButton instanceof HTMLButtonElement) {
+					analyzeButton.disabled = false;
+				}
 				setStatus("Runtime loaded");
 				setOutput("Runtime loaded. Edit snippet and run.");
+				inspectRuntime();
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				setStatus("Failed to load runtime", true);
@@ -119,40 +309,32 @@ print(x)</textarea>
 			}
 			if (!sourceEl || !(sourceEl instanceof HTMLTextAreaElement)) return;
 			const source = sourceEl.value;
-			try {
-				const support = runtimeModule.wasm_snippet_support(source);
-				const supportPhase = readField(support, "phase");
-				if (supportPhase && supportPhase !== "supported") {
-					const supportError = readField(support, "error") || "Unsupported snippet";
-					const supportLine = readField(support, "line") || 0;
-					const supportColumn = readField(support, "column") || 0;
-					setStatus(`Snippet blocked (${supportPhase})`, true);
-					setOutput(
-						JSON.stringify(
-							{
-								phase: supportPhase,
-								error: supportError,
-								line: supportLine,
-								column: supportColumn,
-							},
-							null,
-							2
-						)
-					);
-					return;
-				}
+			const preflight = analyzeSnippet();
+			const supportPhase = preflight?.phase;
 
+			if (!preflight || supportPhase !== "supported") {
+				setOutput(
+					"Execution skipped because snippet preflight is not in the supported phase."
+				);
+				return;
+			}
+
+			try {
 				const result = runtimeModule.execute(source);
 				const payload = {
-					phase: readField(result, "phase"),
-					success: readField(result, "success"),
-					stdout: readField(result, "stdout"),
-					stderr: readField(result, "stderr"),
-					error: readField(result, "error"),
-					blocker_key: readField(result, "blocker_key"),
-					line: readField(result, "line"),
-					column: readField(result, "column"),
+					preflight,
+					execute: {
+						phase: readField(result, "phase"),
+						success: readField(result, "success"),
+						stdout: readField(result, "stdout"),
+						stderr: readField(result, "stderr"),
+						error: readField(result, "error"),
+						blocker_key: readField(result, "blocker_key"),
+						line: readField(result, "line"),
+						column: readField(result, "column"),
+					},
 				};
+				inspectRuntime();
 				setStatus("Snippet executed");
 				setOutput(JSON.stringify(payload, null, 2));
 			} catch (error) {
@@ -171,6 +353,18 @@ print(x)</textarea>
 		if (runButton instanceof HTMLButtonElement) {
 			runButton.addEventListener("click", () => {
 				runSnippet();
+			});
+		}
+
+		if (inspectButton instanceof HTMLButtonElement) {
+			inspectButton.addEventListener("click", () => {
+				inspectRuntime();
+			});
+		}
+
+		if (analyzeButton instanceof HTMLButtonElement) {
+			analyzeButton.addEventListener("click", () => {
+				analyzeSnippet();
 			});
 		}
 	</script>
