@@ -854,6 +854,10 @@ Current `wasm-vm-probe` snapshot (non-gating, latest local run):
   tracks remaining raw wasm `env` imports (current vm-probe baseline) so
   browser-loader closure can be driven by import-family elimination rather than
   trial-and-error patching.
+- gate hardening: `scripts/validate_wasm_evidence_pack.py` now enforces
+  `counts.env_function_imports == 0` (and no missing shim symbols) from
+  `perf/wasm_vm_env_import_summary_latest.json`, so non-zero wasm vm-probe
+  `env` imports fail contract-gate/browser-smoke evidence validation.
 - latest: wasm vm-probe lane now uses wasm-native allocator shims
   (`malloc`/`calloc`/`realloc`/`free`) plus wasm-native float-formatting and
   `PyOS_strto*` parsing paths (no direct wasm libc imports for
