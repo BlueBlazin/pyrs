@@ -42,6 +42,35 @@ print(x)</textarea>
 			<pre id="playground-preflight">Analyze snippet to view import roots and blocker mapping.</pre>
 		</section>
 
+		<section class="playground-card playground-worker">
+			<h2>Worker Probe Controls</h2>
+			<p>
+				Use these controls to exercise worker lifecycle and timeout contracts in browser mode.
+				Worker execution support depends on build mode and current worker state.
+			</p>
+			<div class="playground-worker-grid">
+				<button id="playground-worker-start" type="button" disabled>Worker Start</button>
+				<button id="playground-worker-recycle" type="button" disabled>Worker Recycle</button>
+				<button id="playground-worker-terminate" type="button" disabled>Worker Terminate</button>
+				<button id="playground-worker-execute" type="button" disabled>Worker Execute</button>
+			</div>
+			<div class="playground-worker-timeout">
+				<label for="playground-worker-timeout-ms">Worker timeout (ms)</label>
+				<input
+					id="playground-worker-timeout-ms"
+					type="number"
+					min="1"
+					max="120000"
+					value="5000"
+					disabled
+				/>
+				<button id="playground-worker-timeout-set" type="button" disabled>
+					Set Timeout
+				</button>
+			</div>
+			<pre id="playground-worker-output">Load runtime to use worker probe controls.</pre>
+		</section>
+
 		<section class="playground-card">
 			<h2>Output</h2>
 			<pre id="playground-output">Load runtime to begin.</pre>
@@ -65,6 +94,13 @@ print(x)</textarea>
 		const statusEl = document.getElementById("playground-status");
 		const runtimeEl = document.getElementById("playground-runtime");
 		const preflightEl = document.getElementById("playground-preflight");
+		const workerOutputEl = document.getElementById("playground-worker-output");
+		const workerStartButton = document.getElementById("playground-worker-start");
+		const workerRecycleButton = document.getElementById("playground-worker-recycle");
+		const workerTerminateButton = document.getElementById("playground-worker-terminate");
+		const workerExecuteButton = document.getElementById("playground-worker-execute");
+		const workerTimeoutInput = document.getElementById("playground-worker-timeout-ms");
+		const workerTimeoutSetButton = document.getElementById("playground-worker-timeout-set");
 		const outputEl = document.getElementById("playground-output");
 		const sourceEl = document.getElementById("playground-source");
 
@@ -115,6 +151,32 @@ print(x)</textarea>
 		const setOutput = (message) => {
 			if (!outputEl || !(outputEl instanceof HTMLElement)) return;
 			outputEl.textContent = message;
+		};
+
+		const setWorkerOutput = (message) => {
+			if (!workerOutputEl || !(workerOutputEl instanceof HTMLElement)) return;
+			workerOutputEl.textContent = message;
+		};
+
+		const setWorkerControlsEnabled = (enabled) => {
+			if (workerStartButton instanceof HTMLButtonElement) {
+				workerStartButton.disabled = !enabled;
+			}
+			if (workerRecycleButton instanceof HTMLButtonElement) {
+				workerRecycleButton.disabled = !enabled;
+			}
+			if (workerTerminateButton instanceof HTMLButtonElement) {
+				workerTerminateButton.disabled = !enabled;
+			}
+			if (workerExecuteButton instanceof HTMLButtonElement) {
+				workerExecuteButton.disabled = !enabled;
+			}
+			if (workerTimeoutSetButton instanceof HTMLButtonElement) {
+				workerTimeoutSetButton.disabled = !enabled;
+			}
+			if (workerTimeoutInput instanceof HTMLInputElement) {
+				workerTimeoutInput.disabled = !enabled;
+			}
 		};
 
 		const collectRuntimeSnapshot = () => {
@@ -264,6 +326,99 @@ print(x)</textarea>
 			return payload;
 		};
 
+		const runWorkerLifecycle = (opName, operation) => {
+			if (!runtimeModule) {
+				setStatus("Runtime not loaded", true);
+				return;
+			}
+			try {
+				const result = operation();
+				const payload = {
+					operation: opName,
+					success: readField(result, "success"),
+					operation_id: readField(result, "operation_id"),
+					phase: readField(result, "phase"),
+					state: readField(result, "state"),
+					error: readField(result, "error"),
+					blocker_key: readField(result, "blocker_key"),
+				};
+				inspectRuntime();
+				setStatus(`Worker ${opName} completed`);
+				setWorkerOutput(JSON.stringify(payload, null, 2));
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				setStatus(`Worker ${opName} failed`, true);
+				setWorkerOutput(message);
+			}
+		};
+
+		const runWorkerExecute = () => {
+			if (!runtimeModule) {
+				setStatus("Runtime not loaded", true);
+				return;
+			}
+			if (!sourceEl || !(sourceEl instanceof HTMLTextAreaElement)) return;
+			try {
+				const source = sourceEl.value;
+				const result = runtimeModule.wasm_worker_execute_with_operation(source);
+				const payload = {
+					operation: "execute",
+					operation_id: readField(result, "operation_id"),
+					success: readField(result, "success"),
+					phase: readField(result, "phase"),
+					state: readField(result, "state"),
+					stdout: readField(result, "stdout"),
+					stderr: readField(result, "stderr"),
+					error: readField(result, "error"),
+					blocker_key: readField(result, "blocker_key"),
+					line: readField(result, "line"),
+					column: readField(result, "column"),
+				};
+				inspectRuntime();
+				setStatus("Worker execute completed");
+				setWorkerOutput(JSON.stringify(payload, null, 2));
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				setStatus("Worker execute failed", true);
+				setWorkerOutput(message);
+			}
+		};
+
+		const runWorkerSetTimeout = () => {
+			if (!runtimeModule) {
+				setStatus("Runtime not loaded", true);
+				return;
+			}
+			if (!workerTimeoutInput || !(workerTimeoutInput instanceof HTMLInputElement)) {
+				return;
+			}
+			const timeoutMs = Number.parseInt(workerTimeoutInput.value, 10);
+			if (!Number.isFinite(timeoutMs)) {
+				setStatus("Invalid timeout value", true);
+				return;
+			}
+			try {
+				const result = runtimeModule.wasm_worker_set_timeout(timeoutMs);
+				const payload = {
+					operation: "set_timeout",
+					success: readField(result, "success"),
+					operation_id: readField(result, "operation_id"),
+					phase: readField(result, "phase"),
+					state: readField(result, "state"),
+					timeout_ms: readField(result, "timeout_ms"),
+					error: readField(result, "error"),
+					blocker_key: readField(result, "blocker_key"),
+				};
+				inspectRuntime();
+				setStatus("Worker timeout call completed");
+				setWorkerOutput(JSON.stringify(payload, null, 2));
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				setStatus("Worker timeout call failed", true);
+				setWorkerOutput(message);
+			}
+		};
+
 		const loadRuntime = async () => {
 			if (runtimeModule) {
 				setStatus("Runtime already loaded");
@@ -290,8 +445,10 @@ print(x)</textarea>
 				if (analyzeButton instanceof HTMLButtonElement) {
 					analyzeButton.disabled = false;
 				}
+				setWorkerControlsEnabled(true);
 				setStatus("Runtime loaded");
 				setOutput("Runtime loaded. Edit snippet and run.");
+				setWorkerOutput("Worker controls enabled. Choose a lifecycle action or execute snippet.");
 				inspectRuntime();
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -367,6 +524,36 @@ print(x)</textarea>
 				analyzeSnippet();
 			});
 		}
+
+		if (workerStartButton instanceof HTMLButtonElement) {
+			workerStartButton.addEventListener("click", () => {
+				runWorkerLifecycle("start", () => runtimeModule.wasm_worker_start());
+			});
+		}
+
+		if (workerRecycleButton instanceof HTMLButtonElement) {
+			workerRecycleButton.addEventListener("click", () => {
+				runWorkerLifecycle("recycle", () => runtimeModule.wasm_worker_recycle());
+			});
+		}
+
+		if (workerTerminateButton instanceof HTMLButtonElement) {
+			workerTerminateButton.addEventListener("click", () => {
+				runWorkerLifecycle("terminate", () => runtimeModule.wasm_worker_terminate());
+			});
+		}
+
+		if (workerExecuteButton instanceof HTMLButtonElement) {
+			workerExecuteButton.addEventListener("click", () => {
+				runWorkerExecute();
+			});
+		}
+
+		if (workerTimeoutSetButton instanceof HTMLButtonElement) {
+			workerTimeoutSetButton.addEventListener("click", () => {
+				runWorkerSetTimeout();
+			});
+		}
 	</script>
 </SiteLayout>
 
@@ -425,7 +612,9 @@ print(x)</textarea>
 		align-items: center;
 	}
 
-	.playground-toolbar button {
+	.playground-toolbar button,
+	.playground-worker-grid button,
+	.playground-worker-timeout button {
 		border: 1px solid #6a4535;
 		background: #251713;
 		color: #f7eee8;
@@ -437,7 +626,9 @@ print(x)</textarea>
 		cursor: pointer;
 	}
 
-	.playground-toolbar button:disabled {
+	.playground-toolbar button:disabled,
+	.playground-worker-grid button:disabled,
+	.playground-worker-timeout button:disabled {
 		cursor: not-allowed;
 		opacity: 0.58;
 	}
@@ -499,5 +690,43 @@ print(x)</textarea>
 		font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 		font-size: 0.84em;
 		color: #f0d1bd;
+	}
+
+	.playground-worker p {
+		margin: 0.7rem 0 0;
+		color: #beaa9f;
+		line-height: 1.48;
+	}
+
+	.playground-worker-grid {
+		margin-top: 0.72rem;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+		gap: 0.56rem;
+	}
+
+	.playground-worker-timeout {
+		margin-top: 0.72rem;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.56rem;
+	}
+
+	.playground-worker-timeout label {
+		font-size: 0.82rem;
+		font-weight: 600;
+		color: #dcc9be;
+	}
+
+	.playground-worker-timeout input {
+		width: 120px;
+		padding: 0.36rem 0.5rem;
+		border-radius: 0.42rem;
+		border: 1px solid #573b2f;
+		background: #0c0908;
+		color: #f7eee8;
+		font: inherit;
+		font-size: 0.82rem;
 	}
 </style>
