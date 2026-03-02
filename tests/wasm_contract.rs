@@ -1530,6 +1530,56 @@ fn wasm_worker_runtime_error_does_not_force_failed_state() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_worker_timeout_runtime_error_recycles_worker_state() {
+    reset_top_level_worker_state_for_contract_tests();
+
+    let configured = wasm_worker_set_timeout(50);
+    if !vm_probe_enabled() {
+        assert_eq!(
+            configured.phase(),
+            "unsupported_worker_timeout_enforcement".to_string()
+        );
+        assert_eq!(
+            configured.blocker_key(),
+            Some("worker_runtime_unwired".to_string())
+        );
+        assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+        return;
+    }
+
+    assert_eq!(configured.phase(), "worker_timeout_configured".to_string());
+    assert!(configured.success());
+    assert_eq!(configured.state(), "ready".to_string());
+    assert_eq!(wasm_worker_current_timeout_ms(), 50);
+
+    let assigned = wasm_worker_execute_with_operation("x = 7\n");
+    assert_eq!(assigned.phase(), "ok".to_string());
+    assert_eq!(assigned.state(), "ready".to_string());
+    assert!(assigned.success());
+
+    let timed_out = wasm_worker_execute_with_operation("while True:\n    pass\n");
+    assert_eq!(timed_out.phase(), "runtime_error".to_string());
+    assert_eq!(timed_out.state(), "ready".to_string());
+    assert!(!timed_out.success());
+    assert!(timed_out.blocker_key().is_none());
+    let timeout_error = timed_out
+        .error()
+        .expect("timed-out worker execution should have runtime error");
+    assert!(timeout_error.contains("execution timeout exceeded"));
+
+    assert_eq!(wasm_worker_current_timeout_ms(), 5_000);
+
+    let missing = wasm_worker_execute_with_operation("x\n");
+    assert_eq!(missing.phase(), "runtime_error".to_string());
+    assert_eq!(missing.state(), "ready".to_string());
+    assert!(!missing.success());
+    let missing_error = missing
+        .error()
+        .expect("post-timeout execute should report NameError");
+    assert!(missing_error.contains("NameError"));
+}
+
+#[wasm_bindgen_test]
 fn wasm_worker_timeout_configuration_requires_ready_state_after_terminate() {
     reset_top_level_worker_state_for_contract_tests();
     let terminate = wasm_worker_terminate();
