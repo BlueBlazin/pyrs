@@ -68,6 +68,8 @@ import HighlightChip from "../components/ui/HighlightChip.astro";
 		let runtimeLoadPromise = null;
 		let replSession = null;
 		let commandIndex = 1;
+		const commandHistory = [];
+		let historyIndex = -1;
 
 		const readField = (object, key) => {
 			if (!object) return undefined;
@@ -117,6 +119,14 @@ import HighlightChip from "../components/ui/HighlightChip.astro";
 			if (inputEl instanceof HTMLTextAreaElement) {
 				inputEl.disabled = busy;
 			}
+		};
+
+		const setInputValue = (value) => {
+			if (!(inputEl instanceof HTMLTextAreaElement)) return;
+			inputEl.value = value;
+			resizeInput();
+			const end = value.length;
+			inputEl.setSelectionRange(end, end);
 		};
 
 		const resizeInput = () => {
@@ -243,6 +253,10 @@ import HighlightChip from "../components/ui/HighlightChip.astro";
 		const runSource = async (source) => {
 			const normalized = source.trimEnd();
 			if (!normalized.trim()) return;
+			if (commandHistory.at(-1) !== normalized) {
+				commandHistory.push(normalized);
+			}
+			historyIndex = commandHistory.length;
 			appendTranscriptLine(`\n#${commandIndex}`, "meta");
 			appendPromptInput(normalized);
 			commandIndex += 1;
@@ -273,10 +287,44 @@ import HighlightChip from "../components/ui/HighlightChip.astro";
 
 		if (inputEl instanceof HTMLTextAreaElement) {
 			inputEl.addEventListener("keydown", (event) => {
+				if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "l") {
+					event.preventDefault();
+					if (transcriptEl instanceof HTMLElement) {
+						transcriptEl.innerHTML = "";
+					}
+					appendTranscriptLine("# transcript cleared", "meta");
+					return;
+				}
 				if (event.key === "Enter" && !event.shiftKey) {
 					event.preventDefault();
 					if (formEl instanceof HTMLFormElement) {
 						formEl.requestSubmit();
+					}
+					return;
+				}
+				if (event.key === "ArrowUp") {
+					const atStart =
+						inputEl.selectionStart === 0 &&
+						inputEl.selectionEnd === 0;
+					if (atStart && commandHistory.length > 0) {
+						event.preventDefault();
+						historyIndex = Math.max(0, historyIndex - 1);
+						setInputValue(commandHistory[historyIndex] || "");
+					}
+					return;
+				}
+				if (event.key === "ArrowDown") {
+					const atEnd =
+						inputEl.selectionStart === inputEl.value.length &&
+						inputEl.selectionEnd === inputEl.value.length;
+					if (atEnd && commandHistory.length > 0) {
+						event.preventDefault();
+						historyIndex = Math.min(commandHistory.length, historyIndex + 1);
+						if (historyIndex >= commandHistory.length) {
+							setInputValue("");
+						} else {
+							setInputValue(commandHistory[historyIndex] || "");
+						}
 					}
 				}
 			});
@@ -437,6 +485,7 @@ import HighlightChip from "../components/ui/HighlightChip.astro";
 
 	.transcript-line {
 		white-space: pre-wrap;
+		animation: line-in 120ms ease;
 	}
 
 	.transcript-line + .transcript-line {
@@ -558,6 +607,17 @@ import HighlightChip from "../components/ui/HighlightChip.astro";
 		}
 		100% {
 			opacity: 1;
+		}
+	}
+
+	@keyframes line-in {
+		from {
+			opacity: 0;
+			transform: translateY(3px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
 		}
 	}
 
