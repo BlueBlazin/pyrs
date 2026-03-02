@@ -113,6 +113,44 @@ Prefer `wasm_worker_state_keys()`, `wasm_worker_lifecycle_phase_keys()`, and
 UI branching enums instead of hardcoding
 string literals.
 
+## `/playground` Worker Transport (Website)
+
+Current website `/playground` integration uses a dedicated module worker:
+
+- worker module:
+  - `website/public/workers/playground-runtime-worker.js`
+- worker startup:
+  - `new Worker(workerEntrypoint, { type: "module" })`
+- request envelope:
+  - `{ requestId, action, ...payload }`
+- response envelope:
+  - `{ requestId, ok, ...payload }`
+
+Supported request actions:
+
+1. `load`
+   - payload: `{ wasmEntrypoint }`
+   - response:
+     - success: `{ ok: true, runtimeInfo }`
+     - failure: `{ ok: false, error }`
+2. `execute`
+   - payload: `{ source }`
+   - response:
+     - success: `{ ok: true, result }` where `result` mirrors
+       `WasmExecutionResult` shape.
+     - failure: `{ ok: false, error }`
+3. `reset`
+   - payload: none
+   - response:
+     - success: `{ ok: true }`
+     - failure: `{ ok: false, error }`
+
+Integration guardrails:
+
+- treat worker `error`/`messageerror` events as fatal for in-flight requests;
+- reject all pending request promises on worker failure;
+- keep transcript rendering on main thread, and keep wasm execution in worker only.
+
 ## Minimal Browser Pseudocode
 
 ```js

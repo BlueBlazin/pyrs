@@ -828,6 +828,10 @@ Completed on this branch:
   invariants via `node scripts/check_playground_worker_contract.mjs` in both
   `scripts/check_wasm_branch.sh` and
   `scripts/run_wasm_contract_smoke.sh`.
+- latest: client/API docs now include explicit `/playground` worker RPC
+  envelope and action contracts (`load`, `execute`, `reset`) in
+  `docs/WASM_CLIENT_INTEGRATION_FLOW.md` and `docs/WASM_API_CONTRACT.md`,
+  with both docs summary generators re-run to keep source/doc gates current.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

@@ -389,6 +389,39 @@ This document defines the JS-facing contract currently exported by
 - `last_state: Option<String>`
 - `last_error: Option<String>`
 
+## Website Worker RPC (`/playground`)
+
+This is a website integration contract (not a `wasm_api_version` export) used by
+`website/src/pages/playground.astro` with worker module
+`website/public/workers/playground-runtime-worker.js`.
+
+Message envelope:
+
+- request: `{ requestId, action, ...payload }`
+- response: `{ requestId, ok, ...payload }`
+
+Action contracts:
+
+- `load`
+  - request payload: `{ wasmEntrypoint: string }`
+  - success payload: `{ runtimeInfo }`
+    - `runtimeInfo` mirrors `WasmRuntimeInfo` field names
+      (`api_version`, `pyrs_version`, `supports_parse_compile`,
+      `supports_execution`, `execution_backend`, `execution_status`,
+      `execution_blocker_count`).
+  - failure payload: `{ error: string }`
+- `execute`
+  - request payload: `{ source: string }`
+  - success payload: `{ result }`
+    - `result` mirrors `WasmExecutionResult` field names
+      (`success`, `phase`, `stdout`, `stderr`, `error`, `blocker_key`, `line`,
+      `column`).
+  - failure payload: `{ error: string }`
+- `reset`
+  - request payload: none
+  - success payload: empty (`{ ok: true }`)
+  - failure payload: `{ error: string }`
+
 ## Stability Rules
 
 1. Any breaking contract change must bump `wasm_api_version()`.
