@@ -62,6 +62,26 @@ pub struct WasmWorkerInfoFixture {
     pub expected_vm_probe_timeout_enforcement_supported: Option<bool>,
 }
 
+pub struct WasmWorkerSessionStateGateFixture {
+    pub name: &'static str,
+    pub trigger_action: &'static str,
+    pub timeout_ms: u32,
+    pub expected_execute_phase: &'static str,
+    pub expected_execute_state: &'static str,
+    pub expected_execute_blocker_key: Option<&'static str>,
+    pub expected_timeout_phase: &'static str,
+    pub expected_timeout_state: &'static str,
+    pub expected_timeout_success: bool,
+    pub expected_timeout_blocker_key: Option<&'static str>,
+    pub expected_vm_probe_execute_phase: Option<&'static str>,
+    pub expected_vm_probe_execute_state: Option<&'static str>,
+    pub expected_vm_probe_execute_blocker_key: Option<Option<&'static str>>,
+    pub expected_vm_probe_timeout_phase: Option<&'static str>,
+    pub expected_vm_probe_timeout_state: Option<&'static str>,
+    pub expected_vm_probe_timeout_success: Option<bool>,
+    pub expected_vm_probe_timeout_blocker_key: Option<Option<&'static str>>,
+}
+
 pub const WASM_WORKER_INFO_FIXTURES: &[WasmWorkerInfoFixture] = &[WasmWorkerInfoFixture {
     name: "worker_info_runtime_contract",
     expected_supported: false,
@@ -267,6 +287,47 @@ pub const WASM_WORKER_TIMEOUT_FIXTURES: &[WasmWorkerTimeoutFixture] = &[
         expected_vm_probe_state: Some("ready"),
         expected_vm_probe_success: None,
         expected_vm_probe_blocker_key: None,
+    },
+];
+
+pub const WASM_WORKER_SESSION_STATE_GATE_FIXTURES: &[WasmWorkerSessionStateGateFixture] = &[
+    WasmWorkerSessionStateGateFixture {
+        name: "session_state_gate_after_terminate",
+        trigger_action: "terminate",
+        timeout_ms: 5_000,
+        expected_execute_phase: "unsupported_worker_execution",
+        expected_execute_state: "unwired",
+        expected_execute_blocker_key: Some("worker_runtime_unwired"),
+        expected_timeout_phase: "unsupported_worker_timeout_enforcement",
+        expected_timeout_state: "unwired",
+        expected_timeout_success: false,
+        expected_timeout_blocker_key: Some("worker_runtime_unwired"),
+        expected_vm_probe_execute_phase: None,
+        expected_vm_probe_execute_state: None,
+        expected_vm_probe_execute_blocker_key: None,
+        expected_vm_probe_timeout_phase: None,
+        expected_vm_probe_timeout_state: None,
+        expected_vm_probe_timeout_success: None,
+        expected_vm_probe_timeout_blocker_key: None,
+    },
+    WasmWorkerSessionStateGateFixture {
+        name: "session_state_gate_after_recycle",
+        trigger_action: "recycle",
+        timeout_ms: 5_000,
+        expected_execute_phase: "unsupported_worker_execution",
+        expected_execute_state: "unwired",
+        expected_execute_blocker_key: Some("worker_runtime_unwired"),
+        expected_timeout_phase: "unsupported_worker_timeout_enforcement",
+        expected_timeout_state: "unwired",
+        expected_timeout_success: false,
+        expected_timeout_blocker_key: Some("worker_runtime_unwired"),
+        expected_vm_probe_execute_phase: Some("ok"),
+        expected_vm_probe_execute_state: Some("ready"),
+        expected_vm_probe_execute_blocker_key: Some(None),
+        expected_vm_probe_timeout_phase: Some("worker_timeout_configured"),
+        expected_vm_probe_timeout_state: Some("ready"),
+        expected_vm_probe_timeout_success: Some(true),
+        expected_vm_probe_timeout_blocker_key: Some(None),
     },
 ];
 
