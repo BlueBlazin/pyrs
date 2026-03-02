@@ -930,6 +930,13 @@ Completed on this branch:
     `timeout_enforcement_supported` are all `false` in `failed` state,
   - all three return to `true` after `wasm_worker_recycle()` restores
     `state = "ready"`.
+- latest: local wasm branch gate now compiles lib unit-test harnesses in both
+  default and vm-probe lanes:
+  - added `cargo test --target wasm32-unknown-unknown --lib --no-run
+    --no-default-features --features wasm-vm-probe` to
+    `scripts/check_wasm_branch.sh`,
+  - this prevents vm-probe-only wasm unit contracts from drifting
+    uncompiled between checkpoints.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

@@ -19,6 +19,9 @@ cargo check --target wasm32-unknown-unknown --tests --no-default-features --feat
 echo "[wasm-branch] cargo test wasm lib unit harness (compile-only)"
 cargo test --target wasm32-unknown-unknown --lib --no-run --no-default-features
 
+echo "[wasm-branch] cargo test wasm lib unit harness (compile-only vm-probe)"
+cargo test --target wasm32-unknown-unknown --lib --no-run --no-default-features --features wasm-vm-probe
+
 echo "[wasm-branch] wasm vm probe lane"
 scripts/probe_wasm_vm_compile.sh
 
