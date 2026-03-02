@@ -918,6 +918,12 @@ Completed on this branch:
     (`scripts/generate_wasm_worker_contract_summary.py`),
   - worker docs were updated to lock the same state-dependent contract shape
     (`docs/WASM_WORKER_RUNTIME_CONTRACT.md`, `docs/WASM_API_CONTRACT.md`).
+- latest: `generate_wasm_session_contract_summary.py` now enforces that
+  `wasm_worker_info_tracks_external_lifecycle_state_transitions` includes
+  explicit terminate/recycle capability assertions for
+  `execute_supported`/`timeout_configuration_supported`/
+  `timeout_enforcement_supported`, preventing silent test-coverage erosion for
+  worker-info state-gated support flags.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

@@ -486,6 +486,8 @@ def validate(
     has_terminate_start_timeout_recovery_test: bool,
     has_terminate_start_session_recovery_test: bool,
     has_worker_info_lifecycle_transition_test: bool,
+    has_worker_info_terminate_capability_asserts: bool,
+    has_worker_info_recycle_capability_asserts: bool,
     has_worker_session_sequence_test: bool,
 ) -> list[str]:
     errors: list[str] = []
@@ -546,6 +548,14 @@ def validate(
     if not has_worker_info_lifecycle_transition_test:
         errors.append(
             "missing wasm contract test fn wasm_worker_info_tracks_external_lifecycle_state_transitions"
+        )
+    if not has_worker_info_terminate_capability_asserts:
+        errors.append(
+            "missing worker-info terminate capability assertions for execute/timeout support"
+        )
+    if not has_worker_info_recycle_capability_asserts:
+        errors.append(
+            "missing worker-info recycle capability assertions for execute/timeout support"
         )
     if not has_worker_session_sequence_test:
         errors.append(
@@ -1254,6 +1264,21 @@ def main() -> int:
         "fn wasm_worker_info_tracks_external_lifecycle_state_transitions()"
         in wasm_contract_test_source
     )
+    has_worker_info_terminate_capability_asserts = (
+        "assert!(!info_after_terminate.execute_supported());" in wasm_contract_test_source
+        and "assert!(!info_after_terminate.timeout_configuration_supported());"
+        in wasm_contract_test_source
+        and "assert!(!info_after_terminate.timeout_enforcement_supported());"
+        in wasm_contract_test_source
+    )
+    has_worker_info_recycle_capability_asserts = (
+        "assert_eq!(info_after_recycle.execute_supported(), vm_probe_enabled());"
+        in wasm_contract_test_source
+        and "info_after_recycle.timeout_configuration_supported(),"
+        in wasm_contract_test_source
+        and "info_after_recycle.timeout_enforcement_supported(),"
+        in wasm_contract_test_source
+    )
     has_worker_session_sequence_test = (
         "fn wasm_worker_session_followups_track_multi_step_external_sequences()"
         in wasm_contract_test_source
@@ -1275,6 +1300,8 @@ def main() -> int:
         has_terminate_start_timeout_recovery_test,
         has_terminate_start_session_recovery_test,
         has_worker_info_lifecycle_transition_test,
+        has_worker_info_terminate_capability_asserts,
+        has_worker_info_recycle_capability_asserts,
         has_worker_session_sequence_test,
     )
     if errors:
@@ -1299,6 +1326,8 @@ def main() -> int:
             "terminate_start_timeout_recovery_test": has_terminate_start_timeout_recovery_test,
             "terminate_start_session_recovery_test": has_terminate_start_session_recovery_test,
             "worker_info_lifecycle_transition_test": has_worker_info_lifecycle_transition_test,
+            "worker_info_terminate_capability_asserts": has_worker_info_terminate_capability_asserts,
+            "worker_info_recycle_capability_asserts": has_worker_info_recycle_capability_asserts,
             "worker_session_sequence_test": has_worker_session_sequence_test,
         },
         "counts": {
