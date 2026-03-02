@@ -12,7 +12,7 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 	navContext="playground"
 	noindex={true}
 >
-	<section class="playground-page">
+	<section class="playground-page" data-wasm-entrypoint={wasmEntrypoint}>
 		<header class="playground-header">
 			<div class="playground-kicker-row">
 				<p class="playground-kicker">WASM Playground</p>
@@ -64,7 +64,11 @@ const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 		const clearButton = document.getElementById("playground-clear");
 		const resetButton = document.getElementById("playground-reset");
 
-		const wasmEntrypoint = {JSON.stringify(wasmEntrypoint)};
+		const pageRoot = document.querySelector(".playground-page");
+		const wasmEntrypoint =
+			pageRoot instanceof HTMLElement && pageRoot.dataset.wasmEntrypoint
+				? pageRoot.dataset.wasmEntrypoint
+				: "/wasm/pyrs.js";
 
 		let runtimeModule = null;
 		let runtimeLoadPromise = null;
