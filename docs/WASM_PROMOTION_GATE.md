@@ -78,23 +78,23 @@ Promotion review must include:
 7. Artifact ID + SHA256 snapshot for the reviewed run:
    - `python3 scripts/extract_wasm_ci_artifact_hashes.py --run-id <run-id> --format markdown`
 
-### Latest Recorded Evidence Snapshot (2026-03-02 UTC)
+### Latest Recorded Evidence Snapshot (2026-03-03 UTC)
 
-- workflow-dispatch run: [22582347683](https://github.com/BlueBlazin/pyrs/actions/runs/22582347683)
-- head commit: `176f14f38986afc3c3864504ff4e6070b20f11a9`
+- workflow-dispatch run: [22585005498](https://github.com/BlueBlazin/pyrs/actions/runs/22585005498)
+- head commit: `dfd5089a46c08993fe95df65c2e85182ff8ecbba`
 - artifact hashes (from CI upload logs):
   - `wasm-contract-artifacts`:
-    - artifact id: `5723749301`
-    - sha256: `2403a64cd266c7ca7e903488ac722802999ac3014327cc17865983da082b5d30`
+    - artifact id: `5724939487`
+    - sha256: `225e3da619063d112dfd783f0202fcf21b6bfa897329115cf9294dc15d517b6f`
   - `wasm-evidence-pack`:
-    - artifact id: `5723749667`
-    - sha256: `fc5531eed96e51c090ffde4493f445ae6f670f9c9f7656cd0a1a7273ba2b402c`
+    - artifact id: `5724939812`
+    - sha256: `a6e71bed419a077ffefc604a436b8a4650a20897f081399db22552cb4c7bcd19`
   - `wasm-browser-smoke-artifacts`:
-    - artifact id: `5723779122`
-    - sha256: `e698079612770e98d1248ea074791581fff14b2e445e36d7a1702713758c926c`
+    - artifact id: `5724980929`
+    - sha256: `820fb1595c429da2f1d365db1db389c4510f52be8342a71750c54eb1b9efb247`
   - `wasm-browser-smoke-evidence-pack`:
-    - artifact id: `5723779351`
-    - sha256: `d739e40c5dd00676c01ec7a2a0cae62be3150c65dd819ba15d6d80399fb62574`
+    - artifact id: `5724981253`
+    - sha256: `8f20715b5878262dbbd4f685bb7abd1914674bc308d2b31a026b7b13f246a2a4`
 
 ## Decision Rule
 

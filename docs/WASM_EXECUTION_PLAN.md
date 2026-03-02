@@ -860,9 +860,10 @@ Completed on this branch:
   default unwired blocking + vm-probe ready/configured expectations), closing
   CI drift introduced by expanded fixture coverage.
 - latest: workflow-dispatch browser smoke on current head
-  (`22582347683`, commit `176f14f`) is green for both jobs
+  (`22585005498`, commit `dfd5089`) is green for both jobs
   (`wasm-contract-gate`, `wasm-browser-smoke`); artifact IDs and SHA256
-  digests are now recorded in `docs/WASM_PROMOTION_GATE.md`.
+  digests were captured via the dispatch helper output and recorded in
+  `docs/WASM_PROMOTION_GATE.md`.
 - latest: wasm promotion-note extraction now has a dedicated helper script
   (`scripts/extract_wasm_ci_artifact_hashes.py`) and runbook wiring so
   artifact hash capture is reproducible and less manual.
@@ -881,7 +882,8 @@ Latest host seam audit (local branch run):
 Remaining near-term focus:
 1. W5: increase worker runtime execution coverage in vm-probe mode (state/lifecycle edges).
 2. W6: refine playground UX/error affordances from first real browser-smoke transcripts.
-3. W7: capture and publish first workflow-dispatch browser-smoke baseline artifact.
+3. W7: keep workflow-dispatch browser-smoke evidence snapshots current after each
+   significant wasm contract/runtime checkpoint.
 
 ### W6-native: Browser REPL UX Convergence Plan
 
