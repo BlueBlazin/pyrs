@@ -27,8 +27,10 @@ This document defines the JS-facing contract currently exported by
 - `wasm_worker_info() -> WasmWorkerInfo`
   - Returns worker-runtime contract status summary.
   - `lifecycle_supported` is `true` only in `wasm-vm-probe` builds.
-  - `timeout_configuration_supported` is `true` only in `wasm-vm-probe` builds.
-  - `timeout_enforcement_supported` is `true` only in `wasm-vm-probe` builds.
+  - `execute_supported`, `timeout_configuration_supported`, and
+    `timeout_enforcement_supported` are `true` only when built with
+    `wasm-vm-probe` and worker `state = "ready"`; they are `false` in default
+    builds and for vm-probe non-ready states.
 - `wasm_worker_timeout_policy() -> WasmWorkerTimeoutPolicy`
   - Returns timeout/recycle contract metadata for worker execution.
   - `configuration_supported` is `true` only in `wasm-vm-probe` builds
@@ -195,9 +197,9 @@ This document defines the JS-facing contract currently exported by
 - `interruption_model: String` (currently `"worker_recycle"`)
 - `lifecycle_supported: bool` (`true` only in `wasm-vm-probe` builds)
 - `execution_probe_enabled: bool` (`true` only in `wasm-vm-probe` builds)
-- `execute_supported: bool` (`true` only in `wasm-vm-probe` builds)
-- `timeout_configuration_supported: bool` (`true` only in `wasm-vm-probe` builds)
-- `timeout_enforcement_supported: bool` (default `false`, `wasm-vm-probe` => `true`)
+- `execute_supported: bool` (`true` only when `wasm-vm-probe` and worker `state = "ready"`)
+- `timeout_configuration_supported: bool` (`true` only when `wasm-vm-probe` and worker `state = "ready"`)
+- `timeout_enforcement_supported: bool` (`true` only when `wasm-vm-probe` and worker `state = "ready"`)
 - `blocker_count: usize`
 
 ## `WasmWorkerTimeoutPolicy`

@@ -1767,9 +1767,9 @@ pub fn wasm_worker_info() -> WasmWorkerInfo {
         interruption_model: WASM_WORKER_INTERRUPT_MODEL_RECYCLE.to_string(),
         lifecycle_supported: wasm_vm_runtime_enabled(),
         execution_probe_enabled: wasm_vm_runtime_enabled(),
-        execute_supported: wasm_vm_runtime_enabled(),
-        timeout_configuration_supported: wasm_vm_runtime_enabled(),
-        timeout_enforcement_supported: wasm_vm_runtime_enabled(),
+        execute_supported: wasm_vm_runtime_enabled() && worker_runtime_ready(),
+        timeout_configuration_supported: wasm_vm_runtime_enabled() && worker_runtime_ready(),
+        timeout_enforcement_supported: wasm_vm_runtime_enabled() && worker_runtime_ready(),
         blocker_count: blockers.len(),
     }
 }
@@ -3037,11 +3037,17 @@ mod tests {
         assert_eq!(info_after_start.state(), "ready".to_string());
         assert!(info_after_start.execute_supported());
         assert!(info_after_start.timeout_configuration_supported());
+        assert!(info_after_start.timeout_enforcement_supported());
 
         let terminate = wasm_worker_terminate();
         assert_eq!(terminate.phase(), "worker_terminated".to_string());
         assert_eq!(terminate.state(), "unwired".to_string());
         assert!(terminate.success());
+        let info_after_terminate = wasm_worker_info();
+        assert_eq!(info_after_terminate.state(), "unwired".to_string());
+        assert!(!info_after_terminate.execute_supported());
+        assert!(!info_after_terminate.timeout_configuration_supported());
+        assert!(!info_after_terminate.timeout_enforcement_supported());
 
         let blocked_execute = wasm_worker_execute_with_operation("x = 1\n");
         assert_eq!(
@@ -3069,6 +3075,11 @@ mod tests {
         assert_eq!(recycle.phase(), "worker_recycled".to_string());
         assert_eq!(recycle.state(), "ready".to_string());
         assert!(recycle.success());
+        let info_after_recycle = wasm_worker_info();
+        assert_eq!(info_after_recycle.state(), "ready".to_string());
+        assert!(info_after_recycle.execute_supported());
+        assert!(info_after_recycle.timeout_configuration_supported());
+        assert!(info_after_recycle.timeout_enforcement_supported());
 
         let resumed_execute = wasm_worker_execute_with_operation("x = 1\n");
         assert_eq!(resumed_execute.phase(), "ok".to_string());
@@ -3295,5 +3306,6 @@ mod tests {
         assert_eq!(info.state(), "unwired".to_string());
         assert!(!info.execute_supported());
         assert!(!info.timeout_configuration_supported());
+        assert!(!info.timeout_enforcement_supported());
     }
 }

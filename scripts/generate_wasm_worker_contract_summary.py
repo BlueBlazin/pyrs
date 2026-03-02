@@ -751,11 +751,33 @@ def parse_source_worker_info_uses_lifecycle_supported_flag(worker_info_body: str
 
 
 def parse_source_worker_info_uses_execute_supported_flag(worker_info_body: str) -> bool:
-    return "execute_supported: wasm_vm_runtime_enabled()" in worker_info_body
+    return (
+        "execute_supported:" in worker_info_body
+        and "wasm_vm_runtime_enabled()" in worker_info_body
+    )
 
 
 def parse_source_worker_info_uses_timeout_configuration_flag(worker_info_body: str) -> bool:
-    return "timeout_configuration_supported: wasm_vm_runtime_enabled()" in worker_info_body
+    return (
+        "timeout_configuration_supported:" in worker_info_body
+        and "wasm_vm_runtime_enabled()" in worker_info_body
+    )
+
+
+def parse_source_worker_info_execute_support_is_state_aware(worker_info_body: str) -> bool:
+    return "execute_supported: wasm_vm_runtime_enabled() && worker_runtime_ready()" in worker_info_body
+
+
+def parse_source_worker_info_timeout_configuration_is_state_aware(
+    worker_info_body: str,
+) -> bool:
+    return "timeout_configuration_supported: wasm_vm_runtime_enabled() && worker_runtime_ready()" in worker_info_body
+
+
+def parse_source_worker_info_timeout_enforcement_is_state_aware(
+    worker_info_body: str,
+) -> bool:
+    return "timeout_enforcement_supported: wasm_vm_runtime_enabled() && worker_runtime_ready()" in worker_info_body
 
 
 def parse_source_worker_info_timeout_enforcement_flag(
@@ -766,6 +788,11 @@ def parse_source_worker_info_timeout_enforcement_flag(
     )
     if literal_match:
         return literal_match.group(1) == "true"
+    if (
+        "timeout_enforcement_supported: wasm_vm_runtime_enabled() && worker_runtime_ready()"
+        in worker_info_body
+    ):
+        return vm_probe
     if "timeout_enforcement_supported: wasm_vm_runtime_enabled()" in worker_info_body:
         return vm_probe
     raise ValueError(
@@ -902,6 +929,19 @@ def main() -> int:
     )
     source_worker_info_uses_timeout_configuration_flag = (
         parse_source_worker_info_uses_timeout_configuration_flag(source_worker_info_body)
+    )
+    source_worker_info_execute_support_is_state_aware = (
+        parse_source_worker_info_execute_support_is_state_aware(source_worker_info_body)
+    )
+    source_worker_info_timeout_configuration_is_state_aware = (
+        parse_source_worker_info_timeout_configuration_is_state_aware(
+            source_worker_info_body
+        )
+    )
+    source_worker_info_timeout_enforcement_is_state_aware = (
+        parse_source_worker_info_timeout_enforcement_is_state_aware(
+            source_worker_info_body
+        )
     )
     source_worker_info_timeout_enforcement_supported = (
         parse_source_worker_info_timeout_enforcement_flag(
@@ -1145,6 +1185,18 @@ def main() -> int:
     if not source_worker_info_uses_timeout_configuration_flag:
         errors.append(
             "wasm_worker_info should set timeout_configuration_supported from wasm_vm_runtime_enabled()"
+        )
+    if not source_worker_info_execute_support_is_state_aware:
+        errors.append(
+            "wasm_worker_info should gate execute_supported on worker_runtime_ready()"
+        )
+    if not source_worker_info_timeout_configuration_is_state_aware:
+        errors.append(
+            "wasm_worker_info should gate timeout_configuration_supported on worker_runtime_ready()"
+        )
+    if not source_worker_info_timeout_enforcement_is_state_aware:
+        errors.append(
+            "wasm_worker_info should gate timeout_enforcement_supported on worker_runtime_ready()"
         )
     if (
         source_worker_info_timeout_enforcement_supported
@@ -1453,6 +1505,9 @@ def main() -> int:
             "uses_lifecycle_supported_flag": source_worker_info_uses_lifecycle_supported_flag,
             "uses_execute_supported_flag": source_worker_info_uses_execute_supported_flag,
             "uses_timeout_configuration_flag": source_worker_info_uses_timeout_configuration_flag,
+            "execute_support_is_state_aware": source_worker_info_execute_support_is_state_aware,
+            "timeout_configuration_is_state_aware": source_worker_info_timeout_configuration_is_state_aware,
+            "timeout_enforcement_is_state_aware": source_worker_info_timeout_enforcement_is_state_aware,
         },
         "worker_info_effective_rows": [
             {

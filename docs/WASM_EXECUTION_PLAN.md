@@ -907,6 +907,17 @@ Completed on this branch:
   `tests/wasm_contract.rs`
   (`scripts/generate_wasm_session_contract_summary.py`), preventing silent
   deletion of these lifecycle recovery contracts.
+- latest: `wasm_worker_info()` capability booleans are now explicitly
+  state-aware in vm-probe mode:
+  - `execute_supported`, `timeout_configuration_supported`, and
+    `timeout_enforcement_supported` are only `true` while shared worker
+    `state = "ready"` and become `false` for non-ready states
+    (`unwired`/`failed`),
+  - worker-contract source validation now enforces `worker_runtime_ready()`
+    guards on those three fields
+    (`scripts/generate_wasm_worker_contract_summary.py`),
+  - worker docs were updated to lock the same state-dependent contract shape
+    (`docs/WASM_WORKER_RUNTIME_CONTRACT.md`, `docs/WASM_API_CONTRACT.md`).
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

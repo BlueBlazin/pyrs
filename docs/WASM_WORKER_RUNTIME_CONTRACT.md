@@ -33,13 +33,17 @@ This document defines the browser worker-runtime contract currently exposed by:
 - `interruption_model = "worker_recycle"`
 - `lifecycle_supported = false` in default builds, `true` with `wasm-vm-probe`
 - `execution_probe_enabled = false` in default builds, `true` with `wasm-vm-probe`
-- `execute_supported = false` in default builds, `true` with `wasm-vm-probe`
-- `timeout_configuration_supported = false` in default builds, `true` with `wasm-vm-probe`
-- `timeout_enforcement_supported = false` in default builds, `true` with `wasm-vm-probe`
+- `execute_supported = false` in default builds; with `wasm-vm-probe` it is `true` when `state = "ready"` and `false` when `state != "ready"`.
+- `timeout_configuration_supported = false` in default builds; with `wasm-vm-probe` it is `true` when `state = "ready"` and `false` when `state != "ready"`.
+- `timeout_enforcement_supported = false` in default builds; with `wasm-vm-probe` it is `true` when `state = "ready"` and `false` when `state != "ready"`.
 - `blocker_count = len(wasm_worker_blocker_keys())`
 
 Top-level lifecycle calls now mutate shared worker state, and
 `wasm_worker_info().state` reflects that current top-level state.
+Worker capability booleans in `wasm_worker_info()` (`execute_supported`,
+`timeout_configuration_supported`, `timeout_enforcement_supported`) mirror the
+same shared worker state and are only enabled in vm-probe mode while
+`state = "ready"`.
 
 `wasm_worker_timeout_policy()` currently returns:
 
