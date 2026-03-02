@@ -80,21 +80,17 @@ Promotion review must include:
 
 ### Latest Recorded Evidence Snapshot (2026-03-03 UTC)
 
-- workflow-dispatch run: [22593346662](https://github.com/BlueBlazin/pyrs/actions/runs/22593346662)
-- head commit: `dc1dfd99b6d98cae5ad06c585b7b46e4bbc85713`
-- artifact hashes (from CI upload logs):
-  - `wasm-contract-artifacts`:
-    - artifact id: `5728581632`
-    - sha256: `d1368d8750be5c72a5aa2a236bdb09f2850ba19e89db068e9b4d3f82472b1589`
-  - `wasm-evidence-pack`:
-    - artifact id: `5728581772`
-    - sha256: `70be1641461ef910a5ba05c733218301c36848b3ff86bf98a78e8889912b48c0`
-  - `wasm-browser-smoke-artifacts`:
-    - artifact id: `5728603377`
-    - sha256: `79da7481ac49b4259e9e7592a0fcb1c34de0a8f7f35c604671ac64585f2882df`
-  - `wasm-browser-smoke-evidence-pack`:
-    - artifact id: `5728603616`
-    - sha256: `ecacf12b92028800a1caaa3fb4cb508cbacfb9fe9108513852471b4c789688bd`
+- workflow-dispatch run: [22594183409](https://github.com/BlueBlazin/pyrs/actions/runs/22594183409)
+- head commit: `3bc74c8cbc1c63bf864c43640a465502d12ba852`
+- job status:
+  - `wasm-contract-gate`: `success`
+  - `wasm-browser-smoke`: `success`
+- artifact hashes:
+  - last captured hash snapshot is from run
+    [22593346662](https://github.com/BlueBlazin/pyrs/actions/runs/22593346662)
+    (retained in git history),
+  - refresh hashes for run `22594183409` from a network-enabled shell:
+    `python3 scripts/extract_wasm_ci_artifact_hashes.py --run-id 22594183409 --format markdown`.
 
 ## Decision Rule
 

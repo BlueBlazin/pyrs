@@ -860,10 +860,9 @@ Completed on this branch:
   default unwired blocking + vm-probe ready/configured expectations), closing
   CI drift introduced by expanded fixture coverage.
 - latest: workflow-dispatch browser smoke checkpoint
-  (`22593346662`, commit `dc1dfd99`) is green for both jobs
-  (`wasm-contract-gate`, `wasm-browser-smoke`); artifact IDs and SHA256
-  digests were captured via the dispatch helper output and recorded in
-  `docs/WASM_PROMOTION_GATE.md`.
+  (`22594183409`, commit `3bc74c8c`) is green for both jobs
+  (`wasm-contract-gate`, `wasm-browser-smoke`); promotion docs now track this
+  as the latest verified dispatch snapshot.
 - latest: wasm promotion-note extraction now has a dedicated helper script
   (`scripts/extract_wasm_ci_artifact_hashes.py`) and runbook wiring so
   artifact hash capture is reproducible and less manual.
@@ -887,6 +886,13 @@ Completed on this branch:
   - `tests/wasm_contract.rs::wasm_worker_info_tracks_external_lifecycle_state_transitions`
   locking `wasm_worker_info()` state and capability flag updates to the shared
   global worker state machine.
+- latest: vm-probe failed-state coverage now includes public contract/browser
+  surfaces (not only internal unit tests):
+  - `src/wasm/mod.rs::wasm_worker_force_failed_state_for_tests`
+  - `tests/wasm_contract.rs::wasm_worker_forced_failed_state_blocks_until_start_or_recycle`
+  - `tests/wasm_vm_probe_browser_smoke.rs::vm_probe_worker_forced_failed_state_roundtrip`
+  plus worker-summary gate enforcement in
+  `scripts/generate_wasm_worker_contract_summary.py`.
 - latest: worker session lifecycle coverage now includes multi-step external
   sequence fixtures (for example `terminate -> start`,
   `start -> terminate -> start`, `terminate -> recycle`) via
