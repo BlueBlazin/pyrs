@@ -45,6 +45,17 @@ def resolve_copied_path(copied_to: str, pack_dir: Path) -> Path:
     return relocated
 
 
+def find_copied_artifact(
+    copied_rows: list[dict], source_path: str, pack_dir: Path
+) -> Path | None:
+    for row in copied_rows:
+        if row.get("source") == source_path:
+            copied_to = row.get("copied_to")
+            if isinstance(copied_to, str) and copied_to:
+                return resolve_copied_path(copied_to, pack_dir)
+    return None
+
+
 def main() -> int:
     args = parse_args()
     pack_dir = Path(args.pack_dir)
@@ -91,6 +102,39 @@ def main() -> int:
         return fail(
             "manifest missing copied rows for required artifacts: "
             + ", ".join(missing_sources)
+        )
+
+    env_import_summary = find_copied_artifact(
+        copied,
+        "perf/wasm_vm_env_import_summary_latest.json",
+        pack_dir,
+    )
+    if env_import_summary is None:
+        return fail(
+            "manifest missing copied row for perf/wasm_vm_env_import_summary_latest.json"
+        )
+    if not env_import_summary.is_file():
+        return fail(f"missing env-import summary artifact: {env_import_summary}")
+    try:
+        env_payload = json.loads(env_import_summary.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return fail(f"invalid env-import summary JSON ({env_import_summary}): {exc}")
+
+    counts = env_payload.get("counts")
+    if not isinstance(counts, dict):
+        return fail("env-import summary missing object field 'counts'")
+    env_function_imports = counts.get("env_function_imports")
+    if env_function_imports != 0:
+        return fail(
+            "env-import gate failed: expected counts.env_function_imports == 0, "
+            f"got {env_function_imports}"
+        )
+
+    shim_missing_symbols = env_payload.get("shim_missing_symbols")
+    if shim_missing_symbols not in ([], None):
+        return fail(
+            "env-import shim gate failed: expected shim_missing_symbols to be empty, "
+            f"got {shim_missing_symbols}"
         )
 
     print(
