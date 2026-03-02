@@ -158,6 +158,10 @@ fn expected_worker_lifecycle_blocker_key_for_fixture(
     fixture.expected_blocker_key.map(str::to_string)
 }
 
+fn expected_session_state_after_recycle() -> String {
+    expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
+}
+
 fn expected_worker_execute_blocker_key_for_fixture(
     fixture: &WasmWorkerExecuteFixture,
 ) -> Option<String> {
@@ -875,7 +879,7 @@ fn wasm_worker_session_contract_is_stable() {
         .last_operation_id()
         .expect("last operation id after worker execute should exist");
     assert!(execute_operation_id.starts_with("worker_execute_"));
-    assert_eq!(session.last_state(), Some("unwired".to_string()));
+    assert_eq!(session.last_state(), Some(expected_session_state_after_recycle()));
     if vm_probe_enabled() {
         assert_eq!(
             session
@@ -911,7 +915,7 @@ fn wasm_worker_session_contract_is_stable() {
             .expect("last phase after worker timeout update should exist"),
         "invalid_worker_timeout".to_string()
     );
-    assert_eq!(session.last_state(), Some("unwired".to_string()));
+    assert_eq!(session.last_state(), Some(expected_session_state_after_recycle()));
     assert!(session.last_error().is_some());
 
     let timeout = session.set_timeout_ms(5_000);
@@ -928,7 +932,7 @@ fn wasm_worker_session_contract_is_stable() {
             .expect("last phase after worker timeout update should exist"),
         "unsupported_worker_timeout_enforcement".to_string()
     );
-    assert_eq!(session.last_state(), Some("unwired".to_string()));
+    assert_eq!(session.last_state(), Some(expected_session_state_after_recycle()));
     assert!(session.last_error().is_some());
     let pre_reset_snapshot = session.snapshot();
     assert_eq!(pre_reset_snapshot.starts_requested(), 1);
@@ -941,7 +945,10 @@ fn wasm_worker_session_contract_is_stable() {
         pre_reset_snapshot.last_phase(),
         Some("unsupported_worker_timeout_enforcement".to_string())
     );
-    assert_eq!(pre_reset_snapshot.last_state(), Some("unwired".to_string()));
+    assert_eq!(
+        pre_reset_snapshot.last_state(),
+        Some(expected_session_state_after_recycle())
+    );
     assert!(pre_reset_snapshot.last_error().is_some());
 
     session.reset();

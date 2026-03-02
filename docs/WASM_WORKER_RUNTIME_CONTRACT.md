@@ -194,6 +194,14 @@ enforcement remains unwired.
 - `last_state`
 - `last_error`
 
+Session state behavior:
+
+- `last_state` is lifecycle-derived (`start`/`terminate`/`recycle` results).
+- `execute_with_operation` and `set_timeout_ms` preserve that session state in
+  their returned/stateful telemetry fields.
+- in `wasm-vm-probe`, calling `recycle()` before execute/timeout yields
+  `last_state = "ready"` for those follow-up operations.
+
 ## State Model (Planned)
 
 Future states should evolve without breaking existing consumers:
