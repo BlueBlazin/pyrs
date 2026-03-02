@@ -859,8 +859,8 @@ Completed on this branch:
   treats `trigger_action = "start"` as a first-class state-gate case (with
   default unwired blocking + vm-probe ready/configured expectations), closing
   CI drift introduced by expanded fixture coverage.
-- latest: workflow-dispatch browser smoke on current head
-  (`22587878825`, commit `3af45ae`) is green for both jobs
+- latest: workflow-dispatch browser smoke checkpoint
+  (`22589579425`, commit `fbc0a125`) is green for both jobs
   (`wasm-contract-gate`, `wasm-browser-smoke`); artifact IDs and SHA256
   digests were captured via the dispatch helper output and recorded in
   `docs/WASM_PROMOTION_GATE.md`.
