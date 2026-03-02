@@ -1006,6 +1006,14 @@ Completed on this branch:
     `wasm_worker_vm_probe_failed_state_recycle_resets_timeout_and_vm_state`
     in `src/wasm/mod.rs`
     (`scripts/generate_wasm_worker_contract_summary.py`).
+- latest: worker-summary validation now enforces assertion-level coverage
+  (not just function-name presence) for:
+  - failed-state `terminate -> start` pre-failure reset checks
+    (timeout default reset + NameError on pre-failure binding),
+  - failed-state `recycle` reset checks
+    (timeout default reset + NameError on pre-failure binding),
+  preventing silent drift where these tests remain present but lose key
+  behavioral assertions.
 
 Latest host seam audit (local branch run):
 - `python3 scripts/audit_wasm_host_seam.py` => `total_hits=0` (`allowlisted_hits=0`).

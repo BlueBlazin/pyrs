@@ -595,6 +595,23 @@ def parse_source_worker_timeout_phase_keys(
     return keys
 
 
+def parse_test_function_body(wasm_source: str, function_name: str) -> str | None:
+    signature = f"fn {function_name}()"
+    try:
+        return extract_source_fn_body(wasm_source, signature)
+    except ValueError:
+        return None
+
+
+def source_test_function_contains_all(
+    wasm_source: str, function_name: str, snippets: list[str]
+) -> bool:
+    body = parse_test_function_body(wasm_source, function_name)
+    if body is None:
+        return False
+    return all(snippet in body for snippet in snippets)
+
+
 def parse_source_lifecycle_actions(wasm_source: str) -> list[str]:
     block_match = re.search(
         r"fn worker_unwired_result\(.*?\) -> WasmWorkerLifecycleResult \{(.*?)let blocker_key",
@@ -973,6 +990,28 @@ def main() -> int:
         "fn wasm_worker_vm_probe_failed_state_recycle_resets_timeout_and_vm_state()"
         in wasm_source
     )
+    has_failed_state_terminate_start_pre_failure_reset_assertions = (
+        source_test_function_contains_all(
+            wasm_source,
+            "wasm_worker_vm_probe_failed_state_terminate_then_start_restores_worker_execute",
+            [
+                "let preconfigured = wasm_worker_set_timeout(250);",
+                "assert_eq!(wasm_worker_current_timeout_ms(), 5_000);",
+                'let missing_after_start = wasm_worker_execute_with_operation("x\\n");',
+                'assert!(missing_error.contains("NameError"));',
+            ],
+        )
+    )
+    has_failed_state_recycle_reset_assertions = source_test_function_contains_all(
+        wasm_source,
+        "wasm_worker_vm_probe_failed_state_recycle_resets_timeout_and_vm_state",
+        [
+            "let configured = wasm_worker_set_timeout(250);",
+            "assert_eq!(wasm_worker_current_timeout_ms(), 5_000);",
+            'let missing_after_recycle = wasm_worker_execute_with_operation("x\\n");',
+            'assert!(missing_error.contains("NameError"));',
+        ],
+    )
     source_worker_unwired_lifecycle_sets_shared_state = (
         parse_source_worker_unwired_lifecycle_sets_shared_state(wasm_source)
     )
@@ -1246,6 +1285,14 @@ def main() -> int:
     if not has_failed_state_recycle_reset_test:
         errors.append(
             "missing wasm vm-probe failed-state recycle timeout/vm reset coverage"
+        )
+    if not has_failed_state_terminate_start_pre_failure_reset_assertions:
+        errors.append(
+            "missing wasm vm-probe failed-state terminate/start pre-failure reset assertions"
+        )
+    if not has_failed_state_recycle_reset_assertions:
+        errors.append(
+            "missing wasm vm-probe failed-state recycle reset assertion coverage"
         )
     if (
         source_worker_info_timeout_enforcement_supported
@@ -1563,6 +1610,8 @@ def main() -> int:
             "has_failed_state_start_timeout_recovery_test": has_failed_state_start_timeout_recovery_test,
             "has_failed_state_terminate_start_execute_recovery_test": has_failed_state_terminate_start_execute_recovery_test,
             "has_failed_state_recycle_reset_test": has_failed_state_recycle_reset_test,
+            "has_failed_state_terminate_start_pre_failure_reset_assertions": has_failed_state_terminate_start_pre_failure_reset_assertions,
+            "has_failed_state_recycle_reset_assertions": has_failed_state_recycle_reset_assertions,
         },
         "worker_info_effective_rows": [
             {
