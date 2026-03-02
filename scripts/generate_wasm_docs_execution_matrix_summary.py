@@ -102,6 +102,9 @@ def validate_rows(rows: list[str], source_contract: dict[str, str]) -> list[str]
                 "ok",
                 "runtime_error",
                 source_contract["worker_unsupported_phase"],
+                source_contract["worker_unwired_blocker"],
+                'state = "ready"',
+                'state != "ready"',
             ],
         ),
     ]

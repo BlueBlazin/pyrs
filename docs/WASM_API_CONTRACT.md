@@ -12,7 +12,7 @@ This document defines the JS-facing contract currently exported by
 | `execute(source)` | default | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_execution` (`blocker_key = <capability_key>`) | `unsupported_execution` (`blocker_key = execution_backend_unwired`) |
 | `execute(source)` | `wasm-vm-probe` | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_execution` (`blocker_key = <capability_key>`) | `ok` (success) or `runtime_error` (`blocker_key = None`) |
 | `wasm_worker_execute(source)` | default | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_worker_execution` (`blocker_key = <capability_key>`) | `unsupported_worker_execution` (`blocker_key = worker_runtime_unwired`) |
-| `wasm_worker_execute(source)` | `wasm-vm-probe` | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_worker_execution` (`blocker_key = <capability_key>`) | if `state = "ready"`: `ok` or `runtime_error` (`blocker_key = None`); otherwise `unsupported_worker_execution` (`blocker_key = worker_runtime_unwired`) |
+| `wasm_worker_execute(source)` | `wasm-vm-probe` | `syntax_error` / `compile_error` (`blocker_key = None`) | `unsupported_worker_execution` (`blocker_key = <capability_key>`) | if `state = "ready"`: `ok` or `runtime_error` (`blocker_key = None`); if `state != "ready"`: `unsupported_worker_execution` (`blocker_key = worker_runtime_unwired`) |
 
 ## Top-Level Functions
 
