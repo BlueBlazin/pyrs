@@ -296,6 +296,12 @@ def main() -> int:
         errors.append("docs missing session-local info().state guidance")
     if "session-local" not in docs_source:
         errors.append("docs missing session-local wording for worker session state behavior")
+    if "Top-level lifecycle calls now mutate shared worker state" not in docs_source:
+        errors.append(
+            "docs missing top-level shared worker-state lifecycle guidance"
+        )
+    if "wasm_worker_info().state" not in docs_source:
+        errors.append("docs missing wasm_worker_info().state shared-state guidance")
     if f'state = "{worker_default_state}"' not in docs_source:
         errors.append(
             "docs missing worker execute-with-operation/default state shape "
