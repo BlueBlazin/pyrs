@@ -184,6 +184,12 @@ def validate(
     for key in worker_timeout_phase_keys_vm_probe_extra:
         if key not in docs_source:
             errors.append(f"docs missing worker vm-probe timeout phase key '{key}'")
+    if 'when worker `state = "ready"`' not in docs_source:
+        errors.append("docs missing worker state-ready gating guidance")
+    if 'worker `state != "ready"`' not in docs_source:
+        errors.append("docs missing worker state-not-ready gating guidance")
+    if "worker_runtime_unwired" not in docs_source:
+        errors.append("docs missing worker_runtime_unwired blocker key guidance")
 
     return errors
 
