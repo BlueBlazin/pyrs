@@ -240,6 +240,9 @@ Branch helper:
 - promotion decision rubric:
   `docs/WASM_PROMOTION_GATE.md`
   defines explicit go/no-go criteria before any merge candidacy decision.
+- browser-smoke dispatch runbook:
+  `docs/WASM_BROWSER_SMOKE_RUNBOOK.md`
+  documents repeatable `gh` workflow-dispatch + artifact capture steps.
 
 ## Merge Decision Rubric
 
@@ -677,6 +680,9 @@ Completed on this branch:
 - latest: manual `wasm-browser-smoke` dispatch now fails hard on smoke
   regressions (no `continue-on-error`), so promotion evidence cannot silently
   ignore browser-lane failures.
+- latest: browser-smoke dispatch and artifact capture now have an explicit
+  operator runbook (`docs/WASM_BROWSER_SMOKE_RUNBOOK.md`) to standardize first
+  baseline collection and future promotion evidence.
 - latest: docs index now links to `/playground/` as an explicit browser-route
   entrypoint in Getting Started navigation.
 - latest: `/playground` now surfaces runtime contract introspection

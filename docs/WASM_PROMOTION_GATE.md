@@ -60,6 +60,8 @@ Promotion review must include:
 2. Latest local `scripts/check_wasm_branch.sh` output.
 3. Documented capability limitations and known gaps for browser mode.
 4. Rollback plan (commit range and revert strategy) if post-merge regressions appear.
+5. Manual browser-smoke dispatch evidence using
+   [`docs/WASM_BROWSER_SMOKE_RUNBOOK.md`](./WASM_BROWSER_SMOKE_RUNBOOK.md).
 
 ## Decision Rule
 
