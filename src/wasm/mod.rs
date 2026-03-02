@@ -1692,7 +1692,8 @@ fn worker_vm_probe_lifecycle_result(
 /// Starts worker runtime execution.
 ///
 /// Current milestone behavior:
-/// - returns `phase = "unsupported_worker_start"` until worker backend is wired.
+/// - `wasm-vm-probe`: returns `phase = "worker_started"` and `state = "ready"`,
+/// - default builds: unsupported lifecycle result with unwired blocker.
 #[cfg(feature = "wasm-vm-probe")]
 #[wasm_bindgen]
 pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
@@ -1706,7 +1707,7 @@ pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
 /// Starts worker runtime execution.
 ///
 /// Current milestone behavior:
-/// - returns `phase = "unsupported_worker_start"` until worker backend is wired.
+/// - returns unsupported lifecycle result with unwired blocker.
 #[cfg(not(feature = "wasm-vm-probe"))]
 #[wasm_bindgen]
 pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
@@ -1716,7 +1717,8 @@ pub fn wasm_worker_start() -> WasmWorkerLifecycleResult {
 /// Terminates worker runtime execution.
 ///
 /// Current milestone behavior:
-/// - returns `phase = "unsupported_worker_terminate"` until worker backend is wired.
+/// - `wasm-vm-probe`: returns `phase = "worker_terminated"` and `state = "unwired"`,
+/// - default builds: unsupported lifecycle result with unwired blocker.
 #[cfg(feature = "wasm-vm-probe")]
 #[wasm_bindgen]
 pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
@@ -1730,7 +1732,7 @@ pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
 /// Terminates worker runtime execution.
 ///
 /// Current milestone behavior:
-/// - returns `phase = "unsupported_worker_terminate"` until worker backend is wired.
+/// - returns unsupported lifecycle result with unwired blocker.
 #[cfg(not(feature = "wasm-vm-probe"))]
 #[wasm_bindgen]
 pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
@@ -1740,7 +1742,8 @@ pub fn wasm_worker_terminate() -> WasmWorkerLifecycleResult {
 /// Recycles worker runtime execution state.
 ///
 /// Current milestone behavior:
-/// - returns `phase = "unsupported_worker_recycle"` until worker backend is wired.
+/// - `wasm-vm-probe`: returns `phase = "worker_recycled"` and `state = "ready"`,
+/// - default builds: unsupported lifecycle result with unwired blocker.
 #[cfg(feature = "wasm-vm-probe")]
 #[wasm_bindgen]
 pub fn wasm_worker_recycle() -> WasmWorkerLifecycleResult {
@@ -1754,7 +1757,7 @@ pub fn wasm_worker_recycle() -> WasmWorkerLifecycleResult {
 /// Recycles worker runtime execution state.
 ///
 /// Current milestone behavior:
-/// - returns `phase = "unsupported_worker_recycle"` until worker backend is wired.
+/// - returns unsupported lifecycle result with unwired blocker.
 #[cfg(not(feature = "wasm-vm-probe"))]
 #[wasm_bindgen]
 pub fn wasm_worker_recycle() -> WasmWorkerLifecycleResult {
