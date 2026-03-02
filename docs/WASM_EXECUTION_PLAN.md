@@ -859,8 +859,11 @@ Current `wasm-vm-probe` snapshot (non-gating, latest local run):
   `PyOS_strto*` parsing paths (no direct wasm libc imports for
   `snprintf`/`strtol`/`strtoul`/`strtod`), wasm-safe `zlib`/`bz2`/`lzma`
   shims for stdlib compression modules, and wasm-safe `sqlite3` stubs for
-  stdlib database module compilation. This reduces raw wasm `env` imports from
-  `206` to `121` in the current probe baseline.
+  stdlib database module compilation.
+- latest: wasm vm-probe lane now gates `cpython_keepalive_exports` on native
+  targets and provides a wasm-native `PyOS_FSPath` bridge. This removes the
+  remaining CPython C-API import family and reduces raw wasm `env` imports from
+  `121` to `0` in the current probe baseline.
 
 ## Risk Register
 

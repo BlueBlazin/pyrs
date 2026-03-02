@@ -15,9 +15,14 @@ use super::{
     cpython_gil_release_for_current_thread, cpython_is_known_thread_state_ptr,
     cpython_main_interpreter_state_ptr, cpython_mark_thread_runtime_initialized,
     cpython_marshal_object_to_value, cpython_set_current_thread_state_ptr, cpython_set_error,
-    cpython_set_typed_error, cpython_take_pending_interrupt_signum,
-    cpython_thread_runtime_initialized, value_to_cpython_marshal_object,
-    with_active_cpython_context_mut,
+    cpython_set_typed_error, cpython_take_pending_interrupt_signum, cpython_thread_runtime_initialized,
+    value_to_cpython_marshal_object, with_active_cpython_context_mut,
+};
+
+#[cfg(target_arch = "wasm32")]
+use super::{
+    PyExc_TypeError, PyObject_CallObject, PyObject_GetAttrString, PyTuple_New, Py_IncRef,
+    cpython_value_from_ptr,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -30,6 +35,64 @@ unsafe extern "C" {
 const PY_GILSTATE_LOCKED: i32 = 0;
 const PY_GILSTATE_UNLOCKED: i32 = 1;
 const PY_MUTEX_LOCKED_BIT: u8 = 0x01;
+
+#[cfg(target_arch = "wasm32")]
+unsafe fn cpython_fspath_is_str_or_bytes(path: *mut c_void) -> bool {
+    matches!(cpython_value_from_ptr(path), Ok(Value::Str(_) | Value::Bytes(_)))
+}
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyOS_FSPath(path: *mut c_void) -> *mut c_void {
+    if path.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_TypeError },
+            "expected str, bytes or os.PathLike object",
+        );
+        return std::ptr::null_mut();
+    }
+
+    if unsafe { cpython_fspath_is_str_or_bytes(path) } {
+        unsafe { Py_IncRef(path) };
+        return path;
+    }
+
+    let method_name = b"__fspath__\0";
+    let fspath = unsafe { PyObject_GetAttrString(path, method_name.as_ptr().cast()) };
+    if fspath.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_TypeError },
+            "expected str, bytes or os.PathLike object",
+        );
+        return std::ptr::null_mut();
+    }
+
+    let args = unsafe { PyTuple_New(0) };
+    if args.is_null() {
+        unsafe { Py_DecRef(fspath) };
+        return std::ptr::null_mut();
+    }
+
+    let out = unsafe { PyObject_CallObject(fspath, args) };
+    unsafe {
+        Py_DecRef(args);
+        Py_DecRef(fspath);
+    }
+    if out.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    if unsafe { cpython_fspath_is_str_or_bytes(out) } {
+        return out;
+    }
+
+    unsafe { Py_DecRef(out) };
+    cpython_set_typed_error(
+        unsafe { PyExc_TypeError },
+        "__fspath__() must return str or bytes",
+    );
+    std::ptr::null_mut()
+}
 
 #[cfg(target_arch = "wasm32")]
 fn wasm_parse_c_digit(byte: u8) -> Option<u32> {

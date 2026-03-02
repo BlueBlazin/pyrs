@@ -3,6 +3,7 @@
 //! This module translates raw CPython-facing pointers/calls into pyrs runtime
 //! objects while tracking ownership/lifetime through `ModuleCapiContext` and
 //! VM-global C-API registries.
+#![cfg_attr(target_arch = "wasm32", allow(unused_imports, dead_code))]
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -80,6 +81,7 @@ mod cpython_gc_alloc_api;
 mod cpython_import_api;
 mod cpython_import_runtime;
 mod cpython_iter_api;
+#[cfg(not(target_arch = "wasm32"))]
 mod cpython_keepalive_exports;
 mod cpython_list_api;
 mod cpython_long_float_api;
