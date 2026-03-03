@@ -3645,6 +3645,27 @@ def _override_target():
     return 1
 override_target = typing.override(_override_target)
 override_ok = getattr(override_target, '__override__', False) is True
+class FakeProto:
+    _is_protocol = True
+    __protocol_attrs__ = ('run',)
+    def run(self):
+        return 1
+runtime_target = typing.runtime_checkable(FakeProto)
+runtime_ok = (
+    runtime_target is FakeProto
+    and getattr(FakeProto, '_is_runtime_protocol', False) is True
+    and getattr(FakeProto, '__non_callable_proto_members__', set()) == set()
+)
+runtime_error = ''
+try:
+    typing.runtime_checkable(Plain)
+except Exception as exc:
+    runtime_error = type(exc).__name__
+no_type_target = typing.no_type_check(Plain)
+no_type_ok = (
+    no_type_target is Plain
+    and getattr(Plain, '__no_type_check__', False) is True
+)
 assert_never_ok = False
 try:
     typing.assert_never(123)
@@ -3672,6 +3693,9 @@ ok = (
     and is_protocol_ok
     and final_ok
     and override_ok
+    and runtime_ok
+    and runtime_error == 'TypeError'
+    and no_type_ok
     and assert_never_ok
     and reveal_ok
     and clear_ok

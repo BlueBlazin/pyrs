@@ -938,6 +938,8 @@ impl Vm {
             | BuiltinFunction::TypingAssertNever
             | BuiltinFunction::TypingFinal
             | BuiltinFunction::TypingOverride
+            | BuiltinFunction::TypingRuntimeCheckable
+            | BuiltinFunction::TypingNoTypeCheck
             | BuiltinFunction::TypingNoDefaultNew
             | BuiltinFunction::TypingNoDefaultRepr
             | BuiltinFunction::TypingNoDefaultReduce

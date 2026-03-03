@@ -15974,6 +15974,77 @@ impl Vm {
         Ok(value)
     }
 
+    pub(super) fn builtin_typing_runtime_checkable(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "runtime_checkable() takes exactly one argument",
+            ));
+        }
+        let cls = args.remove(0);
+        let is_protocol = matches!(
+            self.builtin_typing_is_protocol(vec![cls.clone()], HashMap::new())?,
+            Value::Bool(true)
+        );
+        if !is_protocol {
+            return Err(RuntimeError::type_error(format!(
+                "@runtime_checkable can be only applied to protocol classes, got {}",
+                format_repr(&cls)
+            )));
+        }
+        self.typing_try_set_bool_attr(cls.clone(), "_is_runtime_protocol")?;
+        let mut non_callable_members = Vec::new();
+        if let Some(protocol_attrs) = self.optional_getattr_value(cls.clone(), "__protocol_attrs__")?
+        {
+            for member in self.collect_iterable_values(protocol_attrs)? {
+                let Value::Str(member_name) = member else {
+                    continue;
+                };
+                let attr_value = self
+                    .optional_getattr_value(cls.clone(), &member_name)
+                    .map_err(|_| {
+                        RuntimeError::type_error(format!(
+                            "Failed to determine whether protocol member '{}' is a method member",
+                            member_name
+                        ))
+                    })?;
+                let is_callable = attr_value
+                    .as_ref()
+                    .is_some_and(|value| self.is_callable_value(value));
+                if !is_callable {
+                    non_callable_members.push(Value::Str(member_name));
+                }
+            }
+        }
+        self.builtin_setattr(
+            vec![
+                cls.clone(),
+                Value::Str("__non_callable_proto_members__".to_string()),
+                self.heap.alloc_set(non_callable_members),
+            ],
+            HashMap::new(),
+        )?;
+        Ok(cls)
+    }
+
+    pub(super) fn builtin_typing_no_type_check(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "no_type_check() takes exactly one argument",
+            ));
+        }
+        let value = args.remove(0);
+        self.typing_try_set_bool_attr(value.clone(), "__no_type_check__")?;
+        Ok(value)
+    }
+
     fn weakref_reference_type(&self) -> Result<ObjRef, RuntimeError> {
         let module = self
             .modules

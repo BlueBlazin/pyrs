@@ -13462,6 +13462,10 @@ impl Vm {
             BuiltinFunction::TypingAssertNever => self.builtin_typing_assert_never(args, kwargs),
             BuiltinFunction::TypingFinal => self.builtin_typing_final(args, kwargs),
             BuiltinFunction::TypingOverride => self.builtin_typing_override(args, kwargs),
+            BuiltinFunction::TypingRuntimeCheckable => {
+                self.builtin_typing_runtime_checkable(args, kwargs)
+            }
+            BuiltinFunction::TypingNoTypeCheck => self.builtin_typing_no_type_check(args, kwargs),
             BuiltinFunction::TypingNoDefaultNew => self.builtin_typing_nodefault_new(args, kwargs),
             BuiltinFunction::TypingNoDefaultRepr => {
                 self.builtin_typing_nodefault_repr(args, kwargs)
