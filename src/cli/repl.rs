@@ -2155,18 +2155,6 @@ fn format_parse_error(source: &str, filename: &str, err: &ParseError) -> String 
     format_syntax_error(filename, source, err)
 }
 
-fn repl_parse_candidate_source(pending: &str) -> &str {
-    crate::repl_core::parse_candidate_source(pending)
-}
-
-fn repl_parse_success_requires_more_input(source: &str, latest_line: &str) -> bool {
-    crate::repl_core::parse_success_requires_more_input(source, latest_line)
-}
-
-fn repl_input_is_incomplete(source: &str, err: &ParseError) -> bool {
-    crate::repl_core::input_is_incomplete(source, err)
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -2177,9 +2165,8 @@ mod tests {
         CompletionRefreshPlan, CompletionState, MetaCommand, PythonHighlighter, ReplCompleter,
         ReplMagicCommand, ReplThemeMode, ResolvedReplTheme, TimeItRequest, completion_fragment,
         format_parse_error, is_path_like, parse_colorfgbg_background_code, parse_magic_command,
-        parse_meta_command, parse_repl_theme_mode, repl_input_is_incomplete,
-        repl_module_completion_plan, repl_palette, repl_parse_candidate_source,
-        repl_parse_success_requires_more_input, resolve_repl_theme,
+        parse_meta_command, parse_repl_theme_mode, repl_module_completion_plan, repl_palette,
+        resolve_repl_theme,
     };
     use crate::parser;
 
@@ -2187,50 +2174,53 @@ mod tests {
     fn repl_marks_colon_blocks_as_incomplete() {
         let source = "if True:\n";
         let err = parser::parse_module(source).expect_err("parse should fail while incomplete");
-        assert!(repl_input_is_incomplete(source, &err));
+        assert!(crate::repl_core::input_is_incomplete(source, &err));
     }
 
     #[test]
     fn repl_marks_unclosed_delimiter_as_incomplete() {
         let source = "print((1 + 2\n";
         let err = parser::parse_module(source).expect_err("parse should fail while incomplete");
-        assert!(repl_input_is_incomplete(source, &err));
+        assert!(crate::repl_core::input_is_incomplete(source, &err));
     }
 
     #[test]
     fn repl_treats_real_syntax_error_as_complete() {
         let source = "if True print(1)\n";
         let err = parser::parse_module(source).expect_err("parse should fail");
-        assert!(!repl_input_is_incomplete(source, &err));
+        assert!(!crate::repl_core::input_is_incomplete(source, &err));
     }
 
     #[test]
     fn repl_candidate_source_omits_latest_synthetic_newline() {
         assert_eq!(
-            repl_parse_candidate_source("class A:\n    x = 1\n"),
+            crate::repl_core::parse_candidate_source("class A:\n    x = 1\n"),
             "class A:\n    x = 1"
         );
         assert_eq!(
-            repl_parse_candidate_source("class A:\n    x = 1\n\n"),
+            crate::repl_core::parse_candidate_source("class A:\n    x = 1\n\n"),
             "class A:\n    x = 1\n"
         );
     }
 
     #[test]
     fn repl_class_block_stays_incomplete_until_blank_line() {
-        let without_blank = repl_parse_candidate_source("class A:\n    x = 1\n");
+        let without_blank = crate::repl_core::parse_candidate_source("class A:\n    x = 1\n");
         assert!(parser::parse_module(without_blank).is_ok());
-        assert!(repl_parse_success_requires_more_input(
+        assert!(crate::repl_core::parse_success_requires_more_input(
             without_blank,
             "    x = 1"
         ));
 
-        let with_blank = repl_parse_candidate_source("class A:\n    x = 1\n\n");
+        let with_blank = crate::repl_core::parse_candidate_source("class A:\n    x = 1\n\n");
         assert!(
             parser::parse_module(with_blank).is_ok(),
             "class block should complete after blank line"
         );
-        assert!(!repl_parse_success_requires_more_input(with_blank, ""));
+        assert!(!crate::repl_core::parse_success_requires_more_input(
+            with_blank,
+            ""
+        ));
     }
 
     #[test]
