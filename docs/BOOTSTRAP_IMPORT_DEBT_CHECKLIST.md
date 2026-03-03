@@ -112,7 +112,9 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
   - `_io` bootstrap export surface now includes `_io.text_encoding`, matching CPython `io.py` import requirements (`from _io import ... text_encoding ...`);
   - covered by `tests/vm.rs::io_import_prefers_cpython_pure_module_when_lib_path_is_added` and `tests/vm.rs::_io_module_exports_text_encoding_helper`.
 - [ ] `P1` `subprocess` (line 7351)
-- [ ] `P1` `uuid` (line 7637)
+- [x] `P1` `uuid` (line 7637):
+  - added to pure-stdlib unload preference group (`PURE_STDLIB_UUID_MODULES`) so CPython `Lib/uuid.py` is preferred when available;
+  - covered by `tests/vm.rs::uuid_import_prefers_cpython_pure_module_when_lib_path_is_added`.
 - [ ] `P1` `asyncio` (line 7659)
 - [ ] `P1` `threading` (line 7846)
 - [x] `P1` `signal` (line 7877):
