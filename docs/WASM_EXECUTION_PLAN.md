@@ -313,6 +313,20 @@ If any are not true:
 ## Progress Checkpoints (codex/wasm)
 
 Completed on this branch:
+- `ea829337`: introduced shared REPL input-session state for native adapter flow.
+- `7c75118e`: removed stale CLI-local REPL parse helper wrappers in favor of shared core ownership.
+- `55809243`: shared ready-module execution path (`run_ready_module`) wired across CLI + wasm vm-probe.
+- `70d92475`: added profile-based REPL core state (`NativeFull` / `WasmLean`) and wired native loop.
+- `29215b6b`: adopted profile-backed `ReplCoreState` in wasm REPL session scaffolding.
+- `f8a15820`: added cross-profile line-submit conformance coverage for shared core semantics.
+- `2959b218`: consolidated native interactive loop onto shared submit+execute flow.
+- `80651fe6`: routed `WasmReplSession::execute_input` through shared line-state semantics
+  (continuation-aware parse path + compile/blocker/runtime contract mapping).
+- `479f6539`: gated `WasmLean` profile variant to wasm/test builds to avoid host-only warning drift.
+- `b5c26c14`: gated VM-dependent shared REPL execution paths out of wasm no-probe builds and
+  restored green `scripts/check_wasm_branch.sh` contract lane.
+- `5c855910`: added vm-probe browser smoke coverage for REPL continuation execution
+  (`class ...` block finalization on blank line).
 - `afeed21`: initial isolated execution plan + branch-policy guardrails.
 - `7c92917`: wasm dependency lane + target-gated build/dependency isolation.
 - `302fa6b`: `VmHost`/`NativeHost`/`WasmHost` baseline + `Vm::new_with_host`.
