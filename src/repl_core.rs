@@ -109,6 +109,12 @@ pub(crate) enum ReplLineParseResult {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReplPromptKind {
+    Primary,
+    Continuation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ReplProfile {
     NativeFull,
     #[cfg(any(target_arch = "wasm32", feature = "wasm-vm-probe", test))]
@@ -136,6 +142,14 @@ impl ReplInputSession {
 
     pub(crate) fn pending_source(&self) -> &str {
         &self.pending
+    }
+
+    pub(crate) fn prompt_kind(&self) -> ReplPromptKind {
+        if self.is_empty() {
+            ReplPromptKind::Primary
+        } else {
+            ReplPromptKind::Continuation
+        }
     }
 
     pub(crate) fn clear(&mut self) {
@@ -190,6 +204,10 @@ impl ReplCoreState {
         self.input.pending_source()
     }
 
+    pub(crate) fn prompt_kind(&self) -> ReplPromptKind {
+        self.input.prompt_kind()
+    }
+
     pub(crate) fn clear(&mut self) {
         self.input.clear();
     }
@@ -208,6 +226,33 @@ impl ReplCoreState {
 
     pub(crate) fn submit_line(&mut self, line: &str) -> ReplLineParseResult {
         self.input.submit_line(line)
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
+    pub(crate) fn submit_line_and_execute(
+        &mut self,
+        vm: &mut crate::vm::Vm,
+        line: &str,
+        filename: &str,
+    ) -> ReplLineExecuteResult {
+        match self.submit_line(line) {
+            ReplLineParseResult::NeedMoreInput => ReplLineExecuteResult::NeedMoreInput,
+            ReplLineParseResult::ParseError { source, error } => {
+                ReplLineExecuteResult::ParseError { source, error }
+            }
+            ReplLineParseResult::Ready { source, module } => {
+                match run_ready_module(vm, &source, &module, filename, None) {
+                    Ok(display) => ReplLineExecuteResult::Executed {
+                        module,
+                        display,
+                    },
+                    Err(error) => ReplLineExecuteResult::ExecutionError {
+                        source,
+                        error,
+                    },
+                }
+            }
+        }
     }
 }
 
@@ -311,34 +356,6 @@ pub(crate) enum ReplLineExecuteResult {
     },
 }
 
-/// Shared submit+execute flow for line-based REPL adapters.
-#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
-pub(crate) fn submit_line_and_execute(
-    state: &mut ReplCoreState,
-    vm: &mut crate::vm::Vm,
-    line: &str,
-    filename: &str,
-) -> ReplLineExecuteResult {
-    match state.submit_line(line) {
-        ReplLineParseResult::NeedMoreInput => ReplLineExecuteResult::NeedMoreInput,
-        ReplLineParseResult::ParseError { source, error } => {
-            ReplLineExecuteResult::ParseError { source, error }
-        }
-        ReplLineParseResult::Ready { source, module } => {
-            match run_ready_module(vm, &source, &module, filename, None) {
-                Ok(display) => ReplLineExecuteResult::Executed {
-                    module,
-                    display,
-                },
-                Err(error) => ReplLineExecuteResult::ExecutionError {
-                    source,
-                    error,
-                },
-            }
-        }
-    }
-}
-
 #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
 #[derive(Debug)]
 pub(crate) enum ReplExecutionError {
@@ -349,13 +366,13 @@ pub(crate) enum ReplExecutionError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ReplCoreState, ReplInputSession, ReplLineParseResult, ReplProfile, input_is_incomplete,
+        ReplCoreState, ReplInputSession, ReplLineParseResult, ReplProfile, ReplPromptKind,
+        input_is_incomplete,
         parse_candidate_source, parse_success_requires_more_input, submit_line_for_module,
     };
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
     use super::{
         ReplLineExecuteResult, execute_module_or_expression, run_ready_module,
-        submit_line_and_execute,
     };
 
     #[test]
@@ -441,14 +458,17 @@ mod tests {
         let mut session = ReplInputSession::new();
         assert!(session.is_empty());
         assert!(!session.has_pending_nonempty());
+        assert_eq!(session.prompt_kind(), ReplPromptKind::Primary);
 
         session.append_paste_line("class User:");
         assert!(!session.is_empty());
         assert!(session.has_pending_nonempty());
+        assert_eq!(session.prompt_kind(), ReplPromptKind::Continuation);
 
         session.interrupt();
         assert!(session.is_empty());
         assert!(!session.has_pending_nonempty());
+        assert_eq!(session.prompt_kind(), ReplPromptKind::Primary);
 
         session.append_paste_line("x = 1");
         assert!(session.has_pending_nonempty());
@@ -461,11 +481,14 @@ mod tests {
         let mut state = ReplCoreState::new(ReplProfile::NativeFull);
         assert_eq!(state.profile(), ReplProfile::NativeFull);
         assert!(state.is_empty());
+        assert_eq!(state.prompt_kind(), ReplPromptKind::Primary);
 
         state.append_paste_line("x = 1");
         assert!(state.has_pending_nonempty());
+        assert_eq!(state.prompt_kind(), ReplPromptKind::Continuation);
         state.clear();
         assert!(state.is_empty());
+        assert_eq!(state.prompt_kind(), ReplPromptKind::Primary);
 
         let lean = ReplCoreState::new(ReplProfile::WasmLean);
         assert_eq!(lean.profile(), ReplProfile::WasmLean);
@@ -554,7 +577,7 @@ mod tests {
     fn submit_line_and_execute_runs_ready_input_and_returns_display() {
         let mut vm = crate::vm::Vm::new();
         let mut state = ReplCoreState::new(ReplProfile::NativeFull);
-        let result = submit_line_and_execute(&mut state, &mut vm, "1 + 4", "<stdin>");
+        let result = state.submit_line_and_execute(&mut vm, "1 + 4", "<stdin>");
         if let ReplLineExecuteResult::Executed { display, .. } = result {
             assert_eq!(display.as_deref(), Some("5"));
         } else {
@@ -568,7 +591,7 @@ mod tests {
         let mut vm = crate::vm::Vm::new();
         let mut state = ReplCoreState::new(ReplProfile::WasmLean);
         assert!(matches!(
-            submit_line_and_execute(&mut state, &mut vm, "class A:", "<stdin>"),
+            state.submit_line_and_execute(&mut vm, "class A:", "<stdin>"),
             ReplLineExecuteResult::NeedMoreInput
         ));
         assert!(!state.is_empty());

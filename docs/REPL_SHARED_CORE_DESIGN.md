@@ -1,6 +1,6 @@
 # REPL Shared Core Design (Native + WASM Adapters)
 
-Status: proposed (design-only), no runtime wiring changes in this doc.
+Status: in-progress (incremental migration on `codex/wasm`).
 Branch context: `codex/wasm` (isolated from `master`).
 
 ## 1. Context and Product Positioning
@@ -289,3 +289,12 @@ Design is complete when:
 3. Migrate wasm `WasmReplSession` to `ReplCore`.
 4. Add cross-adapter semantic conformance tests.
 5. Delete duplicated logic and refresh wasm evidence artifacts.
+
+## 12. Implementation Checkpoints (Live)
+
+- Shared parse/incomplete-input semantics are centralized in [`src/repl_core.rs`](../src/repl_core.rs).
+- Native CLI loop now uses `ReplCoreState` for line submission and execution flow.
+- wasm `WasmReplSession` now uses `ReplCoreState` for line buffering/continuation state.
+- New `ReplCoreState` session API now includes:
+  - `prompt_kind()` for adapter prompt selection (`>>>` vs `...` decisions),
+  - `submit_line_and_execute(...)` stateful execution method.

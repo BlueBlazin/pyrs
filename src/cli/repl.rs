@@ -376,10 +376,9 @@ fn run_interactive_session(
     let mut paste_mode = false;
     let mut timing_enabled = false;
     loop {
-        let prompt = if repl_state.is_empty() {
-            &primary_prompt
-        } else {
-            &continuation_prompt
+        let prompt = match repl_state.prompt_kind() {
+            crate::repl_core::ReplPromptKind::Primary => &primary_prompt,
+            crate::repl_core::ReplPromptKind::Continuation => &continuation_prompt,
         };
 
         match line_editor.read_line(prompt) {
@@ -459,12 +458,7 @@ fn run_interactive_session(
 
                 let started = Instant::now();
                 let mut ran_execution = false;
-                match crate::repl_core::submit_line_and_execute(
-                    &mut repl_state,
-                    vm,
-                    &line,
-                    "<stdin>",
-                ) {
+                match repl_state.submit_line_and_execute(vm, &line, "<stdin>") {
                     crate::repl_core::ReplLineExecuteResult::NeedMoreInput => continue,
                     crate::repl_core::ReplLineExecuteResult::ParseError { source, error } => {
                         eprintln!(
