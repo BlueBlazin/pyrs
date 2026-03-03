@@ -941,6 +941,7 @@ impl Vm {
             | BuiltinFunction::LocaleStrXfrm
             | BuiltinFunction::LocaleStrColl
             | BuiltinFunction::LocaleNLLangInfo => "_locale",
+            BuiltinFunction::SymtableSymtable => "_symtable",
             _ => "builtins",
         }
         .to_string();

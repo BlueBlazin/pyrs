@@ -7903,7 +7903,7 @@ impl Vm {
         self.install_module_alias_from_existing("_signal", "signal");
         self.install_builtin_module(
             "_symtable",
-            &[("symtable", BuiltinFunction::NoOp)],
+            &[("symtable", BuiltinFunction::SymtableSymtable)],
             vec![
                 ("USE", Value::Int(16)),
                 ("DEF_GLOBAL", Value::Int(1)),

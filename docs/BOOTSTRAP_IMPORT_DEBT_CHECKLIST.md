@@ -24,7 +24,8 @@ Audit date: 2026-03-04
 
 ## 1) Placeholder and `NoOp` Runtime Semantics
 
-- [ ] `P0` Replace `_symtable.symtable` `NoOp` with real behavior or correct unsupported behavior (`_symtable` install at line 7892; function entry at line 7894).
+- [x] `P0` Replace `_symtable.symtable` `NoOp` with real behavior or correct unsupported behavior (`_symtable` install at line 7892; function entry at line 7894):
+  - `symtable()` now has a dedicated builtin with explicit 3-arg call contract and intentional-unavailable behavior (`NotImplementedError`) instead of silent `NoOp`.
 - [x] `P0` Replace `faulthandler` `NoOp` surfaces with CPython-compatible semantics or intentionally unavailable behavior:
   - replaced silent `NoOp`/`Bool` placeholders with explicit builtins:
     - unsupported operations (`enable`, `dump_traceback`, `dump_traceback_later`, `cancel_dump_traceback_later`, `register`, `dump_c_stack`, `_read_null`, `_sigsegv`, `_sigabrt`, `_sigfpe`, `_stack_overflow`, `_fatal_error_c_thread`) now raise `RuntimeError("faulthandler is not supported on this platform")`,

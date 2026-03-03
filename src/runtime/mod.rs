@@ -4601,6 +4601,7 @@ pub enum BuiltinFunction {
     FaulthandlerDisable,
     FaulthandlerIsEnabled,
     FaulthandlerUnregister,
+    SymtableSymtable,
     SocketGetHostName,
     SocketGetHostByName,
     SocketGetAddrInfo,
@@ -6511,6 +6512,17 @@ impl BuiltinFunction {
                     ));
                 }
                 Ok(Value::Bool(false))
+            }
+            BuiltinFunction::SymtableSymtable => {
+                if args.len() != 3 {
+                    return Err(RuntimeError::type_error(
+                        "symtable() takes exactly 3 arguments",
+                    ));
+                }
+                Err(RuntimeError::with_exception(
+                    "NotImplementedError",
+                    Some("_symtable.symtable() is not implemented yet".to_string()),
+                ))
             }
             BuiltinFunction::TypingNoDefaultRepr => Ok(Value::Str("typing.NoDefault".to_string())),
             BuiltinFunction::TypingNoDefaultReduce => Ok(Value::Str("NoDefault".to_string())),
