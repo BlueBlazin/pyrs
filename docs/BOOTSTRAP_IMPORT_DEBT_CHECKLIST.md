@@ -56,6 +56,7 @@ Audit date: 2026-03-04
 - [ ] `P1` Replace `weakref` bootstrap placeholders:
   - `WeakSet` mapped to builtin `Set`;
   - weak dict types mapped to builtin `Dict` (module install at line 5599).
+  - root-cause blocker for pure-stdlib `weakref.py` adoption: CPython expects subclassable `_weakref.ref` type (`class WeakMethod(ref)`), but current pyrs `_weakref.ref` export is a function-valued callable, which raises `TypeError: bases must be types`.
 - [ ] `P1` Replace `_weakrefset.WeakSet` placeholder mapped to builtin `Set` (module install at line 5624).
 
 ## 2) Explicit Stub Modules
