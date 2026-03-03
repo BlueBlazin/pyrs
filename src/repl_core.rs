@@ -1,4 +1,5 @@
 //! Shared REPL parse/incomplete-input semantics used by native and wasm adapters.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
 use crate::ast::Module;
 use crate::parser::ParseError;
@@ -147,6 +148,7 @@ pub(crate) fn execute_module_or_expression(
     vm: &mut crate::vm::Vm,
     module: &Module,
     filename: &str,
+    precompiled_module_code: Option<&crate::bytecode::CodeObject>,
 ) -> Result<Option<String>, ReplExecutionError> {
     if module.body.len() == 1
         && let crate::ast::StmtKind::Expr(expr) = &module.body[0].node
@@ -163,8 +165,14 @@ pub(crate) fn execute_module_or_expression(
         return Ok(Some(rendered));
     }
 
-    let code = crate::compiler::compile_module_with_filename(module, filename)
-        .map_err(ReplExecutionError::Compile)?;
+    let maybe_compiled;
+    let code = if let Some(code) = precompiled_module_code {
+        code
+    } else {
+        maybe_compiled = crate::compiler::compile_module_with_filename(module, filename)
+            .map_err(ReplExecutionError::Compile)?;
+        &maybe_compiled
+    };
     vm.execute(&code).map_err(ReplExecutionError::Runtime)?;
     Ok(None)
 }
@@ -264,7 +272,7 @@ mod tests {
     fn execute_module_or_expression_echoes_expression_repr() {
         let mut vm = crate::vm::Vm::new();
         let module = crate::parser::parse_module("1 + 1").expect("module should parse");
-        let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>")
+        let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>", None)
             .expect("expression execution should succeed");
         assert_eq!(rendered.as_deref(), Some("2"));
     }
@@ -273,7 +281,7 @@ mod tests {
     fn execute_module_or_expression_returns_none_for_statements() {
         let mut vm = crate::vm::Vm::new();
         let module = crate::parser::parse_module("x = 1").expect("module should parse");
-        let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>")
+        let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>", None)
             .expect("statement execution should succeed");
         assert!(rendered.is_none());
         assert!(matches!(vm.get_global("x"), Some(crate::runtime::Value::Int(1))));

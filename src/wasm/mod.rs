@@ -1126,75 +1126,38 @@ impl WasmReplSession {
         {
             self.vm.cache_source_text(WASM_REPL_FILENAME, source);
 
-            if parsed.module.body.len() == 1
-                && let crate::ast::StmtKind::Expr(expr) = &parsed.module.body[0].node
-            {
-                let expression_code = match crate::compiler::compile_expression_with_filename(
-                    expr,
-                    WASM_REPL_FILENAME,
-                ) {
-                    Ok(code) => code,
-                    Err(err) => {
-                        let (message, line, column) = format_compile_error(&err);
-                        let result = WasmExecutionResult {
-                            success: false,
-                            phase: WasmExecutionPhase::CompileError.key().to_string(),
-                            stdout: String::new(),
-                            stderr: message.clone(),
-                            error: Some(message),
-                            blocker_key: None,
-                            line,
-                            column,
-                        };
-                        self.last_error = result.error.clone();
-                        return result;
-                    }
-                };
-
-                let result = match self.vm.execute(&expression_code) {
-                    Ok(value) => {
-                        let mut stdout = String::new();
-                        if !matches!(value, crate::runtime::Value::None) {
-                            match self.vm.render_value_repr_for_display(value) {
-                                Ok(rendered) => {
-                                    stdout = rendered;
-                                }
-                                Err(err) => {
-                                    let runtime_result = runtime_error_to_execution_result(err);
-                                    self.last_error = runtime_result.error.clone();
-                                    return runtime_result;
-                                }
-                            }
-                        }
-                        WasmExecutionResult {
-                            success: true,
-                            phase: WASM_EXECUTION_PHASE_OK.to_string(),
-                            stdout,
-                            stderr: String::new(),
-                            error: None,
-                            blocker_key: None,
-                            line: 0,
-                            column: 0,
-                        }
-                    }
-                    Err(err) => runtime_error_to_execution_result(err),
-                };
-                self.last_error = result.error.clone();
-                return result;
-            }
-
-            let result = match self.vm.execute(&parsed.code) {
-                Ok(_) => WasmExecutionResult {
+            let result = match crate::repl_core::execute_module_or_expression(
+                &mut self.vm,
+                &parsed.module,
+                WASM_REPL_FILENAME,
+                Some(&parsed.code),
+            ) {
+                Ok(stdout) => WasmExecutionResult {
                     success: true,
                     phase: WASM_EXECUTION_PHASE_OK.to_string(),
-                    stdout: String::new(),
+                    stdout: stdout.unwrap_or_default(),
                     stderr: String::new(),
                     error: None,
                     blocker_key: None,
                     line: 0,
                     column: 0,
                 },
-                Err(err) => runtime_error_to_execution_result(err),
+                Err(crate::repl_core::ReplExecutionError::Compile(err)) => {
+                    let (message, line, column) = format_compile_error(&err);
+                    WasmExecutionResult {
+                        success: false,
+                        phase: WasmExecutionPhase::CompileError.key().to_string(),
+                        stdout: String::new(),
+                        stderr: message.clone(),
+                        error: Some(message),
+                        blocker_key: None,
+                        line,
+                        column,
+                    }
+                }
+                Err(crate::repl_core::ReplExecutionError::Runtime(err)) => {
+                    runtime_error_to_execution_result(err)
+                }
             };
             self.last_error = result.error.clone();
             return result;
