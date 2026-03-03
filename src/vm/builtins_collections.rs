@@ -1,13 +1,12 @@
 use super::{
-    BoundMethod, BuiltinFunction, ClassObject, DEQUE_BACKING_STORAGE_ATTR,
-    HashMap, Heap, InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject,
-    MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeMethodKind, ObjRef, Object, RuntimeError,
-    Value, Vm, add_values, and_values, binary_operator, bytes_like_from_value, class_attr_lookup,
-    class_name_for_instance, compare_ge, compare_gt, compare_le, compare_lt, dict_remove_value,
-    dict_set_value_checked, div_values, ensure_hashable, floor_div_values, format_repr,
-    is_missing_attribute_error, is_truthy, lshift_values, mod_values, mul_values, pow_values,
-    rshift_values, runtime_error_matches_exception, sub_values, unary_predicate, value_to_int,
-    xor_values,
+    BoundMethod, BuiltinFunction, ClassObject, DEQUE_BACKING_STORAGE_ATTR, HashMap, Heap,
+    InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, MAPPING_PROXY_STORAGE_ATTR,
+    ModuleObject, NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values,
+    and_values, binary_operator, bytes_like_from_value, class_attr_lookup, class_name_for_instance,
+    compare_ge, compare_gt, compare_le, compare_lt, dict_remove_value, dict_set_value_checked,
+    div_values, ensure_hashable, floor_div_values, format_repr, is_missing_attribute_error,
+    is_truthy, lshift_values, mod_values, mul_values, pow_values, rshift_values,
+    runtime_error_matches_exception, sub_values, unary_predicate, value_to_int, xor_values,
 };
 use crate::runtime::FunctionObject;
 
@@ -877,10 +876,41 @@ impl Vm {
         if n < 0 {
             return Err(RuntimeError::new("tee() n must be non-negative"));
         }
-        let values = self.collect_iterable_values(iterable)?;
-        let mut out = Vec::with_capacity(n as usize);
-        for _ in 0..n {
-            out.push(self.heap.alloc_list(values.clone()));
+        let slot_count =
+            usize::try_from(n).map_err(|_| RuntimeError::new("tee() n is too large"))?;
+        if slot_count == 0 {
+            return Ok(self.heap.alloc_tuple(Vec::new()));
+        }
+        let source = self.to_iterator_value(iterable)?;
+        let shared = match self
+            .heap
+            .alloc_module(ModuleObject::new("__itertools_tee_shared__"))
+        {
+            Value::Module(module) => module,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *shared.kind_mut() {
+            module_data.globals.insert("source".to_string(), source);
+            module_data
+                .globals
+                .insert("buffer".to_string(), self.heap.alloc_list(Vec::new()));
+            module_data.globals.insert(
+                "positions".to_string(),
+                self.heap.alloc_list(vec![Value::Int(0); slot_count]),
+            );
+            module_data
+                .globals
+                .insert("exhausted".to_string(), Value::Bool(false));
+        }
+        let mut out = Vec::with_capacity(slot_count);
+        for slot in 0..slot_count {
+            out.push(self.heap.alloc_iterator(IteratorObject {
+                kind: IteratorKind::Tee {
+                    shared: Value::Module(shared.clone()),
+                    slot,
+                },
+                index: 0,
+            }));
         }
         Ok(self.heap.alloc_tuple(out))
     }
@@ -896,27 +926,18 @@ impl Vm {
                 "zip_longest() got an unexpected keyword argument",
             ));
         }
-        if args.is_empty() {
-            return Ok(self.heap.alloc_list(Vec::new()));
-        }
-        let mut columns = Vec::with_capacity(args.len());
+        let mut iterators = Vec::with_capacity(args.len());
         for source in args {
-            columns.push(self.collect_iterable_values(source)?);
+            iterators.push(self.to_iterator_value(source)?);
         }
-        let max_len = columns.iter().map(Vec::len).max().unwrap_or(0);
-        let mut out = Vec::with_capacity(max_len);
-        for idx in 0..max_len {
-            let mut row = Vec::with_capacity(columns.len());
-            for values in &columns {
-                if idx < values.len() {
-                    row.push(values[idx].clone());
-                } else {
-                    row.push(fillvalue.clone());
-                }
-            }
-            out.push(self.heap.alloc_tuple(row));
-        }
-        Ok(self.heap.alloc_list(out))
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::ZipLongest {
+                active: vec![true; iterators.len()],
+                iterators,
+                fillvalue,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_chain(

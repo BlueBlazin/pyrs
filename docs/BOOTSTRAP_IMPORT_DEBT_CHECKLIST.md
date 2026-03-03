@@ -151,7 +151,7 @@ This investigation was triggered by `itertools` behavior and must remain explici
 - [x] `P0` `itertools.chain.from_iterable` currently returns an eager `list`, not lazy iterator behavior:
   - runtime implementation: `builtin_itertools_chain_from_iterable` at `src/vm/builtins_collections.rs:1022`
 - [x] `P1` Converted these helpers from eager snapshots to lazy iterator objects with CPython-shaped constructor behavior:
-  - `accumulate`, `compress`, `dropwhile`, `filterfalse`, `islice`, `pairwise`, `starmap`, `takewhile`
+  - `accumulate`, `compress`, `dropwhile`, `filterfalse`, `islice`, `pairwise`, `starmap`, `takewhile`, `zip_longest`, `tee`
   - implementation entrypoints: `src/vm/builtins_collections.rs` (`builtin_itertools_*` methods)
 - [ ] `P1` Audit all exported `itertools` callables (lines 3696-3718) for iterator/laziness/type/repr parity, not just value parity.
 - [ ] `P1` Add differential tests for iterator object identity/repr/type and lazy consumption semantics for `itertools` surfaces before further stdlib closure work.

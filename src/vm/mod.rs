@@ -7668,7 +7668,9 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                 | IteratorKind::Islice { .. }
                 | IteratorKind::Pairwise { .. }
                 | IteratorKind::StarMap { .. }
-                | IteratorKind::TakeWhile { .. } => {
+                | IteratorKind::TakeWhile { .. }
+                | IteratorKind::ZipLongest { .. }
+                | IteratorKind::Tee { .. } => {
                     return Err(RuntimeError::type_error("expected bytes-like payload"));
                 }
             };

@@ -57,9 +57,9 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
                 | IteratorKind::Islice { .. }
                 | IteratorKind::Pairwise { .. }
                 | IteratorKind::StarMap { .. }
-                | IteratorKind::TakeWhile { .. } => {
-                    std::ptr::addr_of_mut!(PySeqIter_Type).cast()
-                }
+                | IteratorKind::TakeWhile { .. }
+                | IteratorKind::ZipLongest { .. }
+                | IteratorKind::Tee { .. } => std::ptr::addr_of_mut!(PySeqIter_Type).cast(),
             },
             _ => std::ptr::addr_of_mut!(PyBaseObject_Type).cast(),
         },

@@ -18437,6 +18437,8 @@ objs = {
     "pairwise": itertools.pairwise([1, 2, 3]),
     "starmap": itertools.starmap(operator.add, [(1, 2)]),
     "takewhile": itertools.takewhile(lambda x: x < 3, [1, 2, 3]),
+    "zip_longest": itertools.zip_longest([1, 2], [10], fillvalue=0),
+    "tee": itertools.tee([1, 2], 2)[0],
 }
 is_list = {k: isinstance(v, list) for k, v in objs.items()}
 iter_identity = all(iter(v) is v for v in objs.values())
@@ -18450,6 +18452,8 @@ ok = (
     and not is_list["pairwise"]
     and not is_list["starmap"]
     and not is_list["takewhile"]
+    and not is_list["zip_longest"]
+    and not is_list["tee"]
 )
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -18483,8 +18487,85 @@ checks = {
     "pairwise": probe(lambda x: itertools.pairwise(x)),
     "starmap": probe(lambda x: itertools.starmap(operator.add, x)),
     "takewhile": probe(lambda x: itertools.takewhile(lambda y: y < 0, x)),
+    "zip_longest": probe(lambda x: itertools.zip_longest(x, [1])),
+    "tee": probe(lambda x: itertools.tee(x)),
 }
 ok = all(v[0] == ["iter"] and v[1] == "boom" for v in checks.values())
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn itertools_zip_longest_is_lazy_and_iterlike() {
+    let source = r#"import itertools
+events = []
+def source(name, values):
+    for value in values:
+        events.append(f"{name}{value}")
+        yield value
+z = itertools.zip_longest(source("a", [1, 2]), source("b", [10]), fillvalue=0)
+created = list(events)
+iter_identity = (iter(z) is z)
+first = next(z)
+after_first = list(events)
+second = next(z)
+after_second = list(events)
+rest = list(z)
+repr_ok = repr(itertools.zip_longest([1], [2])).startswith("<itertools.zip_longest object at 0x")
+ok = (
+    created == []
+    and iter_identity
+    and first == (1, 10)
+    and after_first == ["a1", "b10"]
+    and second == (2, 0)
+    and after_second == ["a1", "b10", "a2"]
+    and rest == []
+    and repr_ok
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn itertools_tee_is_lazy_and_buffers_across_consumers() {
+    let source = r#"import itertools
+events = []
+def gen():
+    events.append("yield1")
+    yield 1
+    events.append("yield2")
+    yield 2
+    events.append("yield3")
+    yield 3
+a, b = itertools.tee(gen(), 2)
+created = list(events)
+a1 = next(a)
+after_a1 = list(events)
+b1 = next(b)
+after_b1 = list(events)
+rest_a = list(a)
+after_rest_a = list(events)
+rest_b = list(b)
+repr_ok = repr(itertools.tee([1], 1)[0]).startswith("<itertools._tee object at 0x")
+ok = (
+    created == []
+    and a1 == 1
+    and after_a1 == ["yield1"]
+    and b1 == 1
+    and after_b1 == ["yield1"]
+    and rest_a == [2, 3]
+    and after_rest_a == ["yield1", "yield2", "yield3"]
+    and rest_b == [2, 3]
+    and repr_ok
+)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

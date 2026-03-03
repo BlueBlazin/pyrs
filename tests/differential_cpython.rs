@@ -2630,8 +2630,11 @@ construct = {
     "pairwise": probe(lambda x: itertools.pairwise(x)),
     "starmap": probe(lambda x: itertools.starmap(operator.add, x)),
     "takewhile": probe(lambda x: itertools.takewhile(lambda y: y < 0, x)),
+    "zip_longest": probe(lambda x: itertools.zip_longest(x, [1])),
+    "tee": probe(lambda x: itertools.tee(x)),
 }
 
+t1, t2 = itertools.tee([1, 2], 2)
 objs = {
     "accumulate": itertools.accumulate([1, 2]),
     "compress": itertools.compress([1, 2], [1, 0]),
@@ -2641,6 +2644,8 @@ objs = {
     "pairwise": itertools.pairwise([1, 2, 3]),
     "starmap": itertools.starmap(operator.add, [(1, 2)]),
     "takewhile": itertools.takewhile(lambda x: x < 3, [1, 2, 3]),
+    "zip_longest": itertools.zip_longest([1, 2], [10], fillvalue=0),
+    "tee": t1,
 }
 is_list = {k: isinstance(v, list) for k, v in objs.items()}
 iter_identity = {k: (iter(v) is v) for k, v in objs.items()}
@@ -2653,6 +2658,8 @@ values = {
     "pairwise": list(itertools.pairwise([10, 20, 30])),
     "starmap": list(itertools.starmap(operator.add, [(1, 2), (3, 4)])),
     "takewhile": list(itertools.takewhile(lambda x: x < 4, [1, 2, 3, 4, 1])),
+    "zip_longest": list(itertools.zip_longest([1, 2], [10], fillvalue=0)),
+    "tee_a": [next(t2), *list(t2)],
 }
 
 result = {

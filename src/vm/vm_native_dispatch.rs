@@ -9366,8 +9366,8 @@ impl Vm {
                     IteratorKind::Dict(_) => "dict_keyiterator",
                     IteratorKind::Set(_) => "set_iterator",
                     IteratorKind::Bytes(_) => "bytes_iterator",
-                IteratorKind::ByteArray(_) => "bytearray_iterator",
-                IteratorKind::MemoryView(_) => "memoryview_iterator",
+                    IteratorKind::ByteArray(_) => "bytearray_iterator",
+                    IteratorKind::MemoryView(_) => "memoryview_iterator",
                     IteratorKind::Cycle { .. } => "cycle",
                     IteratorKind::Count { .. } => "count",
                     IteratorKind::Map { .. } => "map",
@@ -9381,6 +9381,8 @@ impl Vm {
                     IteratorKind::Pairwise { .. } => "pairwise",
                     IteratorKind::StarMap { .. } => "starmap",
                     IteratorKind::TakeWhile { .. } => "takewhile",
+                    IteratorKind::ZipLongest { .. } => "zip_longest",
+                    IteratorKind::Tee { .. } => "_tee",
                     IteratorKind::RangeObject { .. } => "range",
                     IteratorKind::Range { .. } => "range_iterator",
                     IteratorKind::SequenceGetItem { .. } => "iterator",
@@ -9474,6 +9476,15 @@ impl Vm {
                 predicate: Value,
                 iterator: Value,
                 done: bool,
+            },
+            ZipLongestAdvance {
+                iterators: Vec<Value>,
+                active: Vec<bool>,
+                fillvalue: Value,
+            },
+            TeeAdvance {
+                shared: Value,
+                slot: usize,
             },
         }
 
@@ -9793,6 +9804,23 @@ impl Vm {
                         done: *done,
                     };
                 }
+                IteratorKind::ZipLongest {
+                    iterators,
+                    active,
+                    fillvalue,
+                } => {
+                    pending_step = PendingIteratorStep::ZipLongestAdvance {
+                        iterators: iterators.clone(),
+                        active: active.clone(),
+                        fillvalue: fillvalue.clone(),
+                    };
+                }
+                IteratorKind::Tee { shared, slot } => {
+                    pending_step = PendingIteratorStep::TeeAdvance {
+                        shared: shared.clone(),
+                        slot: *slot,
+                    };
+                }
                 IteratorKind::RangeObject { start, stop, step } => {
                     if step.is_zero() {
                         return Err(RuntimeError::value_error("range() arg 3 must not be zero"));
@@ -9999,9 +10027,9 @@ impl Vm {
                             active += 1;
                         }
                         GeneratorResumeOutcome::PropagatedException => {
-                            return Err(self.iteration_error_from_state(
-                                "chain() iteration failed",
-                            )?);
+                            return Err(
+                                self.iteration_error_from_state("chain() iteration failed")?
+                            );
                         }
                     }
                 }
@@ -10081,7 +10109,9 @@ impl Vm {
                 match self.next_from_iterator_value(&outer_source)? {
                     GeneratorResumeOutcome::Yield(value) => {
                         let next_iterator = self.to_iterator_value(value).map_err(|_| {
-                            RuntimeError::type_error("chain.from_iterable() argument is not iterable")
+                            RuntimeError::type_error(
+                                "chain.from_iterable() argument is not iterable",
+                            )
                         })?;
                         current = Some(next_iterator);
                         let mut iter = iterator_ref.kind_mut();
@@ -10201,9 +10231,9 @@ impl Vm {
                         }
                         Ok(None)
                     }
-                    GeneratorResumeOutcome::PropagatedException => Err(
-                        self.iteration_error_from_state("accumulate() iterator failed")?,
-                    ),
+                    GeneratorResumeOutcome::PropagatedException => {
+                        Err(self.iteration_error_from_state("accumulate() iterator failed")?)
+                    }
                 }
             }
             PendingIteratorStep::CompressAdvance { data, selectors } => loop {
@@ -10211,18 +10241,14 @@ impl Vm {
                     GeneratorResumeOutcome::Yield(value) => value,
                     GeneratorResumeOutcome::Complete(_) => return Ok(None),
                     GeneratorResumeOutcome::PropagatedException => {
-                        return Err(self.iteration_error_from_state(
-                            "compress() iteration failed",
-                        )?);
+                        return Err(self.iteration_error_from_state("compress() iteration failed")?);
                     }
                 };
                 let selector = match self.next_from_iterator_value(&selectors)? {
                     GeneratorResumeOutcome::Yield(value) => value,
                     GeneratorResumeOutcome::Complete(_) => return Ok(None),
                     GeneratorResumeOutcome::PropagatedException => {
-                        return Err(self.iteration_error_from_state(
-                            "compress() iteration failed",
-                        )?);
+                        return Err(self.iteration_error_from_state("compress() iteration failed")?);
                     }
                 };
                 if self.truthy_from_value(&selector)? {
@@ -10244,9 +10270,7 @@ impl Vm {
                     GeneratorResumeOutcome::Yield(value) => value,
                     GeneratorResumeOutcome::Complete(_) => return Ok(None),
                     GeneratorResumeOutcome::PropagatedException => {
-                        return Err(self.iteration_error_from_state(
-                            "dropwhile() iterator failed",
-                        )?);
+                        return Err(self.iteration_error_from_state("dropwhile() iterator failed")?);
                     }
                 };
                 if dropping {
@@ -10285,9 +10309,9 @@ impl Vm {
                     GeneratorResumeOutcome::Yield(value) => value,
                     GeneratorResumeOutcome::Complete(_) => return Ok(None),
                     GeneratorResumeOutcome::PropagatedException => {
-                        return Err(self.iteration_error_from_state(
-                            "filterfalse() iterator failed",
-                        )?);
+                        return Err(
+                            self.iteration_error_from_state("filterfalse() iterator failed")?
+                        );
                     }
                 };
                 let passed = if matches!(predicate, Value::None) {
@@ -10387,9 +10411,9 @@ impl Vm {
                         }
                         GeneratorResumeOutcome::Complete(_) => return Ok(None),
                         GeneratorResumeOutcome::PropagatedException => {
-                            return Err(self.iteration_error_from_state(
-                                "pairwise() iterator failed",
-                            )?);
+                            return Err(
+                                self.iteration_error_from_state("pairwise() iterator failed")?
+                            );
                         }
                     }
                 }
@@ -10451,9 +10475,7 @@ impl Vm {
                     GeneratorResumeOutcome::Yield(value) => value,
                     GeneratorResumeOutcome::Complete(_) => return Ok(None),
                     GeneratorResumeOutcome::PropagatedException => {
-                        return Err(self.iteration_error_from_state(
-                            "takewhile() iterator failed",
-                        )?);
+                        return Err(self.iteration_error_from_state("takewhile() iterator failed")?);
                     }
                 };
                 let keep = match self.call_internal(
@@ -10487,6 +10509,213 @@ impl Vm {
                     state.index = state.index.saturating_add(1);
                 }
                 Ok(Some(item))
+            }
+            PendingIteratorStep::ZipLongestAdvance {
+                iterators,
+                mut active,
+                fillvalue,
+            } => {
+                if iterators.is_empty() {
+                    return Ok(None);
+                }
+                if active.len() != iterators.len() {
+                    active = vec![true; iterators.len()];
+                }
+                let mut row = Vec::with_capacity(iterators.len());
+                let mut produced = false;
+                for (idx, iterator) in iterators.iter().enumerate() {
+                    if !active[idx] {
+                        row.push(fillvalue.clone());
+                        continue;
+                    }
+                    match self.next_from_iterator_value(iterator)? {
+                        GeneratorResumeOutcome::Yield(value) => {
+                            produced = true;
+                            row.push(value);
+                        }
+                        GeneratorResumeOutcome::Complete(_) => {
+                            active[idx] = false;
+                            row.push(fillvalue.clone());
+                        }
+                        GeneratorResumeOutcome::PropagatedException => {
+                            return Err(
+                                self.iteration_error_from_state("zip_longest() iteration failed")?
+                            );
+                        }
+                    }
+                }
+                let all_exhausted = active.iter().all(|flag| !*flag);
+                let mut iter = iterator_ref.kind_mut();
+                if let Object::Iterator(state) = &mut *iter
+                    && let IteratorKind::ZipLongest {
+                        active: state_active,
+                        ..
+                    } = &mut state.kind
+                {
+                    *state_active = active;
+                    if produced {
+                        state.index = state.index.saturating_add(1);
+                    }
+                }
+                if !produced && all_exhausted {
+                    return Ok(None);
+                }
+                Ok(Some(self.heap.alloc_tuple(row)))
+            }
+            PendingIteratorStep::TeeAdvance { shared, slot } => {
+                let shared_module = match shared {
+                    Value::Module(module) => module,
+                    _ => return Err(RuntimeError::new("invalid tee shared state")),
+                };
+
+                let (
+                    source_value,
+                    buffer_obj,
+                    positions_obj,
+                    source_exhausted,
+                    position,
+                    buffer_len,
+                ) = {
+                    let module_kind = shared_module.kind();
+                    let Object::Module(module_data) = &*module_kind else {
+                        return Err(RuntimeError::new("invalid tee shared module"));
+                    };
+                    let source_value = module_data
+                        .globals
+                        .get("source")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("tee shared state missing source"))?;
+                    let buffer_obj = module_data
+                        .globals
+                        .get("buffer")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("tee shared state missing buffer"))?;
+                    let positions_obj = module_data
+                        .globals
+                        .get("positions")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("tee shared state missing positions"))?;
+                    let source_exhausted = module_data
+                        .globals
+                        .get("exhausted")
+                        .and_then(|value| match value {
+                            Value::Bool(flag) => Some(*flag),
+                            _ => None,
+                        })
+                        .unwrap_or(false);
+                    let position = match &positions_obj {
+                        Value::List(list_obj) => match &*list_obj.kind() {
+                            Object::List(values) => values
+                                .get(slot)
+                                .and_then(|value| match value {
+                                    Value::Int(index) => Some(*index),
+                                    _ => None,
+                                })
+                                .ok_or_else(|| RuntimeError::new("tee slot out of bounds"))?,
+                            _ => return Err(RuntimeError::new("tee positions is invalid")),
+                        },
+                        _ => return Err(RuntimeError::new("tee positions is invalid")),
+                    };
+                    let buffer_len = match &buffer_obj {
+                        Value::List(list_obj) => match &*list_obj.kind() {
+                            Object::List(values) => values.len(),
+                            _ => return Err(RuntimeError::new("tee buffer is invalid")),
+                        },
+                        _ => return Err(RuntimeError::new("tee buffer is invalid")),
+                    };
+                    (
+                        source_value,
+                        buffer_obj,
+                        positions_obj,
+                        source_exhausted,
+                        position,
+                        buffer_len,
+                    )
+                };
+
+                let consume_from_buffer = |slot_value: i64| -> Result<Option<Value>, RuntimeError> {
+                    if slot_value < 0 || slot_value as usize >= buffer_len {
+                        return Ok(None);
+                    }
+                    let value = match &buffer_obj {
+                        Value::List(list_obj) => match &*list_obj.kind() {
+                            Object::List(values) => values.get(slot_value as usize).cloned(),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    Ok(value)
+                };
+
+                if let Some(item) = consume_from_buffer(position)? {
+                    {
+                        let mut positions_kind = match &positions_obj {
+                            Value::List(list_obj) => list_obj.kind_mut(),
+                            _ => return Err(RuntimeError::new("tee positions is invalid")),
+                        };
+                        if let Object::List(values) = &mut *positions_kind
+                            && let Some(Value::Int(current)) = values.get_mut(slot)
+                        {
+                            *current = current.saturating_add(1);
+                        }
+                    }
+                    self.compact_tee_shared_state(&shared_module)?;
+                    let mut iter = iterator_ref.kind_mut();
+                    if let Object::Iterator(state) = &mut *iter
+                        && let IteratorKind::Tee { .. } = &mut state.kind
+                    {
+                        state.index = state.index.saturating_add(1);
+                    }
+                    return Ok(Some(item));
+                }
+
+                if source_exhausted {
+                    return Ok(None);
+                }
+
+                match self.next_from_iterator_value(&source_value)? {
+                    GeneratorResumeOutcome::Yield(item) => {
+                        {
+                            let mut buffer_kind = match &buffer_obj {
+                                Value::List(list_obj) => list_obj.kind_mut(),
+                                _ => return Err(RuntimeError::new("tee buffer is invalid")),
+                            };
+                            if let Object::List(values) = &mut *buffer_kind {
+                                values.push(item.clone());
+                            }
+                        }
+                        {
+                            let mut positions_kind = match &positions_obj {
+                                Value::List(list_obj) => list_obj.kind_mut(),
+                                _ => return Err(RuntimeError::new("tee positions is invalid")),
+                            };
+                            if let Object::List(values) = &mut *positions_kind
+                                && let Some(Value::Int(current)) = values.get_mut(slot)
+                            {
+                                *current = current.saturating_add(1);
+                            }
+                        }
+                        self.compact_tee_shared_state(&shared_module)?;
+                        let mut iter = iterator_ref.kind_mut();
+                        if let Object::Iterator(state) = &mut *iter
+                            && let IteratorKind::Tee { .. } = &mut state.kind
+                        {
+                            state.index = state.index.saturating_add(1);
+                        }
+                        Ok(Some(item))
+                    }
+                    GeneratorResumeOutcome::Complete(_) => {
+                        if let Object::Module(module_data) = &mut *shared_module.kind_mut() {
+                            module_data
+                                .globals
+                                .insert("exhausted".to_string(), Value::Bool(true));
+                        }
+                        Ok(None)
+                    }
+                    GeneratorResumeOutcome::PropagatedException => {
+                        Err(self.iteration_error_from_state("tee() iteration failed")?)
+                    }
+                }
             }
             PendingIteratorStep::SequenceGetItem {
                 target,
@@ -10647,6 +10876,101 @@ impl Vm {
                 }
             }
         }
+    }
+
+    pub(super) fn compact_tee_shared_state(
+        &mut self,
+        shared_module: &ObjRef,
+    ) -> Result<(), RuntimeError> {
+        let (buffer_obj, positions_obj) = {
+            let module_kind = shared_module.kind();
+            let Object::Module(module_data) = &*module_kind else {
+                return Err(RuntimeError::new("invalid tee shared module"));
+            };
+            let buffer_obj = module_data
+                .globals
+                .get("buffer")
+                .cloned()
+                .ok_or_else(|| RuntimeError::new("tee shared state missing buffer"))?;
+            let positions_obj = module_data
+                .globals
+                .get("positions")
+                .cloned()
+                .ok_or_else(|| RuntimeError::new("tee shared state missing positions"))?;
+            (buffer_obj, positions_obj)
+        };
+
+        let min_position = match &positions_obj {
+            Value::List(list_obj) => match &*list_obj.kind() {
+                Object::List(values) => {
+                    if values.is_empty() {
+                        return Ok(());
+                    }
+                    let mut min_position = i64::MAX;
+                    for value in values {
+                        let Value::Int(position) = value else {
+                            return Err(RuntimeError::new("tee positions is invalid"));
+                        };
+                        if *position < 0 {
+                            return Err(RuntimeError::new("tee positions is invalid"));
+                        }
+                        min_position = min_position.min(*position);
+                    }
+                    min_position
+                }
+                _ => return Err(RuntimeError::new("tee positions is invalid")),
+            },
+            _ => return Err(RuntimeError::new("tee positions is invalid")),
+        };
+        if min_position <= 0 {
+            return Ok(());
+        }
+
+        let drain_count = match &buffer_obj {
+            Value::List(list_obj) => match &*list_obj.kind() {
+                Object::List(values) => {
+                    let min_position = usize::try_from(min_position)
+                        .map_err(|_| RuntimeError::new("tee positions is invalid"))?;
+                    min_position.min(values.len())
+                }
+                _ => return Err(RuntimeError::new("tee buffer is invalid")),
+            },
+            _ => return Err(RuntimeError::new("tee buffer is invalid")),
+        };
+        if drain_count == 0 {
+            return Ok(());
+        }
+
+        {
+            let mut buffer_kind = match &buffer_obj {
+                Value::List(list_obj) => list_obj.kind_mut(),
+                _ => return Err(RuntimeError::new("tee buffer is invalid")),
+            };
+            if let Object::List(values) = &mut *buffer_kind {
+                values.drain(0..drain_count);
+            } else {
+                return Err(RuntimeError::new("tee buffer is invalid"));
+            }
+        }
+
+        let delta = i64::try_from(drain_count).unwrap_or(i64::MAX);
+        {
+            let mut positions_kind = match &positions_obj {
+                Value::List(list_obj) => list_obj.kind_mut(),
+                _ => return Err(RuntimeError::new("tee positions is invalid")),
+            };
+            if let Object::List(values) = &mut *positions_kind {
+                for value in values.iter_mut() {
+                    let Value::Int(position) = value else {
+                        return Err(RuntimeError::new("tee positions is invalid"));
+                    };
+                    *position = position.saturating_sub(delta);
+                }
+            } else {
+                return Err(RuntimeError::new("tee positions is invalid"));
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn resume_generator(
