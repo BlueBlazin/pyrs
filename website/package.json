@@ -4,7 +4,10 @@
   "version": "0.0.1",
   "scripts": {
     "dev": "astro dev",
+    "dev:playground": "pnpm run wasm:build && astro dev",
     "build": "astro build",
+    "build:playground": "pnpm run wasm:build && astro build",
+    "wasm:build": "../scripts/build_wasm_website_bundle.sh",
     "check:links": "node scripts/check-internal-links.mjs",
     "report:size": "node scripts/report-build-size.mjs",
     "build:check": "pnpm run build && pnpm run check:links",

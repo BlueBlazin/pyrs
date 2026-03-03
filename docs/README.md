@@ -19,6 +19,20 @@ Use this file to find canonical ownership quickly.
 - `docs/CAPI_LIFETIME_MODEL.md`: P0 ownership/lifetime architecture for CPython-compat pointers and UAF closure plan.
 - `docs/WEBSITE_DOCS_DESIGN_SYSTEM_PLAN.md`: multi-milestone website/docs design-system and IA execution plan.
 
+## WASM Track (Isolated Branch)
+- `docs/WASM_EXECUTION_PLAN.md`: canonical wasm milestone tracker and current branch execution status.
+- `docs/WASM_PROMOTION_GATE.md`: explicit go/no-go criteria and evidence requirements before any merge candidacy.
+- `docs/WASM_API_CONTRACT.md`: top-level wasm bridge export and contract surface.
+- `docs/WASM_WORKER_RUNTIME_CONTRACT.md`: worker lifecycle/execute/timeout contract semantics.
+- `docs/WASM_CLIENT_INTEGRATION_FLOW.md`: browser/client integration order and worker RPC flow.
+- `docs/WASM_BROWSER_SMOKE_RUNBOOK.md`: workflow-dispatch browser smoke runbook and artifact capture process.
+- `scripts/run_wasm_browser_smoke_dispatch.sh`: one-shot dispatch/watch/download helper for browser-smoke evidence capture.
+- `scripts/extract_wasm_ci_artifact_hashes.py`: extract artifact IDs + SHA256 digests from a workflow run log for promotion notes.
+- `scripts/check_wasm_artifact_hash_extractor_contract.py`: fixture-backed contract check for artifact-hash extraction behavior.
+- `scripts/update_wasm_dispatch_snapshot.py`: update runbook/promotion/execution snapshot references to a specific workflow-dispatch run.
+- `scripts/check_wasm_dispatch_snapshot_contract.py`: validate snapshot-updater assumptions against current docs formatting.
+- `scripts/generate_wasm_artifact_input_hashes.py`: generate deterministic local SHA256 summary for evidence-pack source artifacts.
+
 ## Gap Tracking
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.
 - `docs/LANGUAGE_FEATURE_INVENTORY.md`: source-derived CPython 3.14 language-feature inventory baseline and regeneration flow.
@@ -34,6 +48,7 @@ Use this file to find canonical ownership quickly.
 ## Runtime and Architecture
 - `docs/VM_ARCHITECTURE_MAP.md`: VM module ownership and placement rules.
 - `docs/VM_ERROR_MODEL_REFACTOR.md`: plan to replace string-based runtime error classification with typed exception transport.
+- `docs/REPL_SHARED_CORE_DESIGN.md`: proposed shared REPL semantic core architecture for native CLI and wasm adapters.
 - `docs/STDLIB_MIGRATION_PLAN.md`: pure-stdlib-first migration policy.
 - `docs/ENGINEERING_GATES.md`: mandatory process and quality gates.
 - `docs/COVERAGE_GATE_POLICY.json`: policy source for coverage-gate floors, ignores, and targeted test bins.

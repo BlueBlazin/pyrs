@@ -252,7 +252,7 @@ pub unsafe extern "C" fn PyModule_GetState(module: *mut c_void) -> *mut c_void {
             .extension_module_state_registry
             .get(&module_obj.id())
             .map_or(std::ptr::null_mut(), |entry| entry.state as *mut c_void);
-        if std::env::var_os("PYRS_TRACE_CPY_MODSTATE").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_MODSTATE") {
             let module_name = match &*module_obj.kind() {
                 Object::Module(module_data) => module_data
                     .globals
@@ -291,7 +291,7 @@ pub unsafe extern "C" fn PyModule_NewObject(name: *mut c_void) -> *mut c_void {
             return std::ptr::null_mut();
         };
         let Value::Str(module_name) = name_value else {
-            if std::env::var_os("PYRS_TRACE_CPY_MODULE_NAME").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_MODULE_NAME") {
                 let value_kind = match &name_value {
                     Value::None => "None",
                     Value::Bool(_) => "Bool",
@@ -421,7 +421,7 @@ pub unsafe extern "C" fn PyModule_AddObjectRef(
             .unwrap_or(std::ptr::null_mut());
         // PyModule_AddObjectRef stores a new module reference.
         unsafe { Py_IncRef(value_ptr) };
-        if std::env::var_os("PYRS_TRACE_CPY_MODULE_ADD").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_MODULE_ADD") {
             eprintln!(
                 "[cpy-module-add] module={} attr={} value_tag={} value_ptr={:p}",
                 module_data.name,

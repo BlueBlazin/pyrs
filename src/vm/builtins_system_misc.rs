@@ -5,8 +5,8 @@ use super::{
     apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil,
     dict_get_value, format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
     parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp,
-    uuid_hash_mix_bytes, uuid_node_from_hostname, uuid_random_bytes,
-    uuid_timestamp_100ns_since_gregorian, value_to_f64, value_to_int,
+    uuid_hash_mix_bytes, uuid_random_bytes, uuid_timestamp_100ns_since_gregorian, value_to_f64,
+    value_to_int,
 };
 
 const DATETIME_MIN_YEAR: i64 = 1;
@@ -28,6 +28,18 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 }
 
 impl Vm {
+    fn uuid_node_from_host(&self) -> i64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let host_name = self
+            .host
+            .env_var("HOSTNAME")
+            .unwrap_or_else(|| "localhost".to_string());
+        std::hash::Hash::hash(&host_name, &mut hasher);
+        let mut node = std::hash::Hasher::finish(&hasher) & 0x0000_FFFF_FFFF_FFFF;
+        node |= 0x0000_0100_0000_0000;
+        node as i64
+    }
+
     fn warnings_is_internal_traceback_file(filename: &str) -> bool {
         filename.ends_with("_py_warnings.py")
     }
@@ -3201,10 +3213,10 @@ impl Vm {
             Value::None => Ok(current),
             Value::Str(text) => {
                 let normalized = if text.is_empty() {
-                    std::env::var("LC_ALL")
-                        .ok()
-                        .or_else(|| std::env::var("LC_CTYPE").ok())
-                        .or_else(|| std::env::var("LANG").ok())
+                    self.host
+                        .env_var("LC_ALL")
+                        .or_else(|| self.host.env_var("LC_CTYPE"))
+                        .or_else(|| self.host.env_var("LANG"))
                         .filter(|value| !value.is_empty())
                         .unwrap_or_else(|| "C".to_string())
                 } else {
@@ -3348,8 +3360,9 @@ impl Vm {
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new("gethostname() expects no arguments"));
         }
-        let hostname = std::env::var("HOSTNAME")
-            .ok()
+        let hostname = self
+            .host
+            .env_var("HOSTNAME")
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "localhost".to_string());
         Ok(Value::Str(hostname))
@@ -3900,7 +3913,7 @@ impl Vm {
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new("uuid.getnode() expects no arguments"));
         }
-        Ok(Value::Int(uuid_node_from_hostname()))
+        Ok(Value::Int(self.uuid_node_from_host()))
     }
 
     pub(super) fn builtin_uuid1(
@@ -3920,7 +3933,7 @@ impl Vm {
         {
             value_to_int(value)?
         } else {
-            uuid_node_from_hostname()
+            self.uuid_node_from_host()
         } as u64
             & 0x0000_FFFF_FFFF_FFFF;
         let clock_seq = if let Some(value) = kwargs
@@ -4028,7 +4041,7 @@ impl Vm {
         let rand = self.random.next_u32() as u64;
         bytes[8] = ((rand >> 24) as u8 & 0x3f) | 0x80;
         bytes[9] = (rand >> 16) as u8;
-        let node = (uuid_node_from_hostname() as u64) & 0x0000_FFFF_FFFF_FFFF;
+        let node = (self.uuid_node_from_host() as u64) & 0x0000_FFFF_FFFF_FFFF;
         bytes[10..16].copy_from_slice(&node.to_be_bytes()[2..]);
         apply_uuid_version(&mut bytes, 6);
         self.make_uuid_instance_from_bytes(bytes)

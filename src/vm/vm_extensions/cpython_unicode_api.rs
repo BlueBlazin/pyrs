@@ -3148,7 +3148,7 @@ pub unsafe extern "C" fn PyCallable_Check(object: *mut c_void) -> i32 {
         } else {
             0
         };
-        if std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_INIT") {
             let value_tag = value
                 .as_ref()
                 .map(cpython_value_debug_tag)

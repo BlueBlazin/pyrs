@@ -66,6 +66,7 @@ type SqliteTraceCallback =
 type SqliteCollationCallback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, *const c_void, c_int, *const c_void) -> c_int>;
 
+#[cfg(not(target_arch = "wasm32"))]
 #[link(name = "sqlite3")]
 unsafe extern "C" {
     fn sqlite3_open_v2(
@@ -227,6 +228,488 @@ unsafe extern "C" {
     fn sqlite3_result_error(context: *mut Sqlite3Context, value: *const c_char, len: c_int);
 }
 
+#[cfg(target_arch = "wasm32")]
+static SQLITE3_WASM_ERRMSG: &[u8] = b"sqlite3 unavailable in wasm runtime\0";
+#[cfg(target_arch = "wasm32")]
+static SQLITE3_WASM_VERSION: &[u8] = b"3.0.0-wasm-stub\0";
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_open_v2(
+    _filename: *const c_char,
+    db_out: *mut *mut Sqlite3Db,
+    _flags: c_int,
+    _vfs: *const c_char,
+) -> c_int {
+    if !db_out.is_null() {
+        // SAFETY: caller provided writable out pointer.
+        unsafe { *db_out = ptr::null_mut() };
+    }
+    SQLITE_CANTOPEN
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_close_v2(_db: *mut Sqlite3Db) -> c_int {
+    SQLITE_OK
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_errmsg(_db: *mut Sqlite3Db) -> *const c_char {
+    SQLITE3_WASM_ERRMSG.as_ptr() as *const c_char
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case)]
+unsafe fn sqlite3_libversion() -> *const c_char {
+    SQLITE3_WASM_VERSION.as_ptr() as *const c_char
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_prepare_v2(
+    _db: *mut Sqlite3Db,
+    _sql: *const c_char,
+    _nbyte: c_int,
+    stmt_out: *mut *mut Sqlite3Stmt,
+    tail_out: *mut *const c_char,
+) -> c_int {
+    if !stmt_out.is_null() {
+        // SAFETY: caller provided writable out pointer.
+        unsafe { *stmt_out = ptr::null_mut() };
+    }
+    if !tail_out.is_null() {
+        // SAFETY: caller provided writable out pointer.
+        unsafe { *tail_out = ptr::null() };
+    }
+    SQLITE_ERROR
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_step(_stmt: *mut Sqlite3Stmt) -> c_int {
+    SQLITE_DONE
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_finalize(_stmt: *mut Sqlite3Stmt) -> c_int {
+    SQLITE_OK
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_column_count(_stmt: *mut Sqlite3Stmt) -> c_int {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_column_type(_stmt: *mut Sqlite3Stmt, _col: c_int) -> c_int {
+    SQLITE_NULL
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_column_int64(_stmt: *mut Sqlite3Stmt, _col: c_int) -> i64 {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_column_double(_stmt: *mut Sqlite3Stmt, _col: c_int) -> f64 {
+    0.0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_column_text(_stmt: *mut Sqlite3Stmt, _col: c_int) -> *const c_uchar {
+    ptr::null()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_column_blob(_stmt: *mut Sqlite3Stmt, _col: c_int) -> *const c_void {
+    ptr::null()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_column_bytes(_stmt: *mut Sqlite3Stmt, _col: c_int) -> c_int {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_column_name(_stmt: *mut Sqlite3Stmt, _col: c_int) -> *const c_char {
+    ptr::null()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_bind_parameter_count(_stmt: *mut Sqlite3Stmt) -> c_int {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_bind_parameter_name(_stmt: *mut Sqlite3Stmt, _idx: c_int) -> *const c_char {
+    ptr::null()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_bind_null(_stmt: *mut Sqlite3Stmt, _idx: c_int) -> c_int {
+    SQLITE_MISUSE
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_bind_int64(_stmt: *mut Sqlite3Stmt, _idx: c_int, _value: i64) -> c_int {
+    SQLITE_MISUSE
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_bind_double(_stmt: *mut Sqlite3Stmt, _idx: c_int, _value: f64) -> c_int {
+    SQLITE_MISUSE
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_bind_text(
+    _stmt: *mut Sqlite3Stmt,
+    _idx: c_int,
+    _text: *const c_char,
+    _len: c_int,
+    _destructor: SqliteDestructor,
+) -> c_int {
+    SQLITE_MISUSE
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_bind_blob(
+    _stmt: *mut Sqlite3Stmt,
+    _idx: c_int,
+    _blob: *const c_void,
+    _len: c_int,
+    _destructor: SqliteDestructor,
+) -> c_int {
+    SQLITE_MISUSE
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_backup_init(
+    _dest: *mut Sqlite3Db,
+    _dest_name: *const c_char,
+    _src: *mut Sqlite3Db,
+    _src_name: *const c_char,
+) -> *mut Sqlite3Backup {
+    ptr::null_mut()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_backup_step(_backup: *mut Sqlite3Backup, _pages: c_int) -> c_int {
+    SQLITE_DONE
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_backup_finish(_backup: *mut Sqlite3Backup) -> c_int {
+    SQLITE_OK
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_backup_remaining(_backup: *mut Sqlite3Backup) -> c_int {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_backup_pagecount(_backup: *mut Sqlite3Backup) -> c_int {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_sleep(ms: c_int) -> c_int {
+    ms
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_complete(_sql: *const c_char) -> c_int {
+    1
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_blob_open(
+    _db: *mut Sqlite3Db,
+    _db_name: *const c_char,
+    _table_name: *const c_char,
+    _column_name: *const c_char,
+    _row_id: i64,
+    _flags: c_int,
+    blob_out: *mut *mut Sqlite3Blob,
+) -> c_int {
+    if !blob_out.is_null() {
+        // SAFETY: caller provided writable out pointer.
+        unsafe { *blob_out = ptr::null_mut() };
+    }
+    SQLITE_ERROR
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_blob_close(_blob: *mut Sqlite3Blob) -> c_int {
+    SQLITE_OK
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_blob_bytes(_blob: *mut Sqlite3Blob) -> c_int {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_blob_read(
+    _blob: *mut Sqlite3Blob,
+    _buf: *mut c_void,
+    _n: c_int,
+    _offset: c_int,
+) -> c_int {
+    SQLITE_ERROR
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_blob_write(
+    _blob: *mut Sqlite3Blob,
+    _buf: *const c_void,
+    _n: c_int,
+    _offset: c_int,
+) -> c_int {
+    SQLITE_ERROR
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_exec(
+    _db: *mut Sqlite3Db,
+    _sql: *const c_char,
+    _callback: SqliteExecCallback,
+    _callback_arg: *mut c_void,
+    err_out: *mut *mut c_char,
+) -> c_int {
+    if !err_out.is_null() {
+        // SAFETY: caller provided writable out pointer.
+        unsafe { *err_out = ptr::null_mut() };
+    }
+    SQLITE_ERROR
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_limit(_db: *mut Sqlite3Db, _id: c_int, _new_val: c_int) -> c_int {
+    -1
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_total_changes(_db: *mut Sqlite3Db) -> c_int {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_get_autocommit(_db: *mut Sqlite3Db) -> c_int {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_extended_errcode(_db: *mut Sqlite3Db) -> c_int {
+    SQLITE_ERROR
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_interrupt(_db: *mut Sqlite3Db) {}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_changes(_db: *mut Sqlite3Db) -> c_int {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_last_insert_rowid(_db: *mut Sqlite3Db) -> i64 {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_create_function_v2(
+    _db: *mut Sqlite3Db,
+    _z_function_name: *const c_char,
+    _n_arg: c_int,
+    _e_text_rep: c_int,
+    _p_app: *mut c_void,
+    _x_func: SqliteFunctionCallback,
+    _x_step: SqliteFunctionCallback,
+    _x_final: SqliteFunctionCallback,
+    _x_destroy: SqliteDestructor,
+) -> c_int {
+    SQLITE_MISUSE
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_create_collation_v2(
+    _db: *mut Sqlite3Db,
+    _z_name: *const c_char,
+    _e_text_rep: c_int,
+    _p_arg: *mut c_void,
+    _x_compare: SqliteCollationCallback,
+    _x_destroy: SqliteDestructor,
+) -> c_int {
+    SQLITE_MISUSE
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_set_authorizer(
+    _db: *mut Sqlite3Db,
+    _x_auth: SqliteAuthorizerCallback,
+    _p_user_data: *mut c_void,
+) -> c_int {
+    SQLITE_MISUSE
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_progress_handler(
+    _db: *mut Sqlite3Db,
+    _n_ops: c_int,
+    _x_progress: SqliteProgressCallback,
+    _p_user_data: *mut c_void,
+) {
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_trace_v2(
+    _db: *mut Sqlite3Db,
+    _mask: c_uint,
+    _callback: SqliteTraceCallback,
+    _p_user_data: *mut c_void,
+) -> c_int {
+    SQLITE_OK
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_expanded_sql(_stmt: *mut Sqlite3Stmt) -> *mut c_char {
+    ptr::null_mut()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_db_handle(_stmt: *mut Sqlite3Stmt) -> *mut Sqlite3Db {
+    ptr::null_mut()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_free(_ptr: *mut c_void) {}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_user_data(_context: *mut Sqlite3Context) -> *mut c_void {
+    ptr::null_mut()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_value_type(_value: *mut Sqlite3Value) -> c_int {
+    SQLITE_NULL
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_value_int64(_value: *mut Sqlite3Value) -> i64 {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_value_double(_value: *mut Sqlite3Value) -> f64 {
+    0.0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_value_text(_value: *mut Sqlite3Value) -> *const c_uchar {
+    ptr::null()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_value_blob(_value: *mut Sqlite3Value) -> *const c_void {
+    ptr::null()
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_value_bytes(_value: *mut Sqlite3Value) -> c_int {
+    0
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_result_null(_context: *mut Sqlite3Context) {}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_result_int64(_context: *mut Sqlite3Context, _value: i64) {}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_result_double(_context: *mut Sqlite3Context, _value: f64) {}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_result_text(
+    _context: *mut Sqlite3Context,
+    _value: *const c_char,
+    _len: c_int,
+    _destructor: SqliteDestructor,
+) {
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_result_blob(
+    _context: *mut Sqlite3Context,
+    _value: *const c_void,
+    _len: c_int,
+    _destructor: SqliteDestructor,
+) {
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case, unused_variables)]
+unsafe fn sqlite3_result_error(_context: *mut Sqlite3Context, _value: *const c_char, _len: c_int) {
+}
+
 const SQLITE_OK: c_int = 0;
 const SQLITE_ROW: c_int = 100;
 const SQLITE_DONE: c_int = 101;
@@ -234,6 +717,8 @@ const SQLITE_INTEGER: c_int = 1;
 const SQLITE_FLOAT: c_int = 2;
 const SQLITE_TEXT: c_int = 3;
 const SQLITE_BLOB: c_int = 4;
+#[cfg(target_arch = "wasm32")]
+const SQLITE_NULL: c_int = 5;
 const SQLITE_UTF8: c_int = 1;
 const SQLITE_DETERMINISTIC: c_int = 0x0000_0800;
 const SQLITE_TRACE_STMT: c_uint = 0x01;
@@ -4369,8 +4854,13 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
         let op = Self::sqlite_dbconfig_operation(args.remove(0))?;
         let db = self.sqlite_open_db_handle(connection_id)?;
         let mut current: c_int = 0;
+        #[cfg(target_arch = "wasm32")]
+        let _ = (db, op, &mut current);
+        #[cfg(not(target_arch = "wasm32"))]
         // SAFETY: db is valid and sqlite3_db_config expects op, -1 to query, and output pointer.
         let rc = unsafe { sqlite3_db_config(db, op, -1, &mut current as *mut c_int) };
+        #[cfg(target_arch = "wasm32")]
+        let rc = SQLITE_MISUSE;
         if rc != SQLITE_OK {
             return Err(sqlite_error("ValueError", "unknown config operation"));
         }
@@ -4407,8 +4897,13 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
         let db = self.sqlite_open_db_handle(connection_id)?;
         let mut current: c_int = 0;
         let enabled_int: c_int = if enabled { 1 } else { 0 };
+        #[cfg(target_arch = "wasm32")]
+        let _ = (db, op, enabled_int, &mut current);
+        #[cfg(not(target_arch = "wasm32"))]
         // SAFETY: db is valid and sqlite3_db_config expects op, enable flag, and output pointer.
         let rc = unsafe { sqlite3_db_config(db, op, enabled_int, &mut current as *mut c_int) };
+        #[cfg(target_arch = "wasm32")]
+        let rc = SQLITE_MISUSE;
         if rc != SQLITE_OK {
             return Err(sqlite_error("ValueError", "unknown config operation"));
         }

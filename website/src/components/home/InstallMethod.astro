@@ -1,5 +1,6 @@
 ---
 import InstallTerminal from "./InstallTerminal.astro";
+import HighlightChip from "../ui/HighlightChip.astro";
 
 type InstallLine = string | { text: string; prompt?: boolean };
 
@@ -16,7 +17,7 @@ const { title, description, lines, recommended = false } = Astro.props;
 <article class="install-method">
 	<div class="install-method-head">
 		<h3>{title}</h3>
-		{recommended && <span class="install-chip">Recommended</span>}
+		{recommended && <HighlightChip label="Recommended" />}
 	</div>
 	<p>{description}</p>
 	<InstallTerminal lines={lines} />
@@ -42,18 +43,6 @@ const { title, description, lines, recommended = false } = Astro.props;
 		margin: 0;
 		font-size: 0.94rem;
 		letter-spacing: 0.01em;
-	}
-
-	.install-chip {
-		font-size: 0.67rem;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		font-weight: 700;
-		color: #241108;
-		background: linear-gradient(135deg, #dda06f 0%, #cb7647 100%);
-		border: 1px solid rgba(203, 118, 71, 0.42);
-		border-radius: 999px;
-		padding: 0.21rem 0.44rem;
 	}
 
 	.install-method p {

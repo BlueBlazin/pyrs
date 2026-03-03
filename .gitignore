@@ -6,3 +6,5 @@ __pycache__/
 perf/
 /.local/
 .pnpm-store/
+website/public/wasm/
+.claude

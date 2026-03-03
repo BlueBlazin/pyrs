@@ -124,7 +124,7 @@ impl Vm {
                 }
             }
             ExtensionCallableKind::CpythonMethod { method_def } => {
-                if std::env::var_os("PYRS_TRACE_CPY_EXT_CALL").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_CPY_EXT_CALL") {
                     let module_name = match &*entry.module.kind() {
                         Object::Module(module_data) => module_data.name.clone(),
                         _ => "<extension>".to_string(),
@@ -139,7 +139,9 @@ impl Vm {
                         kwargs.len()
                     );
                 }
-                if std::env::var_os("PYRS_TRACE_COPYTO_CALL").is_some() && entry.name == "copyto" {
+                if super::super::env_var_present_cached("PYRS_TRACE_COPYTO_CALL")
+                    && entry.name == "copyto"
+                {
                     let module_name = match &*entry.module.kind() {
                         Object::Module(module_data) => module_data.name.clone(),
                         _ => "<extension>".to_string(),

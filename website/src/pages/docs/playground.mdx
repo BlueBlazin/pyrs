@@ -1,0 +1,83 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: PYRS Docs | Browser Playground
+description: Browser REPL guide for the wasm playground and debug route.
+pageTitle: Browser Playground
+---
+
+import DocSection from "../../components/docs/DocSection.astro";
+import DataTable from "../../components/docs/DataTable.astro";
+import CodeBlock from "../../components/docs/CodeBlock.astro";
+import Callout from "../../components/docs/Callout.astro";
+
+<DocSection>
+	The browser playground lives at <a href="/playground/"><code>/playground</code></a>.
+	It auto-loads the wasm runtime and provides a minimal REPL-focused interface.
+	Runtime execution is handled in a dedicated Web Worker so command execution
+	does not run on the page UI thread.
+</DocSection>
+
+<DocSection title="Quick Start">
+	<CodeBlock
+		label="Open and run"
+		code={`# 1) Build browser wasm assets (repo root)
+./scripts/build_wasm_website_bundle.sh
+
+# 2) Start website dev server
+pnpm --dir website dev
+
+# 3) Open /playground, wait for runtime loaded, and run input`}
+	/>
+	<Callout title="Input model" tone="note">
+		Press <code>Enter</code> to execute. Use <code>Shift</code> + <code>Enter</code> for multiline input.
+	</Callout>
+</DocSection>
+
+<DocSection title="Runtime Status Signals">
+	<DataTable headers={[
+		"State",
+		"Meaning",
+		"What to do",
+	]}>
+		<tr>
+			<td><code>loading</code></td>
+			<td>The wasm bundle is still being initialized.</td>
+			<td>Wait for ready state before running snippets.</td>
+		</tr>
+		<tr>
+			<td><code>ready</code></td>
+			<td>Runtime loaded and REPL execution is available for this build mode.</td>
+			<td>Run snippets normally.</td>
+		</tr>
+		<tr>
+			<td><code>error</code></td>
+			<td>The runtime failed to initialize.</td>
+			<td>Check browser console and confirm wasm assets are published.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Output Shape">
+	<DataTable headers={[
+		"Output class",
+		"Description",
+	]}>
+		<tr>
+			<td>Input transcript</td>
+			<td>Every submitted command is echoed with <code>&gt;&gt;&gt;</code> / <code>...</code> prompts.</td>
+		</tr>
+		<tr>
+			<td>stdout</td>
+			<td>Normal execution output from the wasm runtime.</td>
+		</tr>
+		<tr>
+			<td>stderr</td>
+			<td>Runtime errors, compile/syntax failures, or unsupported capability messages.</td>
+		</tr>
+	</DataTable>
+</DocSection>
+
+<DocSection title="Debug Route">
+	For low-level diagnostics and worker/state contract probing, use the unlisted
+	<a href="/debug/"><code>/debug</code></a> route.
+</DocSection>

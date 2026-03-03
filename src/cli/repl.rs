@@ -367,14 +367,18 @@ fn run_interactive_session(
     let primary_prompt = ReplPrompt::primary();
     let continuation_prompt = ReplPrompt::continuation();
 
-    let mut pending = String::new();
+    let mut repl_state =
+        crate::repl_core::ReplCoreState::new(crate::repl_core::ReplProfile::NativeFull);
+    debug_assert_eq!(
+        repl_state.profile(),
+        crate::repl_core::ReplProfile::NativeFull
+    );
     let mut paste_mode = false;
     let mut timing_enabled = false;
     loop {
-        let prompt = if pending.is_empty() {
-            &primary_prompt
-        } else {
-            &continuation_prompt
+        let prompt = match repl_state.prompt_kind() {
+            crate::repl_core::ReplPromptKind::Primary => &primary_prompt,
+            crate::repl_core::ReplPromptKind::Continuation => &continuation_prompt,
         };
 
         match line_editor.read_line(prompt) {
@@ -387,10 +391,10 @@ fn run_interactive_session(
                 if paste_mode {
                     if parse_meta_command(trimmed) == Some(MetaCommand::TogglePaste) {
                         paste_mode = false;
-                        if !pending.trim().is_empty() {
+                        if repl_state.has_pending_nonempty() {
                             if let Err(err) = execute_with_optional_timing(
                                 vm,
-                                &pending,
+                                repl_state.pending_source(),
                                 "<stdin>",
                                 false,
                                 timing_enabled,
@@ -399,12 +403,11 @@ fn run_interactive_session(
                             }
                             refresh_completion_state(vm, &completion_state);
                         }
-                        pending.clear();
+                        repl_state.clear();
                         eprintln!("paste mode disabled");
                         continue;
                     }
-                    pending.push_str(&line);
-                    pending.push('\n');
+                    repl_state.append_paste_line(&line);
                     continue;
                 }
 
@@ -412,7 +415,7 @@ fn run_interactive_session(
                     if apply_meta_command(
                         command,
                         vm,
-                        &mut pending,
+                        &mut repl_state,
                         &mut paste_mode,
                         &mut timing_enabled,
                         import_site,
@@ -424,7 +427,7 @@ fn run_interactive_session(
                     continue;
                 }
 
-                if pending.trim().is_empty()
+                if repl_state.is_empty()
                     && let Some(command) = parse_magic_command(trimmed)
                 {
                     let result = match command {
@@ -449,63 +452,65 @@ fn run_interactive_session(
                     continue;
                 }
 
-                if trimmed.is_empty() && pending.is_empty() {
+                if trimmed.is_empty() && repl_state.is_empty() {
                     continue;
                 }
 
-                pending.push_str(&line);
-                pending.push('\n');
-                let parse_source = repl_parse_candidate_source(&pending);
-                match parser::parse_module(parse_source) {
-                    Ok(module) => {
-                        if repl_parse_success_requires_more_input(parse_source, &line) {
-                            continue;
-                        }
-                        let completion_plan = repl_module_completion_plan(&module);
-                        vm.cache_source_text("<stdin>", parse_source);
-                        if let Err(err) = execute_parsed_module_with_timing(
-                            vm,
-                            &module,
-                            parse_source,
-                            "<stdin>",
-                            true,
-                            timing_enabled,
-                        ) {
-                            if let Some((status, message)) = parse_system_exit_status(&err) {
-                                if let Some(message) = message {
-                                    eprintln!("{message}");
-                                }
-                                return Ok(status);
-                            }
-                            eprintln!("{}", error_style::format_error_for_stderr(&err));
-                        } else {
-                            apply_completion_refresh_plan(vm, &completion_state, completion_plan);
-                        }
-                        pending.clear();
-                    }
-                    Err(parse_err) => {
-                        if repl_input_is_incomplete(parse_source, &parse_err) {
-                            continue;
-                        }
+                let started = Instant::now();
+                let mut ran_execution = false;
+                match repl_state.submit_line_and_execute(vm, &line, "<stdin>") {
+                    crate::repl_core::ReplLineExecuteResult::NeedMoreInput => continue,
+                    crate::repl_core::ReplLineExecuteResult::ParseError { source, error } => {
                         eprintln!(
                             "{}",
                             error_style::format_error_for_stderr(&format_parse_error(
-                                parse_source, "<stdin>", &parse_err,
+                                &source, "<stdin>", &error,
                             ))
                         );
-                        pending.clear();
                     }
+                    crate::repl_core::ReplLineExecuteResult::Executed {
+                        module, display, ..
+                    } => {
+                        ran_execution = true;
+                        if let Some(rendered) = display {
+                            println!("{rendered}");
+                        }
+                        let completion_plan = repl_module_completion_plan(&module);
+                        apply_completion_refresh_plan(vm, &completion_state, completion_plan);
+                    }
+                    crate::repl_core::ReplLineExecuteResult::ExecutionError { source, error, .. } => {
+                        ran_execution = true;
+                        let err = match error {
+                            crate::repl_core::ReplExecutionError::Compile(compile_err) => {
+                                format_compile_error("<stdin>", &source, &compile_err)
+                            }
+                            crate::repl_core::ReplExecutionError::Runtime(runtime_err) => {
+                                format!("runtime error: {}", runtime_err.message)
+                            }
+                        };
+                        if let Some((status, message)) = parse_system_exit_status(&err) {
+                            if let Some(message) = message {
+                                eprintln!("{message}");
+                            }
+                            return Ok(status);
+                        }
+                        eprintln!("{}", error_style::format_error_for_stderr(&err));
+                    }
+                }
+                if timing_enabled && ran_execution {
+                    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+                    eprintln!("[timing] {elapsed_ms:.3} ms");
                 }
             }
             Ok(Signal::CtrlC) => {
                 eprintln!("KeyboardInterrupt");
-                pending.clear();
+                repl_state.interrupt();
                 paste_mode = false;
             }
             Ok(Signal::CtrlD) => {
-                if paste_mode || !pending.trim().is_empty() {
+                if paste_mode || repl_state.has_pending_nonempty() {
                     eprintln!("KeyboardInterrupt");
-                    pending.clear();
+                    repl_state.interrupt();
                     paste_mode = false;
                 } else {
                     break;
@@ -1950,7 +1955,7 @@ fn split_first_word(input: &str) -> (&str, &str) {
 fn apply_meta_command(
     command: MetaCommand,
     vm: &mut Vm,
-    pending: &mut String,
+    repl_state: &mut crate::repl_core::ReplCoreState,
     paste_mode: &mut bool,
     timing_enabled: &mut bool,
     import_site: bool,
@@ -1974,7 +1979,7 @@ fn apply_meta_command(
             Ok(false)
         }
         MetaCommand::Clear => {
-            pending.clear();
+            repl_state.clear();
             *paste_mode = false;
             Ok(false)
         }
@@ -1993,7 +1998,7 @@ fn apply_meta_command(
         }
         MetaCommand::TogglePaste => {
             *paste_mode = true;
-            pending.clear();
+            repl_state.clear();
             eprintln!("paste mode enabled (finish with :paste)");
             Ok(false)
         }
@@ -2002,7 +2007,7 @@ fn apply_meta_command(
                 eprintln!("shutdown warning before reset: {}", err.message);
             }
             *vm = build_vm_with_warnoptions(import_site, true, warnoptions, None)?;
-            pending.clear();
+            repl_state.reset();
             *paste_mode = false;
             refresh_completion_state(vm, completion_state);
             eprintln!("interpreter state reset");
@@ -2123,144 +2128,30 @@ fn format_duration(seconds: f64) -> String {
     }
 }
 
-fn execute_parsed_module_with_timing(
-    vm: &mut Vm,
-    module: &Module,
-    source: &str,
-    filename: &str,
-    echo_expression_result: bool,
-    timing_enabled: bool,
-) -> Result<(), String> {
-    let started = Instant::now();
-    let result = execute_parsed_module(vm, module, source, filename, echo_expression_result);
-    if timing_enabled {
-        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-        eprintln!("[timing] {elapsed_ms:.3} ms");
-    }
-    result
-}
-
 fn execute_parsed_module(
     vm: &mut Vm,
     module: &Module,
     source: &str,
     filename: &str,
-    echo_expression_result: bool,
+    _echo_expression_result: bool,
 ) -> Result<(), String> {
-    if echo_expression_result
-        && module.body.len() == 1
-        && let StmtKind::Expr(expr) = &module.body[0].node
-    {
-        let code = compiler::compile_expression_with_filename(expr, filename)
-            .map_err(|err| format_compile_error(filename, source, &err))?;
-        let value = vm
-            .execute(&code)
-            .map_err(|err| format!("runtime error: {}", err.message))?;
-        if !matches!(value, Value::None) {
-            let rendered = vm
-                .render_value_repr_for_display(value)
-                .map_err(|err| format!("runtime error: {}", err.message))?;
+    match crate::repl_core::run_ready_module(vm, source, module, filename, None) {
+        Ok(Some(rendered)) => {
             println!("{rendered}");
+            Ok(())
         }
-        return Ok(());
+        Ok(None) => Ok(()),
+        Err(crate::repl_core::ReplExecutionError::Compile(err)) => {
+            Err(format_compile_error(filename, source, &err))
+        }
+        Err(crate::repl_core::ReplExecutionError::Runtime(err)) => {
+            Err(format!("runtime error: {}", err.message))
+        }
     }
-
-    let code = compiler::compile_module_with_filename(module, filename)
-        .map_err(|err| format_compile_error(filename, source, &err))?;
-    vm.execute(&code)
-        .map_err(|err| format!("runtime error: {}", err.message))?;
-    Ok(())
 }
 
 fn format_parse_error(source: &str, filename: &str, err: &ParseError) -> String {
     format_syntax_error(filename, source, err)
-}
-
-fn repl_parse_candidate_source(pending: &str) -> &str {
-    pending.strip_suffix('\n').unwrap_or(pending)
-}
-
-fn repl_parse_success_requires_more_input(source: &str, latest_line: &str) -> bool {
-    !latest_line.trim().is_empty() && repl_has_eof_implied_dedent(source)
-}
-
-fn repl_has_eof_implied_dedent(source: &str) -> bool {
-    let mut lexer = parser::lexer::Lexer::new(source);
-    let Ok(tokens) = lexer.tokenize() else {
-        return false;
-    };
-    let eof_offset = source.len();
-    let mut index = tokens.len();
-    while index > 0 && matches!(tokens[index - 1].kind, parser::token::TokenKind::EndMarker) {
-        index -= 1;
-    }
-    let mut saw_eof_dedent = false;
-    while index > 0 {
-        let token = &tokens[index - 1];
-        if !matches!(token.kind, parser::token::TokenKind::Dedent) {
-            break;
-        }
-        if token.offset == eof_offset {
-            saw_eof_dedent = true;
-        }
-        index -= 1;
-    }
-    saw_eof_dedent
-}
-
-fn repl_input_is_incomplete(source: &str, err: &ParseError) -> bool {
-    let source_trimmed = source.trim_end();
-    if source_trimmed.is_empty() {
-        return false;
-    }
-
-    let lower_msg = err.message.to_ascii_lowercase();
-    if lower_msg.contains("unterminated string literal")
-        || lower_msg.contains("unterminated escape sequence")
-    {
-        return true;
-    }
-
-    if source_trimmed.ends_with('\\') || source_trimmed.ends_with(':') {
-        return true;
-    }
-
-    if has_unclosed_delimiters(source) {
-        return true;
-    }
-
-    if err.offset >= source.len() {
-        return true;
-    }
-
-    lower_msg.contains("expected indent")
-        || lower_msg.contains("expected dedent")
-        || lower_msg.contains("expected rparen")
-        || lower_msg.contains("expected rbracket")
-        || lower_msg.contains("expected rbrace")
-}
-
-fn has_unclosed_delimiters(source: &str) -> bool {
-    let mut lexer = parser::lexer::Lexer::new(source);
-    let Ok(tokens) = lexer.tokenize() else {
-        return false;
-    };
-
-    let mut paren_depth = 0usize;
-    let mut bracket_depth = 0usize;
-    let mut brace_depth = 0usize;
-    for token in tokens {
-        match token.kind {
-            parser::token::TokenKind::LParen => paren_depth += 1,
-            parser::token::TokenKind::RParen => paren_depth = paren_depth.saturating_sub(1),
-            parser::token::TokenKind::LBracket => bracket_depth += 1,
-            parser::token::TokenKind::RBracket => bracket_depth = bracket_depth.saturating_sub(1),
-            parser::token::TokenKind::LBrace => brace_depth += 1,
-            parser::token::TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    paren_depth != 0 || bracket_depth != 0 || brace_depth != 0
 }
 
 #[cfg(test)]
@@ -2273,9 +2164,8 @@ mod tests {
         CompletionRefreshPlan, CompletionState, MetaCommand, PythonHighlighter, ReplCompleter,
         ReplMagicCommand, ReplThemeMode, ResolvedReplTheme, TimeItRequest, completion_fragment,
         format_parse_error, is_path_like, parse_colorfgbg_background_code, parse_magic_command,
-        parse_meta_command, parse_repl_theme_mode, repl_input_is_incomplete,
-        repl_parse_candidate_source, repl_parse_success_requires_more_input,
-        repl_module_completion_plan, repl_palette, resolve_repl_theme,
+        parse_meta_command, parse_repl_theme_mode, repl_module_completion_plan, repl_palette,
+        resolve_repl_theme,
     };
     use crate::parser;
 
@@ -2283,50 +2173,53 @@ mod tests {
     fn repl_marks_colon_blocks_as_incomplete() {
         let source = "if True:\n";
         let err = parser::parse_module(source).expect_err("parse should fail while incomplete");
-        assert!(repl_input_is_incomplete(source, &err));
+        assert!(crate::repl_core::input_is_incomplete(source, &err));
     }
 
     #[test]
     fn repl_marks_unclosed_delimiter_as_incomplete() {
         let source = "print((1 + 2\n";
         let err = parser::parse_module(source).expect_err("parse should fail while incomplete");
-        assert!(repl_input_is_incomplete(source, &err));
+        assert!(crate::repl_core::input_is_incomplete(source, &err));
     }
 
     #[test]
     fn repl_treats_real_syntax_error_as_complete() {
         let source = "if True print(1)\n";
         let err = parser::parse_module(source).expect_err("parse should fail");
-        assert!(!repl_input_is_incomplete(source, &err));
+        assert!(!crate::repl_core::input_is_incomplete(source, &err));
     }
 
     #[test]
     fn repl_candidate_source_omits_latest_synthetic_newline() {
         assert_eq!(
-            repl_parse_candidate_source("class A:\n    x = 1\n"),
+            crate::repl_core::parse_candidate_source("class A:\n    x = 1\n"),
             "class A:\n    x = 1"
         );
         assert_eq!(
-            repl_parse_candidate_source("class A:\n    x = 1\n\n"),
+            crate::repl_core::parse_candidate_source("class A:\n    x = 1\n\n"),
             "class A:\n    x = 1\n"
         );
     }
 
     #[test]
     fn repl_class_block_stays_incomplete_until_blank_line() {
-        let without_blank = repl_parse_candidate_source("class A:\n    x = 1\n");
+        let without_blank = crate::repl_core::parse_candidate_source("class A:\n    x = 1\n");
         assert!(parser::parse_module(without_blank).is_ok());
-        assert!(repl_parse_success_requires_more_input(
+        assert!(crate::repl_core::parse_success_requires_more_input(
             without_blank,
             "    x = 1"
         ));
 
-        let with_blank = repl_parse_candidate_source("class A:\n    x = 1\n\n");
+        let with_blank = crate::repl_core::parse_candidate_source("class A:\n    x = 1\n\n");
         assert!(
             parser::parse_module(with_blank).is_ok(),
             "class block should complete after blank line"
         );
-        assert!(!repl_parse_success_requires_more_input(with_blank, ""));
+        assert!(!crate::repl_core::parse_success_requires_more_input(
+            with_blank,
+            ""
+        ));
     }
 
     #[test]
@@ -2490,14 +2383,15 @@ mod tests {
         vm.set_global("x", crate::runtime::Value::Int(7));
         assert_eq!(vm.get_global("x"), Some(crate::runtime::Value::Int(7)));
 
-        let mut pending = String::new();
+        let mut repl_state =
+            crate::repl_core::ReplCoreState::new(crate::repl_core::ReplProfile::NativeFull);
         let mut paste_mode = false;
         let mut timing_enabled = true;
         let completion_state = Arc::new(Mutex::new(CompletionState::default()));
         let should_exit = super::apply_meta_command(
             MetaCommand::Reset,
             &mut vm,
-            &mut pending,
+            &mut repl_state,
             &mut paste_mode,
             &mut timing_enabled,
             false,

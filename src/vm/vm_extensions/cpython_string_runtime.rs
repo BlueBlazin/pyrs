@@ -4,7 +4,7 @@ use super::Cwchar;
 
 pub(super) unsafe fn c_name_to_string(name: *const c_char) -> Result<String, String> {
     const MAX_C_STRING_BYTES: usize = 1 << 20; // 1 MiB safety cap for native C strings.
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     const SCAN_LEN: usize = MAX_C_STRING_BYTES + 1;
     if name.is_null() {
         return Err("received null C string pointer".to_string());

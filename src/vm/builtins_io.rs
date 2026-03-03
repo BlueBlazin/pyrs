@@ -1,10 +1,12 @@
 use super::{
-    AsRawFd, BigInt, BuiltinFunction, ClassObject, ExceptionObject, GeneratorResumeOutcome,
-    HashMap, InstanceObject, InternalCallOutcome, ObjRef, Object, Read, RuntimeError, Seek,
-    SeekFrom, StructEndian, StructFieldKind, StructFieldSpec, StructFormatSpec, Value, Vm, Write,
+    BigInt, BuiltinFunction, ClassObject, ExceptionObject, GeneratorResumeOutcome, HashMap,
+    InstanceObject, InternalCallOutcome, ObjRef, Object, Read, RuntimeError, Seek, SeekFrom,
+    StructEndian, StructFieldKind, StructFieldSpec, StructFormatSpec, Value, Vm, Write,
     bytes_like_from_value, class_attr_walk, decode_text_bytes, encode_text_bytes, format_value, fs,
     is_truthy, memoryview_bounds, runtime_error_matches_exception, value_to_f64, value_to_int,
 };
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 
 const IO_BUFFERED_ATTR_READ_BUF: &str = "__pyrs_buffered_read_buf";
 const IO_BUFFERED_ATTR_WRITE_BUF: &str = "__pyrs_buffered_write_buf";
