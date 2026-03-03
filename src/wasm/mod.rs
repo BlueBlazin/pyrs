@@ -495,6 +495,7 @@ pub struct WasmSession {
 pub struct WasmReplSession {
     inputs_executed: usize,
     last_error: Option<String>,
+    repl_state: crate::repl_core::ReplCoreState,
     #[cfg(feature = "wasm-vm-probe")]
     vm: Vm,
 }
@@ -1063,6 +1064,7 @@ impl WasmReplSession {
         Self {
             inputs_executed: 0,
             last_error: None,
+            repl_state: crate::repl_core::ReplCoreState::new(crate::repl_core::ReplProfile::WasmLean),
             #[cfg(feature = "wasm-vm-probe")]
             vm: new_wasm_repl_vm(),
         }
@@ -1070,6 +1072,10 @@ impl WasmReplSession {
 
     pub fn execute_input(&mut self, source: &str) -> WasmExecutionResult {
         self.inputs_executed += 1;
+        debug_assert_eq!(
+            self.repl_state.profile(),
+            crate::repl_core::ReplProfile::WasmLean
+        );
 
         let host = WasmHost;
         let parsed = match parse_and_compile_snippet(source) {
@@ -1184,6 +1190,7 @@ impl WasmReplSession {
     pub fn reset(&mut self) {
         self.inputs_executed = 0;
         self.last_error = None;
+        self.repl_state.reset();
         #[cfg(feature = "wasm-vm-probe")]
         {
             self.vm = new_wasm_repl_vm();
