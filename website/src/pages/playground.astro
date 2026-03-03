@@ -568,7 +568,12 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 		const runSource = async (source) => {
 			const normalized = source.replace(/\r/g, "").trimEnd();
 			const isBlankSubmission = normalized.trim().length === 0;
-			if (isBlankSubmission && !continuationPrompt) return;
+			if (isBlankSubmission && !continuationPrompt) {
+				historyIndex = commandHistory.length;
+				appendPromptInput("", false);
+				applyContinuationPrompt(false);
+				return;
+			}
 
 			const sourceForRuntime = isBlankSubmission ? "" : normalized;
 			if (!isBlankSubmission && commandHistory.at(-1) !== sourceForRuntime) {
