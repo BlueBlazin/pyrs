@@ -612,6 +612,19 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 					clearTranscript(true);
 					return;
 				}
+				if (event.key === "Tab" && !event.altKey && !event.ctrlKey && !event.metaKey) {
+					event.preventDefault();
+					const tabSpaces = "    ";
+					const start = inputEl.selectionStart;
+					const end = inputEl.selectionEnd;
+					const before = inputEl.value.slice(0, start);
+					const after = inputEl.value.slice(end);
+					inputEl.value = `${before}${tabSpaces}${after}`;
+					const nextCursor = start + tabSpaces.length;
+					inputEl.setSelectionRange(nextCursor, nextCursor);
+					refreshEditorState();
+					return;
+				}
 				if (event.key === "Enter" && !event.shiftKey) {
 					event.preventDefault();
 					if (formEl instanceof HTMLFormElement) {
@@ -730,29 +743,30 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 
 <style>
 	/* ===========================================
-	   Design tokens — Catppuccin Mocha
+	   Design tokens — Warm Ember
 	   =========================================== */
 	.playground-page {
-		--shell-bg: #1e1e2e;
-		--shell-chrome-bg: #181825;
-		--shell-chrome-border: #313244;
-		--shell-border: #313244;
-		--shell-shadow: rgba(0, 0, 0, 0.5);
+		--shell-bg: #050302;
+		--shell-chrome-bg: linear-gradient(180deg, #18100c 0%, #100a08 100%);
+		--shell-chrome-border: #432d22;
+		--shell-border: #54372a;
+		--shell-shadow: rgba(0, 0, 0, 0.62);
+		--transcript-bg: linear-gradient(180deg, #090605 0%, #060403 100%);
 
 		--tl-close: #ff5f57;
 		--tl-minimize: #febc2e;
 		--tl-maximize: #28c840;
-		--tl-inactive: #45475a;
+		--tl-inactive: #4a352b;
 
-		--status-loading: #fab387;
-		--status-ready: #a6e3a1;
-		--status-error: #f38ba8;
+		--status-loading: #d89563;
+		--status-ready: #9ac190;
+		--status-error: #f0a086;
 
-		--text-primary: #cdd6f4;
-		--text-secondary: #a6adc8;
-		--text-chrome: #6c7086;
+		--text-primary: #e9ded7;
+		--text-secondary: #c2aca0;
+		--text-chrome: #a58576;
 
-		--prompt-color: #89b4fa;
+		--prompt-color: #e8a06d;
 
 		--tok-keyword: #cba6f7;
 		--tok-string: #a6e3a1;
@@ -763,17 +777,17 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 		--tok-type: #f9e2af;
 		--tok-comment: #6c7086;
 
-		--stdout-color: #cdd6f4;
-		--stderr-color: #f38ba8;
-		--banner-color: #6c7086;
+		--stdout-color: #e9ded7;
+		--stderr-color: #f0a086;
+		--banner-color: #8e7162;
 
-		--scrollbar-thumb: rgba(108, 112, 134, 0.4);
-		--scrollbar-thumb-hover: rgba(108, 112, 134, 0.6);
+		--scrollbar-thumb: rgba(162, 116, 89, 0.46);
+		--scrollbar-thumb-hover: rgba(180, 130, 100, 0.64);
 
 		--action-bg: transparent;
-		--action-hover-bg: rgba(108, 112, 134, 0.15);
-		--action-text: #6c7086;
-		--action-hover-text: #a6adc8;
+		--action-hover-bg: rgba(165, 109, 78, 0.16);
+		--action-text: #a08274;
+		--action-hover-text: #e5c9b8;
 
 		--mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 	}
@@ -1002,7 +1016,7 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 		font-size: 14px;
 		line-height: 1.6;
 		word-break: break-word;
-		background: transparent;
+		background: var(--transcript-bg);
 
 		scrollbar-width: thin;
 		scrollbar-color: var(--scrollbar-thumb) transparent;
@@ -1170,7 +1184,7 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 		background: linear-gradient(
 			110deg,
 			transparent 30%,
-			rgba(108, 112, 134, 0.04) 50%,
+			rgba(193, 130, 93, 0.05) 50%,
 			transparent 70%
 		);
 		background-size: 200% 100%;
