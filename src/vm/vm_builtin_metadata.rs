@@ -918,7 +918,8 @@ impl Vm {
             | BuiltinFunction::CodecsIncrementalDecoderReset
             | BuiltinFunction::CodecsIncrementalDecoderGetState
             | BuiltinFunction::CodecsIncrementalDecoderSetState => "codecs",
-            BuiltinFunction::TypingIdFunc => "_typing",
+            BuiltinFunction::TypingInternalIdFunc => "_typing",
+            BuiltinFunction::TypingIdFunc => "typing",
             BuiltinFunction::TypingTypeVar
             | BuiltinFunction::TypingParamSpec
             | BuiltinFunction::TypingTypeVarTuple

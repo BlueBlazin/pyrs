@@ -4335,6 +4335,7 @@ pub enum BuiltinFunction {
     ImpOverrideMultiInterpExtensionsCheck,
     ImpFrozenModuleNames,
     TypingIdFunc,
+    TypingInternalIdFunc,
     TypingTypeVar,
     TypingParamSpec,
     TypingTypeVarTuple,
@@ -6472,6 +6473,14 @@ impl BuiltinFunction {
                 } else {
                     Ok(args[0].clone())
                 }
+            }
+            BuiltinFunction::TypingInternalIdFunc => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error(
+                        "_idfunc() takes exactly one argument",
+                    ));
+                }
+                Ok(args[0].clone())
             }
             BuiltinFunction::TypingNoDefaultRepr => Ok(Value::Str("typing.NoDefault".to_string())),
             BuiltinFunction::TypingNoDefaultReduce => Ok(Value::Str("NoDefault".to_string())),

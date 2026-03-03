@@ -32,8 +32,8 @@ Audit date: 2026-03-04
   - `strxfrm` is currently plain `Str` passthrough (module install at line 7983).
 - [ ] `P0` Remove placeholder behavior in `typing`:
   - `TypingIdFunc` and generic placeholders (`Dict/List/Tuple/Bool/Print`) in exported API (module install at line 3765, placeholder class wiring around lines 3759-3843).
-- [ ] `P1` Remove placeholder behavior in `_typing`:
-  - `_idfunc` uses `TypingIdFunc` (module install at line 4910).
+- [x] `P1` Remove placeholder behavior in `_typing`:
+  - `_typing._idfunc` now uses dedicated builtin dispatch (`TypingInternalIdFunc`) with strict one-argument identity semantics (no shared `TypingIdFunc` placeholder surface).
 - [x] `P1` Remove placeholder behavior in `functools`:
   - `total_ordering` now uses dedicated decorator + synthesized comparator builtins (CPython-shaped `ValueError` when no root order operation exists; no `TypingIdFunc` placeholder).
 - [x] `P1` Replace `_osx_support.customize_config_vars` placeholder:

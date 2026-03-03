@@ -4913,7 +4913,7 @@ impl Vm {
         self.install_builtin_module(
             "_typing",
             &[
-                ("_idfunc", BuiltinFunction::TypingIdFunc),
+                ("_idfunc", BuiltinFunction::TypingInternalIdFunc),
                 ("TypeVar", BuiltinFunction::TypingTypeVar),
                 ("ParamSpec", BuiltinFunction::TypingParamSpec),
                 ("TypeVarTuple", BuiltinFunction::TypingTypeVarTuple),

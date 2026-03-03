@@ -1599,6 +1599,17 @@ fn typing_get_type_hints_respects_no_type_check_on_bound_methods() {
 }
 
 #[test]
+fn typing_internal_idfunc_requires_one_argument() {
+    let source = "import _typing\nok = (_typing._idfunc('abc') == 'abc')\nkind = ''\ntry:\n    _typing._idfunc()\nexcept Exception as exc:\n    kind = type(exc).__name__\nok = ok and (kind == 'TypeError')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn python_function_too_many_positional_arguments_has_cpython_message_shape() {
     let source = "msg = ''\ntry:\n    def f(a, b=1):\n        pass\n    f(1, 2, 3)\nexcept TypeError as exc:\n    msg = str(exc)\nok = (msg == 'f() takes from 1 to 2 positional arguments but 3 were given')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
