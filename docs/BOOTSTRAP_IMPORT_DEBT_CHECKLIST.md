@@ -54,10 +54,12 @@ Audit date: 2026-03-04
   - now returns CPython-shaped `(soft, hard)` tuple and raises `ValueError("invalid resource specified")` for invalid resource ids,
   - `RLIMIT_STACK`/`RLIM_INFINITY` bootstrap constants now come from host platform values instead of static placeholders.
 - [ ] `P1` Replace `weakref` bootstrap placeholders:
-  - `WeakSet` mapped to builtin `Set`;
+  - `WeakSet` now exports dedicated `_weakrefset.WeakSet` class (no longer raw builtin `Set` alias);
   - weak dict types mapped to builtin `Dict` (module install at line 5599).
   - root-cause blocker for pure-stdlib `weakref.py` adoption: CPython expects subclassable `_weakref.ref` type (`class WeakMethod(ref)`), but current pyrs `_weakref.ref` export is a function-valued callable, which raises `TypeError: bases must be types`.
-- [ ] `P1` Replace `_weakrefset.WeakSet` placeholder mapped to builtin `Set` (module install at line 5624).
+- [x] `P1` Replace `_weakrefset.WeakSet` placeholder mapped to builtin `Set` (module install at line 5624):
+  - `_weakrefset.WeakSet` now materializes a dedicated class with explicit method surface (`__init__`, `__len__`, `__contains__`, `__iter__`, `add`, `discard`, `remove`, `clear`, `update`, `copy`),
+  - `threading._dangling` now initializes as a `WeakSet` instance rather than a raw builtin set.
 
 ## 2) Explicit Stub Modules
 

@@ -3837,6 +3837,16 @@ pub enum BuiltinFunction {
     WeakRefGetWeakRefCount,
     WeakRefGetWeakRefs,
     WeakRefRemoveDead,
+    WeakSetInit,
+    WeakSetLen,
+    WeakSetContains,
+    WeakSetIter,
+    WeakSetAdd,
+    WeakSetDiscard,
+    WeakSetRemove,
+    WeakSetClear,
+    WeakSetUpdate,
+    WeakSetCopy,
     ArrayArray,
     GcCollect,
     GcEnable,
@@ -7645,6 +7655,16 @@ impl BuiltinFunction {
             | BuiltinFunction::CollectionsDequeLen
             | BuiltinFunction::CollectionsDequeIter
             | BuiltinFunction::CollectionsDefaultDict
+            | BuiltinFunction::WeakSetInit
+            | BuiltinFunction::WeakSetLen
+            | BuiltinFunction::WeakSetContains
+            | BuiltinFunction::WeakSetIter
+            | BuiltinFunction::WeakSetAdd
+            | BuiltinFunction::WeakSetDiscard
+            | BuiltinFunction::WeakSetRemove
+            | BuiltinFunction::WeakSetClear
+            | BuiltinFunction::WeakSetUpdate
+            | BuiltinFunction::WeakSetCopy
             | BuiltinFunction::InspectIsFunction
             | BuiltinFunction::InspectIsMethod
             | BuiltinFunction::InspectIsRoutine

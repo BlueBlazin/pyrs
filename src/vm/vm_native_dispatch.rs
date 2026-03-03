@@ -11924,6 +11924,16 @@ impl Vm {
             BuiltinFunction::WeakRefFinalizeDetach => {
                 self.builtin_weakref_finalize_detach(args, kwargs)
             }
+            BuiltinFunction::WeakSetInit => self.builtin_weakset_init(args, kwargs),
+            BuiltinFunction::WeakSetLen => self.builtin_weakset_len(args, kwargs),
+            BuiltinFunction::WeakSetContains => self.builtin_weakset_contains(args, kwargs),
+            BuiltinFunction::WeakSetIter => self.builtin_weakset_iter(args, kwargs),
+            BuiltinFunction::WeakSetAdd => self.builtin_weakset_add(args, kwargs),
+            BuiltinFunction::WeakSetDiscard => self.builtin_weakset_discard(args, kwargs),
+            BuiltinFunction::WeakSetRemove => self.builtin_weakset_remove(args, kwargs),
+            BuiltinFunction::WeakSetClear => self.builtin_weakset_clear(args, kwargs),
+            BuiltinFunction::WeakSetUpdate => self.builtin_weakset_update(args, kwargs),
+            BuiltinFunction::WeakSetCopy => self.builtin_weakset_copy(args, kwargs),
             BuiltinFunction::Filter => self.builtin_filter(args, kwargs),
             BuiltinFunction::Reversed => self.builtin_reversed(args, kwargs),
             BuiltinFunction::Zip => self.builtin_zip(args, kwargs),

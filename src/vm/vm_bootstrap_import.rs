@@ -5608,6 +5608,58 @@ impl Vm {
                 ("CallableProxyType", Value::Builtin(BuiltinFunction::Type)),
             ],
         );
+        let weakset_class = match self
+            .heap
+            .alloc_class(ClassObject::new("WeakSet".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *weakset_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_weakrefset".to_string()));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakSetInit),
+            );
+            class_data.attrs.insert(
+                "__len__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakSetLen),
+            );
+            class_data.attrs.insert(
+                "__contains__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakSetContains),
+            );
+            class_data.attrs.insert(
+                "__iter__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakSetIter),
+            );
+            class_data.attrs.insert(
+                "add".to_string(),
+                Value::Builtin(BuiltinFunction::WeakSetAdd),
+            );
+            class_data.attrs.insert(
+                "discard".to_string(),
+                Value::Builtin(BuiltinFunction::WeakSetDiscard),
+            );
+            class_data.attrs.insert(
+                "remove".to_string(),
+                Value::Builtin(BuiltinFunction::WeakSetRemove),
+            );
+            class_data.attrs.insert(
+                "clear".to_string(),
+                Value::Builtin(BuiltinFunction::WeakSetClear),
+            );
+            class_data.attrs.insert(
+                "update".to_string(),
+                Value::Builtin(BuiltinFunction::WeakSetUpdate),
+            );
+            class_data.attrs.insert(
+                "copy".to_string(),
+                Value::Builtin(BuiltinFunction::WeakSetCopy),
+            );
+        }
         self.install_builtin_module(
             "weakref",
             &[
@@ -5621,7 +5673,7 @@ impl Vm {
                 ("ReferenceType", Value::Builtin(BuiltinFunction::Type)),
                 ("ProxyType", Value::Builtin(BuiltinFunction::Type)),
                 ("CallableProxyType", Value::Builtin(BuiltinFunction::Type)),
-                ("WeakSet", Value::Builtin(BuiltinFunction::Set)),
+                ("WeakSet", Value::Class(weakset_class.clone())),
                 ("WeakKeyDictionary", Value::Builtin(BuiltinFunction::Dict)),
                 ("WeakValueDictionary", Value::Builtin(BuiltinFunction::Dict)),
                 (
@@ -5636,7 +5688,7 @@ impl Vm {
         self.install_builtin_module(
             "_weakrefset",
             &[],
-            vec![("WeakSet", Value::Builtin(BuiltinFunction::Set))],
+            vec![("WeakSet", Value::Class(weakset_class.clone()))],
         );
         self.install_builtin_module(
             "array",
@@ -7855,6 +7907,17 @@ impl Vm {
                 Value::Class(thread_local_class.clone()),
             );
         }
+        let dangling_weakset = {
+            let instance = self.heap.alloc_instance(InstanceObject::new(weakset_class.clone()));
+            if let Value::Instance(obj) = &instance
+                && let Object::Instance(instance_data) = &mut *obj.kind_mut()
+            {
+                instance_data
+                    .attrs
+                    .insert("_data".to_string(), self.heap.alloc_set(Vec::new()));
+            }
+            instance
+        };
         self.install_builtin_module(
             "threading",
             &[
@@ -7883,7 +7946,7 @@ impl Vm {
                     "ThreadError",
                     Value::ExceptionType("RuntimeError".to_string()),
                 ),
-                ("_dangling", self.heap.alloc_set(Vec::new())),
+                ("_dangling", dangling_weakset),
             ],
         );
         self.install_builtin_module(

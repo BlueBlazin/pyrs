@@ -11421,6 +11421,16 @@ fn threading_module_exposes_dangling_registry_baseline() {
 }
 
 #[test]
+fn weakset_class_surface_is_not_plain_builtin_set_placeholder() {
+    let source = "import weakref\nimport _weakrefset\nimport threading\nclass Box:\n    pass\na = Box()\nb = Box()\ns = _weakrefset.WeakSet()\ns.add(a)\ns.update([b])\ninitial = (a in s and b in s and len(s) == 2 and len(list(s)) == 2)\ncopy_ok = (isinstance(s.copy(), _weakrefset.WeakSet) and len(s.copy()) == 2)\ns.discard(a)\npost_discard = (a not in s and len(s) == 1)\ns.remove(b)\npost_remove = (len(s) == 0)\nkind = ''\ntry:\n    s.remove(a)\nexcept Exception as exc:\n    kind = type(exc).__name__\nok = initial and copy_ok and post_discard and post_remove and kind == 'KeyError' and (weakref.WeakSet is _weakrefset.WeakSet) and isinstance(threading._dangling, _weakrefset.WeakSet)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_except_star_with_exceptiongroup_split_semantics() {
     let source = "value_count = 0\ntype_count = 0\nruntime_count = 0\ntry:\n    raise ExceptionGroup('outer', [ValueError('a'), TypeError('b'), ExceptionGroup('inner', [ValueError('c'), RuntimeError('d')])])\nexcept* ValueError as eg:\n    value_count = len(eg.exceptions)\nexcept* TypeError as eg:\n    type_count = len(eg.exceptions)\nexcept* RuntimeError as eg:\n    runtime_count = len(eg.exceptions)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

@@ -942,6 +942,16 @@ impl Vm {
             | BuiltinFunction::LocaleStrColl
             | BuiltinFunction::LocaleNLLangInfo => "_locale",
             BuiltinFunction::SymtableSymtable => "_symtable",
+            BuiltinFunction::WeakSetInit
+            | BuiltinFunction::WeakSetLen
+            | BuiltinFunction::WeakSetContains
+            | BuiltinFunction::WeakSetIter
+            | BuiltinFunction::WeakSetAdd
+            | BuiltinFunction::WeakSetDiscard
+            | BuiltinFunction::WeakSetRemove
+            | BuiltinFunction::WeakSetClear
+            | BuiltinFunction::WeakSetUpdate
+            | BuiltinFunction::WeakSetCopy => "_weakrefset",
             _ => "builtins",
         }
         .to_string();

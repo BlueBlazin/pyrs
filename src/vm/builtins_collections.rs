@@ -1865,6 +1865,236 @@ impl Vm {
         self.functools_total_ordering_from_root(args, kwargs, "__ge__", 2)
     }
 
+    fn weakset_backing_set(&mut self, receiver: &Value) -> Result<ObjRef, RuntimeError> {
+        let instance = match receiver {
+            Value::Instance(obj) => obj.clone(),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "WeakSet method receiver must be WeakSet",
+                ));
+            }
+        };
+        let mut instance_kind = instance.kind_mut();
+        let Object::Instance(instance_data) = &mut *instance_kind else {
+            return Err(RuntimeError::type_error(
+                "WeakSet method receiver must be WeakSet",
+            ));
+        };
+        if !matches!(instance_data.attrs.get("_data"), Some(Value::Set(_))) {
+            instance_data
+                .attrs
+                .insert("_data".to_string(), self.heap.alloc_set(Vec::new()));
+        }
+        match instance_data.attrs.get("_data").cloned() {
+            Some(Value::Set(set_obj)) => Ok(set_obj),
+            _ => Err(RuntimeError::new("WeakSet backing storage is invalid")),
+        }
+    }
+
+    pub(super) fn builtin_weakset_init(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::type_error(
+                "WeakSet.__init__() takes at most 1 argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let backing = self.weakset_backing_set(&receiver)?;
+        if let Object::Set(values) = &mut *backing.kind_mut() {
+            values.clear();
+        }
+        if let Some(iterable) = args.pop() {
+            let values = self.collect_iterable_values(iterable)?;
+            for value in values {
+                self.set_insert_checked_runtime(&backing, value)?;
+            }
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_weakset_len(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "WeakSet.__len__() takes no arguments",
+            ));
+        }
+        let backing = self.weakset_backing_set(&args[0])?;
+        let Object::Set(values) = &*backing.kind() else {
+            return Err(RuntimeError::new("WeakSet backing storage is invalid"));
+        };
+        Ok(Value::Int(values.len() as i64))
+    }
+
+    pub(super) fn builtin_weakset_contains(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "WeakSet.__contains__() takes exactly one argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let target = args.remove(0);
+        let backing = self.weakset_backing_set(&receiver)?;
+        Ok(Value::Bool(self.set_contains_runtime(&backing, &target)?))
+    }
+
+    pub(super) fn builtin_weakset_iter(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "WeakSet.__iter__() takes no arguments",
+            ));
+        }
+        let backing = self.weakset_backing_set(&args[0])?;
+        let Object::Set(values) = &*backing.kind() else {
+            return Err(RuntimeError::new("WeakSet backing storage is invalid"));
+        };
+        self.to_iterator_value(self.heap.alloc_list(values.to_vec()))
+    }
+
+    pub(super) fn builtin_weakset_add(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "WeakSet.add() takes exactly one argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let value = args.remove(0);
+        let backing = self.weakset_backing_set(&receiver)?;
+        self.set_insert_checked_runtime(&backing, value)?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_weakset_discard(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "WeakSet.discard() takes exactly one argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let value = args.remove(0);
+        let backing = self.weakset_backing_set(&receiver)?;
+        let _ = self.set_remove_checked_runtime(&backing, &value)?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_weakset_remove(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "WeakSet.remove() takes exactly one argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let value = args.remove(0);
+        let backing = self.weakset_backing_set(&receiver)?;
+        if self.set_remove_checked_runtime(&backing, &value)? {
+            Ok(Value::None)
+        } else {
+            Err(RuntimeError::key_error("key not found"))
+        }
+    }
+
+    pub(super) fn builtin_weakset_clear(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error("WeakSet.clear() takes no arguments"));
+        }
+        let backing = self.weakset_backing_set(&args[0])?;
+        if let Object::Set(values) = &mut *backing.kind_mut() {
+            values.clear();
+            return Ok(Value::None);
+        }
+        Err(RuntimeError::new("WeakSet backing storage is invalid"))
+    }
+
+    pub(super) fn builtin_weakset_update(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "WeakSet.update() takes exactly one argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let iterable = args.remove(0);
+        let backing = self.weakset_backing_set(&receiver)?;
+        for value in self.collect_iterable_values(iterable)? {
+            self.set_insert_checked_runtime(&backing, value)?;
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_weakset_copy(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error("WeakSet.copy() takes no arguments"));
+        }
+        let receiver = match &args[0] {
+            Value::Instance(obj) => obj.clone(),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "WeakSet.copy() receiver must be WeakSet",
+                ));
+            }
+        };
+        let backing = self.weakset_backing_set(&args[0])?;
+        let values = match &*backing.kind() {
+            Object::Set(values) => values.clone(),
+            _ => return Err(RuntimeError::new("WeakSet backing storage is invalid")),
+        };
+        let class = {
+            let receiver_kind = receiver.kind();
+            let Object::Instance(instance_data) = &*receiver_kind else {
+                return Err(RuntimeError::type_error(
+                    "WeakSet.copy() receiver must be WeakSet",
+                ));
+            };
+            instance_data.class.clone()
+        };
+        let copy = self.heap.alloc_instance(InstanceObject::new(class));
+        if let Value::Instance(copy_obj) = &copy
+            && let Object::Instance(copy_data) = &mut *copy_obj.kind_mut()
+        {
+            copy_data
+                .attrs
+                .insert("_data".to_string(), self.heap.alloc_set(values.to_vec()));
+        }
+        Ok(copy)
+    }
+
     pub(super) fn builtin_collections_counter(
         &mut self,
         args: Vec<Value>,
