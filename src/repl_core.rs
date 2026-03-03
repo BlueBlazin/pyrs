@@ -222,6 +222,18 @@ pub(crate) fn execute_module_or_expression(
     Ok(None)
 }
 
+/// Executes a parse-ready module through shared REPL semantics after caching source text.
+pub(crate) fn run_ready_module(
+    vm: &mut crate::vm::Vm,
+    source: &str,
+    module: &Module,
+    filename: &str,
+    precompiled_module_code: Option<&crate::bytecode::CodeObject>,
+) -> Result<Option<String>, ReplExecutionError> {
+    vm.cache_source_text(filename, source);
+    execute_module_or_expression(vm, module, filename, precompiled_module_code)
+}
+
 #[derive(Debug)]
 pub(crate) enum ReplExecutionError {
     Compile(crate::compiler::CompileError),
@@ -233,6 +245,7 @@ mod tests {
     use super::{
         ReplLineParseResult, execute_module_or_expression, input_is_incomplete,
         parse_candidate_source, parse_success_requires_more_input, submit_line_for_module,
+        run_ready_module,
     };
 
     #[test]
@@ -353,5 +366,16 @@ mod tests {
         let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>", Some(&module_code))
             .expect("expression execution should succeed");
         assert_eq!(rendered.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn run_ready_module_executes_statement_payload() {
+        let mut vm = crate::vm::Vm::new();
+        let source = "x = 9\n";
+        let module = crate::parser::parse_module(source).expect("module should parse");
+        let rendered = run_ready_module(&mut vm, source, &module, "<stdin>", None)
+            .expect("execution should succeed");
+        assert!(rendered.is_none());
+        assert!(matches!(vm.get_global("x"), Some(crate::runtime::Value::Int(9))));
     }
 }

@@ -1124,10 +1124,9 @@ impl WasmReplSession {
 
         #[cfg(feature = "wasm-vm-probe")]
         {
-            self.vm.cache_source_text(WASM_REPL_FILENAME, source);
-
-            let result = match crate::repl_core::execute_module_or_expression(
+            let result = match crate::repl_core::run_ready_module(
                 &mut self.vm,
+                source,
                 &parsed.module,
                 WASM_REPL_FILENAME,
                 Some(&parsed.code),

@@ -2136,7 +2136,7 @@ fn execute_parsed_module(
     filename: &str,
     _echo_expression_result: bool,
 ) -> Result<(), String> {
-    match crate::repl_core::execute_module_or_expression(vm, module, filename, None) {
+    match crate::repl_core::run_ready_module(vm, source, module, filename, None) {
         Ok(Some(rendered)) => {
             println!("{rendered}");
             Ok(())
