@@ -4355,6 +4355,14 @@ pub enum BuiltinFunction {
     TypingParamSpec,
     TypingTypeVarTuple,
     TypingTypeAliasType,
+    TypingGetTypeHints,
+    TypingGetOrigin,
+    TypingGetArgs,
+    TypingGetProtocolMembers,
+    TypingGetOverloads,
+    TypingClearOverloads,
+    TypingIsTypedDict,
+    TypingIsProtocol,
     TypingNoDefaultNew,
     TypingNoDefaultRepr,
     TypingNoDefaultReduce,
@@ -6592,6 +6600,16 @@ impl BuiltinFunction {
                         .insert("__constraints__".to_string(), heap.alloc_tuple(Vec::new()));
                 }
                 Ok(Value::Instance(marker))
+            }
+            BuiltinFunction::TypingGetTypeHints
+            | BuiltinFunction::TypingGetOrigin
+            | BuiltinFunction::TypingGetArgs
+            | BuiltinFunction::TypingGetProtocolMembers
+            | BuiltinFunction::TypingGetOverloads
+            | BuiltinFunction::TypingClearOverloads
+            | BuiltinFunction::TypingIsTypedDict
+            | BuiltinFunction::TypingIsProtocol => {
+                Err(RuntimeError::new("typing helper is VM-only"))
             }
             BuiltinFunction::TypingTypeParamSubst
             | BuiltinFunction::TypingTypeParamPrepareSubst

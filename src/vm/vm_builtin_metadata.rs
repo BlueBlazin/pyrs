@@ -924,6 +924,14 @@ impl Vm {
             | BuiltinFunction::TypingParamSpec
             | BuiltinFunction::TypingTypeVarTuple
             | BuiltinFunction::TypingTypeAliasType
+            | BuiltinFunction::TypingGetTypeHints
+            | BuiltinFunction::TypingGetOrigin
+            | BuiltinFunction::TypingGetArgs
+            | BuiltinFunction::TypingGetProtocolMembers
+            | BuiltinFunction::TypingGetOverloads
+            | BuiltinFunction::TypingClearOverloads
+            | BuiltinFunction::TypingIsTypedDict
+            | BuiltinFunction::TypingIsProtocol
             | BuiltinFunction::TypingNoDefaultNew
             | BuiltinFunction::TypingNoDefaultRepr
             | BuiltinFunction::TypingNoDefaultReduce

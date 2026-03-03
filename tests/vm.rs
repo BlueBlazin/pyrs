@@ -3620,6 +3620,67 @@ ok = (
 }
 
 #[test]
+fn typing_bootstrap_helpers_have_runtime_baseline_without_cpython_lib() {
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        eprintln!("skipping typing bootstrap helper test (pyrs binary not found)");
+        return;
+    };
+    let fake_lib = unique_temp_dir("pyrs_typing_bootstrap_only");
+    std::fs::create_dir_all(&fake_lib).expect("create fake lib root");
+    let source = r#"import typing
+origin = getattr(typing, '__file__', None)
+class Plain:
+    pass
+origin_ok = origin is None
+origin_none_ok = typing.get_origin(int) is None
+args_none_ok = typing.get_args(int) == ()
+hints_ok = typing.get_type_hints(Plain) == {}
+is_typed_ok = typing.is_typeddict(dict) is False
+is_protocol_ok = typing.is_protocol(Plain) is False
+clear_ok = typing.clear_overloads() is None
+overloads_ok = typing.get_overloads(lambda: None) == []
+members_error = ''
+try:
+    typing.get_protocol_members(Plain)
+except Exception as exc:
+    members_error = type(exc).__name__
+ok = (
+    origin_ok
+    and origin_none_ok
+    and args_none_ok
+    and hints_ok
+    and is_typed_ok
+    and is_protocol_ok
+    and clear_ok
+    and overloads_ok
+    and members_error == 'TypeError'
+)
+print(ok)
+"#;
+    let output = Command::new(pyrs_bin)
+        .env("PYRS_CPYTHON_LIB", &fake_lib)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn typing bootstrap helper probe");
+    let _ = std::fs::remove_dir_all(&fake_lib);
+    assert!(
+        output.status.success(),
+        "typing bootstrap probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(
+        last_line, "True",
+        "expected typing bootstrap probe to print True, got:\n{}",
+        stdout
+    );
+}
+
+#[test]
 #[ignore = "sqlite in-process lane currently overflows stack in vm harness"]
 fn sqlite3_import_and_basic_query_workflow_from_cpython_lib() {
     let Some(lib_path) = cpython_lib_path() else {

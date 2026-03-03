@@ -35,7 +35,8 @@ Audit date: 2026-03-04
   - `strxfrm` and `strcoll` enforce explicit argument shape and string-only contracts,
   - `nl_langinfo` now enforces integer key shape, supports `CODESET` resolution via runtime filesystem encoding, and raises `ValueError` for unsupported keys.
 - [ ] `P0` Remove placeholder behavior in `typing`:
-  - `TypingIdFunc` and generic placeholders (`Dict/List/Tuple/Bool/Print`) in exported API (module install at line 3765, placeholder class wiring around lines 3759-3843).
+  - generic placeholders (`Dict/List/Tuple/Bool/Print`) for core `typing` helper exports were replaced with dedicated builtins (`get_type_hints`, `get_origin`, `get_args`, `get_protocol_members`, `get_overloads`, `clear_overloads`, `is_typeddict`, `is_protocol`);
+  - remaining debt: `TypingIdFunc` still backs decorator/identity helper exports (module install at line 3765, placeholder class wiring around lines 3759-3843).
 - [x] `P1` Remove placeholder behavior in `_typing`:
   - `_typing._idfunc` now uses dedicated builtin dispatch (`TypingInternalIdFunc`) with strict one-argument identity semantics (no shared `TypingIdFunc` placeholder surface).
 - [x] `P1` Remove placeholder behavior in `functools`:

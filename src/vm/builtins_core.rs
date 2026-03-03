@@ -15616,6 +15616,240 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
+    fn typing_module_global_value(&self, name: &str) -> Option<Value> {
+        let module = self.modules.get("typing")?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return None;
+        };
+        module_data.globals.get(name).cloned()
+    }
+
+    pub(super) fn builtin_typing_get_type_hints(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 4 {
+            return Err(RuntimeError::type_error(
+                "get_type_hints() expects 1-4 positional arguments",
+            ));
+        }
+        let obj = args.remove(0);
+        if kwargs.remove("include_extras").is_some() && args.len() >= 3 {
+            return Err(RuntimeError::type_error(
+                "get_type_hints() got multiple values for argument 'include_extras'",
+            ));
+        }
+        let _ = kwargs.remove("format");
+        if let Some(unexpected) = kwargs.keys().next().cloned() {
+            return Err(RuntimeError::type_error(format!(
+                "get_type_hints() got an unexpected keyword argument '{unexpected}'"
+            )));
+        }
+        if let Some(flag) = self.optional_getattr_value(obj.clone(), "__no_type_check__")?
+            && self.truthy_from_value(&flag)?
+        {
+            return Ok(self.heap.alloc_dict(Vec::new()));
+        }
+        let Some(annotations) = self.optional_getattr_value(obj, "__annotations__")? else {
+            return Ok(self.heap.alloc_dict(Vec::new()));
+        };
+        self.builtin_dict(vec![annotations], HashMap::new())
+    }
+
+    pub(super) fn builtin_typing_get_origin(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "get_origin() takes exactly one argument",
+            ));
+        }
+        let tp = args.remove(0);
+        if self.annotated_alias_metadata_from_value(&tp).is_some()
+            && let Some(annotated) = self.typing_module_global_value("Annotated")
+        {
+            return Ok(annotated);
+        }
+        if self.union_args_from_value(&tp).is_some()
+            && let Some(union) = self.typing_module_global_value("Union")
+        {
+            return Ok(union);
+        }
+        if let Some(origin) = self.optional_getattr_value(tp.clone(), "__origin__")? {
+            return Ok(origin);
+        }
+        if let Value::Class(class_obj) = &tp
+            && let Object::Class(class_data) = &*class_obj.kind()
+        {
+            let module_name = class_data.attrs.get("__module__").and_then(|value| match value {
+                Value::Str(module) => Some(module.as_str()),
+                _ => None,
+            });
+            if matches!(module_name, Some("typing" | "_typing")) && class_data.name == "Generic" {
+                return Ok(tp.clone());
+            }
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_typing_get_args(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "get_args() takes exactly one argument",
+            ));
+        }
+        let tp = args.remove(0);
+        if let Some(metadata) = self.annotated_alias_metadata_from_value(&tp)
+            && let Some(origin) = self.optional_getattr_value(tp.clone(), "__origin__")?
+        {
+            let mut out = Vec::with_capacity(metadata.len() + 1);
+            out.push(origin);
+            out.extend(metadata);
+            return Ok(self.heap.alloc_tuple(out));
+        }
+        if let Some(raw_args) = self.optional_getattr_value(tp.clone(), "__args__")? {
+            return match raw_args {
+                Value::Tuple(tuple_obj) => Ok(Value::Tuple(tuple_obj)),
+                Value::List(list_obj) => {
+                    let Object::List(values) = &*list_obj.kind() else {
+                        return Ok(self.heap.alloc_tuple(Vec::new()));
+                    };
+                    Ok(self.heap.alloc_tuple(values.clone()))
+                }
+                _ => Ok(self.heap.alloc_tuple(Vec::new())),
+            };
+        }
+        if let Some(union_args) = self.union_args_from_value(&tp) {
+            return Ok(self.heap.alloc_tuple(union_args));
+        }
+        Ok(self.heap.alloc_tuple(Vec::new()))
+    }
+
+    pub(super) fn builtin_typing_is_typeddict(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "is_typeddict() takes exactly one argument",
+            ));
+        }
+        let tp = args.remove(0);
+        let Value::Class(class_obj) = tp else {
+            return Ok(Value::Bool(false));
+        };
+        let class_value = Value::Class(class_obj.clone());
+        if let Object::Class(class_data) = &*class_obj.kind() {
+            let module_name = class_data.attrs.get("__module__").and_then(|value| match value {
+                Value::Str(module_name) => Some(module_name.as_str()),
+                _ => None,
+            });
+            if matches!(module_name, Some("typing" | "_typing")) && class_data.name == "TypedDict"
+            {
+                return Ok(Value::Bool(false));
+            }
+        }
+        let Some(metaclass) = self.class_of_value(&class_value) else {
+            return Ok(Value::Bool(false));
+        };
+        let Object::Class(metaclass_data) = &*metaclass.kind() else {
+            return Ok(Value::Bool(false));
+        };
+        Ok(Value::Bool(metaclass_data.name == "_TypedDictMeta"))
+    }
+
+    pub(super) fn builtin_typing_is_protocol(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "is_protocol() takes exactly one argument",
+            ));
+        }
+        let tp = args.remove(0);
+        let Value::Class(class_obj) = tp.clone() else {
+            return Ok(Value::Bool(false));
+        };
+        if let Object::Class(class_data) = &*class_obj.kind() {
+            let module_name = class_data.attrs.get("__module__").and_then(|value| match value {
+                Value::Str(module_name) => Some(module_name.as_str()),
+                _ => None,
+            });
+            if matches!(module_name, Some("typing" | "_typing")) && class_data.name == "Protocol" {
+                return Ok(Value::Bool(false));
+            }
+        }
+        let Some(flag) = self.optional_getattr_value(tp, "_is_protocol")? else {
+            return Ok(Value::Bool(false));
+        };
+        Ok(Value::Bool(self.truthy_from_value(&flag)?))
+    }
+
+    pub(super) fn builtin_typing_get_protocol_members(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "get_protocol_members() takes exactly one argument",
+            ));
+        }
+        let tp = args.remove(0);
+        let is_protocol =
+            matches!(
+                self.builtin_typing_is_protocol(vec![tp.clone()], HashMap::new())?,
+                Value::Bool(true)
+            );
+        if !is_protocol {
+            return Err(RuntimeError::type_error(format!(
+                "{} is not a Protocol",
+                format_repr(&tp)
+            )));
+        }
+        let Some(protocol_attrs) = self.optional_getattr_value(tp, "__protocol_attrs__")? else {
+            return Ok(self.heap.alloc_frozenset(Vec::new()));
+        };
+        let members = self.collect_iterable_values(protocol_attrs)?;
+        Ok(self.heap.alloc_frozenset(members))
+    }
+
+    pub(super) fn builtin_typing_get_overloads(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "get_overloads() takes exactly one argument",
+            ));
+        }
+        Ok(self.heap.alloc_list(Vec::new()))
+    }
+
+    pub(super) fn builtin_typing_clear_overloads(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "clear_overloads() takes no arguments",
+            ));
+        }
+        Ok(Value::None)
+    }
+
     fn weakref_reference_type(&self) -> Result<ObjRef, RuntimeError> {
         let module = self
             .modules

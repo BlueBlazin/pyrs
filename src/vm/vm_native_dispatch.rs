@@ -13444,6 +13444,18 @@ impl Vm {
                 }
                 Ok(marker)
             }
+            BuiltinFunction::TypingGetTypeHints => self.builtin_typing_get_type_hints(args, kwargs),
+            BuiltinFunction::TypingGetOrigin => self.builtin_typing_get_origin(args, kwargs),
+            BuiltinFunction::TypingGetArgs => self.builtin_typing_get_args(args, kwargs),
+            BuiltinFunction::TypingGetProtocolMembers => {
+                self.builtin_typing_get_protocol_members(args, kwargs)
+            }
+            BuiltinFunction::TypingGetOverloads => self.builtin_typing_get_overloads(args, kwargs),
+            BuiltinFunction::TypingClearOverloads => {
+                self.builtin_typing_clear_overloads(args, kwargs)
+            }
+            BuiltinFunction::TypingIsTypedDict => self.builtin_typing_is_typeddict(args, kwargs),
+            BuiltinFunction::TypingIsProtocol => self.builtin_typing_is_protocol(args, kwargs),
             BuiltinFunction::TypingNoDefaultNew => self.builtin_typing_nodefault_new(args, kwargs),
             BuiltinFunction::TypingNoDefaultRepr => {
                 self.builtin_typing_nodefault_repr(args, kwargs)
