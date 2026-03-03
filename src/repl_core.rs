@@ -108,6 +108,51 @@ pub(crate) enum ReplLineParseResult {
     ParseError { source: String, error: ParseError },
 }
 
+/// Shared pending-input state for interactive REPL adapters.
+#[derive(Default)]
+pub(crate) struct ReplInputSession {
+    pending: String,
+}
+
+impl ReplInputSession {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+
+    pub(crate) fn has_pending_nonempty(&self) -> bool {
+        !self.pending.trim().is_empty()
+    }
+
+    pub(crate) fn pending_source(&self) -> &str {
+        &self.pending
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.pending.clear();
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.clear();
+    }
+
+    pub(crate) fn interrupt(&mut self) {
+        self.clear();
+    }
+
+    pub(crate) fn append_paste_line(&mut self, line: &str) {
+        self.pending.push_str(line);
+        self.pending.push('\n');
+    }
+
+    pub(crate) fn submit_line(&mut self, line: &str) -> ReplLineParseResult {
+        submit_line_for_module(&mut self.pending, line)
+    }
+}
+
 /// Appends one user-entered line to the pending REPL buffer and tries to parse.
 ///
 /// Behavior mirrors CPython-style interactive continuation semantics:
