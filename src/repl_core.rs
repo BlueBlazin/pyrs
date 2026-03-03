@@ -307,18 +307,10 @@ impl ReplCoreState {
                 source,
                 module,
                 code,
-            } => {
-                match run_ready_module(vm, &source, &module, filename, Some(&code)) {
-                    Ok(display) => ReplLineExecuteResult::Executed {
-                        module,
-                        display,
-                    },
-                    Err(error) => ReplLineExecuteResult::ExecutionError {
-                        source,
-                        error,
-                    },
-                }
-            }
+            } => match run_ready_module(vm, &source, &module, filename, Some(&code)) {
+                Ok(display) => ReplLineExecuteResult::Executed { module, display },
+                Err(error) => ReplLineExecuteResult::ExecutionError { source, error },
+            },
         }
     }
 }
@@ -434,8 +426,7 @@ pub(crate) enum ReplExecutionError {
 mod tests {
     use super::{
         ReplCoreState, ReplInputSession, ReplLineParseResult, ReplProfile, ReplPromptKind,
-        ReplSourcePrepareError, input_is_incomplete,
-        parse_and_compile_module_source,
+        ReplSourcePrepareError, input_is_incomplete, parse_and_compile_module_source,
         parse_candidate_source, parse_success_requires_more_input, submit_line_for_module,
     };
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
@@ -620,7 +611,10 @@ mod tests {
         let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>", None)
             .expect("statement execution should succeed");
         assert!(rendered.is_none());
-        assert!(matches!(vm.get_global("x"), Some(crate::runtime::Value::Int(1))));
+        assert!(matches!(
+            vm.get_global("x"),
+            Some(crate::runtime::Value::Int(1))
+        ));
     }
 
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
@@ -633,7 +627,10 @@ mod tests {
         let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>", Some(&code))
             .expect("statement execution should succeed");
         assert!(rendered.is_none());
-        assert!(matches!(vm.get_global("x"), Some(crate::runtime::Value::Int(5))));
+        assert!(matches!(
+            vm.get_global("x"),
+            Some(crate::runtime::Value::Int(5))
+        ));
     }
 
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
@@ -643,8 +640,9 @@ mod tests {
         let module = crate::parser::parse_module("1 + 2").expect("module should parse");
         let module_code =
             crate::compiler::compile_module_with_filename(&module, "<stdin>").expect("compile");
-        let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>", Some(&module_code))
-            .expect("expression execution should succeed");
+        let rendered =
+            execute_module_or_expression(&mut vm, &module, "<stdin>", Some(&module_code))
+                .expect("expression execution should succeed");
         assert_eq!(rendered.as_deref(), Some("3"));
     }
 
@@ -657,7 +655,10 @@ mod tests {
         let rendered = run_ready_module(&mut vm, source, &module, "<stdin>", None)
             .expect("execution should succeed");
         assert!(rendered.is_none());
-        assert!(matches!(vm.get_global("x"), Some(crate::runtime::Value::Int(9))));
+        assert!(matches!(
+            vm.get_global("x"),
+            Some(crate::runtime::Value::Int(9))
+        ));
     }
 
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]

@@ -707,8 +707,7 @@ unsafe fn sqlite3_result_blob(
 
 #[cfg(target_arch = "wasm32")]
 #[allow(non_snake_case, unused_variables)]
-unsafe fn sqlite3_result_error(_context: *mut Sqlite3Context, _value: *const c_char, _len: c_int) {
-}
+unsafe fn sqlite3_result_error(_context: *mut Sqlite3Context, _value: *const c_char, _len: c_int) {}
 
 const SQLITE_OK: c_int = 0;
 const SQLITE_ROW: c_int = 100;

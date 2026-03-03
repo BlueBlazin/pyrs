@@ -1,3 +1,5 @@
+#[cfg(target_arch = "wasm32")]
+use super::wasm_c_float_format::format_float_with_c_pattern;
 use super::{
     AttrAccessOutcome, AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, BigInt, BoundMethod,
     BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, ClassBuildOutcome, ClassObject, CodeObject,
@@ -34,8 +36,6 @@ use crate::ast::{
 use crate::runtime::value_lookup_hash;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-#[cfg(target_arch = "wasm32")]
-use super::wasm_c_float_format::format_float_with_c_pattern;
 
 thread_local! {
     static TYPE_INSTANCECHECK_BYPASS_CUSTOM: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -10970,12 +10970,7 @@ impl Vm {
             use std::os::raw::{c_char, c_int};
 
             unsafe extern "C" {
-                fn snprintf(
-                    buffer: *mut c_char,
-                    size: usize,
-                    format: *const c_char,
-                    ...
-                ) -> c_int;
+                fn snprintf(buffer: *mut c_char, size: usize, format: *const c_char, ...) -> c_int;
             }
 
             let c_format = CString::new(format_text)

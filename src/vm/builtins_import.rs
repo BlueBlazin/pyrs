@@ -229,7 +229,7 @@ impl Vm {
             // Python-side import paths can rely on it and skip another `run()`
             // re-entry. C-extension contexts still force local drain semantics.
             if active_stop_depth <= caller_depth {
-                if self.host.env_var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
+                if self.trace_flags.import_pending {
                     let reason = if cpython_context_active {
                         "cpython-context"
                     } else if force_nested_sync {
@@ -258,7 +258,7 @@ impl Vm {
                 // depth. Tighten the active stop depth in-place and let the running
                 // loop honor it without introducing another `run()` re-entry.
                 self.run_stop_depth = Some(caller_depth);
-                if self.host.env_var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
+                if self.trace_flags.import_pending {
                     eprintln!(
                         "[import-pending-tighten] caller_depth={} previous_stop_depth={} frames={}",
                         caller_depth,
@@ -286,7 +286,7 @@ impl Vm {
             .expect("import drain depth underflow");
         self.run_stop_depth = previous_stop;
         if let Err(err) = run_result {
-            if self.host.env_var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
+            if self.trace_flags.import_pending {
                 let caller_exc = self
                     .frames
                     .get(caller_depth.saturating_sub(1))
@@ -318,7 +318,7 @@ impl Vm {
             let caller_active_exception_after =
                 caller_frame.and_then(|frame| frame.active_exception.clone());
             if caller_active_exception_after != caller_active_exception_before {
-                if self.host.env_var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
+                if self.trace_flags.import_pending {
                     let before = caller_active_exception_before
                         .as_ref()
                         .map(|value| self.value_type_name_for_error(value))

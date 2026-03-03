@@ -1,6 +1,6 @@
-use std::cmp::Ordering;
 #[cfg(target_arch = "wasm32")]
 use super::wasm_c_float_format::format_float_with_c_pattern;
+use std::cmp::Ordering;
 
 use super::class_name_for_instance;
 use super::containers::{dedup_hashable_values, dict_contains_key_checked, ensure_hashable};

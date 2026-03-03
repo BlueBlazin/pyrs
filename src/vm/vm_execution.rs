@@ -517,7 +517,7 @@ impl Vm {
         receiver: &Value,
         method_name: &str,
     ) -> Result<Option<Value>, RuntimeError> {
-        let trace = self.host.env_var_os("PYRS_TRACE_LOAD_SPECIAL").is_some();
+        let trace = self.trace_flags.load_special;
         if trace && method_name == "__exit__" {
             eprintln!(
                 "[load-special] start receiver_type={}",
@@ -990,11 +990,7 @@ impl Vm {
                 self.maybe_gc_collect_automatic();
             }
             if !self.pending_del_instances.is_empty() || !self.weakref_finalizers.is_empty() {
-                if self
-                    .host
-                    .env_var_os("PYRS_DISABLE_PENDING_FINALIZERS")
-                    .is_some()
-                {
+                if self.trace_flags.disable_pending_finalizers {
                     continue;
                 }
                 // Keep __del__ suppressed only while an active exception is being processed.
@@ -5186,7 +5182,7 @@ impl Vm {
                         Err(err) => return Err(err),
                     };
                     if let Some(prepare_callable) = prepare_callable {
-                        if self.host.env_var_os("PYRS_TRACE_PREPARE_CALL").is_some() {
+                        if self.trace_flags.prepare_call {
                             let callable_type = self.value_type_name_for_error(&prepare_callable);
                             let callable_repr = format_repr(&prepare_callable);
                             let meta_name = match &meta {
@@ -5490,11 +5486,7 @@ impl Vm {
                                         match value {
                                             Value::Cell(cell) => cells.push(cell.clone()),
                                             _ => {
-                                                if self
-                                                    .host
-                                                    .env_var_os("PYRS_TRACE_CLOSURE_SHAPE")
-                                                    .is_some()
-                                                {
+                                                if self.trace_flags.closure_shape {
                                                     if let Some(frame) = self.frames.last() {
                                                         eprintln!(
                                                             "[closure-shape] file={} fn={} attr_kind=0x08 entry_type={}",

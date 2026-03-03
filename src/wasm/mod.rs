@@ -1052,7 +1052,6 @@ impl WasmSession {
     pub fn last_error(&self) -> Option<String> {
         self.last_error.clone()
     }
-
 }
 
 #[wasm_bindgen]
@@ -1068,7 +1067,9 @@ impl WasmReplSession {
         Self {
             inputs_executed: 0,
             last_error: None,
-            repl_state: crate::repl_core::ReplCoreState::new(crate::repl_core::ReplProfile::WasmLean),
+            repl_state: crate::repl_core::ReplCoreState::new(
+                crate::repl_core::ReplProfile::WasmLean,
+            ),
             #[cfg(feature = "wasm-vm-probe")]
             vm: new_wasm_repl_vm(),
         }
@@ -2275,14 +2276,7 @@ fn compile_failure_to_execution_result(
     } else {
         compile_phase_key.to_string()
     };
-    execution_failure_result(
-        &phase,
-        stderr,
-        error,
-        None,
-        compile.line,
-        compile.column,
-    )
+    execution_failure_result(&phase, stderr, error, None, compile.line, compile.column)
 }
 
 fn execution_failure_result(

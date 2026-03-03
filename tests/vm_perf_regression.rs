@@ -66,7 +66,8 @@ impl VmHost for CountingHost {
             self.debug_depth_limit_queries
                 .fetch_add(1, Ordering::Relaxed);
         }
-        self.env_override(name).or_else(|| self.native.env_var(name))
+        self.env_override(name)
+            .or_else(|| self.native.env_var(name))
     }
 
     fn env_var_os(&self, name: &str) -> Option<OsString> {

@@ -478,7 +478,11 @@ fn run_interactive_session(
                         let completion_plan = repl_module_completion_plan(&module);
                         apply_completion_refresh_plan(vm, &completion_state, completion_plan);
                     }
-                    crate::repl_core::ReplLineExecuteResult::ExecutionError { source, error, .. } => {
+                    crate::repl_core::ReplLineExecuteResult::ExecutionError {
+                        source,
+                        error,
+                        ..
+                    } => {
                         ran_execution = true;
                         let err = match error {
                             crate::repl_core::ReplExecutionError::Compile(compile_err) => {
@@ -2217,8 +2221,7 @@ mod tests {
             "class block should complete after blank line"
         );
         assert!(!crate::repl_core::parse_success_requires_more_input(
-            with_blank,
-            ""
+            with_blank, ""
         ));
     }
 

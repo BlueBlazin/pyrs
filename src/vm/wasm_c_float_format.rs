@@ -65,7 +65,9 @@ fn with_sign_prefix(value: f64, sign_flag: Option<char>, mut body: String) -> St
     }
 }
 
-fn parse_c_float_pattern(pattern: &str) -> Result<(Option<char>, bool, Option<usize>, char), RuntimeError> {
+fn parse_c_float_pattern(
+    pattern: &str,
+) -> Result<(Option<char>, bool, Option<usize>, char), RuntimeError> {
     let chars: Vec<char> = pattern.chars().collect();
     if chars.first() != Some(&'%') || chars.len() < 2 {
         return Err(RuntimeError::value_error("invalid format string"));
@@ -118,12 +120,7 @@ fn format_nonfinite(value: f64, sign_flag: Option<char>, uppercase: bool) -> Str
     with_sign_prefix(value, sign_flag, token.to_string())
 }
 
-fn format_with_exponent(
-    value: f64,
-    precision: usize,
-    alternate: bool,
-    uppercase: bool,
-) -> String {
+fn format_with_exponent(value: f64, precision: usize, alternate: bool, uppercase: bool) -> String {
     let mut text = format!("{:.*e}", precision, value.abs());
     if uppercase {
         text = text.replace('e', "E");
@@ -146,10 +143,17 @@ fn format_with_fixed(value: f64, precision: usize, alternate: bool) -> String {
     text
 }
 
-pub(super) fn format_float_with_c_pattern(pattern: &str, value: f64) -> Result<String, RuntimeError> {
+pub(super) fn format_float_with_c_pattern(
+    pattern: &str,
+    value: f64,
+) -> Result<String, RuntimeError> {
     let (sign_flag, alternate, precision, conversion) = parse_c_float_pattern(pattern)?;
     if !value.is_finite() {
-        return Ok(format_nonfinite(value, sign_flag, conversion.is_ascii_uppercase()));
+        return Ok(format_nonfinite(
+            value,
+            sign_flag,
+            conversion.is_ascii_uppercase(),
+        ));
     }
 
     let mut body = match conversion {

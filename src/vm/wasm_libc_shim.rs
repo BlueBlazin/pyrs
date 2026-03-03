@@ -18,7 +18,12 @@ fn wasm_layout_for_size(payload_size: usize) -> Option<Layout> {
 
 unsafe fn wasm_alloc_header_from_payload(payload: *mut c_void) -> *mut WasmAllocHeader {
     // SAFETY: caller ensures payload points to memory returned by wasm_malloc-like shims.
-    unsafe { payload.cast::<u8>().sub(WASM_ALLOC_HEADER_SIZE).cast::<WasmAllocHeader>() }
+    unsafe {
+        payload
+            .cast::<u8>()
+            .sub(WASM_ALLOC_HEADER_SIZE)
+            .cast::<WasmAllocHeader>()
+    }
 }
 
 #[unsafe(no_mangle)]

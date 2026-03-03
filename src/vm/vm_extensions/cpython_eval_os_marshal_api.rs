@@ -1,7 +1,7 @@
 use std::collections::HashMap;
-use std::ffi::{CStr, c_char, c_double, c_long, c_ulong, c_void};
 #[cfg(not(target_arch = "wasm32"))]
 use std::ffi::c_int;
+use std::ffi::{CStr, c_char, c_double, c_long, c_ulong, c_void};
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::bytecode::cpython::{marshal_dump_object, marshal_load_object};
@@ -15,13 +15,14 @@ use super::{
     cpython_gil_release_for_current_thread, cpython_is_known_thread_state_ptr,
     cpython_main_interpreter_state_ptr, cpython_mark_thread_runtime_initialized,
     cpython_marshal_object_to_value, cpython_set_current_thread_state_ptr, cpython_set_error,
-    cpython_set_typed_error, cpython_take_pending_interrupt_signum, cpython_thread_runtime_initialized,
-    value_to_cpython_marshal_object, with_active_cpython_context_mut,
+    cpython_set_typed_error, cpython_take_pending_interrupt_signum,
+    cpython_thread_runtime_initialized, value_to_cpython_marshal_object,
+    with_active_cpython_context_mut,
 };
 
 #[cfg(target_arch = "wasm32")]
 use super::{
-    PyExc_TypeError, PyObject_CallObject, PyObject_GetAttrString, PyTuple_New, Py_IncRef,
+    Py_IncRef, PyExc_TypeError, PyObject_CallObject, PyObject_GetAttrString, PyTuple_New,
     cpython_value_from_ptr,
 };
 
@@ -38,7 +39,10 @@ const PY_MUTEX_LOCKED_BIT: u8 = 0x01;
 
 #[cfg(target_arch = "wasm32")]
 unsafe fn cpython_fspath_is_str_or_bytes(path: *mut c_void) -> bool {
-    matches!(cpython_value_from_ptr(path), Ok(Value::Str(_) | Value::Bytes(_)))
+    matches!(
+        cpython_value_from_ptr(path),
+        Ok(Value::Str(_) | Value::Bytes(_))
+    )
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -130,11 +134,7 @@ unsafe fn wasm_cstr_bytes(ptr: *const c_char) -> &'static [u8] {
 }
 
 #[cfg(target_arch = "wasm32")]
-unsafe fn wasm_strtol_impl(
-    string: *const c_char,
-    endptr: *mut *mut c_char,
-    base: i32,
-) -> c_long {
+unsafe fn wasm_strtol_impl(string: *const c_char, endptr: *mut *mut c_char, base: i32) -> c_long {
     let bytes = unsafe { wasm_cstr_bytes(string) };
     if bytes.is_empty() {
         unsafe { wasm_set_endptr(string, endptr, 0) };
@@ -234,11 +234,7 @@ unsafe fn wasm_strtol_impl(
 }
 
 #[cfg(target_arch = "wasm32")]
-unsafe fn wasm_strtoul_impl(
-    string: *const c_char,
-    endptr: *mut *mut c_char,
-    base: i32,
-) -> c_ulong {
+unsafe fn wasm_strtoul_impl(string: *const c_char, endptr: *mut *mut c_char, base: i32) -> c_ulong {
     let bytes = unsafe { wasm_cstr_bytes(string) };
     if bytes.is_empty() {
         unsafe { wasm_set_endptr(string, endptr, 0) };
@@ -331,7 +327,8 @@ fn wasm_ascii_case_prefix_eq(bytes: &[u8], pat: &[u8]) -> bool {
     if bytes.len() < pat.len() {
         return false;
     }
-    bytes.iter()
+    bytes
+        .iter()
         .zip(pat.iter())
         .all(|(left, right)| left.eq_ignore_ascii_case(right))
 }

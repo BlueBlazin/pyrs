@@ -340,6 +340,54 @@ jobs:
           path: perf/numpy_gate_direct_latest.json
           if-no-files-found: ignore
 
+  native-perf-smoke:
+    needs: integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev
+
+      - name: Build release pyrs binary
+        run: cargo build -q --release --bin pyrs
+
+      - name: Run native performance smoke gate
+        run: |
+          python3 scripts/perf_smoke_native.py \
+            --pyrs target/release/pyrs \
+            --python-bin python3 \
+            --fib-n 36 \
+            --warmup 1 \
+            --iterations 3 \
+            --max-pyrs-seconds 12 \
+            --max-pyrs-vs-python-ratio 8 \
+            --out perf/native_perf_smoke_latest.json
+
+      - name: Upload native perf smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-perf-smoke
+          path: perf/native_perf_smoke_latest.json
+          if-no-files-found: ignore
+
   dispatch-hotpath-benchmark:
     needs: integrity
     runs-on: ubuntu-latest
