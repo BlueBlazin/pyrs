@@ -966,6 +966,7 @@ impl Vm {
             BuiltinFunction::SymtableSymtable => "_symtable",
             BuiltinFunction::WeakRefRef
             | BuiltinFunction::WeakRefRefNew
+            | BuiltinFunction::WeakRefRefInit
             | BuiltinFunction::WeakRefRefCall
             | BuiltinFunction::WeakRefRefHash
             | BuiltinFunction::WeakRefRefEq

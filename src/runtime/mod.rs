@@ -3833,6 +3833,7 @@ pub enum BuiltinFunction {
     DecimalContextExit,
     WeakRefRef,
     WeakRefRefNew,
+    WeakRefRefInit,
     WeakRefRefCall,
     WeakRefRefHash,
     WeakRefRefEq,
@@ -7025,6 +7026,7 @@ functions outside a stub module should always be followed by an implementation t
                 Ok(args[0].clone())
             }
             BuiltinFunction::WeakRefRefNew
+            | BuiltinFunction::WeakRefRefInit
             | BuiltinFunction::WeakRefRefCall
             | BuiltinFunction::WeakRefRefHash
             | BuiltinFunction::WeakRefRefEq

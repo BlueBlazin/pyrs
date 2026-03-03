@@ -16425,6 +16425,41 @@ functions outside a stub module should always be followed by an implementation t
         Ok(weakref_obj)
     }
 
+    pub(super) fn builtin_weakref_ref_init(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::type_error(
+                "__init__ expected self, object and optional callback",
+            ));
+        }
+        let Some(_target_id) = self.weakref_ref_target_id_from_value(&args[0]) else {
+            if self.weakref_ref_target_value_from_value(&args[0]).is_none() {
+                return Err(RuntimeError::type_error("expected weakref reference instance"));
+            }
+            if let Some(callback) = args.get(2)
+                && !matches!(callback, Value::None)
+                && !self.is_callable_value(callback)
+            {
+                return Err(RuntimeError::type_error(
+                    "weakref callback must be callable or None",
+                ));
+            }
+            return Ok(Value::None);
+        };
+        if let Some(callback) = args.get(2)
+            && !matches!(callback, Value::None)
+            && !self.is_callable_value(callback)
+        {
+            return Err(RuntimeError::type_error(
+                "weakref callback must be callable or None",
+            ));
+        }
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_weakref_ref_call(
         &mut self,
         args: Vec<Value>,

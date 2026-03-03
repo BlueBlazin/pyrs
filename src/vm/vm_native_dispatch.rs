@@ -11963,6 +11963,7 @@ impl Vm {
             BuiltinFunction::Enumerate => self.builtin_enumerate(args, kwargs),
             BuiltinFunction::WeakRefRef => self.builtin_weakref_ref(args, kwargs),
             BuiltinFunction::WeakRefRefNew => self.builtin_weakref_ref_new(args, kwargs),
+            BuiltinFunction::WeakRefRefInit => self.builtin_weakref_ref_init(args, kwargs),
             BuiltinFunction::WeakRefRefCall => self.builtin_weakref_ref_call(args, kwargs),
             BuiltinFunction::WeakRefRefHash => self.builtin_weakref_ref_hash(args, kwargs),
             BuiltinFunction::WeakRefRefEq => self.builtin_weakref_ref_eq(args, kwargs),

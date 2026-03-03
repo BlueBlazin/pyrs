@@ -61,6 +61,7 @@ Audit date: 2026-03-04
   - `PyObject_ClearWeakRefs` lifecycle now preserves weakref-object identity while transitioning refs to dead state for `PyWeakref_GetObject` / `PyWeakref_GetRef` parity;
   - `weakref` is now included in pure-stdlib preference unloading, so CPython `Lib/weakref.py` wins when available on module path;
   - `_weakref.ref` now accepts builtin type objects represented as runtime `Value::Builtin(...)` type-constructors (for example `int`), matching CPython weakrefability needed by `functools.singledispatch` dispatch-cache paths;
+  - `ReferenceType.__init__` now uses dedicated weakref init semantics (`WeakRefRefInit`) instead of generic `NoOp` bootstrap placeholder wiring;
   - builtin `dict` now exports native `popitem()` semantics, unblocking CPython `weakref.WeakKeyDictionary` internals when pure `Lib/weakref.py` is active;
   - bootstrap fallback now exports dedicated `WeakKeyDictionary`/`WeakValueDictionary` classes (no direct `Dict` aliasing); remaining debt is semantic fidelity (fallback classes are still strong-reference-backed and do not yet implement CPython weak-entry lifecycle semantics).
 - [x] `P1` Replace `_weakrefset.WeakSet` placeholder mapped to builtin `Set` (module install at line 5624):

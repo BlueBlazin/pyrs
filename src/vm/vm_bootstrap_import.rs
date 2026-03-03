@@ -5623,7 +5623,7 @@ impl Vm {
             );
             class_data
                 .attrs
-                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::WeakRefRefInit));
             class_data.attrs.insert(
                 "__call__".to_string(),
                 Value::Builtin(BuiltinFunction::WeakRefRefCall),
