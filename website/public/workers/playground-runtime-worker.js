@@ -53,9 +53,18 @@ const ensureReplSession = () => {
   return null;
 };
 
+const readContinuationPrompt = (session) => {
+  if (!session) return false;
+  return Boolean(readField(session, "continuation_prompt"));
+};
+
 const loadRuntime = async (wasmEntrypoint) => {
   if (runtimeModule) {
-    return { ok: true, runtimeInfo: lastRuntimeInfo };
+    return {
+      ok: true,
+      runtimeInfo: lastRuntimeInfo,
+      prompt_continuation: readContinuationPrompt(ensureReplSession()),
+    };
   }
   if (runtimeLoadPromise) {
     return runtimeLoadPromise;
@@ -78,7 +87,11 @@ const loadRuntime = async (wasmEntrypoint) => {
       typeof runtimeModule.wasm_runtime_info === "function"
         ? normalizeRuntimeInfo(runtimeModule.wasm_runtime_info())
         : null;
-    return { ok: true, runtimeInfo: lastRuntimeInfo };
+    return {
+      ok: true,
+      runtimeInfo: lastRuntimeInfo,
+      prompt_continuation: readContinuationPrompt(ensureReplSession()),
+    };
   })()
     .catch((error) => {
       runtimeModule = null;
@@ -110,7 +123,11 @@ const executeSource = (source) => {
     } else {
       return { ok: false, error: "Runtime execute entrypoint is unavailable." };
     }
-    return { ok: true, result: normalizeExecutionResult(result) };
+    return {
+      ok: true,
+      result: normalizeExecutionResult(result),
+      prompt_continuation: readContinuationPrompt(session),
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { ok: false, error: message };
@@ -129,7 +146,10 @@ const resetSession = () => {
       replSession = null;
       ensureReplSession();
     }
-    return { ok: true };
+    return {
+      ok: true,
+      prompt_continuation: readContinuationPrompt(ensureReplSession()),
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { ok: false, error: message };

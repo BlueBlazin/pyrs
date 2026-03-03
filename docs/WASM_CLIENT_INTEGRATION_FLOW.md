@@ -131,18 +131,18 @@ Supported request actions:
 1. `load`
    - payload: `{ wasmEntrypoint }`
    - response:
-     - success: `{ ok: true, runtimeInfo }`
+     - success: `{ ok: true, runtimeInfo, prompt_continuation }`
      - failure: `{ ok: false, error }`
 2. `execute`
    - payload: `{ source }`
    - response:
-     - success: `{ ok: true, result }` where `result` mirrors
-       `WasmExecutionResult` shape.
+     - success: `{ ok: true, result, prompt_continuation }` where `result`
+       mirrors `WasmExecutionResult` shape.
      - failure: `{ ok: false, error }`
 3. `reset`
    - payload: none
    - response:
-     - success: `{ ok: true }`
+     - success: `{ ok: true, prompt_continuation }`
      - failure: `{ ok: false, error }`
 
 Integration guardrails:

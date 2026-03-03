@@ -421,22 +421,26 @@ Action contracts:
 
 - `load`
   - request payload: `{ wasmEntrypoint: string }`
-  - success payload: `{ runtimeInfo }`
+  - success payload: `{ runtimeInfo, prompt_continuation }`
     - `runtimeInfo` mirrors `WasmRuntimeInfo` field names
       (`api_version`, `pyrs_version`, `supports_parse_compile`,
       `supports_execution`, `execution_backend`, `execution_status`,
       `execution_blocker_count`).
+    - `prompt_continuation` mirrors REPL pending-input state (`false` => `>>>`,
+      `true` => `...`).
   - failure payload: `{ error: string }`
 - `execute`
   - request payload: `{ source: string }`
-  - success payload: `{ result }`
+  - success payload: `{ result, prompt_continuation }`
     - `result` mirrors `WasmExecutionResult` field names
       (`success`, `phase`, `stdout`, `stderr`, `error`, `blocker_key`, `line`,
       `column`).
+    - `prompt_continuation` is the prompt state after applying the input.
   - failure payload: `{ error: string }`
 - `reset`
   - request payload: none
-  - success payload: empty (`{ ok: true }`)
+  - success payload: `{ ok: true, prompt_continuation }`
+    - `prompt_continuation` is expected to be `false` after reset.
   - failure payload: `{ error: string }`
 
 ## Stability Rules

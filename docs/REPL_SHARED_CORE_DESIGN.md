@@ -298,3 +298,5 @@ Design is complete when:
 - New `ReplCoreState` session API now includes:
   - `prompt_kind()` for adapter prompt selection (`>>>` vs `...` decisions),
   - `submit_line_and_execute(...)` stateful execution method.
+- Website playground worker now forwards REPL prompt state (`prompt_continuation`)
+  from `WasmReplSession` so UI prompt mode follows core interpreter state.

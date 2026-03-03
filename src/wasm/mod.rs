@@ -1052,6 +1052,7 @@ impl WasmSession {
     pub fn last_error(&self) -> Option<String> {
         self.last_error.clone()
     }
+
 }
 
 #[wasm_bindgen]
@@ -1194,6 +1195,14 @@ impl WasmReplSession {
     #[wasm_bindgen(getter)]
     pub fn last_error(&self) -> Option<String> {
         self.last_error.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn continuation_prompt(&self) -> bool {
+        matches!(
+            self.repl_state.prompt_kind(),
+            crate::repl_core::ReplPromptKind::Continuation
+        )
     }
 }
 
@@ -2890,6 +2899,7 @@ mod tests {
     #[test]
     fn wasm_repl_session_mode_contract_is_stable() {
         let mut session = WasmReplSession::new();
+        assert!(!session.continuation_prompt());
         let result = session.execute_input("x = 1\n");
         if vm_probe_enabled() {
             assert_eq!(result.phase(), "ok".to_string());
@@ -2902,11 +2912,13 @@ mod tests {
             );
         }
         assert_eq!(session.inputs_executed(), 1);
+        assert!(!session.continuation_prompt());
     }
 
     #[test]
     fn wasm_repl_session_incomplete_input_returns_ok_without_errors() {
         let mut session = WasmReplSession::new();
+        assert!(!session.continuation_prompt());
         let header = session.execute_input("if True:");
         assert!(header.success());
         assert_eq!(header.phase(), "ok".to_string());
@@ -2914,6 +2926,7 @@ mod tests {
         assert!(header.stderr().is_empty());
         assert!(header.error().is_none());
         assert!(header.blocker_key().is_none());
+        assert!(session.continuation_prompt());
 
         let body = session.execute_input("    x = 1");
         assert!(body.success());
@@ -2922,6 +2935,12 @@ mod tests {
         assert!(body.stderr().is_empty());
         assert!(body.error().is_none());
         assert!(body.blocker_key().is_none());
+        assert!(session.continuation_prompt());
+
+        let finalize = session.execute_input("");
+        assert!(finalize.success());
+        assert_eq!(finalize.phase(), "ok".to_string());
+        assert!(!session.continuation_prompt());
     }
 
     #[cfg(feature = "wasm-vm-probe")]
@@ -2978,15 +2997,18 @@ mod tests {
         let assign = session.execute_input("x = 7\n");
         assert!(assign.success());
         assert_eq!(session.inputs_executed(), 1);
+        assert!(!session.continuation_prompt());
 
         session.reset();
         assert_eq!(session.inputs_executed(), 0);
+        assert!(!session.continuation_prompt());
 
         let missing = session.execute_input("x\n");
         assert_eq!(missing.phase(), "runtime_error".to_string());
         assert!(!missing.success());
         assert!(missing.stderr().contains("NameError"));
         assert_eq!(session.inputs_executed(), 1);
+        assert!(!session.continuation_prompt());
     }
 
     #[cfg(feature = "wasm-vm-probe")]

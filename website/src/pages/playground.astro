@@ -106,6 +106,7 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 		const workerPendingRequests = new Map();
 		let lastRuntimeInfo = null;
 		let bannerRendered = false;
+		let continuationPrompt = false;
 		const commandHistory = [];
 		let historyIndex = -1;
 
@@ -362,6 +363,11 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 			activePromptEl.textContent = continuation ? "... " : ">>> ";
 		};
 
+		const applyContinuationPrompt = (continuation) => {
+			continuationPrompt = Boolean(continuation);
+			setActivePrompt(continuationPrompt);
+		};
+
 		const setInputValue = (value) => {
 			if (!(inputEl instanceof HTMLTextAreaElement)) return;
 			inputEl.value = value;
@@ -392,7 +398,7 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 			if (!(inputEl instanceof HTMLTextAreaElement)) return;
 			resizeInput();
 			updateEditorHighlight();
-			setActivePrompt(inputEl.value.includes("\n"));
+			setActivePrompt(continuationPrompt);
 			if (highlightEl instanceof HTMLElement) {
 				highlightEl.scrollTop = inputEl.scrollTop;
 				highlightEl.scrollLeft = inputEl.scrollLeft;
@@ -586,6 +592,7 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 							: `Runtime compile-only (${backend})`,
 					);
 					renderStartupBanner();
+					applyContinuationPrompt(response.prompt_continuation);
 					return true;
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
@@ -622,20 +629,22 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 				const response = await sendWorkerRequest("execute", { source: normalized });
 				if (response.ok && response.result) {
 					renderExecutionResult(response.result);
+					applyContinuationPrompt(response.prompt_continuation);
 				} else {
 					const message =
 						typeof response.error === "string" && response.error.length > 0
 							? response.error
 							: "Runtime execute entrypoint is unavailable.";
 					appendTranscriptLine(message, "stderr");
+					applyContinuationPrompt(false);
 				}
 			} catch (error) {
 				runtimeWorkerReady = false;
 				const message = error instanceof Error ? error.message : String(error);
 				appendTranscriptLine(message, "stderr");
+				applyContinuationPrompt(false);
 			} finally {
 				setBusy(false);
-				setActivePrompt(false);
 			}
 		};
 
@@ -717,6 +726,7 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 		if (clearButton instanceof HTMLButtonElement) {
 			clearButton.addEventListener("click", () => {
 				clearTranscript(true);
+				applyContinuationPrompt(false);
 				focusInputAtEnd();
 			});
 		}
@@ -739,10 +749,12 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 								: "Runtime session reset failed.";
 						appendTranscriptLine(message, "stderr");
 					}
+					applyContinuationPrompt(response.prompt_continuation);
 				} catch (error) {
 					runtimeWorkerReady = false;
 					const message = error instanceof Error ? error.message : String(error);
 					appendTranscriptLine(message, "stderr");
+					applyContinuationPrompt(false);
 				}
 				clearTranscript(true);
 				const backend = String(readField(lastRuntimeInfo, "execution_backend") || "wasm");
