@@ -1759,6 +1759,24 @@ pub fn wasm_worker_current_timeout_ms() -> u32 {
     current_worker_timeout_ms()
 }
 
+fn worker_timeout_result(
+    success: bool,
+    phase: &str,
+    timeout_ms: u32,
+    error: Option<String>,
+    blocker_key: Option<String>,
+) -> WasmWorkerTimeoutResult {
+    WasmWorkerTimeoutResult {
+        success,
+        operation_id: next_worker_operation_id("set_timeout"),
+        phase: phase.to_string(),
+        state: current_worker_state_key(),
+        timeout_ms,
+        error,
+        blocker_key,
+    }
+}
+
 /// Applies a requested timeout policy update for worker execution.
 ///
 /// Current milestone behavior:
@@ -1768,67 +1786,55 @@ pub fn wasm_worker_current_timeout_ms() -> u32 {
 #[wasm_bindgen]
 pub fn wasm_worker_set_timeout(timeout_ms: u32) -> WasmWorkerTimeoutResult {
     if !(WASM_WORKER_TIMEOUT_MIN_MS..=WASM_WORKER_TIMEOUT_MAX_MS).contains(&timeout_ms) {
-        return WasmWorkerTimeoutResult {
-            success: false,
-            operation_id: next_worker_operation_id("set_timeout"),
-            phase: WasmWorkerTimeoutPhase::InvalidTimeout.key().to_string(),
-            state: current_worker_state_key(),
+        return worker_timeout_result(
+            false,
+            WasmWorkerTimeoutPhase::InvalidTimeout.key(),
             timeout_ms,
-            error: Some(format!(
+            Some(format!(
                 "worker timeout must be between {} and {} ms",
                 WASM_WORKER_TIMEOUT_MIN_MS, WASM_WORKER_TIMEOUT_MAX_MS
             )),
-            blocker_key: None,
-        };
+            None,
+        );
     }
 
     if !worker_runtime_ready() {
         let state = current_worker_state();
         let blocker_key = worker_unavailable_blocker_key_for_state(state).to_string();
         let message = worker_unavailable_error_for_state(state);
-        return WasmWorkerTimeoutResult {
-            success: false,
-            operation_id: next_worker_operation_id("set_timeout"),
-            phase: WasmWorkerTimeoutPhase::UnsupportedEnforcement
-                .key()
-                .to_string(),
-            state: current_worker_state_key(),
+        return worker_timeout_result(
+            false,
+            WasmWorkerTimeoutPhase::UnsupportedEnforcement.key(),
             timeout_ms,
-            error: Some(message),
-            blocker_key: Some(blocker_key),
-        };
+            Some(message),
+            Some(blocker_key),
+        );
     }
 
     if wasm_vm_runtime_enabled() {
         #[cfg(feature = "wasm-vm-probe")]
         {
             set_current_worker_timeout_ms(timeout_ms);
-            return WasmWorkerTimeoutResult {
-                success: true,
-                operation_id: next_worker_operation_id("set_timeout"),
-                phase: WASM_WORKER_TIMEOUT_CONFIGURED_PHASE.to_string(),
-                state: current_worker_state_key(),
+            return worker_timeout_result(
+                true,
+                WASM_WORKER_TIMEOUT_CONFIGURED_PHASE,
                 timeout_ms,
-                error: None,
-                blocker_key: None,
-            };
+                None,
+                None,
+            );
         }
     }
 
     let blocker_key = WASM_WORKER_BLOCKER_RUNTIME_UNWIRED.to_string();
     let message = wasm_worker_blocker_error(WASM_WORKER_BLOCKER_RUNTIME_UNWIRED)
         .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
-    WasmWorkerTimeoutResult {
-        success: false,
-        operation_id: next_worker_operation_id("set_timeout"),
-        phase: WasmWorkerTimeoutPhase::UnsupportedEnforcement
-            .key()
-            .to_string(),
-        state: current_worker_state_key(),
+    worker_timeout_result(
+        false,
+        WasmWorkerTimeoutPhase::UnsupportedEnforcement.key(),
         timeout_ms,
-        error: Some(message),
-        blocker_key: Some(blocker_key),
-    }
+        Some(message),
+        Some(blocker_key),
+    )
 }
 
 /// Returns key+message entries for known worker blockers.
