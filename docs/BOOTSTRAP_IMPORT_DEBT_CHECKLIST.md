@@ -98,7 +98,9 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
   - `_find_impl` parity follow-up on `_c3_mro` pyc execution is closed:
     translated `LOAD_FAST_AND_CLEAR`/`STORE_FAST` cellvar-slot semantics now match CPython locals-plus behavior;
     covered by `tests/vm.rs::pyc_load_fast_and_clear_cellvar_roundtrip_regression`.
-- [ ] `P1` `__future__` (line 4697)
+- [x] `P1` `__future__` (line 4697):
+  - added to pure-stdlib unload preference group (`PURE_STDLIB_FUTURE_MODULES`) so CPython `Lib/__future__.py` is preferred when available;
+  - covered by `tests/vm.rs::future_import_prefers_cpython_pure_module_when_lib_path_is_added`.
 - [ ] `P1` `inspect` (line 5860)
 - [ ] `P1` `io` (line 5923)
 - [ ] `P1` `subprocess` (line 7351)

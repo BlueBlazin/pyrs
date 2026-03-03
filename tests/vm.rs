@@ -3764,6 +3764,42 @@ ok = (
 }
 
 #[test]
+fn future_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping pure-__future__ import preference test (CPython Lib path not available)"
+        );
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("__future__-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import __future__
+origin = getattr(__future__, '__file__', '')
+norm = origin.replace("\\", "/")
+ok = (
+    norm.endswith('/__future__.py')
+    and ('/shims/' not in norm)
+    and ('annotations' in __future__.all_feature_names)
+    and (__future__.annotations is not None)
+    and hasattr(__future__.annotations, 'compiler_flag')
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn __future__ import preference thread");
+    handle
+        .join()
+        .expect("__future__ import preference thread should complete");
+}
+
+#[test]
 fn typing_bootstrap_helpers_have_runtime_baseline_without_cpython_lib() {
     let Some(pyrs_bin) = pyrs_binary_path() else {
         eprintln!("skipping typing bootstrap helper test (pyrs binary not found)");
