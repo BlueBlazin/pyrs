@@ -109,7 +109,9 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
 - [ ] `P1` `uuid` (line 7637)
 - [ ] `P1` `asyncio` (line 7659)
 - [ ] `P1` `threading` (line 7846)
-- [ ] `P1` `signal` (line 7877)
+- [x] `P1` `signal` (line 7877):
+  - added to pure-stdlib unload preference group (`PURE_STDLIB_SIGNAL_MODULES`) so CPython `Lib/signal.py` is preferred when available;
+  - covered by `tests/vm.rs::signal_import_prefers_cpython_pure_module_when_lib_path_is_added`.
 - [x] `P1` `abc` (line 8691):
   - added to pure-stdlib unload preference group (`PURE_STDLIB_ABC_MODULES`) so CPython `Lib/abc.py` is preferred when available;
   - covered by `tests/vm.rs::abc_import_prefers_cpython_pure_module_when_lib_path_is_added`.

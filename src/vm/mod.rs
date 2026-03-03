@@ -202,6 +202,7 @@ const PURE_STDLIB_FUNCTOOLS_MODULES: &[&str] = &["functools"];
 const PURE_STDLIB_FUTURE_MODULES: &[&str] = &["__future__"];
 const PURE_STDLIB_ABC_MODULES: &[&str] = &["abc"];
 const PURE_STDLIB_OPERATOR_MODULES: &[&str] = &["operator"];
+const PURE_STDLIB_SIGNAL_MODULES: &[&str] = &["signal"];
 const PURE_STDLIB_DECIMAL_MODULES: &[&str] = &["decimal"];
 const PURE_STDLIB_PATHLIB_MODULES: &[&str] = &["pathlib"];
 const PURE_STDLIB_TYPES_MODULES: &[&str] = &["types", "typing"];

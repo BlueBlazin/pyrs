@@ -3874,6 +3874,40 @@ ok = (
 }
 
 #[test]
+fn signal_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-signal import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("signal-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import signal
+origin = getattr(signal, '__file__', '')
+norm = origin.replace("\\", "/")
+sig_name = signal.Signals(signal.SIGINT).name
+ok = (
+    norm.endswith('/signal.py')
+    and ('/shims/' not in norm)
+    and (sig_name == 'SIGINT')
+    and callable(signal.signal)
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn signal import preference thread");
+    handle
+        .join()
+        .expect("signal import preference thread should complete");
+}
+
+#[test]
 fn typing_bootstrap_helpers_have_runtime_baseline_without_cpython_lib() {
     let Some(pyrs_bin) = pyrs_binary_path() else {
         eprintln!("skipping typing bootstrap helper test (pyrs binary not found)");
@@ -5735,6 +5769,19 @@ fn struct_module_docstring_no_longer_uses_stub_marker() {
     let source = r#"import _struct
 doc = _struct.__doc__
 ok = isinstance(doc, str) and ("stub" not in doc.lower()) and ("C structs" in doc)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn builtin_function_doc_attribute_is_present() {
+    let source = r#"import _signal
+doc = _signal.signal.__doc__
+ok = (doc is None) or isinstance(doc, str)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

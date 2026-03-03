@@ -7,7 +7,8 @@ use super::{
     PURE_STDLIB_ABC_MODULES, PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_DECIMAL_MODULES,
     PURE_STDLIB_FUNCTOOLS_MODULES, PURE_STDLIB_FUTURE_MODULES, PURE_STDLIB_OPERATOR_MODULES,
     PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
-    PURE_STDLIB_RE_MODULES, PURE_STDLIB_TYPES_MODULES, PURE_STDLIB_WEAKREF_MODULES, Path, PathBuf,
+    PURE_STDLIB_RE_MODULES, PURE_STDLIB_SIGNAL_MODULES, PURE_STDLIB_TYPES_MODULES,
+    PURE_STDLIB_WEAKREF_MODULES, Path, PathBuf,
     Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
     SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
     SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler, cpython, dict_get_value,
@@ -8751,6 +8752,13 @@ impl Vm {
             }
         }
         for module_name in PURE_STDLIB_OPERATOR_MODULES {
+            if self.has_preferred_filesystem_module(module_name)
+                && self.module_preference_requires_unload(module_name)
+            {
+                self.unregister_module(module_name);
+            }
+        }
+        for module_name in PURE_STDLIB_SIGNAL_MODULES {
             if self.has_preferred_filesystem_module(module_name)
                 && self.module_preference_requires_unload(module_name)
             {

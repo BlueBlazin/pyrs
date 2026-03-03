@@ -1081,6 +1081,7 @@ impl Vm {
                 Ok(self.heap.alloc_tuple(entries))
             }
             "__module__" => Ok(Value::Str(builtin_module_name)),
+            "__doc__" => Ok(Value::None),
             "__self__" => Ok(Value::Builtin(builtin)),
             "__flags__" => Ok(Value::Int(0)),
             "__basicsize__" if self.builtin_is_type_object(builtin) => {
