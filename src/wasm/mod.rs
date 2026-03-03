@@ -1137,16 +1137,11 @@ impl WasmReplSession {
             .into_iter()
             .next()
         {
-            let result = WasmExecutionResult {
-                success: false,
-                phase: WasmExecutionPhase::UnsupportedExecution.key().to_string(),
-                stdout: String::new(),
-                stderr: blocker.message.clone(),
-                error: Some(blocker.message),
-                blocker_key: Some(blocker.blocker_key),
-                line: 0,
-                column: 0,
-            };
+            let result = unsupported_execution_result(
+                WasmExecutionPhase::UnsupportedExecution.key(),
+                blocker.message,
+                Some(blocker.blocker_key),
+            );
             self.last_error = result.error.clone();
             return result;
         }
@@ -1154,16 +1149,11 @@ impl WasmReplSession {
         if !wasm_vm_runtime_enabled() {
             let message = wasm_execution_blocker_error(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED)
                 .unwrap_or_else(|| "wasm execution backend is not wired yet".to_string());
-            let result = WasmExecutionResult {
-                success: false,
-                phase: WasmExecutionPhase::UnsupportedExecution.key().to_string(),
-                stdout: String::new(),
-                stderr: message.clone(),
-                error: Some(message),
-                blocker_key: Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
-                line: 0,
-                column: 0,
-            };
+            let result = unsupported_execution_result(
+                WasmExecutionPhase::UnsupportedExecution.key(),
+                message,
+                Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
+            );
             self.last_error = result.error.clone();
             return result;
         }
@@ -1212,16 +1202,11 @@ impl WasmReplSession {
         {
             let message = wasm_execution_blocker_error(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED)
                 .unwrap_or_else(|| "wasm execution backend is not wired yet".to_string());
-            let result = WasmExecutionResult {
-                success: false,
-                phase: WasmExecutionPhase::UnsupportedExecution.key().to_string(),
-                stdout: String::new(),
-                stderr: message.clone(),
-                error: Some(message),
-                blocker_key: Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
-                line: 0,
-                column: 0,
-            };
+            let result = unsupported_execution_result(
+                WasmExecutionPhase::UnsupportedExecution.key(),
+                message,
+                Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
+            );
             self.last_error = result.error.clone();
             result
         }
@@ -2327,6 +2312,23 @@ fn compile_failure_to_execution_result(
     }
 }
 
+fn unsupported_execution_result(
+    phase_key: &str,
+    message: String,
+    blocker_key: Option<String>,
+) -> WasmExecutionResult {
+    WasmExecutionResult {
+        success: false,
+        phase: phase_key.to_string(),
+        stdout: String::new(),
+        stderr: message.clone(),
+        error: Some(message),
+        blocker_key,
+        line: 0,
+        column: 0,
+    }
+}
+
 #[derive(Clone, Copy)]
 enum WasmExecutionContractMode {
     TopLevel,
@@ -2409,32 +2411,22 @@ fn execute_snippet_with_contract(
         .into_iter()
         .next();
     if let Some(blocker) = first_blocker {
-        return WasmExecutionResult {
-            success: false,
-            phase: contract.unsupported_phase_key().to_string(),
-            stdout: String::new(),
-            stderr: blocker.message.clone(),
-            error: Some(blocker.message),
-            blocker_key: Some(blocker.blocker_key),
-            line: 0,
-            column: 0,
-        };
+        return unsupported_execution_result(
+            contract.unsupported_phase_key(),
+            blocker.message,
+            Some(blocker.blocker_key),
+        );
     }
 
     if contract.requires_worker_ready_state() && !worker_runtime_ready() {
         let state = current_worker_state();
         let blocker_key = worker_unavailable_blocker_key_for_state(state).to_string();
         let message = worker_unavailable_error_for_state(state);
-        return WasmExecutionResult {
-            success: false,
-            phase: contract.unsupported_phase_key().to_string(),
-            stdout: String::new(),
-            stderr: message.clone(),
-            error: Some(message),
-            blocker_key: Some(blocker_key),
-            line: 0,
-            column: 0,
-        };
+        return unsupported_execution_result(
+            contract.unsupported_phase_key(),
+            message,
+            Some(blocker_key),
+        );
     }
 
     if wasm_vm_runtime_enabled() {
@@ -2449,16 +2441,11 @@ fn execute_snippet_with_contract(
     }
 
     let message = contract.unwired_error_message();
-    WasmExecutionResult {
-        success: false,
-        phase: contract.unsupported_phase_key().to_string(),
-        stdout: String::new(),
-        stderr: message.clone(),
-        error: Some(message),
-        blocker_key: Some(contract.unwired_blocker_key().to_string()),
-        line: 0,
-        column: 0,
-    }
+    unsupported_execution_result(
+        contract.unsupported_phase_key(),
+        message,
+        Some(contract.unwired_blocker_key().to_string()),
+    )
 }
 
 fn snippet_blockers_from_import_roots(
