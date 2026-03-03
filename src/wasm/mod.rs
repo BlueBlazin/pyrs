@@ -1892,6 +1892,24 @@ pub fn wasm_worker_timeout_phase_keys() -> Array {
     keys
 }
 
+fn worker_lifecycle_result(
+    action: &str,
+    success: bool,
+    phase: &str,
+    state: String,
+    error: Option<String>,
+    blocker_key: Option<String>,
+) -> WasmWorkerLifecycleResult {
+    WasmWorkerLifecycleResult {
+        success,
+        operation_id: next_worker_operation_id(action),
+        phase: phase.to_string(),
+        state,
+        error,
+        blocker_key,
+    }
+}
+
 #[cfg(not(feature = "wasm-vm-probe"))]
 fn worker_unwired_result(phase: WasmWorkerLifecyclePhase) -> WasmWorkerLifecycleResult {
     let action = match phase {
@@ -1904,14 +1922,14 @@ fn worker_unwired_result(phase: WasmWorkerLifecyclePhase) -> WasmWorkerLifecycle
         .unwrap_or_else(|| "wasm worker runtime is not wired yet".to_string());
     reset_worker_timeout_ms();
     set_current_worker_state(WasmWorkerState::Unwired);
-    WasmWorkerLifecycleResult {
-        success: false,
-        operation_id: next_worker_operation_id(action),
-        phase: phase.key().to_string(),
-        state: current_worker_state_key(),
-        error: Some(message),
-        blocker_key: Some(blocker_key),
-    }
+    worker_lifecycle_result(
+        action,
+        false,
+        phase.key(),
+        current_worker_state_key(),
+        Some(message),
+        Some(blocker_key),
+    )
 }
 
 #[cfg(feature = "wasm-vm-probe")]
@@ -1921,14 +1939,7 @@ fn worker_vm_probe_lifecycle_result(
     state: WasmWorkerState,
 ) -> WasmWorkerLifecycleResult {
     set_current_worker_state(state);
-    WasmWorkerLifecycleResult {
-        success: true,
-        operation_id: next_worker_operation_id(action),
-        phase: phase.to_string(),
-        state: state.key().to_string(),
-        error: None,
-        blocker_key: None,
-    }
+    worker_lifecycle_result(action, true, phase, state.key().to_string(), None, None)
 }
 
 /// Starts worker runtime execution.
