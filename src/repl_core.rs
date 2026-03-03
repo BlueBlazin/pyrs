@@ -140,11 +140,46 @@ pub(crate) fn submit_line_for_module(pending: &mut String, line: &str) -> ReplLi
     }
 }
 
+/// Unified module/expression execution path used by REPL adapters.
+///
+/// Returns `Ok(Some(repr))` only when executing a single expression with a non-`None` value.
+pub(crate) fn execute_module_or_expression(
+    vm: &mut crate::vm::Vm,
+    module: &Module,
+    filename: &str,
+) -> Result<Option<String>, ReplExecutionError> {
+    if module.body.len() == 1
+        && let crate::ast::StmtKind::Expr(expr) = &module.body[0].node
+    {
+        let code = crate::compiler::compile_expression_with_filename(expr, filename)
+            .map_err(ReplExecutionError::Compile)?;
+        let value = vm.execute(&code).map_err(ReplExecutionError::Runtime)?;
+        if matches!(value, crate::runtime::Value::None) {
+            return Ok(None);
+        }
+        let rendered = vm
+            .render_value_repr_for_display(value)
+            .map_err(ReplExecutionError::Runtime)?;
+        return Ok(Some(rendered));
+    }
+
+    let code = crate::compiler::compile_module_with_filename(module, filename)
+        .map_err(ReplExecutionError::Compile)?;
+    vm.execute(&code).map_err(ReplExecutionError::Runtime)?;
+    Ok(None)
+}
+
+#[derive(Debug)]
+pub(crate) enum ReplExecutionError {
+    Compile(crate::compiler::CompileError),
+    Runtime(crate::runtime::RuntimeError),
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        input_is_incomplete, parse_candidate_source, parse_success_requires_more_input,
-        submit_line_for_module, ReplLineParseResult,
+        ReplLineParseResult, execute_module_or_expression, input_is_incomplete,
+        parse_candidate_source, parse_success_requires_more_input, submit_line_for_module,
     };
 
     #[test]
@@ -223,5 +258,24 @@ mod tests {
         let result = submit_line_for_module(&mut pending, "if True print(1)");
         assert!(matches!(result, ReplLineParseResult::ParseError { .. }));
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn execute_module_or_expression_echoes_expression_repr() {
+        let mut vm = crate::vm::Vm::new();
+        let module = crate::parser::parse_module("1 + 1").expect("module should parse");
+        let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>")
+            .expect("expression execution should succeed");
+        assert_eq!(rendered.as_deref(), Some("2"));
+    }
+
+    #[test]
+    fn execute_module_or_expression_returns_none_for_statements() {
+        let mut vm = crate::vm::Vm::new();
+        let module = crate::parser::parse_module("x = 1").expect("module should parse");
+        let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>")
+            .expect("statement execution should succeed");
+        assert!(rendered.is_none());
+        assert!(matches!(vm.get_global("x"), Some(crate::runtime::Value::Int(1))));
     }
 }

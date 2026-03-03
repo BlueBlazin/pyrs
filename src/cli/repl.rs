@@ -2135,31 +2135,21 @@ fn execute_parsed_module(
     module: &Module,
     source: &str,
     filename: &str,
-    echo_expression_result: bool,
+    _echo_expression_result: bool,
 ) -> Result<(), String> {
-    if echo_expression_result
-        && module.body.len() == 1
-        && let StmtKind::Expr(expr) = &module.body[0].node
-    {
-        let code = compiler::compile_expression_with_filename(expr, filename)
-            .map_err(|err| format_compile_error(filename, source, &err))?;
-        let value = vm
-            .execute(&code)
-            .map_err(|err| format!("runtime error: {}", err.message))?;
-        if !matches!(value, Value::None) {
-            let rendered = vm
-                .render_value_repr_for_display(value)
-                .map_err(|err| format!("runtime error: {}", err.message))?;
+    match crate::repl_core::execute_module_or_expression(vm, module, filename) {
+        Ok(Some(rendered)) => {
             println!("{rendered}");
+            Ok(())
         }
-        return Ok(());
+        Ok(None) => Ok(()),
+        Err(crate::repl_core::ReplExecutionError::Compile(err)) => {
+            Err(format_compile_error(filename, source, &err))
+        }
+        Err(crate::repl_core::ReplExecutionError::Runtime(err)) => {
+            Err(format!("runtime error: {}", err.message))
+        }
     }
-
-    let code = compiler::compile_module_with_filename(module, filename)
-        .map_err(|err| format_compile_error(filename, source, &err))?;
-    vm.execute(&code)
-        .map_err(|err| format!("runtime error: {}", err.message))?;
-    Ok(())
 }
 
 fn format_parse_error(source: &str, filename: &str, err: &ParseError) -> String {
