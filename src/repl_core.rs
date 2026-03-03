@@ -1,5 +1,6 @@
 //! Shared REPL parse/incomplete-input semantics used by native and wasm adapters.
 
+use crate::ast::Module;
 use crate::parser::ParseError;
 
 /// Strips the synthetic trailing newline added by line-based REPL submit loops.
@@ -99,9 +100,52 @@ fn has_unclosed_delimiters(source: &str) -> bool {
     paren_depth != 0 || bracket_depth != 0 || brace_depth != 0
 }
 
+/// Structured parse outcome for a single REPL line submission.
+pub(crate) enum ReplLineParseResult {
+    NeedMoreInput,
+    Ready { source: String, module: Module },
+    ParseError { source: String, error: ParseError },
+}
+
+/// Appends one user-entered line to the pending REPL buffer and tries to parse.
+///
+/// Behavior mirrors CPython-style interactive continuation semantics:
+/// - keep collecting input when parse succeeds with EOF-implied dedent,
+/// - keep collecting input for parse errors classified as incomplete,
+/// - clear pending buffer and return parse/ready results otherwise.
+pub(crate) fn submit_line_for_module(pending: &mut String, line: &str) -> ReplLineParseResult {
+    pending.push_str(line);
+    pending.push('\n');
+
+    let parse_source = parse_candidate_source(pending);
+    match crate::parser::parse_module(parse_source) {
+        Ok(module) => {
+            if parse_success_requires_more_input(parse_source, line) {
+                ReplLineParseResult::NeedMoreInput
+            } else {
+                let source = parse_source.to_string();
+                pending.clear();
+                ReplLineParseResult::Ready { source, module }
+            }
+        }
+        Err(error) => {
+            if input_is_incomplete(parse_source, &error) {
+                ReplLineParseResult::NeedMoreInput
+            } else {
+                let source = parse_source.to_string();
+                pending.clear();
+                ReplLineParseResult::ParseError { source, error }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{input_is_incomplete, parse_candidate_source, parse_success_requires_more_input};
+    use super::{
+        input_is_incomplete, parse_candidate_source, parse_success_requires_more_input,
+        submit_line_for_module, ReplLineParseResult,
+    };
 
     #[test]
     fn marks_colon_blocks_as_incomplete() {
@@ -153,5 +197,31 @@ mod tests {
             "class block should complete after blank line"
         );
         assert!(!parse_success_requires_more_input(with_blank, ""));
+    }
+
+    #[test]
+    fn submit_line_transitions_from_incomplete_to_ready() {
+        let mut pending = String::new();
+        assert!(matches!(
+            submit_line_for_module(&mut pending, "class A:"),
+            ReplLineParseResult::NeedMoreInput
+        ));
+        assert!(matches!(
+            submit_line_for_module(&mut pending, "    x = 1"),
+            ReplLineParseResult::NeedMoreInput
+        ));
+        assert!(matches!(
+            submit_line_for_module(&mut pending, ""),
+            ReplLineParseResult::Ready { .. }
+        ));
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn submit_line_clears_pending_on_non_incomplete_parse_error() {
+        let mut pending = String::new();
+        let result = submit_line_for_module(&mut pending, "if True print(1)");
+        assert!(matches!(result, ReplLineParseResult::ParseError { .. }));
+        assert!(pending.is_empty());
     }
 }

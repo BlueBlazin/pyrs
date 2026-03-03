@@ -453,20 +453,15 @@ fn run_interactive_session(
                     continue;
                 }
 
-                pending.push_str(&line);
-                pending.push('\n');
-                let parse_source = repl_parse_candidate_source(&pending);
-                match parser::parse_module(parse_source) {
-                    Ok(module) => {
-                        if repl_parse_success_requires_more_input(parse_source, &line) {
-                            continue;
-                        }
+                match crate::repl_core::submit_line_for_module(&mut pending, &line) {
+                    crate::repl_core::ReplLineParseResult::NeedMoreInput => continue,
+                    crate::repl_core::ReplLineParseResult::Ready { source, module } => {
                         let completion_plan = repl_module_completion_plan(&module);
-                        vm.cache_source_text("<stdin>", parse_source);
+                        vm.cache_source_text("<stdin>", &source);
                         if let Err(err) = execute_parsed_module_with_timing(
                             vm,
                             &module,
-                            parse_source,
+                            &source,
                             "<stdin>",
                             true,
                             timing_enabled,
@@ -481,21 +476,14 @@ fn run_interactive_session(
                         } else {
                             apply_completion_refresh_plan(vm, &completion_state, completion_plan);
                         }
-                        pending.clear();
                     }
-                    Err(parse_err) => {
-                        if repl_input_is_incomplete(parse_source, &parse_err) {
-                            continue;
-                        }
+                    crate::repl_core::ReplLineParseResult::ParseError { source, error } => {
                         eprintln!(
                             "{}",
                             error_style::format_error_for_stderr(&format_parse_error(
-                                parse_source,
-                                "<stdin>",
-                                &parse_err,
+                                &source, "<stdin>", &error,
                             ))
                         );
-                        pending.clear();
                     }
                 }
             }
