@@ -90,7 +90,9 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
 - [ ] `P1` `_osx_support` (line 1536)
 - [ ] `P1` `ssl` (line 1904)
 - [ ] `P1` `codecs` (line 2605)
-- [ ] `P1` `operator` (line 3439)
+- [x] `P1` `operator` (line 3439):
+  - added to pure-stdlib unload preference group (`PURE_STDLIB_OPERATOR_MODULES`) so CPython `Lib/operator.py` is preferred when available;
+  - covered by `tests/vm.rs::operator_import_prefers_cpython_pure_module_when_lib_path_is_added`.
 - [ ] `P1` `_colorize` (line 3675)
 - [x] `P1` `functools` (line 3722):
   - added to `PURE_STDLIB_FUNCTOOLS_MODULES` unload preference group so `Lib/functools.py` is preferred when available;
