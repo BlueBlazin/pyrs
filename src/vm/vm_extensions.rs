@@ -3,6 +3,7 @@
 //! This module translates raw CPython-facing pointers/calls into pyrs runtime
 //! objects while tracking ownership/lifetime through `ModuleCapiContext` and
 //! VM-global C-API registries.
+#![cfg_attr(target_arch = "wasm32", allow(unused_imports, dead_code))]
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -46,6 +47,11 @@ const CPY_RICHCMP_EQ: i32 = 2;
 const CPY_RICHCMP_NE: i32 = 3;
 const CPY_RICHCMP_GT: i32 = 4;
 const CPY_RICHCMP_GE: i32 = 5;
+pub(crate) const MIN_VALID_PTR_THRESHOLD: usize = if usize::BITS > 32 {
+    0x1_0000_0000_u64 as usize
+} else {
+    0x1_0000_u64 as usize
+};
 static TRACE_NUMPY_TYPEDICT_PTR: AtomicUsize = AtomicUsize::new(0);
 thread_local! {
     static CPYTHON_DESCRIPTOR_REGISTRY: RefCell<HashMap<usize, CpythonDescriptorKind>> =
@@ -75,6 +81,7 @@ mod cpython_gc_alloc_api;
 mod cpython_import_api;
 mod cpython_import_runtime;
 mod cpython_iter_api;
+#[cfg(not(target_arch = "wasm32"))]
 mod cpython_keepalive_exports;
 mod cpython_list_api;
 mod cpython_long_float_api;
@@ -540,7 +547,7 @@ impl ProxyAttrLookupReentryGuard {
         let depth_allowed = CPY_PROXY_ATTR_LOOKUP_DEPTH.with(|depth| {
             let next = depth.get().saturating_add(1);
             depth.set(next);
-            if std::env::var_os("PYRS_TRACE_PROXY_ATTR_DEPTH").is_some() && next >= 8 {
+            if super::env_var_present_cached("PYRS_TRACE_PROXY_ATTR_DEPTH") && next >= 8 {
                 eprintln!(
                     "[proxy-attr-depth] depth={} ptr={:p} attr={} is_type={}",
                     next, raw_ptr as *mut c_void, attr_name, is_type_object
@@ -1260,7 +1267,7 @@ type CpythonVectorcallFn =
     unsafe extern "C" fn(*mut c_void, *const *mut c_void, usize, *mut c_void) -> *mut c_void;
 
 unsafe fn cpython_resolve_vectorcall(callable: *mut c_void) -> Option<CpythonVectorcallFn> {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
     if callable.is_null() {
         return None;
     }
@@ -1280,7 +1287,8 @@ unsafe fn cpython_resolve_vectorcall(callable: *mut c_void) -> Option<CpythonVec
     {
         return None;
     }
-    let trace_vectorcall_resolve = std::env::var_os("PYRS_TRACE_CPY_VECTORCALL_RESOLVE").is_some();
+    let trace_vectorcall_resolve =
+        super::env_var_present_cached("PYRS_TRACE_CPY_VECTORCALL_RESOLVE");
     // SAFETY: `type_ptr` is non-null and points to a type object header.
     let mut raw = unsafe { (*type_ptr).tp_vectorcall };
     // SAFETY: `type_ptr` is valid for metadata reads.
@@ -1320,7 +1328,7 @@ unsafe fn cpython_resolve_vectorcall(callable: *mut c_void) -> Option<CpythonVec
 }
 
 unsafe fn cpython_foreign_long_to_i64(object: *mut c_void) -> Option<i64> {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
     if object.is_null() {
         return None;
     }
@@ -1366,7 +1374,7 @@ unsafe fn cpython_foreign_long_to_i64(object: *mut c_void) -> Option<i64> {
 }
 
 unsafe fn cpython_foreign_long_to_u64(object: *mut c_void) -> Option<u64> {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
     if object.is_null() {
         return None;
     }
@@ -3398,7 +3406,7 @@ unsafe extern "C" fn cpython_slot_dunder_init(
         (self_obj, args_tuple)
     };
 
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
     let target_type = if receiver_is_type_object {
         self_obj.cast::<CpythonTypeObject>()
     } else if (target as usize) < MIN_VALID_PTR
@@ -4175,10 +4183,10 @@ impl Drop for ModuleCapiContext {
         let drained_cpython_allocations = std::mem::take(&mut self.cpython_allocations);
         let mut seen_cpython_allocations: HashSet<usize> = HashSet::new();
         for raw in drained_cpython_allocations {
-            const MIN_VALID_PTR: usize = 0x1_0000_0000;
+            const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
             let raw_addr = raw as usize;
             if !seen_cpython_allocations.insert(raw_addr) {
-                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                     eprintln!(
                         "[pin-free] context-skip duplicate compat ptr={:p}",
                         raw.cast::<c_void>()
@@ -4188,7 +4196,7 @@ impl Drop for ModuleCapiContext {
             }
             if raw_addr < MIN_VALID_PTR || raw_addr % std::mem::align_of::<CpythonObjectHead>() != 0
             {
-                if std::env::var_os("PYRS_TRACE_CPY_DROP").is_some() {
+                if super::env_var_present_cached("PYRS_TRACE_CPY_DROP") {
                     eprintln!(
                         "[cpy-drop] skipping invalid compat allocation ptr={:p}",
                         raw.cast::<c_void>()
@@ -4201,7 +4209,7 @@ impl Drop for ModuleCapiContext {
                 let vm = unsafe { &mut *self.vm };
                 if vm.capi_pin_owned_ptr(raw as usize) {
                     vm.capi_registry_mark_alive(raw as usize);
-                    if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                         eprintln!(
                             "[pin-free] pin-insert ptr={:p} reason=keep_cpython_allocations_on_drop",
                             raw.cast::<c_void>()
@@ -4233,7 +4241,7 @@ impl Drop for ModuleCapiContext {
                 if !keep_pinned && let Some(handle) = identity_wrapper_handle {
                     if vm.capi_pin_owned_ptr(raw as usize) {
                         vm.capi_registry_mark_alive(raw as usize);
-                        if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                        if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                             eprintln!(
                                 "[pin-free] pin-insert ptr={:p} reason=identity_wrapper",
                                 raw.cast::<c_void>()
@@ -4248,7 +4256,7 @@ impl Drop for ModuleCapiContext {
                     if interned_unicode {
                         if vm.capi_pin_owned_ptr(raw as usize) {
                             vm.capi_registry_mark_alive(raw as usize);
-                            if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                            if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                                 eprintln!(
                                     "[pin-free] pin-insert ptr={:p} reason=interned_unicode",
                                     raw.cast::<c_void>()
@@ -4277,7 +4285,7 @@ impl Drop for ModuleCapiContext {
                         }
                         if vm.capi_pin_owned_ptr(raw as usize) {
                             vm.capi_registry_mark_alive(raw as usize);
-                            if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                            if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                                 eprintln!(
                                     "[pin-free] pin-insert ptr={:p} reason=refcount_escape",
                                     raw.cast::<c_void>()
@@ -4339,7 +4347,7 @@ impl Drop for ModuleCapiContext {
                 continue;
             }
             if !seen_list_buffers.insert(buffer as usize) {
-                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                     eprintln!(
                         "[pin-free] context-skip duplicate list-buffer ptr={:p}",
                         buffer.cast::<c_void>()
@@ -4364,7 +4372,7 @@ impl Drop for ModuleCapiContext {
                     let vm = unsafe { &mut *self.vm };
                     if vm.capi_pin_owned_ptr(buffer as usize) {
                         vm.capi_registry_mark_alive(buffer as usize);
-                        if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                        if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                             eprintln!(
                                 "[pin-free] pin-insert ptr={:p} reason=list_buffer_keep",
                                 buffer.cast::<c_void>()
@@ -4391,7 +4399,7 @@ impl Drop for ModuleCapiContext {
                 continue;
             }
             if !seen_bytearray_buffers.insert(buffer as usize) {
-                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                     eprintln!(
                         "[pin-free] context-skip duplicate bytearray-buffer ptr={:p}",
                         buffer
@@ -4416,7 +4424,7 @@ impl Drop for ModuleCapiContext {
                     let vm = unsafe { &mut *self.vm };
                     if vm.capi_pin_owned_ptr(buffer as usize) {
                         vm.capi_registry_mark_alive(buffer as usize);
-                        if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                        if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                             eprintln!(
                                 "[pin-free] pin-insert ptr={:p} reason=bytearray_buffer_keep",
                                 buffer
@@ -4443,7 +4451,7 @@ impl Drop for ModuleCapiContext {
                 continue;
             }
             if !seen_aux_allocations.insert(raw as usize) {
-                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                     eprintln!("[pin-free] context-skip duplicate aux ptr={:p}", raw);
                 }
                 continue;
@@ -4464,7 +4472,7 @@ impl Drop for ModuleCapiContext {
                     let vm = unsafe { &mut *self.vm };
                     if vm.capi_pin_owned_ptr(raw as usize) {
                         vm.capi_registry_mark_alive(raw as usize);
-                        if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                        if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                             eprintln!("[pin-free] pin-insert ptr={:p} reason=aux_keep", raw);
                         }
                     }
@@ -4518,7 +4526,7 @@ impl ModuleCapiContext {
     }
 
     fn is_probable_c_string_pointer(ptr: *const c_char) -> bool {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
         if ptr.is_null() {
             return false;
         }
@@ -4527,7 +4535,7 @@ impl ModuleCapiContext {
     }
 
     fn is_probable_type_object_without_metatype(object: *mut c_void) -> bool {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
         if object.is_null() {
             return false;
         }
@@ -4588,7 +4596,7 @@ impl ModuleCapiContext {
     }
 
     fn is_probable_type_object_ptr(object: *mut c_void) -> bool {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
         if object.is_null() {
             return false;
         }
@@ -4627,7 +4635,7 @@ impl ModuleCapiContext {
     }
 
     fn is_probable_external_cpython_object_ptr(object: *mut c_void) -> bool {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
         if object.is_null() {
             return false;
         }
@@ -4974,7 +4982,7 @@ impl ModuleCapiContext {
                             }
                             _ => false,
                         });
-                    if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_ERRFLOW").is_some() {
+                    if super::env_var_present_cached("PYRS_TRACE_DEFAULT_RNG_ERRFLOW") {
                         let mapped_value_tag = mapped_value
                             .as_ref()
                             .map(cpython_value_debug_tag)
@@ -4993,7 +5001,7 @@ impl ModuleCapiContext {
                     if pointer_is_known && mapped_exception_instance {
                         thread_exception = current.pvalue;
                     } else {
-                        if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_ERRFLOW").is_some() {
+                        if super::env_var_present_cached("PYRS_TRACE_DEFAULT_RNG_ERRFLOW") {
                             eprintln!(
                                 "[tstate-exc-sync] dropping non-exception pvalue={:p} mapped_exception_instance={} owned={} registry_live={} pointer_is_known={} ptype={:p}",
                                 current.pvalue,
@@ -5124,7 +5132,7 @@ impl ModuleCapiContext {
     ) {
         let mut ptype = ptype;
         let pvalue = pvalue;
-        if std::env::var_os("PYRS_TRACE_NONE_ERROR_TYPE").is_some() {
+        if super::env_var_present_cached("PYRS_TRACE_NONE_ERROR_TYPE") {
             let none_ptr = (&raw mut _Py_NoneStruct).cast::<c_void>();
             if ptype == none_ptr {
                 let caller = std::panic::Location::caller();
@@ -5137,7 +5145,7 @@ impl ModuleCapiContext {
                 );
             }
         }
-        if std::env::var_os("PYRS_TRACE_CPY_SET_ERROR_STATE").is_some() {
+        if super::env_var_present_cached("PYRS_TRACE_CPY_SET_ERROR_STATE") {
             let caller = std::panic::Location::caller();
             let exception_type_name = cpython_exception_class_name_from_ptr(ptype)
                 .unwrap_or_else(|| "<none>".to_string());
@@ -5167,7 +5175,9 @@ impl ModuleCapiContext {
         {
             self.stamp_exception_type_hint_on_value(&value, ptype);
         }
-        if std::env::var_os("PYRS_TRACE_CPY_UFUNC_ERRORS").is_some() && message.contains("_UFunc") {
+        if super::env_var_present_cached("PYRS_TRACE_CPY_UFUNC_ERRORS")
+            && message.contains("_UFunc")
+        {
             let caller = std::panic::Location::caller();
             let ptype_name = cpython_exception_class_name_from_ptr(ptype)
                 .unwrap_or_else(|| "<none>".to_string());
@@ -5305,7 +5315,7 @@ impl ModuleCapiContext {
         if self.last_error.is_some() && is_reentry_guard {
             return;
         }
-        if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+        if super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") {
             let caller = std::panic::Location::caller();
             eprintln!(
                 "[cpy-err] {} (at {}:{})",
@@ -5314,7 +5324,8 @@ impl ModuleCapiContext {
                 caller.line()
             );
         }
-        if std::env::var_os("PYRS_TRACE_PYARROW_ERROR").is_some() && message.contains("pyarrow") {
+        if super::env_var_present_cached("PYRS_TRACE_PYARROW_ERROR") && message.contains("pyarrow")
+        {
             let stack = if self.vm.is_null() {
                 "<no-vm>".to_string()
             } else {
@@ -5416,7 +5427,7 @@ impl ModuleCapiContext {
             self.clear_error();
             return;
         }
-        if std::env::var_os("PYRS_TRACE_NONE_ERROR_TYPE").is_some() {
+        if super::env_var_present_cached("PYRS_TRACE_NONE_ERROR_TYPE") {
             let none_ptr = (&raw mut _Py_NoneStruct).cast::<c_void>();
             if state.ptype == none_ptr {
                 eprintln!(
@@ -5476,7 +5487,7 @@ impl ModuleCapiContext {
         if raw.is_null() {
             return;
         }
-        if std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some() {
+        if super::env_var_present_cached("PYRS_TRACE_CPY_PTRS") {
             let tag = self
                 .object_value(handle)
                 .map(|value| cpython_value_debug_tag(&value))
@@ -5489,7 +5500,7 @@ impl ModuleCapiContext {
             );
         }
         if let Some(previous) = self.cpython_objects_by_ptr.insert(raw as usize, handle)
-            && std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some()
+            && super::env_var_present_cached("PYRS_TRACE_CPY_PTRS")
         {
             eprintln!(
                 "[cpy-ptr] overwrite ptr={:p} previous_handle={} new_handle={}",
@@ -5591,7 +5602,7 @@ impl ModuleCapiContext {
             let was_pinned = vm.capi_unpin_owned_ptr(ptr as usize);
             vm.extension_pinned_capsule_names.remove(&(ptr as usize));
             vm.capi_registry_mark_freed(ptr as usize);
-            if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+            if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                 eprintln!(
                     "[pin-free] {} ptr={:p} was_pinned={}",
                     trace_label, ptr, was_pinned
@@ -5680,7 +5691,7 @@ impl ModuleCapiContext {
 
     fn alloc_cpython_ptr_for_handle(&mut self, handle: PyrsObjectHandle) -> *mut c_void {
         if let Some(existing) = self.cpython_ptr_by_handle.get(&handle).copied() {
-            if std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some() {
+            if super::env_var_present_cached("PYRS_TRACE_CPY_PTRS") {
                 eprintln!("[cpy-ptr] reuse handle={} ptr={:p}", handle, existing);
             }
             return existing.cast();
@@ -6265,7 +6276,7 @@ impl ModuleCapiContext {
                 Self::cpython_proxy_raw_ptr_from_value(&Value::Class(base.clone())).is_some()
             });
             let native_base_inheritance_enabled = needs_native_base_inheritance
-                && std::env::var_os("PYRS_DISABLE_NATIVE_BASE_READY").is_none();
+                && !super::env_var_present_cached("PYRS_DISABLE_NATIVE_BASE_READY");
             let supports_mapping_subscript =
                 self.class_supports_mapping_subscript_slot(&class_attrs, &class_bases);
             let exception_subclass_flag = if self.vm.is_null() {
@@ -6412,7 +6423,7 @@ impl ModuleCapiContext {
                 }
                 return std::ptr::null_mut();
             }
-            if std::env::var_os("PYRS_TRACE_TYPED_CACHE_SUBSCRIPT").is_some()
+            if super::env_var_present_cached("PYRS_TRACE_TYPED_CACHE_SUBSCRIPT")
                 && class_name.contains("TypedCache")
             {
                 eprintln!(
@@ -6464,7 +6475,7 @@ impl ModuleCapiContext {
                     vectorcall: std::ptr::null_mut(),
                 });
             }
-            if std::env::var_os("PYRS_TRACE_BOUND_METHOD_PTR").is_some() {
+            if super::env_var_present_cached("PYRS_TRACE_BOUND_METHOD_PTR") {
                 eprintln!(
                     "[bound-method-ptr] alloc handle={} method_ptr={:p} im_func={:p} im_self={:p}",
                     handle,
@@ -6550,7 +6561,7 @@ impl ModuleCapiContext {
                         Some(*raw_ptr as usize as *mut c_void)
                     }
                     _ => {
-                        if std::env::var_os("PYRS_TRACE_PROXY_PTR_MISS").is_some() {
+                        if super::env_var_present_cached("PYRS_TRACE_PROXY_PTR_MISS") {
                             let mut keys = class_data.attrs.keys().cloned().collect::<Vec<_>>();
                             keys.sort();
                             eprintln!(
@@ -6571,7 +6582,7 @@ impl ModuleCapiContext {
                         Some(*raw_ptr as usize as *mut c_void)
                     }
                     _ => {
-                        if std::env::var_os("PYRS_TRACE_PROXY_PTR_MISS").is_some() {
+                        if super::env_var_present_cached("PYRS_TRACE_PROXY_PTR_MISS") {
                             let class_name = match &*instance_data.class.kind() {
                                 Object::Class(class_data) => class_data.name.clone(),
                                 _ => "<non-class>".to_string(),
@@ -6703,7 +6714,7 @@ impl ModuleCapiContext {
     /// Returns existing pinned/proxy pointers when possible; otherwise allocates
     /// context-owned compat storage and records it for drop-time lifecycle handling.
     fn alloc_cpython_ptr_for_value(&mut self, value: Value) -> *mut c_void {
-        let trace_bound_ptr = std::env::var_os("PYRS_TRACE_BOUND_METHOD_PTR").is_some();
+        let trace_bound_ptr = super::env_var_present_cached("PYRS_TRACE_BOUND_METHOD_PTR");
         let is_bound_method = matches!(value, Value::BoundMethod(_));
         if let Value::Module(module_obj) = &value
             && let Object::Module(module_data) = &*module_obj.kind()
@@ -6734,7 +6745,7 @@ impl ModuleCapiContext {
             if let Some(entry) = vm.extension_callable_registry.get(&function_id)
                 && let ExtensionCallableKind::CpythonMethod { method_def } = entry.kind
             {
-                if std::env::var_os("PYRS_TRACE_CPY_CFUNCTION_WRAP").is_some() {
+                if super::env_var_present_cached("PYRS_TRACE_CPY_CFUNCTION_WRAP") {
                     // SAFETY: method_def originates from extension-owned PyMethodDef table.
                     let method_name = unsafe {
                         c_name_to_string((*(method_def as *mut CpythonMethodDef)).ml_name)
@@ -6803,7 +6814,7 @@ impl ModuleCapiContext {
             && let Object::Class(class_data) = &*class_obj.kind()
             && is_cpython_proxy_class(class_data)
         {
-            if std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
+            if super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_PTRS") {
                 eprintln!(
                     "[cpy-proxy] missing raw pointer attr for proxy class id={} attrs_keys={:?}",
                     class_obj.id(),
@@ -6957,7 +6968,7 @@ impl ModuleCapiContext {
                 self.refresh_external_proxy_instance_type(handle, object);
             }
             if let Some(value) = self.object_value(handle) {
-                if std::env::var_os("PYRS_TRACE_METHOD_MAP_SOURCE").is_some()
+                if super::env_var_present_cached("PYRS_TRACE_METHOD_MAP_SOURCE")
                     && matches!(value, Value::BoundMethod(_))
                 {
                     let type_name = cpython_type_name_for_object_ptr(object);
@@ -6972,7 +6983,7 @@ impl ModuleCapiContext {
                 if Self::value_requires_external_mapping_stale_check(&value)
                     && self.external_proxy_mapping_is_stale(&value, object)
                 {
-                    if std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
+                    if super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_PTRS") {
                         eprintln!(
                             "[cpy-proxy] stale mapping reset object_ptr={:p} value_tag={}",
                             object,
@@ -7010,7 +7021,7 @@ impl ModuleCapiContext {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             let vm = unsafe { &mut *self.vm };
             if let Some(value) = vm.extension_cpython_ptr_values.get(&raw).cloned() {
-                if std::env::var_os("PYRS_TRACE_METHOD_MAP_SOURCE").is_some()
+                if super::env_var_present_cached("PYRS_TRACE_METHOD_MAP_SOURCE")
                     && matches!(value, Value::BoundMethod(_))
                 {
                     let type_name = cpython_type_name_for_object_ptr(object);
@@ -7024,7 +7035,7 @@ impl ModuleCapiContext {
                 if Self::value_requires_external_mapping_stale_check(&value)
                     && self.external_proxy_mapping_is_stale(&value, object)
                 {
-                    if std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
+                    if super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_PTRS") {
                         eprintln!(
                             "[cpy-proxy] stale vm-cache reset object_ptr={:p} value_tag={}",
                             object,
@@ -7149,7 +7160,7 @@ impl ModuleCapiContext {
         if updated_class.id() == cached_class_obj.id() {
             return;
         }
-        if std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some() {
+        if super::env_var_present_cached("PYRS_TRACE_PROXY_CLASS_SOURCE") {
             let old_name = match &*cached_class_obj.kind() {
                 Object::Class(class_data) => class_data.name.clone(),
                 _ => "<non-class>".to_string(),
@@ -7298,7 +7309,7 @@ impl ModuleCapiContext {
         // is insufficient and would misclassify those type objects as plain instances.
         let is_type_object =
             self.is_known_type_ptr(object) || Self::is_probable_type_object_ptr(object);
-        if std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
+        if super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_PTRS") {
             let object_type_name = unsafe {
                 object_type
                     .as_ref()
@@ -7331,7 +7342,7 @@ impl ModuleCapiContext {
                     &*type_proxy_class.kind(),
                     Object::Class(class_data) if is_cpython_proxy_class(class_data)
                 );
-                if std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some() {
+                if super::env_var_present_cached("PYRS_TRACE_PROXY_CLASS_SOURCE") {
                     let class_name = match &*type_proxy_class.kind() {
                         Object::Class(class_data) => class_data.name.clone(),
                         _ => "<non-class>".to_string(),
@@ -7363,7 +7374,7 @@ impl ModuleCapiContext {
                     }
                     other => return Some(other),
                 }
-            } else if std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some() {
+            } else if super::env_var_present_cached("PYRS_TRACE_PROXY_CLASS_SOURCE") {
                 let owns_type_ptr = self.owns_cpython_allocation_ptr(object_type.cast::<c_void>());
                 let probable_external =
                     Self::is_probable_external_cpython_object_ptr(object_type.cast::<c_void>());
@@ -7430,7 +7441,7 @@ impl ModuleCapiContext {
                 }
             }
         }
-        if std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some() && !is_type_object {
+        if super::env_var_present_cached("PYRS_TRACE_PROXY_CLASS_SOURCE") && !is_type_object {
             let type_name = unsafe {
                 object_type
                     .as_ref()
@@ -7460,7 +7471,7 @@ impl ModuleCapiContext {
                     })
                 });
             if let Some((name, module)) = heap_type_name {
-                if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+                if super::env_var_present_cached("PYRS_TRACE_CPY_OWNED_TYPES") {
                     eprintln!(
                         "[cpy-owned-type] proxy-name source=heap-registry ptr={:p} name={} module={}",
                         object,
@@ -7474,7 +7485,7 @@ impl ModuleCapiContext {
                 let type_name =
                     unsafe { c_name_to_string((*object.cast::<CpythonTypeObject>()).tp_name).ok() };
                 if let Some(type_name) = type_name {
-                    if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+                    if super::env_var_present_cached("PYRS_TRACE_CPY_OWNED_TYPES") {
                         eprintln!(
                             "[cpy-owned-type] proxy-name source=known-tp_name ptr={:p} tp_name={}",
                             object, type_name
@@ -7643,7 +7654,7 @@ impl ModuleCapiContext {
             }
         }
         let _depth_guard = CpyPtrMapDepthGuard;
-        if std::env::var_os("PYRS_DEBUG_CPY_PTR_DEPTH").is_some() && depth > 256 {
+        if super::env_var_present_cached("PYRS_DEBUG_CPY_PTR_DEPTH") && depth > 256 {
             panic!(
                 "cpython_value_from_ptr_or_proxy recursion depth exceeded: depth={depth} ptr={object:p}"
             );
@@ -7674,7 +7685,7 @@ impl ModuleCapiContext {
                 self.capi_registry_register_owned_ptr(object, None);
                 registry_known_live = true;
                 owns_allocation = true;
-                if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
+                if super::env_var_present_cached("PYRS_TRACE_CPY_UNKNOWN_PTR") {
                     eprintln!(
                         "[cpy-proxy-registry-heal] ptr={:p} discovered_owned=true",
                         object
@@ -7690,7 +7701,7 @@ impl ModuleCapiContext {
             // for those type-like pointers so C-API tuple/dict setters can carry
             // them through initialization paths.
             let likely_type_object = unsafe {
-                const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
                 let object_addr = object as usize;
                 if object_addr < MIN_VALID_PTR
                     || object_addr % std::mem::align_of::<CpythonObjectHead>() != 0
@@ -7724,7 +7735,7 @@ impl ModuleCapiContext {
             if likely_type_object && let Some(proxy) = self.cpython_external_proxy_value(object) {
                 let proxy =
                     self.cache_cpython_proxy_value_for_ptr(object, proxy, owns_allocation, true);
-                if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
+                if super::env_var_present_cached("PYRS_TRACE_CPY_UNKNOWN_PTR") {
                     eprintln!(
                         "[cpy-proxy-type-fallback] ptr={:p} owns={} probable=false type_like={}",
                         object, owns_allocation, likely_type_object
@@ -7732,7 +7743,7 @@ impl ModuleCapiContext {
                 }
                 return Some(proxy);
             }
-            if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
+            if super::env_var_present_cached("PYRS_TRACE_CPY_UNKNOWN_PTR") {
                 let stack = if self.vm.is_null() {
                     "<no-vm>".to_string()
                 } else {
@@ -7776,7 +7787,7 @@ impl ModuleCapiContext {
             // materialized into runtime values. Context-scoped incref/decref churn can
             // leave escaped proxy values pointing at reclaimed CPython objects.
             let inserted = self.capi_registry_pin_external_once_ptr(object);
-            if std::env::var_os("PYRS_TRACE_CPY_PIN").is_some() || force_trace_fallback {
+            if super::env_var_present_cached("PYRS_TRACE_CPY_PIN") || force_trace_fallback {
                 eprintln!(
                     "[cpy-pin] ptr={:p} branch=external inserted={}",
                     object, inserted
@@ -7801,7 +7812,7 @@ impl ModuleCapiContext {
                 .or_insert_with(|| proxy.clone());
         }
         let handle = self.alloc_object(proxy.clone());
-        if std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some() {
+        if super::env_var_present_cached("PYRS_TRACE_CPY_PTRS") {
             let caller = std::panic::Location::caller();
             eprintln!(
                 "[cpy-ptr] proxy-map handle={} external_ptr={:p} caller={}:{}",
@@ -7812,7 +7823,7 @@ impl ModuleCapiContext {
             );
         }
         if let Some(previous) = self.cpython_objects_by_ptr.insert(object as usize, handle)
-            && std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some()
+            && super::env_var_present_cached("PYRS_TRACE_CPY_PTRS")
         {
             eprintln!(
                 "[cpy-ptr] overwrite external ptr={:p} previous_handle={} new_handle={}",
@@ -8665,7 +8676,7 @@ impl ModuleCapiContext {
     }
 
     fn cpython_slot_table_ptr_is_valid<T>(ptr: *const T) -> bool {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
         !ptr.is_null()
             && (ptr as usize) >= MIN_VALID_PTR
             && (ptr as usize) % std::mem::align_of::<T>() == 0
@@ -8676,7 +8687,7 @@ impl ModuleCapiContext {
         mapping_ptr: *mut c_void,
         key: &str,
     ) -> *mut c_void {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
         if mapping_ptr.is_null()
             || (mapping_ptr as usize) < MIN_VALID_PTR
             || (mapping_ptr as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
@@ -8812,14 +8823,14 @@ impl ModuleCapiContext {
             || self.is_known_type_ptr(object)
             || Self::is_probable_type_object_ptr(object);
         let trace_type_attr =
-            attr_name == "type" && std::env::var_os("PYRS_TRACE_PROXY_TYPE_ATTR").is_some();
+            attr_name == "type" && super::env_var_present_cached("PYRS_TRACE_PROXY_TYPE_ATTR");
         let trace_attr_max =
-            attr_name == "max" && std::env::var_os("PYRS_TRACE_ATTR_MAX").is_some();
-        let trace_lookup_branch = std::env::var_os("PYRS_TRACE_PROXY_LOOKUP_BRANCH").is_some();
-        let trace_repr_lookup = std::env::var_os("PYRS_TRACE_PROXY_REPR_LOOKUP").is_some()
+            attr_name == "max" && super::env_var_present_cached("PYRS_TRACE_ATTR_MAX");
+        let trace_lookup_branch = super::env_var_present_cached("PYRS_TRACE_PROXY_LOOKUP_BRANCH");
+        let trace_repr_lookup = super::env_var_present_cached("PYRS_TRACE_PROXY_REPR_LOOKUP")
             && matches!(attr_name, "__repr__" | "__str__");
         let is_proxy_trace = attr_name == "__array_finalize__"
-            && std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some();
+            && super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_PTRS");
         if is_proxy_trace {
             eprintln!(
                 "[cpy-proxy] tp_dict lookup object_ptr={:p} object_type={:p} expected_type={:p}",
@@ -8896,7 +8907,7 @@ impl ModuleCapiContext {
                 if !external_value_ptr.is_null() {
                     let mut descriptor_rejected_for_slot_fallback = false;
                     let trace_generate_state_lookup = attr_name == "generate_state"
-                        && std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE").is_some();
+                        && super::env_var_present_cached("PYRS_TRACE_GETATTR_GENERATE_STATE");
                     // SAFETY: best-effort descriptor probe on tp_dict entry.
                     let descriptor_type = unsafe {
                         external_value_ptr
@@ -9168,7 +9179,7 @@ impl ModuleCapiContext {
                         cpython_value_debug_tag(&value)
                     );
                 }
-                if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+                if super::env_var_present_cached("PYRS_TRACE_PROXY_ATTR_CALL") {
                     eprintln!(
                         "[proxy-attr-map] source=tp_dict_value target={:p} attr={} value_tag={}",
                         object,
@@ -9919,7 +9930,7 @@ impl ModuleCapiContext {
             Some(vectorcall) => vectorcall,
             None => return None,
         };
-        let trace_vectorcall = std::env::var_os("PYRS_TRACE_CPY_VECTORCALL").is_some();
+        let trace_vectorcall = super::env_var_present_cached("PYRS_TRACE_CPY_VECTORCALL");
         if trace_vectorcall {
             // SAFETY: callable is a candidate PyObject pointer in vectorcall path.
             let type_name = unsafe {
@@ -10157,8 +10168,8 @@ impl ModuleCapiContext {
         args: &[Value],
         kwargs: &HashMap<String, Value>,
     ) -> Option<*mut c_void> {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
-        let trace_calls = std::env::var_os("PYRS_TRACE_CPY_CALLS").is_some();
+        const MIN_VALID_PTR: usize = MIN_VALID_PTR_THRESHOLD;
+        let trace_calls = super::env_var_present_cached("PYRS_TRACE_CPY_CALLS");
         if callable.is_null() || self.vm.is_null() {
             if trace_calls {
                 eprintln!(
@@ -10179,7 +10190,7 @@ impl ModuleCapiContext {
         if cpython_exception_value_from_ptr(callable as usize).is_some() {
             return None;
         }
-        if std::env::var_os("PYRS_TRACE_CPY_NONE_CALL").is_some()
+        if super::env_var_present_cached("PYRS_TRACE_CPY_NONE_CALL")
             && callable == std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>()
         {
             let arg_summary = args
@@ -10198,7 +10209,7 @@ impl ModuleCapiContext {
                 "[cpy-none-call] args=[{}] kwargs=[{}]",
                 arg_summary, kw_summary
             );
-            if std::env::var_os("PYRS_TRACE_CPY_NONE_CALL_BT").is_some() {
+            if super::env_var_present_cached("PYRS_TRACE_CPY_NONE_CALL_BT") {
                 eprintln!(
                     "[cpy-none-call-bt]\n{:?}",
                     std::backtrace::Backtrace::force_capture()
@@ -10237,7 +10248,7 @@ impl ModuleCapiContext {
         {
             return None;
         }
-        let trace_seed_calls = if std::env::var_os("PYRS_TRACE_NUMPY_SEED_CALLS").is_some() {
+        let trace_seed_calls = if super::env_var_present_cached("PYRS_TRACE_NUMPY_SEED_CALLS") {
             let callable_name = if cpython_is_type_object_ptr(callable) {
                 // SAFETY: type-object pointer shape is validated by `cpython_is_type_object_ptr`.
                 unsafe {
@@ -10258,7 +10269,7 @@ impl ModuleCapiContext {
         } else {
             false
         };
-        let trace_numpy_ufunc_call = std::env::var_os("PYRS_TRACE_NUMPY_UFUNC_CALL").is_some();
+        let trace_numpy_ufunc_call = super::env_var_present_cached("PYRS_TRACE_NUMPY_UFUNC_CALL");
         if trace_numpy_ufunc_call {
             // SAFETY: `type_ptr` was validated above.
             let type_name = unsafe {
@@ -10878,7 +10889,7 @@ impl ModuleCapiContext {
                 }
                 self.cpython_tuple_items_cache_by_handle
                     .insert(handle, raw_items);
-                let trace_raw = std::env::var_os("PYRS_TRACE_CPY_TUPLE_RAW").is_some();
+                let trace_raw = super::env_var_present_cached("PYRS_TRACE_CPY_TUPLE_RAW");
                 let mut values = Vec::with_capacity(item_ptrs.len());
                 let mut fallback_indices = Vec::new();
                 for (idx, item_ptr) in item_ptrs.iter().copied().enumerate() {
@@ -11647,7 +11658,7 @@ impl ModuleCapiContext {
         if type_ptr.is_null() {
             return;
         }
-        let trace = std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some();
+        let trace = super::env_var_present_cached("PYRS_TRACE_PROXY_CLASS_SOURCE");
         // SAFETY: caller gates `type_ptr` to type-object creation flow.
         let type_dict_ptr = unsafe { (*type_ptr.cast::<CpythonTypeObject>()).tp_dict };
         if type_dict_ptr.is_null() {
@@ -11811,7 +11822,7 @@ impl ModuleCapiContext {
             None => (type_name, None),
         };
         let Some(handle) = self.cpython_objects_by_ptr.get(&(ptr as usize)).copied() else {
-            if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+            if super::env_var_present_cached("PYRS_TRACE_CPY_OWNED_TYPES") {
                 eprintln!(
                     "[cpy-owned-type] refresh-name ptr={:p} status=no-handle",
                     ptr
@@ -11821,7 +11832,7 @@ impl ModuleCapiContext {
         };
         let updated_class = {
             let Some(slot) = self.objects.get_mut(&handle) else {
-                if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+                if super::env_var_present_cached("PYRS_TRACE_CPY_OWNED_TYPES") {
                     eprintln!(
                         "[cpy-owned-type] refresh-name ptr={:p} handle={} status=missing-slot",
                         ptr, handle
@@ -11830,7 +11841,7 @@ impl ModuleCapiContext {
                 return;
             };
             let Value::Class(class_obj) = &mut slot.value else {
-                if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+                if super::env_var_present_cached("PYRS_TRACE_CPY_OWNED_TYPES") {
                     eprintln!(
                         "[cpy-owned-type] refresh-name ptr={:p} handle={} status=non-class",
                         ptr, handle
@@ -11852,7 +11863,7 @@ impl ModuleCapiContext {
                         .insert("__module__".to_string(), Value::Str(module_name));
                 }
             }
-            if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+            if super::env_var_present_cached("PYRS_TRACE_CPY_OWNED_TYPES") {
                 eprintln!(
                     "[cpy-owned-type] refresh-name ptr={:p} handle={} status=updated name={} module={}",
                     ptr,
@@ -11880,7 +11891,7 @@ impl ModuleCapiContext {
         if inserted {
             self.refresh_owned_type_proxy_name(ptr);
         }
-        if inserted && std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+        if inserted && super::env_var_present_cached("PYRS_TRACE_CPY_OWNED_TYPES") {
             eprintln!("[cpy-owned-type] register ptr={:p}", ptr);
         }
     }
@@ -11911,7 +11922,7 @@ impl ModuleCapiContext {
         let vm = unsafe { &mut *self.vm };
         if vm.capi_pin_owned_ptr(ptr as usize) {
             vm.capi_registry_mark_alive(ptr as usize);
-            if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+            if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                 eprintln!(
                     "[pin-free] pin-insert ptr={:p} reason=pin_owned_allocation_for_vm",
                     ptr
@@ -11938,7 +11949,7 @@ impl ModuleCapiContext {
         let vm = unsafe { &mut *self.vm };
         if vm.capi_pin_owned_ptr(ptr as usize) {
             vm.capi_registry_mark_alive(ptr as usize);
-            if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+            if super::env_var_present_cached("PYRS_TRACE_PIN_FREE") {
                 eprintln!(
                     "[pin-free] pin-insert ptr={:p} reason=pin_capsule_allocation_for_vm",
                     ptr
@@ -11992,7 +12003,7 @@ impl ModuleCapiContext {
         let requested_name = raw
             .to_str()
             .map_err(|_| "capsule name must be utf-8".to_string())?;
-        let trace_capsule_import = std::env::var_os("PYRS_TRACE_CPY_CAPSULE_IMPORT").is_some();
+        let trace_capsule_import = super::env_var_present_cached("PYRS_TRACE_CPY_CAPSULE_IMPORT");
         if self.vm.is_null() {
             return Err("capsule_import missing VM context".to_string());
         }

@@ -8,9 +8,10 @@ interface Props {
 	title: string;
 	description: string;
 	noindex?: boolean;
+	navContext?: "home" | "docs" | "playground";
 }
 
-const { title, description, noindex = false } = Astro.props;
+const { title, description, noindex = false, navContext = "home" } = Astro.props;
 const copyScriptSrc = `${import.meta.env.BASE_URL}scripts/copy-buttons.js`;
 ---
 
@@ -21,7 +22,7 @@ const copyScriptSrc = `${import.meta.env.BASE_URL}scripts/copy-buttons.js`;
 	<body>
 		<div class="site-shell">
 			<a class="skip-link" href="#main-content">Skip to content</a>
-			<TopNav context="home" />
+			<TopNav context={navContext} />
 			<main class="home-main" id="main-content">
 				<slot />
 			</main>

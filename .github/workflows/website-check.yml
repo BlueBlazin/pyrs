@@ -4,12 +4,20 @@ on:
   pull_request:
     paths:
       - "website/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/build_wasm_website_bundle.sh"
       - ".github/workflows/website-check.yml"
   push:
     branches:
       - master
     paths:
       - "website/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/build_wasm_website_bundle.sh"
       - ".github/workflows/website-check.yml"
 
 jobs:
@@ -21,6 +29,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (wasm32)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        working-directory: .
+        run: |
+          if ! command -v wasm-pack >/dev/null 2>&1; then
+            cargo install wasm-pack --locked
+          fi
+
+      - name: Build wasm playground bundle (size profile)
+        working-directory: .
+        run: ./scripts/build_wasm_website_bundle.sh
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4

@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use pyrs::ast::{
     AssignTarget, CallArg, ComprehensionClause, Constant, DictEntry, Expr, ExprKind, FloatLiteral,
     MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind, TypeParamKind,

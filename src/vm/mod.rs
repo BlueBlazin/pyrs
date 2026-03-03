@@ -21,6 +21,10 @@ mod vm_execution;
 mod vm_extensions;
 mod vm_native_dispatch;
 mod vm_runtime_methods;
+#[cfg(target_arch = "wasm32")]
+mod wasm_c_float_format;
+#[cfg(target_arch = "wasm32")]
+mod wasm_libc_shim;
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
@@ -31,18 +35,15 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{IsTerminal, Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
-#[cfg(unix)]
-use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
-#[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+#[cfg(target_arch = "wasm32")]
+use js_sys::Date;
 
 use self::capi_registry::{CapiObjectRegistry, CapiPtrProvenance, CapiRefKind};
 use self::containers::{
@@ -69,6 +70,7 @@ use crate::extensions::{
     PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1,
     PyrsModuleStateFreeV1, SharedLibraryHandle,
 };
+use crate::host::{HostCapability, NativeHost, VmHost};
 use crate::parser;
 use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
@@ -86,6 +88,11 @@ struct Block {
 unsafe extern "C" {
     fn free(ptr: *mut c_void);
 }
+
+#[cfg(target_arch = "wasm32")]
+type VmExecutionDeadline = f64;
+#[cfg(not(target_arch = "wasm32"))]
+type VmExecutionDeadline = Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TraceFrame {
@@ -506,26 +513,6 @@ pub(super) fn vm_current_thread_ident() -> i64 {
         .unwrap_or_else(vm_os_thread_ident)
 }
 
-fn env_flag_enabled(name: &str) -> bool {
-    let Ok(raw) = std::env::var(name) else {
-        return false;
-    };
-    let normalized = raw.trim().to_ascii_lowercase();
-    matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
-}
-
-fn env_flag_enabled_or_default(name: &str, default: bool) -> bool {
-    let Ok(raw) = std::env::var(name) else {
-        return default;
-    };
-    let normalized = raw.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "1" | "true" | "yes" | "on" => true,
-        "0" | "false" | "no" | "off" => false,
-        _ => default,
-    }
-}
-
 const ENV_VAR_PRESENCE_PROBES: &[&str] = &[
     "PYRS_IMPORT_PERF_VERBOSE",
     "PYRS_TRACE_ASSERT_RAISE",
@@ -553,6 +540,56 @@ const ENV_VAR_PRESENCE_PROBES: &[&str] = &[
     "PYRS_TRACE_SUBSCRIPT",
     "PYRS_TRACE_SUBSCRIPT_ERROR",
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EnvPresenceProbeSource {
+    Uninitialized = 0,
+    Native = 1,
+    Unsupported = 2,
+}
+
+impl EnvPresenceProbeSource {
+    fn from_raw(raw: u8) -> Self {
+        match raw {
+            1 => Self::Native,
+            2 => Self::Unsupported,
+            _ => Self::Uninitialized,
+        }
+    }
+
+    fn from_host(host: &dyn VmHost) -> Self {
+        if host.supports(HostCapability::EnvironmentRead) {
+            Self::Native
+        } else {
+            Self::Unsupported
+        }
+    }
+}
+
+static ENV_PRESENCE_PROBE_SOURCE: AtomicU8 =
+    AtomicU8::new(EnvPresenceProbeSource::Uninitialized as u8);
+
+#[inline]
+fn configure_env_presence_probe_source(host: &dyn VmHost) {
+    let source = EnvPresenceProbeSource::from_host(host);
+    ENV_PRESENCE_PROBE_SOURCE.store(source as u8, AtomicOrdering::Relaxed);
+}
+
+#[inline]
+fn env_probe_source() -> EnvPresenceProbeSource {
+    EnvPresenceProbeSource::from_raw(ENV_PRESENCE_PROBE_SOURCE.load(AtomicOrdering::Relaxed))
+}
+
+#[inline]
+fn host_env_var_present(name: &str) -> bool {
+    match env_probe_source() {
+        EnvPresenceProbeSource::Unsupported => false,
+        EnvPresenceProbeSource::Native | EnvPresenceProbeSource::Uninitialized => {
+            let host = NativeHost;
+            host.env_var_os(name).is_some()
+        }
+    }
+}
 
 #[inline]
 fn is_known_env_presence_probe(name: &'static str) -> bool {
@@ -588,7 +625,7 @@ fn is_known_env_presence_probe(name: &'static str) -> bool {
 
 #[inline]
 fn env_var_present_once(name: &'static str, slot: &'static OnceLock<bool>) -> bool {
-    *slot.get_or_init(|| std::env::var_os(name).is_some())
+    *slot.get_or_init(|| host_env_var_present(name))
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -615,27 +652,29 @@ struct VmTraceFlags {
 }
 
 impl VmTraceFlags {
-    fn from_env() -> Self {
+    fn from_host(host: &dyn VmHost) -> Self {
         Self {
-            import_perf_verbose: env_var_present_cached("PYRS_IMPORT_PERF_VERBOSE"),
-            assert_raise: env_var_present_cached("PYRS_TRACE_ASSERT_RAISE"),
-            build_class: env_var_present_cached("PYRS_TRACE_BUILD_CLASS"),
-            check_exc: env_var_present_cached("PYRS_TRACE_CHECK_EXC"),
-            class_base: env_var_present_cached("PYRS_TRACE_CLASS_BASE"),
-            delete_attr: env_var_present_cached("PYRS_TRACE_DELETE_ATTR"),
-            dict_merge: env_var_present_cached("PYRS_TRACE_DICT_MERGE"),
-            exception_table: env_var_present_cached("PYRS_TRACE_EXCEPTION_TABLE"),
-            fast_cell: env_var_present_cached("PYRS_TRACE_FAST_CELL"),
-            fast_local_unbound: env_var_present_cached("PYRS_TRACE_FAST_LOCAL_UNBOUND"),
-            for_iter_fail: env_var_present_cached("PYRS_TRACE_FOR_ITER_FAIL"),
-            import_pending: env_var_present_cached("PYRS_TRACE_IMPORT_PENDING"),
-            init_subclass: env_var_present_cached("PYRS_TRACE_INIT_SUBCLASS"),
-            numpy_core_importfrom: env_var_present_cached("PYRS_TRACE_NUMPY_CORE_IMPORTFROM"),
-            startswith_attr: env_var_present_cached("PYRS_TRACE_STARTSWITH_ATTR"),
-            store_attr: env_var_present_cached("PYRS_TRACE_STORE_ATTR"),
-            store_subscript: env_var_present_cached("PYRS_TRACE_STORE_SUBSCRIPT"),
-            subscript: env_var_present_cached("PYRS_TRACE_SUBSCRIPT"),
-            subscript_error: env_var_present_cached("PYRS_TRACE_SUBSCRIPT_ERROR"),
+            import_perf_verbose: host.env_var_os("PYRS_IMPORT_PERF_VERBOSE").is_some(),
+            assert_raise: host.env_var_os("PYRS_TRACE_ASSERT_RAISE").is_some(),
+            build_class: host.env_var_os("PYRS_TRACE_BUILD_CLASS").is_some(),
+            check_exc: host.env_var_os("PYRS_TRACE_CHECK_EXC").is_some(),
+            class_base: host.env_var_os("PYRS_TRACE_CLASS_BASE").is_some(),
+            delete_attr: host.env_var_os("PYRS_TRACE_DELETE_ATTR").is_some(),
+            dict_merge: host.env_var_os("PYRS_TRACE_DICT_MERGE").is_some(),
+            exception_table: host.env_var_os("PYRS_TRACE_EXCEPTION_TABLE").is_some(),
+            fast_cell: host.env_var_os("PYRS_TRACE_FAST_CELL").is_some(),
+            fast_local_unbound: host.env_var_os("PYRS_TRACE_FAST_LOCAL_UNBOUND").is_some(),
+            for_iter_fail: host.env_var_os("PYRS_TRACE_FOR_ITER_FAIL").is_some(),
+            import_pending: host.env_var_os("PYRS_TRACE_IMPORT_PENDING").is_some(),
+            init_subclass: host.env_var_os("PYRS_TRACE_INIT_SUBCLASS").is_some(),
+            numpy_core_importfrom: host
+                .env_var_os("PYRS_TRACE_NUMPY_CORE_IMPORTFROM")
+                .is_some(),
+            startswith_attr: host.env_var_os("PYRS_TRACE_STARTSWITH_ATTR").is_some(),
+            store_attr: host.env_var_os("PYRS_TRACE_STORE_ATTR").is_some(),
+            store_subscript: host.env_var_os("PYRS_TRACE_STORE_SUBSCRIPT").is_some(),
+            subscript: host.env_var_os("PYRS_TRACE_SUBSCRIPT").is_some(),
+            subscript_error: host.env_var_os("PYRS_TRACE_SUBSCRIPT_ERROR").is_some(),
         }
     }
 }
@@ -645,7 +684,7 @@ fn env_var_present_cached(name: &'static str) -> bool {
     let any_probe_enabled = *ANY_PROBE_ENABLED.get_or_init(|| {
         ENV_VAR_PRESENCE_PROBES
             .iter()
-            .any(|probe| std::env::var_os(probe).is_some())
+            .any(|probe| host_env_var_present(probe))
     });
     if !any_probe_enabled && is_known_env_presence_probe(name) {
         return false;
@@ -751,7 +790,7 @@ fn env_var_present_cached(name: &'static str) -> bool {
             static SLOT: OnceLock<bool> = OnceLock::new();
             env_var_present_once(name, &SLOT)
         }
-        _ => std::env::var_os(name).is_some(),
+        _ => host_env_var_present(name),
     }
 }
 
@@ -1028,6 +1067,7 @@ impl Frame {
 /// shims. Changes to caches or registries here must preserve CPython-visible
 /// behavior first; performance fast paths are secondary.
 pub struct Vm {
+    host: Arc<dyn VmHost>,
     frames: Vec<Box<Frame>>,
     frame_pool: Vec<Box<Frame>>,
     simple_frame_pool: Vec<Box<Frame>>,
@@ -1157,6 +1197,7 @@ pub struct Vm {
     traceback_caret_enabled: bool,
     instruction_step_limit: Option<u64>,
     instruction_steps: u64,
+    execution_deadline: Option<VmExecutionDeadline>,
 }
 
 impl Drop for Vm {
@@ -1231,26 +1272,26 @@ impl Drop for Vm {
                 let addr = raw as usize;
                 self.capi_registry_mark_pending_free(addr);
                 if !self.capi_owned_ptr_is_pinned(addr) {
-                    if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    if self.host.env_var_os("PYRS_TRACE_PIN_FREE").is_some() {
                         eprintln!("[pin-free] vm-skip ptr={:p} reason=not-in-set", raw);
                     }
                     self.capi_registry_mark_freed(addr);
                     continue;
                 }
                 if self.capi_registry_is_freed(addr) {
-                    if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    if self.host.env_var_os("PYRS_TRACE_PIN_FREE").is_some() {
                         eprintln!("[pin-free] vm-skip ptr={:p} reason=already-freed", raw);
                     }
                     self.capi_registry_mark_freed(addr);
                     continue;
                 }
                 if !freed_pinned_allocations.insert(addr) {
-                    if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    if self.host.env_var_os("PYRS_TRACE_PIN_FREE").is_some() {
                         eprintln!("[pin-free] vm-skip ptr={:p} reason=duplicate", raw);
                     }
                     continue;
                 }
-                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                if self.host.env_var_os("PYRS_TRACE_PIN_FREE").is_some() {
                     eprintln!("[pin-free] vm-free ptr={:p}", raw);
                 }
                 // SAFETY: pointers were allocated via libc malloc in C-API compat paths.
@@ -1276,6 +1317,11 @@ impl Default for Vm {
 
 impl Vm {
     pub fn new() -> Self {
+        Self::new_with_host(Arc::new(NativeHost))
+    }
+
+    pub fn new_with_host(host: Arc<dyn VmHost>) -> Self {
+        configure_env_presence_probe_source(host.as_ref());
         let heap = Heap::new();
         let main_module = match heap.alloc_module(ModuleObject::new("__main__")) {
             Value::Module(obj) => obj,
@@ -1298,10 +1344,11 @@ impl Vm {
         let mut modules = HashMap::new();
         modules.insert("__main__".to_string(), main_module.clone());
 
-        let module_paths = vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))];
-        let trace_flags = VmTraceFlags::from_env();
+        let module_paths = vec![host.current_dir().unwrap_or_else(|_| PathBuf::from("."))];
+        let trace_flags = VmTraceFlags::from_host(host.as_ref());
 
         let mut vm = Self {
+            host: host.clone(),
             frames: Vec::with_capacity(128),
             frame_pool: Vec::with_capacity(128),
             simple_frame_pool: Vec::with_capacity(128),
@@ -1323,7 +1370,7 @@ impl Vm {
             import_path_hooks_signature: 0,
             import_meta_path_has_default_finder: true,
             import_path_hooks_has_default_hook: true,
-            import_perf_enabled: env_flag_enabled("PYRS_IMPORT_PERF"),
+            import_perf_enabled: host.env_flag_enabled("PYRS_IMPORT_PERF"),
             trace_flags,
             import_perf_counters: ImportPerfCounters::default(),
             heap,
@@ -1399,16 +1446,14 @@ impl Vm {
             next_extension_callable_id: 1,
             // Shim fallback is restricted by LOCAL_SHIM_MODULES (`_ctypes`) and only used when
             // normal path resolution fails, so keep it enabled by default (allow explicit opt-out).
-            local_shim_fallback_enabled: !env_flag_enabled("PYRS_DISABLE_LOCAL_SHIMS"),
+            local_shim_fallback_enabled: !host.env_flag_enabled("PYRS_DISABLE_LOCAL_SHIMS"),
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
             prefer_pure_re_when_available: true,
             // CPython-default behavior: prefer validated source-bound pyc when available.
             // `PYRS_IMPORT_PREFER_PYC` can still explicitly override this.
-            prefer_pyc_when_source_available: env_flag_enabled_or_default(
-                "PYRS_IMPORT_PREFER_PYC",
-                true,
-            ),
+            prefer_pyc_when_source_available: host
+                .env_flag_enabled_or_default("PYRS_IMPORT_PREFER_PYC", true),
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
             hash_cache: HashMap::new(),
@@ -1440,11 +1485,12 @@ impl Vm {
             warnings_bless_my_loader_depth: 0,
             fast_local_unbound_marker,
             traceback_caret_enabled: true,
-            instruction_step_limit: std::env::var("PYRS_STEP_LIMIT")
-                .ok()
+            instruction_step_limit: host
+                .env_var("PYRS_STEP_LIMIT")
                 .and_then(|value| value.parse::<u64>().ok())
                 .filter(|limit| *limit > 0),
             instruction_steps: 0,
+            execution_deadline: None,
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(
@@ -1921,7 +1967,7 @@ impl Vm {
     #[inline]
     fn ensure_can_push_python_frame(&self) -> Result<(), RuntimeError> {
         if self.frames.len() as i64 >= self.recursion_limit {
-            if std::env::var_os("PYRS_TRACE_RECURSION_LIMIT").is_some() {
+            if self.host.env_var_os("PYRS_TRACE_RECURSION_LIMIT").is_some() {
                 let frame_summary = self
                     .frames
                     .iter()
@@ -3807,6 +3853,47 @@ impl Vm {
         result
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn deadline_from_timeout_ms(timeout_ms: u32) -> Option<VmExecutionDeadline> {
+        Instant::now().checked_add(Duration::from_millis(timeout_ms as u64))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn deadline_from_timeout_ms(timeout_ms: u32) -> Option<VmExecutionDeadline> {
+        Some(Date::now() + timeout_ms as f64)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn deadline_reached(deadline: VmExecutionDeadline) -> bool {
+        Instant::now() >= deadline
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn deadline_reached(deadline: VmExecutionDeadline) -> bool {
+        Date::now() >= deadline
+    }
+
+    fn execution_deadline_reached(&self) -> bool {
+        self.execution_deadline
+            .map(Self::deadline_reached)
+            .unwrap_or(false)
+    }
+
+    pub fn execute_with_timeout_ms(
+        &mut self,
+        code: &CodeObject,
+        timeout_ms: u32,
+    ) -> Result<Value, RuntimeError> {
+        if timeout_ms == 0 {
+            return self.execute(code);
+        }
+        let previous_deadline = self.execution_deadline;
+        self.execution_deadline = Self::deadline_from_timeout_ms(timeout_ms);
+        let result = self.execute(code);
+        self.execution_deadline = previous_deadline;
+        result
+    }
+
     pub fn execute_pyc_bytes(&mut self, bytes: &[u8]) -> Result<Value, RuntimeError> {
         let pyc = cpython::load_pyc(bytes).map_err(|err| RuntimeError::new(err.message))?;
         let code = cpython::translate_code(&pyc, &mut self.heap)
@@ -3821,19 +3908,19 @@ impl Vm {
     }
 
     fn detect_cpython_stdlib_root(&self) -> Option<PathBuf> {
-        if let Ok(path) = std::env::var("PYRS_CPYTHON_LIB") {
+        if let Some(path) = self.host.env_var("PYRS_CPYTHON_LIB") {
             let path = PathBuf::from(path);
-            if path.is_dir() {
+            if self.host.path_is_dir(&path) {
                 return Some(path);
             }
         }
         let local = PathBuf::from(".local/Python-3.14.3/Lib");
-        if local.is_dir() {
+        if self.host.path_is_dir(&local) {
             return Some(local);
         }
         let framework =
             PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14");
-        if framework.is_dir() {
+        if self.host.path_is_dir(&framework) {
             return Some(framework);
         }
         None
@@ -4103,19 +4190,23 @@ impl Vm {
             module_data
                 .globals
                 .insert("implementation".to_string(), Value::Module(implementation));
-            let argv = std::env::args().map(Value::Str).collect::<Vec<_>>();
+            let process_args = self.host.process_args();
+            let argv = process_args
+                .iter()
+                .cloned()
+                .map(Value::Str)
+                .collect::<Vec<_>>();
             module_data
                 .globals
                 .insert("argv".to_string(), self.heap.alloc_list(argv.clone()));
             module_data
                 .globals
                 .insert("orig_argv".to_string(), self.heap.alloc_list(argv));
-            let executable_path = std::env::current_exe().unwrap_or_else(|_| {
-                std::env::args()
-                    .next()
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("pyrs"))
-            });
+            let executable_path = self
+                .host
+                .current_exe()
+                .or_else(|| process_args.first().map(PathBuf::from))
+                .unwrap_or_else(|| PathBuf::from("pyrs"));
             let executable = executable_path.to_string_lossy().to_string();
             let mut inferred_prefix = executable_path
                 .parent()
@@ -4142,9 +4233,11 @@ impl Vm {
                 }
             }
             let inferred_prefix_str = inferred_prefix.to_string_lossy().to_string();
-            let venv_prefix = std::env::var_os("VIRTUAL_ENV")
+            let venv_prefix = self
+                .host
+                .env_var_os("VIRTUAL_ENV")
                 .map(PathBuf::from)
-                .filter(|path| path.is_dir())
+                .filter(|path| self.host.path_is_dir(path))
                 .map(|path| path.to_string_lossy().to_string());
             let prefix = venv_prefix
                 .clone()
@@ -4167,7 +4260,7 @@ impl Vm {
             module_data
                 .globals
                 .insert("base_exec_prefix".to_string(), Value::Str(base_exec_prefix));
-            let platform = match std::env::consts::OS {
+            let platform = match self.host.os_name() {
                 "macos" => "darwin",
                 other => other,
             };
@@ -5645,7 +5738,7 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
             value_to_int(backing.clone())
         }
         other => {
-            if std::env::var_os("PYRS_TRACE_VALUE_TO_INT").is_some() {
+            if env_var_present_cached("PYRS_TRACE_VALUE_TO_INT") {
                 eprintln!("[value_to_int] unsupported value={}", format_repr(&other));
                 eprintln!(
                     "[value_to_int] backtrace:\n{:?}",
@@ -6254,6 +6347,7 @@ fn value_to_sequence_items(value: &Value) -> Result<Vec<Value>, RuntimeError> {
     }
 }
 
+#[cfg(unix)]
 fn collect_process_argv(value: &Value) -> Result<Vec<String>, RuntimeError> {
     let items = value_to_sequence_items(value)?;
     let mut argv = Vec::with_capacity(items.len());
@@ -6263,6 +6357,7 @@ fn collect_process_argv(value: &Value) -> Result<Vec<String>, RuntimeError> {
     Ok(argv)
 }
 
+#[cfg(unix)]
 fn collect_env_entries(value: &Value) -> Result<Vec<(String, String)>, RuntimeError> {
     let items = value_to_sequence_items(value)?;
     let mut out = Vec::with_capacity(items.len());
@@ -6472,15 +6567,6 @@ fn uuid_hash_mix_bytes(tag: u8, namespace: [u8; 16], name: &[u8]) -> [u8; 16] {
     bytes[..8].copy_from_slice(&high.to_be_bytes());
     bytes[8..].copy_from_slice(&low.to_be_bytes());
     bytes
-}
-
-fn uuid_node_from_hostname() -> i64 {
-    let mut hasher = DefaultHasher::new();
-    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string());
-    host.hash(&mut hasher);
-    let mut node = hasher.finish() & 0x0000_FFFF_FFFF_FFFF;
-    node |= 0x0000_0100_0000_0000;
-    node as i64
 }
 
 fn uuid_timestamp_100ns_since_gregorian() -> Result<u64, RuntimeError> {
@@ -10116,7 +10202,7 @@ fn bind_arguments(
         && func.code.kwarg.is_none()
     {
         if positional.len() != total_positional {
-            if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+            if env_var_present_cached("PYRS_TRACE_BIND_ARGS") {
                 eprintln!(
                     "[bind-args] fn={} file={} count-mismatch positional={} expected={} posonly={:?} params={:?}",
                     func.code.name,
@@ -10176,7 +10262,7 @@ fn bind_arguments(
     let mut extra_positional = Vec::new();
     if positional.len() > total_positional {
         if func.code.vararg.is_none() {
-            if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+            if env_var_present_cached("PYRS_TRACE_BIND_ARGS") {
                 eprintln!(
                     "[bind-args] fn={} file={} extra-positional={} max={} (no vararg)",
                     func.code.name,
@@ -10232,7 +10318,7 @@ fn bind_arguments(
                 extra_kwargs.push((name, value));
                 continue;
             }
-            if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+            if env_var_present_cached("PYRS_TRACE_BIND_ARGS") {
                 eprintln!(
                     "[bind-args] fn={} unexpected-posonly-keyword={}",
                     func.code.name, name
@@ -10277,7 +10363,7 @@ fn bind_arguments(
             }
             extra_kwargs.push((name, value));
         } else {
-            if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+            if env_var_present_cached("PYRS_TRACE_BIND_ARGS") {
                 eprintln!(
                     "[bind-args] fn={} unexpected-keyword={}",
                     func.code.name, name
@@ -10311,7 +10397,7 @@ fn bind_arguments(
         }
     }
     if !missing_required.is_empty() {
-        if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+        if env_var_present_cached("PYRS_TRACE_BIND_ARGS") {
             eprintln!(
                 "[bind-args] fn={} file={} missing-required positional={:?} signature posonly={:?} params={:?}",
                 func.code.name,
@@ -10948,7 +11034,7 @@ fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {
         seen: &mut HashSet<u64>,
         depth: usize,
     ) {
-        if std::env::var_os("PYRS_DEBUG_CLASS_ATTR_WALK_DEPTH").is_some() && depth > 256 {
+        if env_var_present_cached("PYRS_DEBUG_CLASS_ATTR_WALK_DEPTH") && depth > 256 {
             let class_name = match &*class.kind() {
                 Object::Class(class_data) => class_data.name.clone(),
                 _ => "<non-class>".to_string(),

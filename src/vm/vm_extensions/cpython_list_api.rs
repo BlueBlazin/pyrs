@@ -76,7 +76,7 @@ pub(super) static mut PY_LIST_MAPPING_METHODS: CpythonMappingMethods = CpythonMa
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyList_New(size: isize) -> *mut c_void {
-    let trace_lists = std::env::var_os("PYRS_TRACE_CPY_LIST").is_some();
+    let trace_lists = super::super::env_var_present_cached("PYRS_TRACE_CPY_LIST");
     if size < 0 {
         cpython_set_error("PyList_New requires non-negative size");
         return std::ptr::null_mut();
@@ -105,7 +105,7 @@ pub unsafe extern "C" fn PyList_New(size: isize) -> *mut c_void {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyList_Size(list: *mut c_void) -> isize {
-    let trace_lists = std::env::var_os("PYRS_TRACE_CPY_LIST").is_some();
+    let trace_lists = super::super::env_var_present_cached("PYRS_TRACE_CPY_LIST");
     if trace_lists {
         let _ = with_active_cpython_context_mut(|context| {
             if context.owns_cpython_allocation_ptr(list) {
@@ -155,7 +155,7 @@ pub unsafe extern "C" fn PyList_Size(list: *mut c_void) -> isize {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyList_Append(list: *mut c_void, item: *mut c_void) -> i32 {
-    let trace_lists = std::env::var_os("PYRS_TRACE_CPY_LIST").is_some();
+    let trace_lists = super::super::env_var_present_cached("PYRS_TRACE_CPY_LIST");
     with_active_cpython_context_mut(|context| {
         let item_value = match context.cpython_value_from_ptr_or_proxy(item) {
             Some(value) => value,
@@ -240,7 +240,7 @@ pub unsafe extern "C" fn PyList_Append(list: *mut c_void, item: *mut c_void) -> 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyList_GetItem(list: *mut c_void, index: isize) -> *mut c_void {
-    let trace_lists = std::env::var_os("PYRS_TRACE_CPY_LIST").is_some();
+    let trace_lists = super::super::env_var_present_cached("PYRS_TRACE_CPY_LIST");
     with_active_cpython_context_mut(|context| {
         if index < 0 {
             context.set_error("PyList_GetItem index out of range");
@@ -648,7 +648,7 @@ pub unsafe extern "C" fn PyList_Reverse(list: *mut c_void) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyList_GetItemRef(list: *mut c_void, index: isize) -> *mut c_void {
-    let trace_lists = std::env::var_os("PYRS_TRACE_CPY_LIST").is_some();
+    let trace_lists = super::super::env_var_present_cached("PYRS_TRACE_CPY_LIST");
     with_active_cpython_context_mut(|context| {
         if index < 0 {
             context.set_error("PyList_GetItemRef index out of range");

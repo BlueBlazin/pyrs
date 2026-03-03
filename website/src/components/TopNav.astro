@@ -1,12 +1,30 @@
 ---
 interface Props {
-	context?: "home" | "docs";
+	context?: "home" | "docs" | "playground";
 }
 
 const { context = "home" } = Astro.props;
 const isHome = context === "home";
 const intrinsicLogoSize = 68;
 const withBase = (path = "") => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, "")}`;
+const navLinks =
+	context === "home"
+		? [
+				{ label: "Docs", href: withBase("docs/") },
+				{ label: "Playground", href: withBase("playground/") },
+				{ label: "GitHub", href: "https://github.com/BlueBlazin/pyrs" },
+			]
+		: context === "docs"
+			? [
+					{ label: "Home", href: withBase("") },
+					{ label: "Playground", href: withBase("playground/") },
+					{ label: "GitHub", href: "https://github.com/BlueBlazin/pyrs" },
+				]
+			: [
+					{ label: "Home", href: withBase("") },
+					{ label: "Docs", href: withBase("docs/") },
+					{ label: "GitHub", href: "https://github.com/BlueBlazin/pyrs" },
+				];
 ---
 
 <header class="global-topbar" data-context={context}>
@@ -15,8 +33,11 @@ const withBase = (path = "") => `${import.meta.env.BASE_URL}${path.replace(/^\/+
 		<span>PYRS</span>
 	</a>
 	<nav class="global-topnav">
-		{context === "home" ? <a href={withBase("docs/")}>Docs</a> : <a href={withBase("")}>Home</a>}
-		<a href="https://github.com/BlueBlazin/pyrs">GitHub</a>
+		{
+			navLinks.map((link) => (
+				<a href={link.href}>{link.label}</a>
+			))
+		}
 	</nav>
 </header>
 

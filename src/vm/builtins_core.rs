@@ -33,13 +33,9 @@ use crate::ast::{
 };
 use crate::runtime::value_lookup_hash;
 use std::collections::hash_map::DefaultHasher;
-use std::ffi::CString;
 use std::hash::{Hash, Hasher};
-use std::os::raw::{c_char, c_int};
-
-unsafe extern "C" {
-    fn snprintf(buffer: *mut c_char, size: usize, format: *const c_char, ...) -> c_int;
-}
+#[cfg(target_arch = "wasm32")]
+use super::wasm_c_float_format::format_float_with_c_pattern;
 
 thread_local! {
     static TYPE_INSTANCECHECK_BYPASS_CUSTOM: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1843,7 +1839,7 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        let mut setting = std::env::var("PYTHONBREAKPOINT").unwrap_or_default();
+        let mut setting = self.host.env_var("PYTHONBREAKPOINT").unwrap_or_default();
         if setting.is_empty() {
             setting = "pdb.set_trace".to_string();
         } else if setting == "0" {
@@ -7332,7 +7328,7 @@ impl Vm {
         }
         let value = args.remove(0);
         let callable = self.is_callable_value(&value);
-        if !callable && std::env::var_os("PYRS_TRACE_CALLABLE_FALSE").is_some() {
+        if !callable && self.host.env_var_os("PYRS_TRACE_CALLABLE_FALSE").is_some() {
             eprintln!(
                 "[callable-false] type={} repr={}",
                 self.value_type_name_for_error(&value),
@@ -9485,7 +9481,7 @@ impl Vm {
                 _ => false,
             };
             if !allow_extra {
-                if std::env::var_os("PYRS_TRACE_OBJECT_INIT").is_some() {
+                if self.host.env_var_os("PYRS_TRACE_OBJECT_INIT").is_some() {
                     let class_name = match &args[0] {
                         Value::Instance(instance) => match &*instance.kind() {
                             Object::Instance(instance_data) => match &*instance_data.class.kind() {
@@ -9896,7 +9892,10 @@ impl Vm {
             .extension_cpython_ptr_by_object_id
             .contains_key(&class.id())
         {
-            if std::env::var_os("PYRS_TRACE_OBJECT_INIT_CLASS").is_some()
+            if self
+                .host
+                .env_var_os("PYRS_TRACE_OBJECT_INIT_CLASS")
+                .is_some()
                 && let Object::Class(class_data) = &*class.kind()
             {
                 eprintln!(
@@ -9907,7 +9906,10 @@ impl Vm {
             }
             return true;
         }
-        if std::env::var_os("PYRS_TRACE_OBJECT_INIT_CLASS").is_some()
+        if self
+            .host
+            .env_var_os("PYRS_TRACE_OBJECT_INIT_CLASS")
+            .is_some()
             && let Object::Class(class_data) = &*class.kind()
         {
             eprintln!(
@@ -10013,7 +10015,11 @@ impl Vm {
             }
             Value::Cell(cell) => self.store_attr_cell(&cell, &name, value)?,
             other => {
-                if std::env::var_os("PYRS_TRACE_SETATTR_UNSUPPORTED").is_some() {
+                if self
+                    .host
+                    .env_var_os("PYRS_TRACE_SETATTR_UNSUPPORTED")
+                    .is_some()
+                {
                     eprintln!(
                         "[object-setattr-unsupported] target={} name={}",
                         format_repr(&other),
@@ -10953,28 +10959,48 @@ impl Vm {
         format_text: &str,
         value: f64,
     ) -> Result<String, RuntimeError> {
-        let c_format = CString::new(format_text)
-            .map_err(|_| RuntimeError::value_error("invalid format string"))?;
-        // SAFETY: `c_format` is NUL-terminated and valid for both calls.
-        let needed = unsafe { snprintf(std::ptr::null_mut(), 0, c_format.as_ptr(), value) };
-        if needed < 0 {
-            return Err(RuntimeError::value_error("failed to format float"));
+        #[cfg(target_arch = "wasm32")]
+        {
+            format_float_with_c_pattern(format_text, value)
         }
-        let mut buffer = vec![0u8; needed as usize + 1];
-        // SAFETY: buffer is writable and large enough for output including trailing NUL.
-        let wrote = unsafe {
-            snprintf(
-                buffer.as_mut_ptr().cast::<c_char>(),
-                buffer.len(),
-                c_format.as_ptr(),
-                value,
-            )
-        };
-        if wrote < 0 {
-            return Err(RuntimeError::value_error("failed to format float"));
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use std::ffi::CString;
+            use std::os::raw::{c_char, c_int};
+
+            unsafe extern "C" {
+                fn snprintf(
+                    buffer: *mut c_char,
+                    size: usize,
+                    format: *const c_char,
+                    ...
+                ) -> c_int;
+            }
+
+            let c_format = CString::new(format_text)
+                .map_err(|_| RuntimeError::value_error("invalid format string"))?;
+            // SAFETY: `c_format` is NUL-terminated and valid for both calls.
+            let needed = unsafe { snprintf(std::ptr::null_mut(), 0, c_format.as_ptr(), value) };
+            if needed < 0 {
+                return Err(RuntimeError::value_error("failed to format float"));
+            }
+            let mut buffer = vec![0u8; needed as usize + 1];
+            // SAFETY: buffer is writable and large enough for output including trailing NUL.
+            let wrote = unsafe {
+                snprintf(
+                    buffer.as_mut_ptr().cast::<c_char>(),
+                    buffer.len(),
+                    c_format.as_ptr(),
+                    value,
+                )
+            };
+            if wrote < 0 {
+                return Err(RuntimeError::value_error("failed to format float"));
+            }
+            buffer.truncate(wrote as usize);
+            Ok(String::from_utf8_lossy(&buffer).into_owned())
         }
-        buffer.truncate(wrote as usize);
-        Ok(String::from_utf8_lossy(&buffer).into_owned())
     }
 
     fn apply_grouping_to_float_text(
@@ -11917,7 +11943,7 @@ impl Vm {
     ) -> Result<Option<Ordering>, RuntimeError> {
         const PY_LT: i32 = 0;
         const PY_GT: i32 = 4;
-        if std::env::var_os("PYRS_TRACE_COMPARE_ORDER").is_some() {
+        if self.host.env_var_os("PYRS_TRACE_COMPARE_ORDER").is_some() {
             eprintln!(
                 "[cmp-order] left_type={} right_type={} left_proxy={:p} right_proxy={:p}",
                 self.value_type_name_for_error(&left),
@@ -12422,7 +12448,10 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = std::env::var_os("PYRS_TRACE_BINARY_DIV_RUNTIME").is_some();
+        let trace = self
+            .host
+            .env_var_os("PYRS_TRACE_BINARY_DIV_RUNTIME")
+            .is_some();
         match div_values(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err)
@@ -12533,7 +12562,10 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = std::env::var_os("PYRS_TRACE_BINARY_MUL_RUNTIME").is_some();
+        let trace = self
+            .host
+            .env_var_os("PYRS_TRACE_BINARY_MUL_RUNTIME")
+            .is_some();
         match mul_values(left.clone(), right.clone(), &self.heap) {
             Ok(value) => Ok(value),
             Err(err)
@@ -12630,7 +12662,10 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = std::env::var_os("PYRS_TRACE_BINARY_SUB_RUNTIME").is_some();
+        let trace = self
+            .host
+            .env_var_os("PYRS_TRACE_BINARY_SUB_RUNTIME")
+            .is_some();
         match sub_values(left.clone(), right.clone(), &self.heap) {
             Ok(value) => Ok(value),
             Err(err)
@@ -12693,7 +12728,10 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = std::env::var_os("PYRS_TRACE_BINARY_OR_RUNTIME").is_some();
+        let trace = self
+            .host
+            .env_var_os("PYRS_TRACE_BINARY_OR_RUNTIME")
+            .is_some();
         match or_values(left.clone(), right.clone(), &self.heap) {
             Ok(value) => {
                 if matches!(value, Value::Tuple(_))
@@ -12768,7 +12806,10 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        let trace = std::env::var_os("PYRS_TRACE_BINARY_XOR_RUNTIME").is_some();
+        let trace = self
+            .host
+            .env_var_os("PYRS_TRACE_BINARY_XOR_RUNTIME")
+            .is_some();
         match xor_values(left.clone(), right.clone(), &self.heap) {
             Ok(value) => Ok(value),
             Err(err)
@@ -13952,7 +13993,9 @@ impl Vm {
                     if matches!(value, Value::ExceptionType(_)) {
                         return Ok(matches!(class_data.name.as_str(), "type" | "object"));
                     }
-                    let trace_seed_instance = std::env::var_os("PYRS_TRACE_ISINSTANCE_CLASS")
+                    let trace_seed_instance = self
+                        .host
+                        .env_var_os("PYRS_TRACE_ISINSTANCE_CLASS")
                         .is_some()
                         && matches!(value, Value::None)
                         && (class_data.name.contains("SeedSequence")
@@ -15737,7 +15780,10 @@ impl Vm {
             return self.load_dunder_class_attr(&target);
         }
         if name == "generate_state"
-            && std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE").is_some()
+            && self
+                .host
+                .env_var_os("PYRS_TRACE_GETATTR_GENERATE_STATE")
+                .is_some()
         {
             let target_tag = match &target {
                 Value::None => "None".to_string(),
@@ -16120,7 +16166,11 @@ impl Vm {
             }
             Value::Builtin(builtin) => self.store_attr_builtin(builtin, &name, value)?,
             other => {
-                if std::env::var_os("PYRS_TRACE_SETATTR_UNSUPPORTED").is_some() {
+                if self
+                    .host
+                    .env_var_os("PYRS_TRACE_SETATTR_UNSUPPORTED")
+                    .is_some()
+                {
                     eprintln!(
                         "[setattr-unsupported] target={} name={}",
                         format_repr(&other),
@@ -16320,7 +16370,7 @@ impl Vm {
             } else {
                 inferred
             };
-            if std::env::var_os("PYRS_TRACE_SUPER_DTYPE").is_some() {
+            if self.host.env_var_os("PYRS_TRACE_SUPER_DTYPE").is_some() {
                 let class_name = |class: &ObjRef| match &*class.kind() {
                     Object::Class(class_data) => class_data.name.clone(),
                     _ => "<non-class>".to_string(),

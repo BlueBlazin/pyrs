@@ -499,7 +499,7 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
         let mut slot_object = object;
         let mut proxy_slot_fallback = false;
         if let Some(value) = mapped_value.clone() {
-            if std::env::var_os("PYRS_TRACE_CPY_LONG").is_some()
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_LONG")
                 && let Value::Instance(instance_obj) = &value
             {
                 let (class_name, has_proxy_marker, has_proxy_attr) =
@@ -525,7 +525,7 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                     object, class_name, has_proxy_marker, has_proxy_attr
                 );
                 if class_name == "_NoValueType"
-                    && std::env::var_os("PYRS_TRACE_CPY_LONG_BACKTRACE").is_some()
+                    && super::super::env_var_present_cached("PYRS_TRACE_CPY_LONG_BACKTRACE")
                 {
                     eprintln!(
                         "[cpy-long-map-bt] object={:p}\n{}",
@@ -546,8 +546,8 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                         context.alloc_cpython_ptr_for_value(Value::BigInt(bigint))
                     }
                     _ => {
-                        if std::env::var_os("PYRS_TRACE_CPY_LONG").is_some()
-                            || std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
+                        if super::super::env_var_present_cached("PYRS_TRACE_CPY_LONG")
+                            || super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS")
                         {
                             eprintln!(
                                 "[cpy-long-debug] builtin-int returned non-int object={:p} mapped={}",
@@ -591,7 +591,7 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                 .unwrap_or(std::ptr::null_mut())
         };
         if type_ptr.is_null() {
-            if std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_UNKNOWN_PTR") {
                 eprintln!("[cpy-unknown-ptr] PyNumber_Long object={:p}", slot_object);
             }
             context.set_error("unknown PyObject pointer");
@@ -605,7 +605,7 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                 .as_ref()
         };
         let Some(number_methods) = number_methods else {
-            if std::env::var_os("PYRS_TRACE_CPY_LONG").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_LONG") {
                 // SAFETY: `type_ptr` is non-null and points to a CPython-compatible type object.
                 let type_name = unsafe {
                     c_name_to_string((*type_ptr).tp_name)
@@ -628,7 +628,7 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
         };
         let converter = number_methods.nb_int.or(number_methods.nb_index);
         let Some(converter) = converter else {
-            if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") {
                 // SAFETY: `type_ptr` is non-null and points to a CPython-compatible type object.
                 let type_name = unsafe {
                     c_name_to_string((*type_ptr).tp_name)

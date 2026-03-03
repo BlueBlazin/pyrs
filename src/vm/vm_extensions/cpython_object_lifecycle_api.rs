@@ -120,7 +120,7 @@ pub unsafe extern "C" fn _Py_Dealloc(object: *mut c_void) {
     if object.is_null() {
         return;
     }
-    let trace_dealloc = std::env::var_os("PYRS_TRACE_CPY_DEALLOC").is_some();
+    let trace_dealloc = super::super::env_var_present_cached("PYRS_TRACE_CPY_DEALLOC");
     let object_type_name = if trace_dealloc {
         // SAFETY: best-effort debug read for candidate PyObject*.
         let ty_ptr =

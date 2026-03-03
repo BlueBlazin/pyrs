@@ -37,6 +37,7 @@ pub(in crate::vm) struct LzmaDecompressorState {
     check: i64,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[link(name = "lzma")]
 unsafe extern "C" {
     fn lzma_easy_buffer_encode(
@@ -61,6 +62,40 @@ unsafe extern "C" {
         output_size: usize,
     ) -> c_uint;
     fn lzma_check_is_supported(check: c_uint) -> c_int;
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe fn lzma_easy_buffer_encode(
+    _preset: c_uint,
+    _check: c_uint,
+    _allocator: *const c_void,
+    _input: *const u8,
+    _input_size: usize,
+    _output: *mut u8,
+    _output_pos: *mut usize,
+    _output_size: usize,
+) -> c_uint {
+    11
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe fn lzma_stream_buffer_decode(
+    _memlimit: *mut u64,
+    _flags: c_uint,
+    _allocator: *const c_void,
+    _input: *const u8,
+    _input_pos: *mut usize,
+    _input_size: usize,
+    _output: *mut u8,
+    _output_pos: *mut usize,
+    _output_size: usize,
+) -> c_uint {
+    11
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe fn lzma_check_is_supported(_check: c_uint) -> c_int {
+    0
 }
 
 impl Vm {

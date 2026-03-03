@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use pyrs::bytecode::pyc::{PycHeader, parse_pyc_header, write_pyc_header};
 
 #[test]

@@ -3,6 +3,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::cli;
 use crate::runtime::Value;
 use crate::{compiler, parser};
@@ -29,11 +30,44 @@ use super::{
 const CPYTHON_PENDING_CALLS_MAX: usize = 32;
 const CPYTHON_ATEXIT_CALLBACKS_MAX: usize = 32;
 
+fn cpython_target_arch() -> &'static str {
+    if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        "unknown"
+    }
+}
+
+fn cpython_target_os() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "unknown"
+    }
+}
+
+fn cpython_host_env_var(name: &str) -> Option<String> {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return None;
+        }
+        // SAFETY: active context holds a live VM pointer for this call.
+        let vm = unsafe { &*context.vm };
+        vm.host.env_var(name)
+    })
+    .ok()
+    .flatten()
+}
+
 fn cpython_build_info_cstring() -> &'static CString {
     CPYTHON_BUILD_INFO_TEXT.get_or_init(|| {
         let package_version = env!("CARGO_PKG_VERSION");
-        let target_arch = std::env::consts::ARCH;
-        let target_os = std::env::consts::OS;
+        let target_arch = cpython_target_arch();
+        let target_os = cpython_target_os();
         CString::new(format!("pyrs-{package_version}, {target_arch}-{target_os}"))
             .expect("build info should not contain interior NUL")
     })
@@ -49,7 +83,7 @@ fn cpython_compiler_cstring() -> &'static CString {
 
 fn cpython_platform_cstring() -> &'static CString {
     CPYTHON_PLATFORM_TEXT.get_or_init(|| {
-        CString::new(std::env::consts::OS).expect("platform should not contain interior NUL")
+        CString::new(cpython_target_os()).expect("platform should not contain interior NUL")
     })
 }
 
@@ -258,8 +292,7 @@ pub unsafe extern "C" fn Py_SetPythonHome(home: *const Cwchar) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Py_GetPythonHome() -> *mut Cwchar {
     cpython_get_or_init_wide_storage(&CPYTHON_PYTHON_HOME_WIDE, || {
-        std::env::var("PYTHONHOME")
-            .ok()
+        cpython_host_env_var("PYTHONHOME")
             .or_else(|| cpython_read_sys_string("prefix"))
             .unwrap_or_default()
     })
@@ -633,8 +666,19 @@ pub unsafe extern "C" fn Py_Main(argc: c_int, argv: *mut *mut Cwchar) -> c_int {
         cpython_set_wide_storage(&CPYTHON_PROGRAM_FULL_PATH_WIDE, program);
     }
     cpython_store_argv_wide(&all_args);
-    let cli_args = all_args.into_iter().skip(1).collect();
-    cli::run_with_args_vec(cli_args)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let cli_args = all_args.into_iter().skip(1).collect();
+        return cli::run_with_args_vec(cli_args);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "Py_Main is unavailable on wasm target",
+        );
+        2
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -670,8 +714,19 @@ pub unsafe extern "C" fn Py_BytesMain(argc: c_int, argv: *mut *mut c_char) -> c_
         cpython_set_wide_storage(&CPYTHON_PROGRAM_FULL_PATH_WIDE, program);
     }
     cpython_store_argv_wide(&all_args);
-    let cli_args = all_args.into_iter().skip(1).collect();
-    cli::run_with_args_vec(cli_args)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let cli_args = all_args.into_iter().skip(1).collect();
+        return cli::run_with_args_vec(cli_args);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "Py_BytesMain is unavailable on wasm target",
+        );
+        2
+    }
 }
 
 #[unsafe(no_mangle)]

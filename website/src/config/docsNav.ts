@@ -22,6 +22,7 @@ export const docsNavGroups: DocsNavGroup[] = [
 		items: [
 			{ href: "/docs/execution-modes/", label: "Execution Modes" },
 			{ href: "/docs/repl-reference/", label: "REPL Reference" },
+			{ href: "/docs/playground/", label: "Browser Playground" },
 			{ href: "/docs/ast-and-bytecode-tools/", label: "AST and Bytecode Tools" },
 			{ href: "/docs/reference/", label: "CLI and Environment" },
 			{ href: "/docs/diagnostics/", label: "Diagnostics and Tracebacks" },

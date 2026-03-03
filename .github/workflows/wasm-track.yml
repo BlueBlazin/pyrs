@@ -1,0 +1,167 @@
+name: wasm-track
+
+on:
+  push:
+    branches:
+      - codex/wasm
+  pull_request:
+    branches:
+      - codex/wasm
+  workflow_dispatch:
+
+jobs:
+  wasm-contract-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev
+
+      - name: Install cargo-nextest
+        run: |
+          if ! command -v cargo-nextest >/dev/null 2>&1; then
+            cargo install cargo-nextest --locked
+          fi
+
+      - name: Run wasm branch gate
+        run: scripts/check_wasm_branch.sh
+
+      - name: Validate local wasm evidence pack
+        run: |
+          python3 scripts/validate_wasm_evidence_pack.py \
+            --pack-dir perf/wasm_evidence_pack_latest
+
+      - name: Upload wasm contract artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-contract-artifacts
+          if-no-files-found: ignore
+          path: |
+            perf/wasm_worker_contract_summary_latest.json
+            perf/wasm_execute_contract_summary_latest.json
+            perf/wasm_session_contract_summary_latest.json
+            perf/wasm_docs_execution_matrix_summary_latest.json
+            perf/wasm_api_contract_surface_summary_latest.json
+            perf/wasm_worker_docs_contract_summary_latest.json
+            perf/wasm_client_flow_summary_latest.json
+            perf/wasm_module_policy_summary_latest.json
+            perf/wasm_capability_summary_latest.json
+            perf/wasm_playground_worker_contract_latest.json
+            perf/wasm_host_seam_audit_latest.json
+            perf/wasm_vm_link_blockers_latest.json
+            perf/wasm_vm_env_import_summary_latest.json
+            perf/wasm_worker_contract_summary_vm_probe_latest.json
+            perf/wasm_execute_contract_summary_vm_probe_latest.json
+            perf/wasm_browser_smoke_baseline_latest.json
+            perf/wasm_evidence_pack_latest/manifest.json
+            perf/wasm_evidence_pack_latest/*.json
+
+      - name: Upload wasm evidence-pack artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-evidence-pack
+          if-no-files-found: error
+          path: perf/wasm_evidence_pack_latest/**
+
+  wasm-browser-smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: wasm-contract-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev
+
+      - name: Install cargo-nextest
+        run: |
+          if ! command -v cargo-nextest >/dev/null 2>&1; then
+            cargo install cargo-nextest --locked
+          fi
+
+      - name: Install wasm-pack
+        run: |
+          if ! command -v wasm-pack >/dev/null 2>&1; then
+            cargo install wasm-pack --locked
+          fi
+
+      - name: Download contract-gate evidence pack
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-evidence-pack
+          path: perf/wasm_evidence_pack_from_gate
+
+      - name: Validate downloaded contract-gate evidence pack
+        run: |
+          python3 scripts/validate_wasm_evidence_pack.py \
+            --pack-dir perf/wasm_evidence_pack_from_gate \
+            --allow-missing-source
+
+      - name: Run optional browser smoke lane
+        env:
+          PYRS_WASM_SKIP_CORE_SMOKE: "1"
+          PYRS_WASM_RUN_BROWSER_SMOKE: "1"
+          PYRS_WASM_RUN_VM_PROBE_BROWSER_STATE_GATE_SMOKE: "1"
+        run: scripts/run_wasm_contract_smoke.sh
+
+      - name: Validate browser smoke baseline summary
+        run: |
+          python3 scripts/validate_wasm_browser_smoke_baseline.py \
+            --summary perf/wasm_browser_smoke_baseline_latest.json
+
+      - name: Upload browser smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-browser-smoke-artifacts
+          if-no-files-found: ignore
+          path: |
+            perf/wasm_browser_smoke_baseline_latest.json
+            perf/wasm_evidence_pack_from_gate/**
+
+      - name: Upload browser smoke evidence-pack artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-browser-smoke-evidence-pack
+          if-no-files-found: error
+          path: perf/wasm_evidence_pack_from_gate/**

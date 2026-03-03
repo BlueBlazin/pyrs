@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use pyrs::bytecode::Opcode;
 use pyrs::bytecode::cpython::{CpythonCode, PyObject, translate_code};
 use pyrs::bytecode::metadata::OpcodeMetadata;

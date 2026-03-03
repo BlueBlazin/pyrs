@@ -39,7 +39,7 @@ static CAPIPERF_PY_DECREF_HANDLE_HITS: AtomicU64 = AtomicU64::new(0);
 #[inline]
 fn capi_perf_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PYRS_CAPI_PERF").is_some())
+    *ENABLED.get_or_init(|| super::super::env_var_present_cached("PYRS_CAPI_PERF"))
 }
 
 #[inline]

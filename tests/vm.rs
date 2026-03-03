@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use pyrs::{
     bytecode::pyc::{PycHeader, write_pyc_header},
     compiler, parser,
@@ -316,6 +318,21 @@ fn executes_name_expression_with_global() {
     vm.set_global("x", Value::Int(7));
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
+}
+
+#[test]
+fn execute_with_timeout_ms_aborts_busy_loop() {
+    let module = parser::parse_module("while True:\n    pass\n").expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let err = vm
+        .execute_with_timeout_ms(&code, 5)
+        .expect_err("busy loop should hit timeout");
+    assert!(
+        err.message.contains("execution timeout exceeded"),
+        "unexpected timeout error: {}",
+        err.message
+    );
 }
 
 #[test]

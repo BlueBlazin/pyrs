@@ -34,7 +34,7 @@ pub(in crate::vm::vm_extensions) fn cpython_bind_module_def(
         .insert(module_obj.id(), module_def as usize);
     // SAFETY: module_def points to extension-provided PyModuleDef storage.
     let module_state_size = unsafe { (*module_def).m_size };
-    if std::env::var_os("PYRS_TRACE_CPY_MODSTATE").is_some() {
+    if super::super::env_var_present_cached("PYRS_TRACE_CPY_MODSTATE") {
         let module_name = match &*module_obj.kind() {
             crate::runtime::Object::Module(module_data) => module_data
                 .globals

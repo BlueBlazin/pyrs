@@ -1,4 +1,6 @@
-use std::ffi::{CString, c_char, c_void};
+#[cfg(not(target_arch = "wasm32"))]
+use std::ffi::CString;
+use std::ffi::{c_char, c_void};
 use std::fs;
 use std::path::{Path, PathBuf};
 

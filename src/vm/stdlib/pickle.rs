@@ -9,6 +9,11 @@ use super::super::{
     NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, class_name_for_instance, is_truthy,
     runtime_error_matches_exception, value_from_bigint, value_to_int,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::host::NativeHost;
+use crate::host::VmHost;
+#[cfg(target_arch = "wasm32")]
+use crate::host::WasmHost;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Mutex, OnceLock};
@@ -81,9 +86,21 @@ enum PickleCallKind {
     Loads,
 }
 
+fn pickle_profile_env_var(name: &str) -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let host = WasmHost;
+        return host.env_var(name);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let host = NativeHost;
+        host.env_var(name)
+    }
+}
+
 fn pickle_profile_flag(name: &str) -> bool {
-    std::env::var(name)
-        .ok()
+    pickle_profile_env_var(name)
         .map(|value| {
             let normalized = value.trim().to_ascii_lowercase();
             matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
@@ -97,8 +114,7 @@ fn pickle_profile_enabled() -> bool {
 
 fn pickle_profile_emit_every() -> u64 {
     *PICKLE_PROFILE_EMIT_EVERY.get_or_init(|| {
-        std::env::var("PYRS_PROFILE_PICKLE_EMIT_EVERY")
-            .ok()
+        pickle_profile_env_var("PYRS_PROFILE_PICKLE_EMIT_EVERY")
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(1_000)
             .max(1)

@@ -21,7 +21,7 @@ unsafe fn cpython_external_capsule_pointer(
     let raw = capsule.cast::<CpythonCapsuleCompatObject>();
     let ty = unsafe { (*raw).ob_base.ob_type };
     if ty != std::ptr::addr_of_mut!(PyCapsule_Type).cast() {
-        if std::env::var_os("PYRS_TRACE_CPY_CAPSULE").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_CAPSULE") {
             eprintln!(
                 "[cpy-capsule] external type mismatch ptr={:p} type={:p} expected={:p}",
                 capsule,
@@ -37,7 +37,7 @@ unsafe fn cpython_external_capsule_pointer(
         // SAFETY: capsule name pointer is part of the external capsule object.
         let actual_ptr = unsafe { (*raw).name };
         if actual_ptr.is_null() {
-            if std::env::var_os("PYRS_TRACE_CPY_CAPSULE").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_CAPSULE") {
                 eprintln!(
                     "[cpy-capsule] external name mismatch ptr={:p} requested={} actual=<null> type={:p}",
                     capsule,
@@ -50,7 +50,7 @@ unsafe fn cpython_external_capsule_pointer(
         // SAFETY: `actual_ptr` is validated non-null above.
         let actual = unsafe { CStr::from_ptr(actual_ptr) };
         if requested.to_bytes() != actual.to_bytes() {
-            if std::env::var_os("PYRS_TRACE_CPY_CAPSULE").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_CAPSULE") {
                 eprintln!(
                     "[cpy-capsule] external name mismatch ptr={:p} requested={} actual={} type={:p}",
                     capsule,
@@ -126,7 +126,7 @@ pub unsafe extern "C" fn PyCapsule_New(
     name: *const c_char,
     destructor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) -> *mut c_void {
-    if std::env::var_os("PYRS_TRACE_CPY_CAPSULE_IMPORT").is_some() {
+    if super::super::env_var_present_cached("PYRS_TRACE_CPY_CAPSULE_IMPORT") {
         let name_text = if name.is_null() {
             "<null>".to_string()
         } else {
@@ -141,7 +141,7 @@ pub unsafe extern "C" fn PyCapsule_New(
             name_text, pointer, destructor
         );
     }
-    if std::env::var_os("PYRS_TRACE_PYBIND11_ATTRS").is_some() && !name.is_null() {
+    if super::super::env_var_present_cached("PYRS_TRACE_PYBIND11_ATTRS") && !name.is_null() {
         // SAFETY: capsule name pointer is expected to be NUL-terminated.
         let name_text = unsafe { CStr::from_ptr(name) }
             .to_str()
@@ -153,7 +153,7 @@ pub unsafe extern "C" fn PyCapsule_New(
             );
         }
     }
-    if std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some() {
+    if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_INIT") {
         let name_text = if name.is_null() {
             "<null>".to_string()
         } else {
@@ -185,7 +185,7 @@ pub unsafe extern "C" fn PyCapsule_New(
         cpython_set_error(err);
         std::ptr::null_mut()
     });
-    if std::env::var_os("PYRS_TRACE_NUMPY_MEM_HANDLER").is_some() && !name.is_null() {
+    if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_MEM_HANDLER") && !name.is_null() {
         // SAFETY: capsule name pointer is expected to be NUL-terminated.
         let name_text = unsafe { CStr::from_ptr(name) }
             .to_str()
@@ -205,8 +205,8 @@ pub unsafe extern "C" fn PyCapsule_GetPointer(
     capsule: *mut c_void,
     name: *const c_char,
 ) -> *mut c_void {
-    let trace_capsule_get = std::env::var_os("PYRS_TRACE_CPY_CAPSULE_GET").is_some();
-    let trace_numpy_capsules = std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some();
+    let trace_capsule_get = super::super::env_var_present_cached("PYRS_TRACE_CPY_CAPSULE_GET");
+    let trace_numpy_capsules = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_INIT");
     let requested_name = if name.is_null() {
         None
     } else {
@@ -217,12 +217,12 @@ pub unsafe extern "C" fn PyCapsule_GetPointer(
         && requested_name
             .map(|requested| requested.contains("_ARRAY_API") || requested.contains("_UFUNC_API"))
             .unwrap_or(false);
-    let trace_pybind_capsule = std::env::var_os("PYRS_TRACE_PYBIND11_ATTRS").is_some()
+    let trace_pybind_capsule = super::super::env_var_present_cached("PYRS_TRACE_PYBIND11_ATTRS")
         && requested_name
             .map(|requested| requested.contains("__pybind11"))
             .unwrap_or(false);
     with_active_cpython_context_mut(|context| {
-        if std::env::var_os("PYRS_TRACE_NUMPY_MEM_HANDLER").is_some() && !name.is_null() {
+        if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_MEM_HANDLER") && !name.is_null() {
             // SAFETY: capsule name pointer is expected to be NUL-terminated.
             let name_text = unsafe { CStr::from_ptr(name) }
                 .to_str()
@@ -287,7 +287,7 @@ pub unsafe extern "C" fn PyCapsule_GetPointer(
                     return pointer;
                 }
                 Ok(None) => {
-                    if std::env::var_os("PYRS_TRACE_CPY_CAPSULE").is_some() {
+                    if super::super::env_var_present_cached("PYRS_TRACE_CPY_CAPSULE") {
                         let requested_name = if name.is_null() {
                             "<null>".to_string()
                         } else {
@@ -310,7 +310,7 @@ pub unsafe extern "C" fn PyCapsule_GetPointer(
                 }
             }
         };
-        if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS")
             && !context.capsules.contains_key(&handle)
         {
             let tag = context
@@ -649,7 +649,7 @@ pub unsafe extern "C" fn PyCapsule_SetName(capsule: *mut c_void, name: *const c_
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyCapsule_IsValid(capsule: *mut c_void, name: *const c_char) -> i32 {
-    if std::env::var_os("PYRS_TRACE_CPY_CAPSULE_VALID").is_some() {
+    if super::super::env_var_present_cached("PYRS_TRACE_CPY_CAPSULE_VALID") {
         eprintln!(
             "[cpy-capsule-valid] enter ptr={:p} requested_name={}",
             capsule,
@@ -668,7 +668,7 @@ pub unsafe extern "C" fn PyCapsule_IsValid(capsule: *mut c_void, name: *const c_
             if unsafe { cpython_external_capsule_is_valid(capsule, name) } {
                 return 1;
             }
-            if std::env::var_os("PYRS_TRACE_CPY_CAPSULE_VALID").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_CAPSULE_VALID") {
                 let raw_type = if capsule.is_null() {
                     std::ptr::null_mut()
                 } else {
@@ -701,7 +701,7 @@ pub unsafe extern "C" fn PyCapsule_IsValid(capsule: *mut c_void, name: *const c_
         };
         match context.capsule_is_valid(handle, name) {
             Ok(valid) => {
-                if std::env::var_os("PYRS_TRACE_CPY_CAPSULE_VALID").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_CPY_CAPSULE_VALID") {
                     eprintln!(
                         "[cpy-capsule-valid] handle={} ptr={:p} valid={} requested_name={}",
                         handle,
@@ -720,7 +720,7 @@ pub unsafe extern "C" fn PyCapsule_IsValid(capsule: *mut c_void, name: *const c_
                 valid
             }
             Err(err) => {
-                if std::env::var_os("PYRS_TRACE_CPY_CAPSULE_VALID").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_CPY_CAPSULE_VALID") {
                     eprintln!(
                         "[cpy-capsule-valid] handle={} ptr={:p} error={}",
                         handle, capsule, err
@@ -732,7 +732,7 @@ pub unsafe extern "C" fn PyCapsule_IsValid(capsule: *mut c_void, name: *const c_
     }) {
         Ok(value) => value,
         Err(err) => {
-            if std::env::var_os("PYRS_TRACE_CPY_CAPSULE_VALID").is_some() {
+            if super::super::env_var_present_cached("PYRS_TRACE_CPY_CAPSULE_VALID") {
                 eprintln!(
                     "[cpy-capsule-valid] no-active-context ptr={:p} requested_name={} err={}",
                     capsule,

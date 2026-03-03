@@ -35,7 +35,7 @@ struct DebugDecimalObject {
 }
 
 pub(super) fn cpython_valid_type_ptr(type_ptr: *mut CpythonTypeObject) -> bool {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     if type_ptr.is_null() {
         return false;
     }
@@ -235,7 +235,7 @@ pub(super) fn cpython_try_richcompare_slot(
     right: *mut c_void,
     op: i32,
 ) -> Option<*mut c_void> {
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     if left.is_null() || right.is_null() {
         return None;
     }
@@ -269,7 +269,7 @@ pub(super) fn cpython_try_richcompare_slot(
     if !cpython_valid_type_ptr(left_type) || !cpython_valid_type_ptr(right_type) {
         return None;
     }
-    let trace = std::env::var_os("PYRS_TRACE_RICH_SLOT").is_some();
+    let trace = super::super::env_var_present_cached("PYRS_TRACE_RICH_SLOT");
     if trace {
         // SAFETY: type pointers validated above.
         let left_name = unsafe {
@@ -377,8 +377,8 @@ pub(super) fn cpython_try_binary_number_slot(
     right: *mut c_void,
     slot_offset: usize,
 ) -> Option<*mut c_void> {
-    let trace = std::env::var_os("PYRS_TRACE_NUMBER_SLOT").is_some();
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    let trace = super::super::env_var_present_cached("PYRS_TRACE_NUMBER_SLOT");
+    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     if left.is_null() || right.is_null() {
         return None;
     }
@@ -579,7 +579,7 @@ pub(super) fn cpython_call_object(
         }
         if let Some(result) = context.try_native_tp_call(callable_ptr, &args, &kwargs) {
             if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
-                if std::env::var_os("PYRS_TRACE_CPY_NULL_NOERR").is_some() {
+                if super::super::env_var_present_cached("PYRS_TRACE_CPY_NULL_NOERR") {
                     let callable_tag = context
                         .cpython_value_from_borrowed_ptr(callable_ptr)
                         .map(|value| cpython_value_debug_tag(&value))
@@ -615,7 +615,7 @@ pub(super) fn cpython_call_object(
         // SAFETY: VM pointer is valid for active context lifetime.
         let vm = unsafe { &mut *context.vm };
         if let Value::ExceptionType(name) = callable {
-            if std::env::var_os("PYRS_TRACE_EXCEPTION_TYPE_FLAGS").is_some()
+            if super::super::env_var_present_cached("PYRS_TRACE_EXCEPTION_TYPE_FLAGS")
                 && (name == "TypeError" || name == "ValueError" || name == "IndexError")
             {
                 // SAFETY: exception symbol pointers are process-global type objects.
@@ -635,7 +635,7 @@ pub(super) fn cpython_call_object(
             }
             callable = Value::Class(vm.alloc_synthetic_exception_class(&name));
         }
-        let trace_ufunc_errors = std::env::var_os("PYRS_TRACE_CPY_UFUNC_ERRORS").is_some();
+        let trace_ufunc_errors = super::super::env_var_present_cached("PYRS_TRACE_CPY_UFUNC_ERRORS");
         let callable_tag = if trace_ufunc_errors {
             Some(cpython_value_debug_tag(&callable))
         } else {
@@ -644,7 +644,7 @@ pub(super) fn cpython_call_object(
         let callable_desc_for_error = cpython_value_debug_tag(&callable);
         let arg_count = args.len();
         let kwarg_count = kwargs.len();
-        if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
+        if super::super::env_var_present_cached("PYRS_TRACE_CPY_API") {
             eprintln!(
                 "[cpy-api] cpython_call_object ptr={:p} callable={}",
                 callable_ptr,
@@ -659,7 +659,7 @@ pub(super) fn cpython_call_object(
                     .last()
                     .and_then(|frame| frame.active_exception.clone());
                 if let Some(exception_value) = active_exception {
-                    if std::env::var_os("PYRS_TRACE_CPY_CALL_EXC").is_some() {
+                    if super::super::env_var_present_cached("PYRS_TRACE_CPY_CALL_EXC") {
                         eprintln!(
                             "[cpy-call-exc] value={}",
                             cpython_value_debug_tag(&exception_value)
@@ -706,7 +706,7 @@ pub(super) fn cpython_call_object(
                             stack
                         );
                     }
-                    if std::env::var_os("PYRS_TRACE_CPY_CTYPES_ERROR").is_some()
+                    if super::super::env_var_present_cached("PYRS_TRACE_CPY_CTYPES_ERROR")
                         && message.contains("ModuleNotFoundError: module '_ctypes' not found")
                     {
                         let stack = vm
@@ -744,7 +744,7 @@ pub(super) fn cpython_call_object(
                     return std::ptr::null_mut();
                 }
                 let message = err.message;
-                if std::env::var_os("PYRS_TRACE_BIND_CALLABLE").is_some()
+                if super::super::env_var_present_cached("PYRS_TRACE_BIND_CALLABLE")
                     && message.contains("argument count mismatch")
                 {
                     let callable_type_name = unsafe {
@@ -766,7 +766,7 @@ pub(super) fn cpython_call_object(
                         message
                     );
                 }
-                if std::env::var_os("PYRS_TRACE_PROXY_NOT_CALLABLE").is_some()
+                if super::super::env_var_present_cached("PYRS_TRACE_PROXY_NOT_CALLABLE")
                     && message.contains("proxy object is not callable")
                 {
                     eprintln!(

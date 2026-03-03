@@ -1,0 +1,1299 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+
+const baseUrl = import.meta.env.BASE_URL || "/";
+const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
+const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runtime-worker.js`;
+---
+
+<SiteLayout
+	title="PYRS Playground | Browser REPL"
+	description="Run PYRS in a browser REPL powered by wasm."
+	navContext="playground"
+	noindex={true}
+>
+	<section
+		class="playground-page"
+		data-wasm-entrypoint={wasmEntrypoint}
+		data-worker-entrypoint={workerEntrypoint}
+	>
+		<section class="playground-shell is-loading" aria-label="Browser REPL">
+			<div class="shell-chrome">
+				<div class="shell-chrome-left">
+					<div class="shell-traffic-lights" aria-hidden="true">
+						<span class="tl tl-close"></span>
+						<span class="tl tl-minimize"></span>
+						<span class="tl tl-maximize"></span>
+					</div>
+				</div>
+				<div class="shell-chrome-center">
+					<span class="shell-title">PYRS REPL</span>
+					<span class="shell-status" id="playground-status-shell" data-state="idle" aria-live="polite">
+						<span class="status-dot" aria-hidden="true"></span>
+						<span id="playground-status-text">Loading runtime&hellip;</span>
+					</span>
+				</div>
+				<div class="shell-chrome-right">
+					<button type="button" id="playground-clear" class="shell-action" title="Clear transcript (Ctrl+L)">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+						<span class="shell-action-label">Clear</span>
+					</button>
+					<button type="button" id="playground-reset" class="shell-action" title="Reset session">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+						<span class="shell-action-label">Reset</span>
+					</button>
+				</div>
+			</div>
+
+			<div class="playground-transcript" id="playground-transcript">
+				<form class="playground-inline-entry" id="playground-form" autocomplete="off">
+					<label for="playground-input" class="sr-only">Python REPL input</label>
+					<span class="transcript-prompt transcript-prompt-active" id="playground-active-prompt"
+						>&gt;&gt;&gt; </span
+					>
+					<div class="playground-editor-stack">
+						<pre
+							id="playground-highlight"
+							class="playground-editor-highlight"
+							aria-hidden="true"
+						></pre>
+						<textarea
+							id="playground-input"
+							class="playground-editor-input"
+							name="source"
+							spellcheck="false"
+							autocapitalize="off"
+							autocorrect="off"
+							rows="1"
+						></textarea>
+					</div>
+				</form>
+			</div>
+		</section>
+	</section>
+
+	<script is:inline>
+		const statusShell = document.getElementById("playground-status-shell");
+		const statusText = document.getElementById("playground-status-text");
+		const transcriptEl = document.getElementById("playground-transcript");
+		const formEl = document.getElementById("playground-form");
+		const inputEl = document.getElementById("playground-input");
+		const highlightEl = document.getElementById("playground-highlight");
+		const activePromptEl = document.getElementById("playground-active-prompt");
+		const clearButton = document.getElementById("playground-clear");
+		const resetButton = document.getElementById("playground-reset");
+		const shellEl = document.querySelector(".playground-shell");
+
+		const pageRoot = document.querySelector(".playground-page");
+		const wasmEntrypoint =
+			pageRoot instanceof HTMLElement && pageRoot.dataset.wasmEntrypoint
+				? pageRoot.dataset.wasmEntrypoint
+				: "/wasm/pyrs.js";
+		const workerEntrypoint =
+			pageRoot instanceof HTMLElement && pageRoot.dataset.workerEntrypoint
+				? pageRoot.dataset.workerEntrypoint
+				: "/workers/playground-runtime-worker.js";
+
+		let runtimeWorker = null;
+		let runtimeWorkerReady = false;
+		let runtimeLoadPromise = null;
+		let nextWorkerRequestId = 1;
+		const workerPendingRequests = new Map();
+		let lastRuntimeInfo = null;
+		let bannerRendered = false;
+		let continuationPrompt = false;
+		const commandHistory = [];
+		let historyIndex = -1;
+
+		const PY_KEYWORDS = new Set([
+			"False",
+			"None",
+			"True",
+			"and",
+			"as",
+			"assert",
+			"async",
+			"await",
+			"break",
+			"class",
+			"continue",
+			"def",
+			"del",
+			"elif",
+			"else",
+			"except",
+			"finally",
+			"for",
+			"from",
+			"global",
+			"if",
+			"import",
+			"in",
+			"is",
+			"lambda",
+			"nonlocal",
+			"not",
+			"or",
+			"pass",
+			"raise",
+			"return",
+			"try",
+			"while",
+			"with",
+			"yield",
+		]);
+		const PY_BUILTIN_TYPES = new Set([
+			"int",
+			"float",
+			"bool",
+			"complex",
+			"str",
+			"bytes",
+			"bytearray",
+			"list",
+			"tuple",
+			"dict",
+			"set",
+			"frozenset",
+			"object",
+			"type",
+		]);
+		const PY_TOKEN_REGEX =
+			/(@[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)|([rRuUbBfF]{0,2}(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'))|(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?j?\b)|([A-Za-z_][A-Za-z0-9_]*)|(#.*$)/gm;
+
+		const escapeHtml = (value) =>
+			value
+				.replaceAll("&", "&amp;")
+				.replaceAll("<", "&lt;")
+				.replaceAll(">", "&gt;");
+
+		const readField = (object, key) => {
+			if (!object) return undefined;
+			const value = object[key];
+			if (typeof value === "function") {
+				try {
+					return value.call(object);
+				} catch {
+					return undefined;
+				}
+			}
+			return value;
+		};
+
+		const scrollTranscriptToEnd = () => {
+			if (!(transcriptEl instanceof HTMLElement)) return;
+			requestAnimationFrame(() => {
+				transcriptEl.scrollTop = transcriptEl.scrollHeight;
+			});
+		};
+
+		const appendBeforeInlineEntry = (node) => {
+			if (!(transcriptEl instanceof HTMLElement)) return;
+			if (formEl instanceof HTMLElement && formEl.parentElement === transcriptEl) {
+				transcriptEl.insertBefore(node, formEl);
+			} else {
+				transcriptEl.appendChild(node);
+			}
+			scrollTranscriptToEnd();
+		};
+
+		const tokenizePython = (source) => {
+			const input = source.replace(/\r/g, "");
+			if (input.length === 0) {
+				return [];
+			}
+
+			const segments = [];
+			let cursor = 0;
+			let expectNameKind = null;
+			PY_TOKEN_REGEX.lastIndex = 0;
+
+			for (const match of input.matchAll(PY_TOKEN_REGEX)) {
+				const matchText = match[0];
+				const start = match.index ?? 0;
+
+				if (start > cursor) {
+					segments.push({ text: input.slice(cursor, start), kind: null });
+				}
+
+				let kind = null;
+				if (match[1]) {
+					kind = "tok-decorator";
+					expectNameKind = null;
+				} else if (match[2]) {
+					kind = "tok-string";
+					expectNameKind = null;
+				} else if (match[3]) {
+					kind = "tok-number";
+					expectNameKind = null;
+				} else if (match[4]) {
+					const word = matchText;
+					if (expectNameKind === "class") {
+						kind = "tok-class-name";
+						expectNameKind = null;
+					} else if (expectNameKind === "def") {
+						kind = "tok-function-name";
+						expectNameKind = null;
+					} else if (PY_KEYWORDS.has(word)) {
+						kind = "tok-keyword";
+						if (word === "class") {
+							expectNameKind = "class";
+						} else if (word === "def") {
+							expectNameKind = "def";
+						} else {
+							expectNameKind = null;
+						}
+					} else if (PY_BUILTIN_TYPES.has(word)) {
+						kind = "tok-type-name";
+						expectNameKind = null;
+					} else {
+						expectNameKind = null;
+					}
+				} else if (match[5]) {
+					kind = "tok-comment";
+					expectNameKind = null;
+				}
+
+				segments.push({ text: matchText, kind });
+				cursor = start + matchText.length;
+				if (matchText.includes("\n")) {
+					expectNameKind = null;
+				}
+			}
+
+			if (cursor < input.length) {
+				segments.push({ text: input.slice(cursor), kind: null });
+			}
+			return segments;
+		};
+
+		const renderToken = (text, kind) => {
+			const escaped = escapeHtml(text);
+			if (!kind) return escaped;
+			return `<span class="${kind}">${escaped}</span>`;
+		};
+
+		const highlightPython = (source) => {
+			const segments = tokenizePython(source.replace(/\r/g, ""));
+			if (segments.length === 0) {
+				return "";
+			}
+			return segments.map((segment) => renderToken(segment.text, segment.kind)).join("");
+		};
+
+		const updateEditorHighlight = () => {
+			if (!(highlightEl instanceof HTMLElement) || !(inputEl instanceof HTMLTextAreaElement)) return;
+			highlightEl.innerHTML = highlightPython(inputEl.value) || "\u00a0";
+		};
+
+		const setStatus = (state, message) => {
+			if (statusShell instanceof HTMLElement) {
+				statusShell.dataset.state = state;
+			}
+			if (statusText instanceof HTMLElement) {
+				statusText.textContent = message;
+			}
+		};
+
+		const setBusy = (busy) => {
+			if (inputEl instanceof HTMLTextAreaElement) {
+				inputEl.disabled = busy;
+			}
+			if (clearButton instanceof HTMLButtonElement) {
+				clearButton.disabled = busy;
+			}
+			if (resetButton instanceof HTMLButtonElement) {
+				resetButton.disabled = busy;
+			}
+		};
+
+		const setActivePrompt = (continuation) => {
+			if (!(activePromptEl instanceof HTMLElement)) return;
+			activePromptEl.textContent = continuation ? "... " : ">>> ";
+		};
+
+		const applyContinuationPrompt = (continuation) => {
+			continuationPrompt = Boolean(continuation);
+			setActivePrompt(continuationPrompt);
+		};
+
+		const setInputValue = (value) => {
+			if (!(inputEl instanceof HTMLTextAreaElement)) return;
+			inputEl.value = value;
+			refreshEditorState();
+			const end = value.length;
+			inputEl.setSelectionRange(end, end);
+		};
+
+		const focusInputAtEnd = () => {
+			if (!(inputEl instanceof HTMLTextAreaElement) || inputEl.disabled) return;
+			inputEl.focus();
+			const end = inputEl.value.length;
+			inputEl.setSelectionRange(end, end);
+			refreshEditorState();
+		};
+
+		const resizeInput = () => {
+			if (!(inputEl instanceof HTMLTextAreaElement)) return;
+			inputEl.style.height = "0px";
+			const nextHeight = Math.min(Math.max(inputEl.scrollHeight, 24), 220);
+			inputEl.style.height = `${nextHeight}px`;
+			if (highlightEl instanceof HTMLElement) {
+				highlightEl.style.minHeight = `${nextHeight}px`;
+			}
+		};
+
+		const syncEditorScroll = () => {
+			if (!(highlightEl instanceof HTMLElement) || !(inputEl instanceof HTMLTextAreaElement)) return;
+			highlightEl.scrollTop = inputEl.scrollTop;
+			highlightEl.scrollLeft = inputEl.scrollLeft;
+		};
+
+		const refreshEditorState = () => {
+			if (!(inputEl instanceof HTMLTextAreaElement)) return;
+			resizeInput();
+			updateEditorHighlight();
+			setActivePrompt(continuationPrompt);
+			syncEditorScroll();
+		};
+
+		const appendTranscriptLine = (text, kind = "stdout") => {
+			const line = document.createElement("div");
+			line.className = `transcript-line transcript-line-${kind}`;
+			line.textContent = text;
+			appendBeforeInlineEntry(line);
+		};
+
+		const appendPromptLine = (prompt, text) => {
+			const line = document.createElement("div");
+			line.className = "transcript-line transcript-line-input";
+
+			const promptSpan = document.createElement("span");
+			promptSpan.className = "transcript-prompt";
+			promptSpan.textContent = prompt;
+
+			const codeSpan = document.createElement("span");
+			codeSpan.className = "transcript-input-text";
+			const highlighted = highlightPython(text);
+			if (highlighted.length > 0) {
+				codeSpan.innerHTML = highlighted;
+			} else {
+				codeSpan.textContent = "";
+			}
+
+			line.appendChild(promptSpan);
+			line.appendChild(codeSpan);
+			appendBeforeInlineEntry(line);
+		};
+
+		const appendPromptInput = (source, startsContinuation) => {
+			const lines = source.split("\n");
+			lines.forEach((line, index) => {
+				appendPromptLine(index === 0 && !startsContinuation ? ">>> " : "... ", line);
+			});
+		};
+
+		const appendMultilineOutput = (text, kind) => {
+			const lines = text.replace(/\r/g, "").split("\n");
+			while (lines.length > 0 && lines[lines.length - 1] === "") {
+				lines.pop();
+			}
+			lines.forEach((line) => appendTranscriptLine(line, kind));
+		};
+
+		const summarizeExecutionResult = (result) => {
+			const success = Boolean(readField(result, "success"));
+			const stdout = readField(result, "stdout") || "";
+			const stderr = readField(result, "stderr") || "";
+			const error = readField(result, "error") || "";
+			return { success, stdout, stderr, error };
+		};
+
+		const renderExecutionResult = (result) => {
+			const summary = summarizeExecutionResult(result);
+			if (summary.stdout.trim().length > 0) {
+				appendMultilineOutput(summary.stdout, "stdout");
+			}
+			if (summary.stderr.trim().length > 0) {
+				appendMultilineOutput(summary.stderr, "stderr");
+			}
+			if (!summary.success && summary.error && summary.stderr.trim().length === 0) {
+				appendTranscriptLine(summary.error, "stderr");
+			}
+		};
+
+		const renderStartupBanner = (force = false) => {
+			if (!runtimeWorkerReady) return;
+			if (bannerRendered && !force) return;
+			const version = String(readField(lastRuntimeInfo, "pyrs_version") || "dev");
+			const backend = String(readField(lastRuntimeInfo, "execution_backend") || "wasm");
+			appendTranscriptLine(`PYRS ${version} (${backend})`, "banner");
+			appendTranscriptLine(
+				'Type "help", "copyright", "credits" or "license" for more information.',
+				"banner",
+			);
+			bannerRendered = true;
+		};
+
+		const clearTranscript = (preserveBanner = true) => {
+			if (!(transcriptEl instanceof HTMLElement)) return;
+			for (const child of [...transcriptEl.children]) {
+				if (child !== formEl) {
+					child.remove();
+				}
+			}
+			bannerRendered = false;
+			if (preserveBanner && runtimeWorkerReady) {
+				renderStartupBanner(true);
+			}
+			scrollTranscriptToEnd();
+		};
+
+		const rejectAllWorkerRequests = (message) => {
+			for (const pending of workerPendingRequests.values()) {
+				pending.reject(new Error(message));
+			}
+			workerPendingRequests.clear();
+		};
+
+		const ensureRuntimeWorker = () => {
+			if (runtimeWorker) return runtimeWorker;
+			if (typeof Worker !== "function") {
+				setStatus("error", "Web Worker is not supported in this browser");
+				appendTranscriptLine("Web Worker is unavailable in this browser.", "stderr");
+				return null;
+			}
+
+			const worker = new Worker(workerEntrypoint, { type: "module" });
+			worker.addEventListener("message", (event) => {
+				const payload = event.data;
+				if (!payload || typeof payload !== "object") {
+					return;
+				}
+				const requestId = Number(payload.requestId);
+				if (!Number.isFinite(requestId)) {
+					return;
+				}
+				const pending = workerPendingRequests.get(requestId);
+				if (!pending) {
+					return;
+				}
+				workerPendingRequests.delete(requestId);
+				pending.resolve(payload);
+			});
+			worker.addEventListener("error", (event) => {
+				const message = event.message || "runtime worker crashed";
+				runtimeWorkerReady = false;
+				rejectAllWorkerRequests(message);
+				setStatus("error", "Runtime worker failed");
+				appendTranscriptLine(`Runtime worker error: ${message}`, "stderr");
+			});
+			worker.addEventListener("messageerror", () => {
+				runtimeWorkerReady = false;
+				rejectAllWorkerRequests("runtime worker returned an invalid response");
+				setStatus("error", "Runtime worker response decoding failed");
+				appendTranscriptLine("Runtime worker response decoding failed.", "stderr");
+			});
+			runtimeWorker = worker;
+			return worker;
+		};
+
+		const sendWorkerRequest = (action, payload = {}) => {
+			const worker = ensureRuntimeWorker();
+			if (!worker) {
+				return Promise.reject(new Error("runtime worker is unavailable"));
+			}
+			const requestId = nextWorkerRequestId++;
+			return new Promise((resolve, reject) => {
+				workerPendingRequests.set(requestId, { resolve, reject });
+				try {
+					worker.postMessage({ requestId, action, ...payload });
+				} catch (error) {
+					workerPendingRequests.delete(requestId);
+					reject(error instanceof Error ? error : new Error(String(error)));
+				}
+			});
+		};
+
+		const setShellLoading = (loading) => {
+			if (shellEl instanceof HTMLElement) {
+				shellEl.classList.toggle("is-loading", loading);
+			}
+		};
+
+		const ensureRuntimeLoaded = async () => {
+			if (runtimeWorkerReady) return true;
+			if (runtimeLoadPromise) return runtimeLoadPromise;
+
+			runtimeLoadPromise = (async () => {
+				setStatus("loading", "Loading runtime\u2026");
+				setShellLoading(true);
+				try {
+					const response = await sendWorkerRequest("load", { wasmEntrypoint });
+					if (!response.ok) {
+						const message =
+							typeof response.error === "string" && response.error.length > 0
+								? response.error
+								: "runtime failed to load";
+						setStatus("error", "Runtime failed to load");
+						appendTranscriptLine(`Runtime load error: ${message}`, "stderr");
+						return false;
+					}
+
+					runtimeWorkerReady = true;
+					lastRuntimeInfo = response.runtimeInfo || null;
+					const executionEnabled = Boolean(readField(lastRuntimeInfo, "supports_execution"));
+					setStatus(
+						"ready",
+						executionEnabled ? "Runtime ready" : "Runtime compile-only",
+					);
+					renderStartupBanner();
+					applyContinuationPrompt(response.prompt_continuation);
+					return true;
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					runtimeWorkerReady = false;
+					setStatus("error", "Runtime failed to load");
+					appendTranscriptLine(`Runtime load error: ${message}`, "stderr");
+					return false;
+				} finally {
+					runtimeLoadPromise = null;
+					setShellLoading(false);
+				}
+			})();
+
+			return runtimeLoadPromise;
+		};
+
+		const runSource = async (source) => {
+			const normalized = source.replace(/\r/g, "").trimEnd();
+			const isBlankSubmission = normalized.trim().length === 0;
+			if (isBlankSubmission && !continuationPrompt) return;
+
+			const sourceForRuntime = isBlankSubmission ? "" : normalized;
+			if (!isBlankSubmission && commandHistory.at(-1) !== sourceForRuntime) {
+				commandHistory.push(sourceForRuntime);
+			}
+			historyIndex = commandHistory.length;
+			appendPromptInput(sourceForRuntime, continuationPrompt);
+
+			setBusy(true);
+			const loaded = await ensureRuntimeLoaded();
+			if (!loaded) {
+				setBusy(false);
+				return;
+			}
+
+			try {
+				const response = await sendWorkerRequest("execute", { source: sourceForRuntime });
+				if (response.ok && response.result) {
+					renderExecutionResult(response.result);
+					applyContinuationPrompt(response.prompt_continuation);
+				} else {
+					const message =
+						typeof response.error === "string" && response.error.length > 0
+							? response.error
+							: "Runtime execute entrypoint is unavailable.";
+					appendTranscriptLine(message, "stderr");
+					applyContinuationPrompt(false);
+				}
+			} catch (error) {
+				runtimeWorkerReady = false;
+				const message = error instanceof Error ? error.message : String(error);
+				appendTranscriptLine(message, "stderr");
+				applyContinuationPrompt(false);
+			} finally {
+				setBusy(false);
+			}
+		};
+
+		if (inputEl instanceof HTMLTextAreaElement) {
+			inputEl.addEventListener("keydown", (event) => {
+				if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "l") {
+					event.preventDefault();
+					clearTranscript(true);
+					return;
+				}
+				if (event.key === "Tab" && !event.altKey && !event.ctrlKey && !event.metaKey) {
+					event.preventDefault();
+					const tabSpaces = "    ";
+					const start = inputEl.selectionStart;
+					const end = inputEl.selectionEnd;
+					const before = inputEl.value.slice(0, start);
+					const after = inputEl.value.slice(end);
+					inputEl.value = `${before}${tabSpaces}${after}`;
+					const nextCursor = start + tabSpaces.length;
+					inputEl.setSelectionRange(nextCursor, nextCursor);
+					refreshEditorState();
+					return;
+				}
+				if (event.key === "Enter" && !event.shiftKey) {
+					event.preventDefault();
+					if (formEl instanceof HTMLFormElement) {
+						formEl.requestSubmit();
+					}
+					return;
+				}
+				if (event.key === "ArrowUp") {
+					const atStart = inputEl.selectionStart === 0 && inputEl.selectionEnd === 0;
+					if (atStart && commandHistory.length > 0) {
+						event.preventDefault();
+						historyIndex = Math.max(0, historyIndex - 1);
+						setInputValue(commandHistory[historyIndex] || "");
+					}
+					return;
+				}
+				if (event.key === "ArrowDown") {
+					const atEnd =
+						inputEl.selectionStart === inputEl.value.length &&
+						inputEl.selectionEnd === inputEl.value.length;
+					if (atEnd && commandHistory.length > 0) {
+						event.preventDefault();
+						historyIndex = Math.min(commandHistory.length, historyIndex + 1);
+						if (historyIndex >= commandHistory.length) {
+							setInputValue("");
+						} else {
+							setInputValue(commandHistory[historyIndex] || "");
+						}
+					}
+				}
+			});
+			inputEl.addEventListener("input", refreshEditorState);
+			inputEl.addEventListener("scroll", syncEditorScroll);
+			inputEl.addEventListener("focus", updateEditorHighlight);
+			inputEl.addEventListener("blur", updateEditorHighlight);
+			refreshEditorState();
+		}
+
+		if (shellEl instanceof HTMLElement) {
+			shellEl.addEventListener("pointerdown", (event) => {
+				const target = event.target;
+				if (!(target instanceof HTMLElement)) return;
+				if (target.closest("button") || target.closest(".playground-editor-stack")) {
+					return;
+				}
+				event.preventDefault();
+				focusInputAtEnd();
+			});
+		}
+
+		if (formEl instanceof HTMLFormElement && inputEl instanceof HTMLTextAreaElement) {
+			formEl.addEventListener("submit", async (event) => {
+				event.preventDefault();
+				const source = inputEl.value;
+				inputEl.value = "";
+				refreshEditorState();
+				await runSource(source);
+				focusInputAtEnd();
+			});
+		}
+
+		if (clearButton instanceof HTMLButtonElement) {
+			clearButton.addEventListener("click", () => {
+				clearTranscript(true);
+				applyContinuationPrompt(false);
+				focusInputAtEnd();
+			});
+		}
+
+		if (resetButton instanceof HTMLButtonElement) {
+			resetButton.addEventListener("click", async () => {
+				setBusy(true);
+				const loaded = await ensureRuntimeLoaded();
+				if (!loaded) {
+					setBusy(false);
+					focusInputAtEnd();
+					return;
+				}
+				try {
+					const response = await sendWorkerRequest("reset");
+					if (!response.ok) {
+						const message =
+							typeof response.error === "string" && response.error.length > 0
+								? response.error
+								: "Runtime session reset failed.";
+						appendTranscriptLine(message, "stderr");
+					}
+					applyContinuationPrompt(response.prompt_continuation);
+				} catch (error) {
+					runtimeWorkerReady = false;
+					const message = error instanceof Error ? error.message : String(error);
+					appendTranscriptLine(message, "stderr");
+					applyContinuationPrompt(false);
+				}
+				clearTranscript(true);
+				setStatus("ready", "Runtime ready");
+				setBusy(false);
+				focusInputAtEnd();
+			});
+		}
+
+		window.addEventListener("beforeunload", () => {
+			if (runtimeWorker) {
+				rejectAllWorkerRequests("runtime worker terminated");
+				runtimeWorker.terminate();
+				runtimeWorker = null;
+				runtimeWorkerReady = false;
+			}
+		});
+
+		ensureRuntimeLoaded().then(() => {
+			focusInputAtEnd();
+		});
+	</script>
+</SiteLayout>
+
+<style>
+	/* ===========================================
+	   Design tokens — Warm Ember
+	   =========================================== */
+	.playground-page {
+		--shell-bg: #050302;
+		--shell-chrome-bg: linear-gradient(180deg, #18100c 0%, #100a08 100%);
+		--shell-chrome-border: #432d22;
+		--shell-border: #54372a;
+		--shell-shadow: rgba(0, 0, 0, 0.62);
+		--transcript-bg: linear-gradient(180deg, #090605 0%, #060403 100%);
+
+		--tl-close: #ff5f57;
+		--tl-minimize: #febc2e;
+		--tl-maximize: #28c840;
+		--tl-inactive: #4a352b;
+
+		--status-loading: #d89563;
+		--status-ready: #9ac190;
+		--status-error: #f0a086;
+
+		--text-primary: #e9ded7;
+		--text-secondary: #c2aca0;
+		--text-chrome: #a58576;
+
+		--prompt-color: #e8a06d;
+
+		--tok-keyword: #cba6f7;
+		--tok-string: #a6e3a1;
+		--tok-number: #fab387;
+		--tok-function: #89b4fa;
+		--tok-class: #f9e2af;
+		--tok-decorator: #74c7ec;
+		--tok-type: #f9e2af;
+		--tok-comment: #6c7086;
+
+		--stdout-color: #e9ded7;
+		--stderr-color: #f0a086;
+		--banner-color: #8e7162;
+
+		--scrollbar-thumb: rgba(162, 116, 89, 0.46);
+		--scrollbar-thumb-hover: rgba(180, 130, 100, 0.64);
+
+		--action-bg: transparent;
+		--action-hover-bg: rgba(165, 109, 78, 0.16);
+		--action-text: #a08274;
+		--action-hover-text: #e5c9b8;
+
+		--mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	}
+
+	/* ===========================================
+	   Global layout overrides (playground only)
+	   =========================================== */
+	:global(.site-shell:has(.playground-page)) {
+		display: flex;
+		flex-direction: column;
+		min-height: 100vh;
+		min-height: 100dvh;
+		padding-bottom: 0;
+	}
+
+	:global(.site-shell:has(.playground-page) > .home-main) {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+	}
+
+	:global(.site-shell:has(.playground-page) > .site-footer) {
+		margin-top: 0;
+		padding-top: 0.8rem;
+		padding-bottom: 0.8rem;
+		flex-shrink: 0;
+	}
+
+	/* ===========================================
+	   Page layout
+	   =========================================== */
+	.playground-page {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		padding-top: 0.5rem;
+		padding-bottom: 0.5rem;
+		min-height: 0;
+	}
+
+	/* ===========================================
+	   Shell container
+	   =========================================== */
+	.playground-shell {
+		display: flex;
+		flex-direction: column;
+		flex: 1;
+		width: 100%;
+		min-height: 400px;
+		border-radius: 10px;
+		border: 1px solid var(--shell-border);
+		background: var(--shell-bg);
+		overflow: hidden;
+		box-shadow:
+			0 0 0 1px rgba(0, 0, 0, 0.3),
+			0 8px 32px var(--shell-shadow),
+			0 2px 8px rgba(0, 0, 0, 0.2);
+	}
+
+	/* ===========================================
+	   Title bar chrome
+	   =========================================== */
+	.shell-chrome {
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
+		align-items: center;
+		height: 38px;
+		padding: 0 12px;
+		background: var(--shell-chrome-bg);
+		border-bottom: 1px solid var(--shell-chrome-border);
+		user-select: none;
+		-webkit-user-select: none;
+		flex-shrink: 0;
+	}
+
+	.shell-chrome-left {
+		display: flex;
+		align-items: center;
+	}
+
+	.shell-chrome-center {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+	}
+
+	.shell-chrome-right {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 2px;
+	}
+
+	/* ===========================================
+	   Traffic lights
+	   =========================================== */
+	.shell-traffic-lights {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.tl {
+		width: 12px;
+		height: 12px;
+		border-radius: 50%;
+		display: block;
+		box-shadow: inset 0 -0.5px 0.5px rgba(0, 0, 0, 0.15);
+		transition: background-color 150ms ease;
+	}
+
+	.tl-close {
+		background: var(--tl-close);
+	}
+
+	.tl-minimize {
+		background: var(--tl-minimize);
+	}
+
+	.tl-maximize {
+		background: var(--tl-maximize);
+	}
+
+	.playground-shell:not(:hover) .tl {
+		background: var(--tl-inactive);
+		box-shadow: none;
+	}
+
+	/* ===========================================
+	   Status indicator
+	   =========================================== */
+	.shell-title {
+		font-family: var(--mono);
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--text-chrome);
+		letter-spacing: 0.02em;
+	}
+
+	.shell-status {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		font-family: var(--mono);
+		font-size: 11px;
+		color: var(--text-chrome);
+		letter-spacing: 0.01em;
+	}
+
+	.status-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--tl-inactive);
+		flex-shrink: 0;
+	}
+
+	.shell-status[data-state="loading"] .status-dot {
+		background: var(--status-loading);
+		animation: pulse 1.2s ease-in-out infinite;
+	}
+
+	.shell-status[data-state="ready"] .status-dot {
+		background: var(--status-ready);
+	}
+
+	.shell-status[data-state="error"] .status-dot {
+		background: var(--status-error);
+	}
+
+	/* ===========================================
+	   Action buttons
+	   =========================================== */
+	.shell-action {
+		appearance: none;
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		height: 24px;
+		padding: 0 8px;
+		border: none;
+		border-radius: 4px;
+		background: var(--action-bg);
+		color: var(--action-text);
+		font-family: var(--mono);
+		font-size: 11px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: background-color 120ms ease, color 120ms ease;
+	}
+
+	.shell-action:hover {
+		background: var(--action-hover-bg);
+		color: var(--action-hover-text);
+	}
+
+	.shell-action:focus-visible {
+		outline: 2px solid var(--prompt-color);
+		outline-offset: 1px;
+		border-radius: 4px;
+	}
+
+	.shell-action:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
+	.shell-action svg {
+		flex-shrink: 0;
+	}
+
+	/* ===========================================
+	   Transcript body
+	   =========================================== */
+	.playground-transcript {
+		position: relative;
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 16px;
+		overflow-y: auto;
+		overscroll-behavior-y: contain;
+		font-family: var(--mono);
+		font-size: 14px;
+		line-height: 1.6;
+		word-break: break-word;
+		background: var(--transcript-bg);
+
+		scrollbar-width: thin;
+		scrollbar-color: var(--scrollbar-thumb) transparent;
+	}
+
+	.playground-transcript::-webkit-scrollbar {
+		width: 6px;
+	}
+
+	.playground-transcript::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	.playground-transcript::-webkit-scrollbar-thumb {
+		background: var(--scrollbar-thumb);
+		border-radius: 3px;
+	}
+
+	.playground-transcript::-webkit-scrollbar-thumb:hover {
+		background: var(--scrollbar-thumb-hover);
+	}
+
+	/* ===========================================
+	   Transcript lines (`:global` — created by JS)
+	   =========================================== */
+	:global(.transcript-line) {
+		white-space: pre-wrap;
+		animation: line-in 100ms ease;
+	}
+
+	:global(.transcript-line-input) {
+		display: grid;
+		grid-template-columns: 4ch minmax(0, 1fr);
+		align-items: start;
+		min-height: 1.6em;
+		color: var(--text-primary);
+	}
+
+	:global(.transcript-prompt) {
+		display: inline-block;
+		color: var(--prompt-color);
+		font-weight: 500;
+		user-select: none;
+	}
+
+	:global(.transcript-input-text) {
+		display: block;
+		color: var(--text-primary);
+		min-width: 0;
+	}
+
+	:global(.transcript-line-banner) {
+		color: var(--banner-color);
+	}
+
+	:global(.transcript-line-stdout) {
+		color: var(--stdout-color);
+	}
+
+	:global(.transcript-line-stderr) {
+		color: var(--stderr-color);
+	}
+
+	/* ===========================================
+	   Inline entry form
+	   =========================================== */
+	.playground-inline-entry {
+		display: grid;
+		grid-template-columns: 4ch minmax(0, 1fr);
+		align-items: start;
+		min-height: 1.6em;
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+
+	/* ===========================================
+	   Editor stack (highlight overlay + textarea)
+	   =========================================== */
+	.playground-editor-stack {
+		position: relative;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.playground-editor-highlight,
+	.playground-editor-input {
+		margin: 0;
+		padding: 0;
+		font-family: inherit;
+		font-size: inherit;
+		line-height: inherit;
+		letter-spacing: inherit;
+		white-space: pre-wrap;
+		word-break: break-word;
+		tab-size: 4;
+	}
+
+	.playground-editor-highlight {
+		color: var(--text-primary);
+		pointer-events: none;
+		min-height: 1.6em;
+	}
+
+	.playground-editor-input {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		border: none;
+		outline: none;
+		resize: none;
+		overflow: hidden;
+		background: transparent;
+		color: transparent;
+		caret-color: var(--text-primary);
+		-webkit-text-fill-color: transparent;
+	}
+
+	/* ===========================================
+	   Syntax highlighting tokens
+	   =========================================== */
+	:global(.tok-keyword) {
+		color: var(--tok-keyword, #cba6f7);
+		font-weight: 500;
+	}
+
+	:global(.tok-class-name) {
+		color: var(--tok-class, #f9e2af);
+		font-weight: 500;
+	}
+
+	:global(.tok-function-name) {
+		color: var(--tok-function, #89b4fa);
+		font-weight: 500;
+	}
+
+	:global(.tok-decorator) {
+		color: var(--tok-decorator, #74c7ec);
+	}
+
+	:global(.tok-type-name) {
+		color: var(--tok-type, #f9e2af);
+	}
+
+	:global(.tok-number) {
+		color: var(--tok-number, #fab387);
+	}
+
+	:global(.tok-string) {
+		color: var(--tok-string, #a6e3a1);
+	}
+
+	:global(.tok-comment) {
+		color: var(--tok-comment, #6c7086);
+		font-style: italic;
+	}
+
+	/* ===========================================
+	   Loading state shimmer
+	   =========================================== */
+	.playground-shell.is-loading .playground-transcript::before {
+		content: "";
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(
+			110deg,
+			transparent 30%,
+			rgba(193, 130, 93, 0.05) 50%,
+			transparent 70%
+		);
+		background-size: 200% 100%;
+		animation: shimmer 2s ease-in-out infinite;
+		pointer-events: none;
+		z-index: 1;
+	}
+
+	/* ===========================================
+	   Accessibility
+	   =========================================== */
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		border: 0;
+	}
+
+	/* ===========================================
+	   Animations
+	   =========================================== */
+	@keyframes pulse {
+		0% { opacity: 1; }
+		50% { opacity: 0.3; }
+		100% { opacity: 1; }
+	}
+
+	@keyframes line-in {
+		from { opacity: 0; transform: translateY(2px); }
+		to { opacity: 1; transform: translateY(0); }
+	}
+
+	@keyframes shimmer {
+		0% { background-position: 200% 0; }
+		100% { background-position: -200% 0; }
+	}
+
+	/* ===========================================
+	   Responsive: tablet (max-width: 760px)
+	   =========================================== */
+	@media (max-width: 760px) {
+		.playground-shell {
+			min-height: 300px;
+			border-radius: 8px;
+		}
+
+		.shell-chrome {
+			height: 34px;
+			padding: 0 10px;
+		}
+
+		.shell-traffic-lights {
+			gap: 6px;
+		}
+
+		.tl {
+			width: 10px;
+			height: 10px;
+		}
+
+		.playground-transcript {
+			padding: 12px;
+			font-size: 13px;
+		}
+
+		.shell-action-label {
+			display: none;
+		}
+
+		.transcript-line-input,
+		.playground-inline-entry {
+			grid-template-columns: 2rem minmax(0, 1fr);
+			column-gap: 0.4rem;
+		}
+	}
+
+	/* ===========================================
+	   Responsive: phone (max-width: 480px)
+	   =========================================== */
+	@media (max-width: 480px) {
+		.shell-title {
+			display: none;
+		}
+	}
+
+	/* ===========================================
+	   Reduced motion
+	   =========================================== */
+	@media (prefers-reduced-motion: reduce) {
+		.tl {
+			transition: none;
+		}
+
+		.transcript-line {
+			animation: none;
+		}
+
+		.playground-shell.is-loading .playground-transcript::before {
+			animation: none;
+		}
+
+		.shell-status[data-state="loading"] .status-dot {
+			animation: none;
+		}
+	}
+</style>
