@@ -453,31 +453,16 @@ fn run_interactive_session(
                     continue;
                 }
 
-                match repl_state.submit_line(&line) {
-                    crate::repl_core::ReplLineParseResult::NeedMoreInput => continue,
-                    crate::repl_core::ReplLineParseResult::Ready { source, module } => {
-                        let completion_plan = repl_module_completion_plan(&module);
-                        vm.cache_source_text("<stdin>", &source);
-                        if let Err(err) = execute_parsed_module_with_timing(
-                            vm,
-                            &module,
-                            &source,
-                            "<stdin>",
-                            true,
-                            timing_enabled,
-                        ) {
-                            if let Some((status, message)) = parse_system_exit_status(&err) {
-                                if let Some(message) = message {
-                                    eprintln!("{message}");
-                                }
-                                return Ok(status);
-                            }
-                            eprintln!("{}", error_style::format_error_for_stderr(&err));
-                        } else {
-                            apply_completion_refresh_plan(vm, &completion_state, completion_plan);
-                        }
-                    }
-                    crate::repl_core::ReplLineParseResult::ParseError { source, error } => {
+                let started = Instant::now();
+                let mut ran_execution = false;
+                match crate::repl_core::submit_line_and_execute(
+                    &mut repl_state,
+                    vm,
+                    &line,
+                    "<stdin>",
+                ) {
+                    crate::repl_core::ReplLineExecuteResult::NeedMoreInput => continue,
+                    crate::repl_core::ReplLineExecuteResult::ParseError { source, error } => {
                         eprintln!(
                             "{}",
                             error_style::format_error_for_stderr(&format_parse_error(
@@ -485,6 +470,38 @@ fn run_interactive_session(
                             ))
                         );
                     }
+                    crate::repl_core::ReplLineExecuteResult::Executed {
+                        module, display, ..
+                    } => {
+                        ran_execution = true;
+                        if let Some(rendered) = display {
+                            println!("{rendered}");
+                        }
+                        let completion_plan = repl_module_completion_plan(&module);
+                        apply_completion_refresh_plan(vm, &completion_state, completion_plan);
+                    }
+                    crate::repl_core::ReplLineExecuteResult::ExecutionError { source, error, .. } => {
+                        ran_execution = true;
+                        let err = match error {
+                            crate::repl_core::ReplExecutionError::Compile(compile_err) => {
+                                format_compile_error("<stdin>", &source, &compile_err)
+                            }
+                            crate::repl_core::ReplExecutionError::Runtime(runtime_err) => {
+                                format!("runtime error: {}", runtime_err.message)
+                            }
+                        };
+                        if let Some((status, message)) = parse_system_exit_status(&err) {
+                            if let Some(message) = message {
+                                eprintln!("{message}");
+                            }
+                            return Ok(status);
+                        }
+                        eprintln!("{}", error_style::format_error_for_stderr(&err));
+                    }
+                }
+                if timing_enabled && ran_execution {
+                    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+                    eprintln!("[timing] {elapsed_ms:.3} ms");
                 }
             }
             Ok(Signal::CtrlC) => {
@@ -2111,23 +2128,6 @@ fn format_duration(seconds: f64) -> String {
     } else {
         format!("{seconds:.3} s")
     }
-}
-
-fn execute_parsed_module_with_timing(
-    vm: &mut Vm,
-    module: &Module,
-    source: &str,
-    filename: &str,
-    echo_expression_result: bool,
-    timing_enabled: bool,
-) -> Result<(), String> {
-    let started = Instant::now();
-    let result = execute_parsed_module(vm, module, source, filename, echo_expression_result);
-    if timing_enabled {
-        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-        eprintln!("[timing] {elapsed_ms:.3} ms");
-    }
-    result
 }
 
 fn execute_parsed_module(

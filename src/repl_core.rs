@@ -291,6 +291,49 @@ pub(crate) fn run_ready_module(
     execute_module_or_expression(vm, module, filename, precompiled_module_code)
 }
 
+pub(crate) enum ReplLineExecuteResult {
+    NeedMoreInput,
+    ParseError {
+        source: String,
+        error: ParseError,
+    },
+    Executed {
+        module: Module,
+        display: Option<String>,
+    },
+    ExecutionError {
+        source: String,
+        error: ReplExecutionError,
+    },
+}
+
+/// Shared submit+execute flow for line-based REPL adapters.
+pub(crate) fn submit_line_and_execute(
+    state: &mut ReplCoreState,
+    vm: &mut crate::vm::Vm,
+    line: &str,
+    filename: &str,
+) -> ReplLineExecuteResult {
+    match state.submit_line(line) {
+        ReplLineParseResult::NeedMoreInput => ReplLineExecuteResult::NeedMoreInput,
+        ReplLineParseResult::ParseError { source, error } => {
+            ReplLineExecuteResult::ParseError { source, error }
+        }
+        ReplLineParseResult::Ready { source, module } => {
+            match run_ready_module(vm, &source, &module, filename, None) {
+                Ok(display) => ReplLineExecuteResult::Executed {
+                    module,
+                    display,
+                },
+                Err(error) => ReplLineExecuteResult::ExecutionError {
+                    source,
+                    error,
+                },
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum ReplExecutionError {
     Compile(crate::compiler::CompileError),
@@ -300,9 +343,9 @@ pub(crate) enum ReplExecutionError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ReplCoreState, ReplInputSession, ReplLineParseResult, ReplProfile,
+        ReplCoreState, ReplInputSession, ReplLineExecuteResult, ReplLineParseResult, ReplProfile,
         execute_module_or_expression, input_is_incomplete, parse_candidate_source,
-        parse_success_requires_more_input, run_ready_module,
+        parse_success_requires_more_input, run_ready_module, submit_line_and_execute,
         submit_line_for_module,
     };
 
@@ -490,5 +533,28 @@ mod tests {
             .expect("execution should succeed");
         assert!(rendered.is_none());
         assert!(matches!(vm.get_global("x"), Some(crate::runtime::Value::Int(9))));
+    }
+
+    #[test]
+    fn submit_line_and_execute_runs_ready_input_and_returns_display() {
+        let mut vm = crate::vm::Vm::new();
+        let mut state = ReplCoreState::new(ReplProfile::NativeFull);
+        let result = submit_line_and_execute(&mut state, &mut vm, "1 + 4", "<stdin>");
+        if let ReplLineExecuteResult::Executed { display, .. } = result {
+            assert_eq!(display.as_deref(), Some("5"));
+        } else {
+            panic!("expected executed result");
+        }
+    }
+
+    #[test]
+    fn submit_line_and_execute_preserves_need_more_input_state() {
+        let mut vm = crate::vm::Vm::new();
+        let mut state = ReplCoreState::new(ReplProfile::WasmLean);
+        assert!(matches!(
+            submit_line_and_execute(&mut state, &mut vm, "class A:", "<stdin>"),
+            ReplLineExecuteResult::NeedMoreInput
+        ));
+        assert!(!state.is_empty());
     }
 }
