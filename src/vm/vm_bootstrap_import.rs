@@ -3777,9 +3777,15 @@ impl Vm {
                 ("runtime_checkable", BuiltinFunction::TypingRuntimeCheckable),
                 ("override", BuiltinFunction::TypingOverride),
                 ("reveal_type", BuiltinFunction::TypingRevealType),
-                ("dataclass_transform", BuiltinFunction::TypingIdFunc),
+                (
+                    "dataclass_transform",
+                    BuiltinFunction::TypingDataclassTransform,
+                ),
                 ("no_type_check", BuiltinFunction::TypingNoTypeCheck),
-                ("no_type_check_decorator", BuiltinFunction::TypingIdFunc),
+                (
+                    "no_type_check_decorator",
+                    BuiltinFunction::TypingNoTypeCheckDecorator,
+                ),
                 ("TypeVar", BuiltinFunction::TypingTypeVar),
                 ("ParamSpec", BuiltinFunction::TypingParamSpec),
                 ("TypeVarTuple", BuiltinFunction::TypingTypeVarTuple),

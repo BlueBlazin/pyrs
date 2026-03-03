@@ -3666,6 +3666,27 @@ no_type_ok = (
     no_type_target is Plain
     and getattr(Plain, '__no_type_check__', False) is True
 )
+transform = typing.dataclass_transform(eq_default=False, order_default=True, custom='ok')
+@transform
+class Model:
+    pass
+transform_meta = getattr(Model, '__dataclass_transform__', {})
+dataclass_ok = (
+    isinstance(transform_meta, dict)
+    and transform_meta.get('eq_default') is False
+    and transform_meta.get('order_default') is True
+    and transform_meta.get('kwargs', {}).get('custom') == 'ok'
+)
+def _identity_decorator(fn):
+    return fn
+wrapped_no_type = typing.no_type_check_decorator(_identity_decorator)
+@wrapped_no_type
+def decorated_fn(x: int):
+    return x
+no_type_decorator_ok = (
+    getattr(decorated_fn, '__no_type_check__', False) is True
+    and decorated_fn(3) == 3
+)
 assert_never_ok = False
 try:
     typing.assert_never(123)
@@ -3712,6 +3733,8 @@ ok = (
     and runtime_ok
     and runtime_error == 'TypeError'
     and no_type_ok
+    and dataclass_ok
+    and no_type_decorator_ok
     and assert_never_ok
     and reveal_ok
     and dummy_error == 'NotImplementedError'

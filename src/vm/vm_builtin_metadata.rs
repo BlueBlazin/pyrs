@@ -942,6 +942,10 @@ impl Vm {
             | BuiltinFunction::TypingNoTypeCheck
             | BuiltinFunction::TypingOverload
             | BuiltinFunction::TypingOverloadDummy
+            | BuiltinFunction::TypingDataclassTransform
+            | BuiltinFunction::TypingDataclassTransformApply
+            | BuiltinFunction::TypingNoTypeCheckDecorator
+            | BuiltinFunction::TypingNoTypeCheckDecoratorCall
             | BuiltinFunction::TypingNoDefaultNew
             | BuiltinFunction::TypingNoDefaultRepr
             | BuiltinFunction::TypingNoDefaultReduce

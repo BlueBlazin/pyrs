@@ -13470,6 +13470,18 @@ impl Vm {
             BuiltinFunction::TypingOverloadDummy => {
                 self.builtin_typing_overload_dummy(args, kwargs)
             }
+            BuiltinFunction::TypingDataclassTransform => {
+                self.builtin_typing_dataclass_transform(args, kwargs)
+            }
+            BuiltinFunction::TypingDataclassTransformApply => {
+                self.builtin_typing_dataclass_transform_apply(args, kwargs)
+            }
+            BuiltinFunction::TypingNoTypeCheckDecorator => {
+                self.builtin_typing_no_type_check_decorator(args, kwargs)
+            }
+            BuiltinFunction::TypingNoTypeCheckDecoratorCall => {
+                self.builtin_typing_no_type_check_decorator_call(args, kwargs)
+            }
             BuiltinFunction::TypingNoDefaultNew => self.builtin_typing_nodefault_new(args, kwargs),
             BuiltinFunction::TypingNoDefaultRepr => {
                 self.builtin_typing_nodefault_repr(args, kwargs)

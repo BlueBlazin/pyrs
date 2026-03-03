@@ -9,8 +9,8 @@ Audit date: 2026-03-04
 - `install_builtin_module(...)` calls with dynamic names: 2 (`&sysconfigdata_name`, `&legacy_sysconfigdata_name`)
 - explicit alias installs (`install_module_alias_from_existing`): 7
 - explicit fallback installers (`install_*_fallback_module` + `_json` accelerator fallback): 8
-- direct `BuiltinFunction::NoOp` usage in bootstrap installs: `_symtable`, `faulthandler`, `_locale`
-- `TypingIdFunc` placeholder usage in bootstrap installs: `_osx_support`, `functools`, `typing`, `_typing`
+- module-level `BuiltinFunction::NoOp` placeholder exports in audited bootstrap scope: none (remaining `NoOp` use is non-export class wiring, e.g. internal `__init__` placeholders).
+- `TypingIdFunc` placeholder usage in bootstrap installs: none (residual runtime-only `TypingIdFunc` usage remains in non-bootstrap paths such as `functools.singledispatch.register` helper return).
 - local shim fallback path support is present (`shims/`, currently `_ctypes`)
 
 ## Checklist Conventions
@@ -34,11 +34,11 @@ Audit date: 2026-03-04
   - `_locale.strxfrm`, `_locale.strcoll`, and `_locale.nl_langinfo` now use dedicated builtins (no `NoOp`/generic `Str` placeholders),
   - `strxfrm` and `strcoll` enforce explicit argument shape and string-only contracts,
   - `nl_langinfo` now enforces integer key shape, supports `CODESET` resolution via runtime filesystem encoding, and raises `ValueError` for unsupported keys.
-- [ ] `P0` Remove placeholder behavior in `typing`:
+- [x] `P0` Remove placeholder behavior in `typing`:
   - generic placeholders (`Dict/List/Tuple/Bool/Print`) for core `typing` helper exports were replaced with dedicated builtins (`get_type_hints`, `get_origin`, `get_args`, `get_protocol_members`, `get_overloads`, `clear_overloads`, `is_typeddict`, `is_protocol`);
   - `cast`, `assert_type`, `reveal_type`, `assert_never`, `final`, and `override` now use dedicated runtime semantics (no shared identity placeholder path);
   - `overload` now has dedicated registry + decorator-dummy runtime semantics aligned with CPython’s `get_overloads()`/`clear_overloads()` behavior;
-  - remaining debt: `TypingIdFunc` still backs `dataclass_transform` and `no_type_check_decorator` (module install at line 3765, placeholder class wiring around lines 3759-3843).
+  - `runtime_checkable`, `no_type_check`, `dataclass_transform`, and `no_type_check_decorator` now use dedicated runtime semantics (including decorator wrapper state where required).
 - [x] `P1` Remove placeholder behavior in `_typing`:
   - `_typing._idfunc` now uses dedicated builtin dispatch (`TypingInternalIdFunc`) with strict one-argument identity semantics (no shared `TypingIdFunc` placeholder surface).
 - [x] `P1` Remove placeholder behavior in `functools`:

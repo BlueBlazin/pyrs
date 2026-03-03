@@ -4373,6 +4373,10 @@ pub enum BuiltinFunction {
     TypingNoTypeCheck,
     TypingOverload,
     TypingOverloadDummy,
+    TypingDataclassTransform,
+    TypingDataclassTransformApply,
+    TypingNoTypeCheckDecorator,
+    TypingNoTypeCheckDecoratorCall,
     TypingNoDefaultNew,
     TypingNoDefaultRepr,
     TypingNoDefaultReduce,
@@ -6628,6 +6632,12 @@ impl BuiltinFunction {
             | BuiltinFunction::TypingRuntimeCheckable
             | BuiltinFunction::TypingNoTypeCheck
             | BuiltinFunction::TypingOverload => {
+                Err(RuntimeError::new("typing helper is VM-only"))
+            }
+            BuiltinFunction::TypingDataclassTransform
+            | BuiltinFunction::TypingDataclassTransformApply
+            | BuiltinFunction::TypingNoTypeCheckDecorator
+            | BuiltinFunction::TypingNoTypeCheckDecoratorCall => {
                 Err(RuntimeError::new("typing helper is VM-only"))
             }
             BuiltinFunction::TypingOverloadDummy => Err(RuntimeError::with_exception(

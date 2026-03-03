@@ -16108,6 +16108,196 @@ functions outside a stub module should always be followed by an implementation t
         ))
     }
 
+    pub(super) fn builtin_typing_dataclass_transform(
+        &mut self,
+        args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "dataclass_transform() takes no positional arguments",
+            ));
+        }
+        let mut parse_bool = |name: &str, default: bool| -> Result<bool, RuntimeError> {
+            match kwargs.remove(name) {
+                Some(Value::Bool(flag)) => Ok(flag),
+                Some(_) => Err(RuntimeError::type_error(format!(
+                    "dataclass_transform() argument '{name}' must be bool"
+                ))),
+                None => Ok(default),
+            }
+        };
+        let eq_default = parse_bool("eq_default", true)?;
+        let order_default = parse_bool("order_default", false)?;
+        let kw_only_default = parse_bool("kw_only_default", false)?;
+        let frozen_default = parse_bool("frozen_default", false)?;
+        let field_specifiers = match kwargs.remove("field_specifiers") {
+            Some(Value::Tuple(values)) => Value::Tuple(values),
+            Some(Value::List(list_obj)) => match &*list_obj.kind() {
+                Object::List(values) => self.heap.alloc_tuple(values.clone()),
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "dataclass_transform() field_specifiers must be a tuple",
+                    ));
+                }
+            },
+            Some(_) => {
+                return Err(RuntimeError::type_error(
+                    "dataclass_transform() field_specifiers must be a tuple",
+                ));
+            }
+            None => self.heap.alloc_tuple(Vec::new()),
+        };
+        let payload_kwargs = self.heap.alloc_dict(
+            kwargs
+                .into_iter()
+                .map(|(key, value)| (Value::Str(key), value))
+                .collect(),
+        );
+        let payload = self.heap.alloc_dict(vec![
+            (Value::Str("eq_default".to_string()), Value::Bool(eq_default)),
+            (
+                Value::Str("order_default".to_string()),
+                Value::Bool(order_default),
+            ),
+            (
+                Value::Str("kw_only_default".to_string()),
+                Value::Bool(kw_only_default),
+            ),
+            (
+                Value::Str("frozen_default".to_string()),
+                Value::Bool(frozen_default),
+            ),
+            (Value::Str("field_specifiers".to_string()), field_specifiers),
+            (Value::Str("kwargs".to_string()), payload_kwargs),
+        ]);
+        let wrapper = match self.heap.alloc_module(ModuleObject::new(
+            "__typing_dataclass_transform_decorator__".to_string(),
+        )) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+            module_data.globals.insert(
+                "__pyrs_typing_dataclass_transform__".to_string(),
+                Value::Bool(true),
+            );
+            module_data.globals.insert("payload".to_string(), payload);
+        }
+        Ok(self.alloc_builtin_bound_method(
+            BuiltinFunction::TypingDataclassTransformApply,
+            wrapper,
+        ))
+    }
+
+    pub(super) fn builtin_typing_dataclass_transform_apply(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "dataclass_transform decorator expects one argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let target = args.remove(0);
+        let payload = if let Value::Module(wrapper) = receiver {
+            if let Object::Module(module_data) = &*wrapper.kind() {
+                module_data
+                    .globals
+                    .get("payload")
+                    .cloned()
+                    .unwrap_or_else(|| self.heap.alloc_dict(Vec::new()))
+            } else {
+                self.heap.alloc_dict(Vec::new())
+            }
+        } else {
+            self.heap.alloc_dict(Vec::new())
+        };
+        self.builtin_setattr(
+            vec![
+                target.clone(),
+                Value::Str("__dataclass_transform__".to_string()),
+                payload,
+            ],
+            HashMap::new(),
+        )?;
+        Ok(target)
+    }
+
+    pub(super) fn builtin_typing_no_type_check_decorator(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "no_type_check_decorator() takes exactly one argument",
+            ));
+        }
+        let decorator = args.remove(0);
+        if !self.is_callable_value(&decorator) {
+            return Err(RuntimeError::type_error(
+                "no_type_check_decorator() argument must be callable",
+            ));
+        }
+        let wrapper =
+            match self.heap.alloc_module(ModuleObject::new(
+                "__typing_no_type_check_decorator__".to_string(),
+            )) {
+                Value::Module(obj) => obj,
+                _ => unreachable!(),
+            };
+        if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+            module_data
+                .globals
+                .insert("__pyrs_typing_no_type_check_decorator__".to_string(), Value::Bool(true));
+            module_data
+                .globals
+                .insert("decorator".to_string(), decorator);
+        }
+        Ok(self.alloc_builtin_bound_method(
+            BuiltinFunction::TypingNoTypeCheckDecoratorCall,
+            wrapper,
+        ))
+    }
+
+    pub(super) fn builtin_typing_no_type_check_decorator_call(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "no_type_check_decorator wrapper missing receiver",
+            ));
+        }
+        let receiver = args.remove(0);
+        let Value::Module(wrapper) = receiver else {
+            return Err(RuntimeError::type_error(
+                "no_type_check_decorator wrapper receiver must be module",
+            ));
+        };
+        let decorator = if let Object::Module(module_data) = &*wrapper.kind() {
+            module_data.globals.get("decorator").cloned()
+        } else {
+            None
+        }
+        .ok_or_else(|| RuntimeError::type_error("no_type_check_decorator wrapper is invalid"))?;
+        let decorated = match self.call_internal(decorator, args, kwargs)? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(
+                    self.runtime_error_from_active_exception(
+                        "no_type_check_decorator wrapped decorator failed",
+                    ),
+                );
+            }
+        };
+        self.builtin_typing_no_type_check(vec![decorated], HashMap::new())
+    }
+
     fn weakref_reference_type(&self) -> Result<ObjRef, RuntimeError> {
         let module = self
             .modules
