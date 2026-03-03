@@ -1077,22 +1077,64 @@ impl WasmReplSession {
             crate::repl_core::ReplProfile::WasmLean
         );
 
-        let host = WasmHost;
-        let parsed = match parse_and_compile_snippet(source) {
-            Ok(parsed) => parsed,
-            Err(compile) => {
-                let result = compile_failure_to_execution_result(
-                    compile,
-                    WasmExecutionPhase::SyntaxError.key(),
-                    WasmExecutionPhase::CompileError.key(),
-                    "repl parse/compile check failed",
-                );
+        let ready = match self.repl_state.submit_line(source) {
+            crate::repl_core::ReplLineParseResult::NeedMoreInput => {
+                let result = WasmExecutionResult {
+                    success: true,
+                    phase: WASM_EXECUTION_PHASE_OK.to_string(),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    error: None,
+                    blocker_key: None,
+                    line: 0,
+                    column: 0,
+                };
+                self.last_error = None;
+                return result;
+            }
+            crate::repl_core::ReplLineParseResult::ParseError { error, .. } => {
+                let message = format_parse_error(&error);
+                let result = WasmExecutionResult {
+                    success: false,
+                    phase: WasmExecutionPhase::SyntaxError.key().to_string(),
+                    stdout: String::new(),
+                    stderr: message.clone(),
+                    error: Some(message),
+                    blocker_key: None,
+                    line: error.line,
+                    column: error.column,
+                };
                 self.last_error = result.error.clone();
                 return result;
             }
+            crate::repl_core::ReplLineParseResult::Ready { source, module } => (source, module),
         };
+        let (ready_source, ready_module) = ready;
 
-        let import_roots = collect_import_roots(&parsed.module);
+        let compile_code =
+            match crate::compiler::compile_module_with_filename(&ready_module, WASM_REPL_FILENAME) {
+                Ok(code) => code,
+                Err(err) => {
+                    let (message, line, column) = format_compile_error(&err);
+                    let result = WasmExecutionResult {
+                        success: false,
+                        phase: WasmExecutionPhase::CompileError.key().to_string(),
+                        stdout: String::new(),
+                        stderr: message.clone(),
+                        error: Some(message),
+                        blocker_key: None,
+                        line,
+                        column,
+                    };
+                    self.last_error = result.error.clone();
+                    return result;
+                }
+            };
+        #[cfg(not(feature = "wasm-vm-probe"))]
+        let _ = &compile_code;
+
+        let host = WasmHost;
+        let import_roots = collect_import_roots(&ready_module);
         if let Some(blocker) = snippet_blockers_from_import_roots(&import_roots, &host)
             .into_iter()
             .next()
@@ -1132,10 +1174,10 @@ impl WasmReplSession {
         {
             let result = match crate::repl_core::run_ready_module(
                 &mut self.vm,
-                source,
-                &parsed.module,
+                &ready_source,
+                &ready_module,
                 WASM_REPL_FILENAME,
-                Some(&parsed.code),
+                Some(&compile_code),
             ) {
                 Ok(stdout) => WasmExecutionResult {
                     success: true,
@@ -2871,6 +2913,26 @@ mod tests {
         assert_eq!(session.inputs_executed(), 1);
     }
 
+    #[test]
+    fn wasm_repl_session_incomplete_input_returns_ok_without_errors() {
+        let mut session = WasmReplSession::new();
+        let header = session.execute_input("if True:");
+        assert!(header.success());
+        assert_eq!(header.phase(), "ok".to_string());
+        assert!(header.stdout().is_empty());
+        assert!(header.stderr().is_empty());
+        assert!(header.error().is_none());
+        assert!(header.blocker_key().is_none());
+
+        let body = session.execute_input("    x = 1");
+        assert!(body.success());
+        assert_eq!(body.phase(), "ok".to_string());
+        assert!(body.stdout().is_empty());
+        assert!(body.stderr().is_empty());
+        assert!(body.error().is_none());
+        assert!(body.blocker_key().is_none());
+    }
+
     #[cfg(feature = "wasm-vm-probe")]
     #[test]
     fn wasm_repl_session_vm_probe_persists_assignments_and_echoes_expressions() {
@@ -2885,6 +2947,36 @@ mod tests {
         assert_eq!(expression.phase(), "ok".to_string());
         assert!(expression.success());
         assert_eq!(expression.stdout(), "42".to_string());
+        assert!(expression.stderr().is_empty());
+    }
+
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
+    fn wasm_repl_session_vm_probe_executes_multiline_class_block_on_blank_line() {
+        let mut session = WasmReplSession::new();
+
+        let header = session.execute_input("class Counter:");
+        assert!(header.success());
+        assert_eq!(header.phase(), "ok".to_string());
+        assert!(header.stdout().is_empty());
+        assert!(header.stderr().is_empty());
+
+        let body = session.execute_input("    value = 3");
+        assert!(body.success());
+        assert_eq!(body.phase(), "ok".to_string());
+        assert!(body.stdout().is_empty());
+        assert!(body.stderr().is_empty());
+
+        let finalize = session.execute_input("");
+        assert!(finalize.success());
+        assert_eq!(finalize.phase(), "ok".to_string());
+        assert!(finalize.stdout().is_empty());
+        assert!(finalize.stderr().is_empty());
+
+        let expression = session.execute_input("Counter.value");
+        assert!(expression.success());
+        assert_eq!(expression.phase(), "ok".to_string());
+        assert_eq!(expression.stdout(), "3".to_string());
         assert!(expression.stderr().is_empty());
     }
 
