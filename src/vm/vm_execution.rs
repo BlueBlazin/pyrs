@@ -873,8 +873,7 @@ impl Vm {
             };
 
             if should_return {
-                if let Some(filter) = self.host.env_var_os("PYRS_TRACE_MODULE_RETURN_IP")
-                    && let Some(filter) = filter.to_str()
+                if let Some(filter) = self.trace_text_filters.module_return_ip.as_ref()
                     && let Some(frame) = self.frames.last()
                     && frame.is_module
                     && frame.code.filename.contains(filter)
@@ -7883,8 +7882,7 @@ impl Vm {
                     frame.stack.pop().unwrap_or(Value::None)
                 };
                 let mut frame = self.frames.pop().expect("frame exists");
-                if let Some(filter) = self.host.env_var_os("PYRS_TRACE_MODULE_RETURN_IP")
-                    && let Some(filter) = filter.to_str()
+                if let Some(filter) = self.trace_text_filters.module_return_ip.as_ref()
                     && frame.is_module
                     && frame.code.filename.contains(filter)
                 {
@@ -8451,8 +8449,7 @@ impl Vm {
             }
 
             if let Some(block) = frame.blocks.pop() {
-                if let Some(filter) = self.host.env_var_os("PYRS_TRACE_UNWIND")
-                    && let Some(filter) = filter.to_str()
+                if let Some(filter) = self.trace_text_filters.unwind.as_ref()
                     && frame.code.filename.contains(filter)
                 {
                     let location = frame.code.locations.get(frame.last_ip);

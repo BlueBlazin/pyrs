@@ -661,6 +661,21 @@ struct VmTraceFlags {
     subscript_error: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+struct VmTraceTextFilters {
+    module_return_ip: Option<String>,
+    unwind: Option<String>,
+}
+
+impl VmTraceTextFilters {
+    fn from_host(host: &dyn VmHost) -> Self {
+        Self {
+            module_return_ip: host.env_var("PYRS_TRACE_MODULE_RETURN_IP"),
+            unwind: host.env_var("PYRS_TRACE_UNWIND"),
+        }
+    }
+}
+
 impl VmTraceFlags {
     fn from_host(host: &dyn VmHost) -> Self {
         Self {
@@ -1113,6 +1128,7 @@ pub struct Vm {
     import_path_hooks_has_default_hook: bool,
     import_perf_enabled: bool,
     trace_flags: VmTraceFlags,
+    trace_text_filters: VmTraceTextFilters,
     import_perf_counters: ImportPerfCounters,
     heap: Heap,
     random: Mt19937,
@@ -1370,6 +1386,7 @@ impl Vm {
 
         let module_paths = vec![host.current_dir().unwrap_or_else(|_| PathBuf::from("."))];
         let trace_flags = VmTraceFlags::from_host(host.as_ref());
+        let trace_text_filters = VmTraceTextFilters::from_host(host.as_ref());
         let debug_exception_unwind_depth_enabled = host
             .env_var_os("PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH")
             .is_some();
@@ -1406,6 +1423,7 @@ impl Vm {
             import_path_hooks_has_default_hook: true,
             import_perf_enabled: host.env_flag_enabled("PYRS_IMPORT_PERF"),
             trace_flags,
+            trace_text_filters,
             import_perf_counters: ImportPerfCounters::default(),
             heap,
             random: Mt19937::new(5489),

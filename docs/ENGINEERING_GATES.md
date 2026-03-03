@@ -141,8 +141,9 @@ Run this pipeline continuously during Milestone 13 and Milestone 14:
 9. coverage gate summary (`scripts/run_coverage_gate.sh`; floors/test scope/ignore rules are policy-driven via `docs/COVERAGE_GATE_POLICY.json`, CI enforces the current ratchet when `PYRS_COVERAGE_ENFORCE=1`, local runs remain report-only by default)
 10. strict-harness timeout regression (`tests/cpython_harness.rs::subprocess_harness_helper_times_out_hanging_program`) so hang/memory-growth incidents fail fast
 11. dispatch hotpath perf smoke (`scripts/bench_dispatch_hotpath.sh`) on CI as non-blocking telemetry artifact; regressions must be investigated before performance sprint closure
-12. generated Unicode-name table drift check (`scripts/generate_unicode_name_table.py --check`) to prevent unvetted/manual changes in parser Unicode data
-13. builtin surface parity gate (`scripts/run_builtin_parity_gate.sh`) for inventory + semantic probes against CPython
+12. native perf smoke gate (`scripts/perf_smoke_native.py`) on CI as a blocking lane; it fails when `pyrs` mean runtime exceeds `--max-pyrs-seconds` or when `pyrs_mean/python_mean` exceeds `--max-pyrs-vs-python-ratio`; latest artifact: `perf/native_perf_smoke_latest.json`
+13. generated Unicode-name table drift check (`scripts/generate_unicode_name_table.py --check`) to prevent unvetted/manual changes in parser Unicode data
+14. builtin surface parity gate (`scripts/run_builtin_parity_gate.sh`) for inventory + semantic probes against CPython
 
 Strict stdlib harness policy:
 - `tests/cpython_harness.rs` strict suite runs in isolated subprocesses with a per-entry timeout (`PYRS_STRICT_HARNESS_TIMEOUT_SECS`, default 120s) to prevent unbounded hangs/memory growth from masking regressions.
