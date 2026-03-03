@@ -34,7 +34,9 @@ reedline = "0.45.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.7"
-getrandom = { version = "0.2.17", features = ["js"] }
+getrandom = { version = "0.4.1", features = ["wasm_js"] }
+# `scrypt` currently pulls `getrandom 0.2.x` through `rand_core`; keep its wasm backend enabled.
+getrandom_02 = { package = "getrandom", version = "0.2.17", features = ["js"] }
 js-sys = "0.3.91"
 wasm-bindgen = "0.2.114"
 web-sys = "0.3.91"
