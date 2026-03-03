@@ -327,6 +327,14 @@ Completed on this branch:
   restored green `scripts/check_wasm_branch.sh` contract lane.
 - `5c855910`: added vm-probe browser smoke coverage for REPL continuation execution
   (`class ...` block finalization on blank line).
+- `b647c267`: unified module compile helper usage across top-level/session contract paths.
+- `645fa734`: centralized unsupported execution-result mapping across wasm contract paths.
+- `39bf3387`: documented `WasmReplSession` continuation semantics in wasm API contract docs.
+- `5745d6e7`: unified wasm execution-result builders (`ok`/`error`) and added vm-probe browser
+  smoke coverage for multiline-followed-by-runtime-error shape stability.
+- `e7c24c50`: centralized execution-failure result construction, including optional-error compile
+  contract paths.
+- `e2f4acc9`: centralized `WasmReplSession` `last_error` update sink via one result finalizer path.
 - `afeed21`: initial isolated execution plan + branch-policy guardrails.
 - `7c92917`: wasm dependency lane + target-gated build/dependency isolation.
 - `302fa6b`: `VmHost`/`NativeHost`/`WasmHost` baseline + `Vm::new_with_host`.
