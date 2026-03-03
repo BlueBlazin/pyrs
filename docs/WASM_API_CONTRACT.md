@@ -355,6 +355,21 @@ This document defines the JS-facing contract currently exported by
 - `snippets_checked: usize`
 - `last_error: Option<String>`
 
+### WasmReplSession (class API)
+
+- `new()`
+- `execute_input(source: &str) -> WasmExecutionResult`
+- `reset()`
+- `inputs_executed: usize`
+- `last_error: Option<String>`
+
+Notes:
+
+- line-based continuation is stateful across calls:
+  - incomplete input returns `phase = "ok"` with empty `stdout`/`stderr`,
+  - once a block is finalized (for example, blank line after an indented suite),
+    execution follows normal `WasmExecutionResult` phase/error rules.
+
 ## `WasmWorkerSession`
 
 - `new()`
