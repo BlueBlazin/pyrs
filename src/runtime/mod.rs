@@ -3762,6 +3762,7 @@ pub enum BuiltinFunction {
     SysStdinWrite,
     SysStdinFlush,
     SysStreamIsATty,
+    OsxSupportCustomizeConfigVars,
     SysconfigGetDataName,
     PlatformSystem,
     PlatformRelease,
@@ -7233,6 +7234,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SysStdinWrite
             | BuiltinFunction::SysStdinFlush
             | BuiltinFunction::SysStreamIsATty
+            | BuiltinFunction::OsxSupportCustomizeConfigVars
             | BuiltinFunction::SysconfigGetDataName
             | BuiltinFunction::PlatformSystem
             | BuiltinFunction::PlatformRelease

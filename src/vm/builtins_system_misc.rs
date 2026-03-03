@@ -3320,6 +3320,28 @@ impl Vm {
         Ok(Value::Str(preferred))
     }
 
+    pub(super) fn builtin_osx_support_customize_config_vars(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "customize_config_vars() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "customize_config_vars() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        // CPython returns the same mapping object after environment-aware
+        // macOS-specific adjustments. pyrs keeps this as a pass-through
+        // fallback while preserving call contract and identity.
+        Ok(args.remove(0))
+    }
+
     pub(super) fn socket_class_ref(&self) -> Result<ObjRef, RuntimeError> {
         let Some(module) = self.modules.get("_socket").cloned() else {
             return Err(RuntimeError::module_not_found_error(

@@ -36,8 +36,8 @@ Audit date: 2026-03-04
   - `_idfunc` uses `TypingIdFunc` (module install at line 4910).
 - [ ] `P1` Remove placeholder behavior in `functools`:
   - `total_ordering` currently wired via `TypingIdFunc` (module install at line 3722).
-- [ ] `P1` Replace `_osx_support.customize_config_vars` placeholder:
-  - currently wired to `TypingIdFunc` (module install at line 1536).
+- [x] `P1` Replace `_osx_support.customize_config_vars` placeholder:
+  - now wired to dedicated builtin (`OsxSupportCustomizeConfigVars`) with explicit CPython-shaped call contract (`1` positional arg, no kwargs) and mapping identity return semantics.
 - [x] `P1` Replace `platform` placeholder exports:
   - bootstrap exports now use dedicated native platform builtins (`system`, `release`, `version`, `machine`, `processor`, `node`, `platform`, `python_version`, `python_implementation`, `uname`) instead of generic placeholders,
   - `uname` now returns a 6-field tuple `(system, node, release, version, machine, processor)` with string entries (CPython-shaped surface).

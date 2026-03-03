@@ -11830,6 +11830,9 @@ impl Vm {
             BuiltinFunction::SysStdinWrite => self.builtin_sys_stdin_write(args, kwargs),
             BuiltinFunction::SysStdinFlush => self.builtin_sys_stream_flush(args, kwargs),
             BuiltinFunction::SysStreamIsATty => self.builtin_sys_stream_isatty(args, kwargs),
+            BuiltinFunction::OsxSupportCustomizeConfigVars => {
+                self.builtin_osx_support_customize_config_vars(args, kwargs)
+            }
             BuiltinFunction::SysconfigGetDataName => {
                 self.builtin_sysconfig_get_data_name(args, kwargs)
             }

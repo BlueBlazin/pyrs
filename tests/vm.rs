@@ -16359,6 +16359,16 @@ fn subprocess_args_from_interpreter_flags_returns_list() {
 }
 
 #[test]
+fn osx_support_customize_config_vars_preserves_mapping_identity() {
+    let source = "import _osx_support\ncfg = {'CFLAGS': '-O2'}\nout = _osx_support.customize_config_vars(cfg)\nok = (out is cfg and out['CFLAGS'] == '-O2')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn subprocess_popen_pipe_attrs_support_readline_and_write() {
     let source = r#"import subprocess
 p = subprocess.Popen(

@@ -1535,7 +1535,10 @@ impl Vm {
         );
         self.install_builtin_module(
             "_osx_support",
-            &[("customize_config_vars", BuiltinFunction::TypingIdFunc)],
+            &[(
+                "customize_config_vars",
+                BuiltinFunction::OsxSupportCustomizeConfigVars,
+            )],
             Vec::new(),
         );
         self.install_builtin_module(
