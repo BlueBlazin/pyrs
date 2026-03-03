@@ -2662,6 +2662,25 @@ objs = {
 }
 is_list = {k: isinstance(v, list) for k, v in objs.items()}
 iter_identity = {k: (iter(v) is v) for k, v in objs.items()}
+repr_prefix = {
+    "accumulate": repr(objs["accumulate"]).startswith("<itertools.accumulate object at 0x"),
+    "batched": repr(objs["batched"]).startswith("<itertools.batched object at 0x"),
+    "combinations": repr(objs["combinations"]).startswith("<itertools.combinations object at 0x"),
+    "combinations_with_replacement": repr(objs["combinations_with_replacement"]).startswith("<itertools.combinations_with_replacement object at 0x"),
+    "compress": repr(objs["compress"]).startswith("<itertools.compress object at 0x"),
+    "dropwhile": repr(objs["dropwhile"]).startswith("<itertools.dropwhile object at 0x"),
+    "filterfalse": repr(objs["filterfalse"]).startswith("<itertools.filterfalse object at 0x"),
+    "groupby": repr(objs["groupby"]).startswith("<itertools.groupby object at 0x"),
+    "islice": repr(objs["islice"]).startswith("<itertools.islice object at 0x"),
+    "pairwise": repr(objs["pairwise"]).startswith("<itertools.pairwise object at 0x"),
+    "permutations": repr(objs["permutations"]).startswith("<itertools.permutations object at 0x"),
+    "product": repr(objs["product"]).startswith("<itertools.product object at 0x"),
+    "repeat": repr(objs["repeat"]) == "repeat('x', 2)",
+    "starmap": repr(objs["starmap"]).startswith("<itertools.starmap object at 0x"),
+    "takewhile": repr(objs["takewhile"]).startswith("<itertools.takewhile object at 0x"),
+    "zip_longest": repr(objs["zip_longest"]).startswith("<itertools.zip_longest object at 0x"),
+    "tee": repr(objs["tee"]).startswith("<itertools._tee object at 0x"),
+}
 values = {
     "accumulate": list(itertools.accumulate([1, 2, 3])),
     "batched": list(itertools.batched([1, 2, 3, 4, 5], 2)),
@@ -2688,6 +2707,7 @@ result = {
     "construct": construct,
     "is_list": is_list,
     "iter_identity": iter_identity,
+    "repr_prefix": repr_prefix,
     "values": values,
 }
 "#;

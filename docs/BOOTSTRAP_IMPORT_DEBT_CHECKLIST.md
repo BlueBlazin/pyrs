@@ -153,8 +153,8 @@ This investigation was triggered by `itertools` behavior and must remain explici
 - [x] `P1` Converted these helpers from eager snapshots to lazy iterator objects with CPython-shaped constructor behavior:
   - `accumulate`, `combinations`, `combinations_with_replacement`, `compress`, `dropwhile`, `filterfalse`, `groupby`, `islice`, `pairwise`, `permutations`, `product`, `repeat`, `starmap`, `takewhile`, `zip_longest`, `tee`, `batched`
   - implementation entrypoints: `src/vm/builtins_collections.rs` (`builtin_itertools_*` methods)
-- [ ] `P1` Audit all exported `itertools` callables (lines 3696-3718) for iterator/laziness/type/repr parity, not just value parity.
-- [ ] `P1` Add differential tests for iterator object identity/repr/type and lazy consumption semantics for `itertools` surfaces before further stdlib closure work.
+- [x] `P1` Audited exported `itertools` callables (lines 3696-3718) for iterator/laziness/type/repr parity and converted eager helpers to iterator objects with CPython-shaped repr/type behavior where applicable.
+- [x] `P1` Added differential + vm tests for iterator object identity/repr/type and lazy consumption semantics across `itertools` helper surfaces (including partial-consumption `groupby` behavior).
 
 ## Recommended Fix Order
 

@@ -9306,6 +9306,58 @@ pub fn format_value(value: &Value) -> String {
                 IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => {
                     format!("<itertools.chain object at 0x{:x}>", obj.id())
                 }
+                IteratorKind::Accumulate { .. } => {
+                    format!("<itertools.accumulate object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::Combinations { .. } => {
+                    format!("<itertools.combinations object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::CombinationsWithReplacement { .. } => {
+                    format!(
+                        "<itertools.combinations_with_replacement object at 0x{:x}>",
+                        obj.id()
+                    )
+                }
+                IteratorKind::Compress { .. } => {
+                    format!("<itertools.compress object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::Count { .. } => {
+                    format!("<itertools.count object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::Cycle { .. } => {
+                    format!("<itertools.cycle object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::DropWhile { .. } => {
+                    format!("<itertools.dropwhile object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::FilterFalse { .. } => {
+                    format!("<itertools.filterfalse object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::Islice { .. } => {
+                    format!("<itertools.islice object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::Pairwise { .. } => {
+                    format!("<itertools.pairwise object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::Permutations { .. } => {
+                    format!("<itertools.permutations object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::Product { .. } => {
+                    format!("<itertools.product object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::Repeat { value, remaining } => match remaining {
+                    Some(remaining) => format!("repeat({}, {})", format_repr(value), remaining),
+                    None => format!("repeat({})", format_repr(value)),
+                },
+                IteratorKind::StarMap { .. } => {
+                    format!("<itertools.starmap object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::TakeWhile { .. } => {
+                    format!("<itertools.takewhile object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::Batched { .. } => {
+                    format!("<itertools.batched object at 0x{:x}>", obj.id())
+                }
                 IteratorKind::ZipLongest { .. } => {
                     format!("<itertools.zip_longest object at 0x{:x}>", obj.id())
                 }
