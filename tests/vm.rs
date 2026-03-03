@@ -12284,6 +12284,26 @@ fn exposes_functools_total_ordering_decorator() {
 }
 
 #[test]
+fn functools_total_ordering_requires_one_order_operation() {
+    let source = "import functools\nok = False\ntry:\n    @functools.total_ordering\n    class C:\n        pass\nexcept ValueError as exc:\n    ok = 'must define at least one ordering operation' in str(exc)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn functools_total_ordering_synthesizes_from_le_root() {
+    let source = "import functools\n@functools.total_ordering\nclass C:\n    def __init__(self, v):\n        self.v = v\n    def __eq__(self, other):\n        return self.v == other.v\n    def __le__(self, other):\n        return self.v <= other.v\na = C(1)\nb = C(2)\nok = (a < b and a <= b and b > a and b >= a)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_object_new_lookuperror_and_open_builtin() {
     let source = "obj = object.__new__(object)\nstate = object.__getstate__(obj)\nerr = False\ntry:\n    raise LookupError\nexcept LookupError:\n    err = True\nself_ok = isinstance(int.__new__.__self__, type)\nopen_ok = callable(open)\nok = (state is None) and err and self_ok and open_ok\n";
     let module = parser::parse_module(source).expect("parse should succeed");

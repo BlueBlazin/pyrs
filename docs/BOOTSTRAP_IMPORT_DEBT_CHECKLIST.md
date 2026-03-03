@@ -34,8 +34,8 @@ Audit date: 2026-03-04
   - `TypingIdFunc` and generic placeholders (`Dict/List/Tuple/Bool/Print`) in exported API (module install at line 3765, placeholder class wiring around lines 3759-3843).
 - [ ] `P1` Remove placeholder behavior in `_typing`:
   - `_idfunc` uses `TypingIdFunc` (module install at line 4910).
-- [ ] `P1` Remove placeholder behavior in `functools`:
-  - `total_ordering` currently wired via `TypingIdFunc` (module install at line 3722).
+- [x] `P1` Remove placeholder behavior in `functools`:
+  - `total_ordering` now uses dedicated decorator + synthesized comparator builtins (CPython-shaped `ValueError` when no root order operation exists; no `TypingIdFunc` placeholder).
 - [x] `P1` Replace `_osx_support.customize_config_vars` placeholder:
   - now wired to dedicated builtin (`OsxSupportCustomizeConfigVars`) with explicit CPython-shaped call contract (`1` positional arg, no kwargs) and mapping identity return semantics.
 - [x] `P1` Replace `platform` placeholder exports:

@@ -12681,6 +12681,45 @@ impl Vm {
             BuiltinFunction::FunctoolsWraps => self.builtin_functools_wraps(args, kwargs),
             BuiltinFunction::FunctoolsPartial => self.builtin_functools_partial(args, kwargs),
             BuiltinFunction::FunctoolsCmpToKey => self.builtin_functools_cmp_to_key(args, kwargs),
+            BuiltinFunction::FunctoolsTotalOrdering => {
+                self.builtin_functools_total_ordering(args, kwargs)
+            }
+            BuiltinFunction::FunctoolsTotalOrderingGtFromLt => {
+                self.builtin_functools_total_ordering_gt_from_lt(args, kwargs)
+            }
+            BuiltinFunction::FunctoolsTotalOrderingLeFromLt => {
+                self.builtin_functools_total_ordering_le_from_lt(args, kwargs)
+            }
+            BuiltinFunction::FunctoolsTotalOrderingGeFromLt => {
+                self.builtin_functools_total_ordering_ge_from_lt(args, kwargs)
+            }
+            BuiltinFunction::FunctoolsTotalOrderingGeFromLe => {
+                self.builtin_functools_total_ordering_ge_from_le(args, kwargs)
+            }
+            BuiltinFunction::FunctoolsTotalOrderingLtFromLe => {
+                self.builtin_functools_total_ordering_lt_from_le(args, kwargs)
+            }
+            BuiltinFunction::FunctoolsTotalOrderingGtFromLe => {
+                self.builtin_functools_total_ordering_gt_from_le(args, kwargs)
+            }
+            BuiltinFunction::FunctoolsTotalOrderingLtFromGt => {
+                self.builtin_functools_total_ordering_lt_from_gt(args, kwargs)
+            }
+            BuiltinFunction::FunctoolsTotalOrderingGeFromGt => {
+                self.builtin_functools_total_ordering_ge_from_gt(args, kwargs)
+            }
+            BuiltinFunction::FunctoolsTotalOrderingLeFromGt => {
+                self.builtin_functools_total_ordering_le_from_gt(args, kwargs)
+            }
+            BuiltinFunction::FunctoolsTotalOrderingLeFromGe => {
+                self.builtin_functools_total_ordering_le_from_ge(args, kwargs)
+            }
+            BuiltinFunction::FunctoolsTotalOrderingGtFromGe => {
+                self.builtin_functools_total_ordering_gt_from_ge(args, kwargs)
+            }
+            BuiltinFunction::FunctoolsTotalOrderingLtFromGe => {
+                self.builtin_functools_total_ordering_lt_from_ge(args, kwargs)
+            }
             BuiltinFunction::FunctoolsCachedProperty => {
                 self.builtin_functools_cached_property(args, kwargs)
             }

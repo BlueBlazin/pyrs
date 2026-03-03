@@ -4254,6 +4254,19 @@ pub enum BuiltinFunction {
     FunctoolsCmpToKey,
     FunctoolsCachedProperty,
     FunctoolsLruCache,
+    FunctoolsTotalOrdering,
+    FunctoolsTotalOrderingGtFromLt,
+    FunctoolsTotalOrderingLeFromLt,
+    FunctoolsTotalOrderingGeFromLt,
+    FunctoolsTotalOrderingGeFromLe,
+    FunctoolsTotalOrderingLtFromLe,
+    FunctoolsTotalOrderingGtFromLe,
+    FunctoolsTotalOrderingLtFromGt,
+    FunctoolsTotalOrderingGeFromGt,
+    FunctoolsTotalOrderingLeFromGt,
+    FunctoolsTotalOrderingLeFromGe,
+    FunctoolsTotalOrderingGtFromGe,
+    FunctoolsTotalOrderingLtFromGe,
     CollectionsCounter,
     CollectionsDeque,
     CollectionsDequeInit,
@@ -7555,6 +7568,19 @@ impl BuiltinFunction {
             | BuiltinFunction::FunctoolsWraps
             | BuiltinFunction::FunctoolsPartial
             | BuiltinFunction::FunctoolsCmpToKey
+            | BuiltinFunction::FunctoolsTotalOrdering
+            | BuiltinFunction::FunctoolsTotalOrderingGtFromLt
+            | BuiltinFunction::FunctoolsTotalOrderingLeFromLt
+            | BuiltinFunction::FunctoolsTotalOrderingGeFromLt
+            | BuiltinFunction::FunctoolsTotalOrderingGeFromLe
+            | BuiltinFunction::FunctoolsTotalOrderingLtFromLe
+            | BuiltinFunction::FunctoolsTotalOrderingGtFromLe
+            | BuiltinFunction::FunctoolsTotalOrderingLtFromGt
+            | BuiltinFunction::FunctoolsTotalOrderingGeFromGt
+            | BuiltinFunction::FunctoolsTotalOrderingLeFromGt
+            | BuiltinFunction::FunctoolsTotalOrderingLeFromGe
+            | BuiltinFunction::FunctoolsTotalOrderingGtFromGe
+            | BuiltinFunction::FunctoolsTotalOrderingLtFromGe
             | BuiltinFunction::CollectionsCounter
             | BuiltinFunction::CollectionsDeque
             | BuiltinFunction::CollectionsDequeInit

@@ -3733,7 +3733,7 @@ impl Vm {
                 ("lru_cache", BuiltinFunction::FunctoolsLruCache),
                 ("cache", BuiltinFunction::FunctoolsLruCache),
                 ("cached_property", BuiltinFunction::FunctoolsCachedProperty),
-                ("total_ordering", BuiltinFunction::TypingIdFunc),
+                ("total_ordering", BuiltinFunction::FunctoolsTotalOrdering),
                 ("singledispatch", BuiltinFunction::FunctoolsSingleDispatch),
                 (
                     "singledispatchmethod",

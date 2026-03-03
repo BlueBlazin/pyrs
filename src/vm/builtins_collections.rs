@@ -1574,6 +1574,297 @@ impl Vm {
         Ok(self.heap.alloc_instance(instance))
     }
 
+    fn functools_notimplemented_value(&self) -> Value {
+        self.builtins
+            .get("NotImplemented")
+            .cloned()
+            .unwrap_or(Value::None)
+    }
+
+    fn functools_is_notimplemented_value(&self, value: &Value) -> bool {
+        let marker = self.functools_notimplemented_value();
+        match (value, &marker) {
+            (Value::Instance(left), Value::Instance(right)) => left.id() == right.id(),
+            _ => value == &marker,
+        }
+    }
+
+    fn functools_call_ordering_root_method(
+        &mut self,
+        receiver: Value,
+        other: Value,
+        root_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        let Some(class_ref) = self.class_of_value(&receiver) else {
+            return Err(RuntimeError::type_error(
+                "total_ordering synthetic method requires instance receiver",
+            ));
+        };
+        let Some(root_method) = class_attr_lookup(&class_ref, root_name) else {
+            return Err(RuntimeError::attribute_error(format!(
+                "type has no attribute '{root_name}'"
+            )));
+        };
+        let callable = match self.bind_descriptor_method(root_method.clone(), &receiver)? {
+            Some(bound) => bound,
+            None => root_method,
+        };
+        match self.call_internal(callable, vec![other], HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => Err(self
+                .runtime_error_from_active_exception(
+                    "functools.total_ordering synthetic compare failed",
+                )),
+        }
+    }
+
+    fn functools_total_ordering_from_root(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        root_name: &str,
+        pattern: u8,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "total_ordering synthetic comparator expects self and other",
+            ));
+        }
+        let receiver = args.remove(0);
+        let other = args.remove(0);
+        let root_result =
+            self.functools_call_ordering_root_method(receiver.clone(), other.clone(), root_name)?;
+        if self.functools_is_notimplemented_value(&root_result) {
+            return Ok(self.functools_notimplemented_value());
+        }
+        let root_truth = self.truthy_from_value(&root_result)?;
+        let equals_value = self.compare_eq_runtime(receiver, other)?;
+        let equals = self.truthy_from_value(&equals_value)?;
+        let result = match pattern {
+            // !root and receiver != other
+            0 => !root_truth && !equals,
+            // root or receiver == other
+            1 => root_truth || equals,
+            // !root
+            2 => !root_truth,
+            // !root or receiver == other
+            3 => !root_truth || equals,
+            // root and receiver != other
+            4 => root_truth && !equals,
+            _ => unreachable!(),
+        };
+        Ok(Value::Bool(result))
+    }
+
+    pub(super) fn builtin_functools_total_ordering(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "total_ordering() expects one class argument",
+            ));
+        }
+        let class = match args.remove(0) {
+            Value::Class(class) => class,
+            _ => return Err(RuntimeError::type_error("total_ordering() expects a class")),
+        };
+        let root = {
+            let class_kind = class.kind();
+            let Object::Class(class_data) = &*class_kind else {
+                return Err(RuntimeError::type_error("total_ordering() expects a class"));
+            };
+            ["__lt__", "__le__", "__gt__", "__ge__"]
+                .into_iter()
+                .find(|name| class_data.attrs.contains_key(*name))
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    RuntimeError::value_error(
+                        "must define at least one ordering operation: < > <= >=",
+                    )
+                })?
+        };
+
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            let add_missing = |attrs: &mut HashMap<String, Value>,
+                               method_name: &str,
+                               builtin: BuiltinFunction| {
+                if !attrs.contains_key(method_name) {
+                    attrs.insert(method_name.to_string(), Value::Builtin(builtin));
+                }
+            };
+            match root.as_str() {
+                "__lt__" => {
+                    add_missing(
+                        &mut class_data.attrs,
+                        "__gt__",
+                        BuiltinFunction::FunctoolsTotalOrderingGtFromLt,
+                    );
+                    add_missing(
+                        &mut class_data.attrs,
+                        "__le__",
+                        BuiltinFunction::FunctoolsTotalOrderingLeFromLt,
+                    );
+                    add_missing(
+                        &mut class_data.attrs,
+                        "__ge__",
+                        BuiltinFunction::FunctoolsTotalOrderingGeFromLt,
+                    );
+                }
+                "__le__" => {
+                    add_missing(
+                        &mut class_data.attrs,
+                        "__ge__",
+                        BuiltinFunction::FunctoolsTotalOrderingGeFromLe,
+                    );
+                    add_missing(
+                        &mut class_data.attrs,
+                        "__lt__",
+                        BuiltinFunction::FunctoolsTotalOrderingLtFromLe,
+                    );
+                    add_missing(
+                        &mut class_data.attrs,
+                        "__gt__",
+                        BuiltinFunction::FunctoolsTotalOrderingGtFromLe,
+                    );
+                }
+                "__gt__" => {
+                    add_missing(
+                        &mut class_data.attrs,
+                        "__lt__",
+                        BuiltinFunction::FunctoolsTotalOrderingLtFromGt,
+                    );
+                    add_missing(
+                        &mut class_data.attrs,
+                        "__ge__",
+                        BuiltinFunction::FunctoolsTotalOrderingGeFromGt,
+                    );
+                    add_missing(
+                        &mut class_data.attrs,
+                        "__le__",
+                        BuiltinFunction::FunctoolsTotalOrderingLeFromGt,
+                    );
+                }
+                "__ge__" => {
+                    add_missing(
+                        &mut class_data.attrs,
+                        "__le__",
+                        BuiltinFunction::FunctoolsTotalOrderingLeFromGe,
+                    );
+                    add_missing(
+                        &mut class_data.attrs,
+                        "__gt__",
+                        BuiltinFunction::FunctoolsTotalOrderingGtFromGe,
+                    );
+                    add_missing(
+                        &mut class_data.attrs,
+                        "__lt__",
+                        BuiltinFunction::FunctoolsTotalOrderingLtFromGe,
+                    );
+                }
+                _ => unreachable!(),
+            }
+        }
+        Ok(Value::Class(class))
+    }
+
+    pub(super) fn builtin_functools_total_ordering_gt_from_lt(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.functools_total_ordering_from_root(args, kwargs, "__lt__", 0)
+    }
+
+    pub(super) fn builtin_functools_total_ordering_le_from_lt(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.functools_total_ordering_from_root(args, kwargs, "__lt__", 1)
+    }
+
+    pub(super) fn builtin_functools_total_ordering_ge_from_lt(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.functools_total_ordering_from_root(args, kwargs, "__lt__", 2)
+    }
+
+    pub(super) fn builtin_functools_total_ordering_ge_from_le(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.functools_total_ordering_from_root(args, kwargs, "__le__", 3)
+    }
+
+    pub(super) fn builtin_functools_total_ordering_lt_from_le(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.functools_total_ordering_from_root(args, kwargs, "__le__", 4)
+    }
+
+    pub(super) fn builtin_functools_total_ordering_gt_from_le(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.functools_total_ordering_from_root(args, kwargs, "__le__", 2)
+    }
+
+    pub(super) fn builtin_functools_total_ordering_lt_from_gt(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.functools_total_ordering_from_root(args, kwargs, "__gt__", 0)
+    }
+
+    pub(super) fn builtin_functools_total_ordering_ge_from_gt(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.functools_total_ordering_from_root(args, kwargs, "__gt__", 1)
+    }
+
+    pub(super) fn builtin_functools_total_ordering_le_from_gt(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.functools_total_ordering_from_root(args, kwargs, "__gt__", 2)
+    }
+
+    pub(super) fn builtin_functools_total_ordering_le_from_ge(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.functools_total_ordering_from_root(args, kwargs, "__ge__", 3)
+    }
+
+    pub(super) fn builtin_functools_total_ordering_gt_from_ge(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.functools_total_ordering_from_root(args, kwargs, "__ge__", 4)
+    }
+
+    pub(super) fn builtin_functools_total_ordering_lt_from_ge(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.functools_total_ordering_from_root(args, kwargs, "__ge__", 2)
+    }
+
     pub(super) fn builtin_collections_counter(
         &mut self,
         args: Vec<Value>,
