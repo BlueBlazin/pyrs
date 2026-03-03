@@ -1119,11 +1119,7 @@ impl WasmReplSession {
         let _ = (&ready_source, &compile_code);
 
         let host = WasmHost;
-        let import_roots = collect_import_roots(&ready_module);
-        if let Some(blocker) = snippet_blockers_from_import_roots(&import_roots, &host)
-            .into_iter()
-            .next()
-        {
+        if let Some(blocker) = first_snippet_blocker_for_module(&ready_module, &host) {
             return self.finish_execution_result(unsupported_execution_result(
                 WasmExecutionPhase::UnsupportedExecution.key(),
                 blocker.message,
@@ -2424,11 +2420,7 @@ fn execute_snippet_with_contract(
         }
     };
 
-    let import_roots = collect_import_roots(&parsed.module);
-    let first_blocker = snippet_blockers_from_import_roots(&import_roots, &host)
-        .into_iter()
-        .next();
-    if let Some(blocker) = first_blocker {
+    if let Some(blocker) = first_snippet_blocker_for_module(&parsed.module, &host) {
         return unsupported_execution_result(
             contract.unsupported_phase_key(),
             blocker.message,
@@ -2495,6 +2487,16 @@ fn snippet_blockers_from_import_roots(
         });
     }
     blockers
+}
+
+fn first_snippet_blocker_for_module(
+    module: &crate::ast::Module,
+    host: &dyn VmHost,
+) -> Option<WasmSnippetBlocker> {
+    let import_roots = collect_import_roots(module);
+    snippet_blockers_from_import_roots(&import_roots, host)
+        .into_iter()
+        .next()
 }
 
 /// Preflight analysis for snippet viability in wasm mode.

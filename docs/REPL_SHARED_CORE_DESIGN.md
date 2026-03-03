@@ -301,5 +301,7 @@ Design is complete when:
   - `submit_line_and_execute(...)` stateful execution method built on the same prepare path.
 - Shared source-level parse+compile helper (`parse_and_compile_module_source(...)`)
   now backs wasm snippet preflight parse/compile checks.
+- wasm top-level execute and `WasmReplSession` now share module-level blocker
+  resolution plumbing (single first-blocker helper from parsed import roots).
 - Website playground worker now forwards REPL prompt state (`prompt_continuation`)
   from `WasmReplSession` so UI prompt mode follows core interpreter state.
