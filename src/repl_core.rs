@@ -420,6 +420,26 @@ mod tests {
     }
 
     #[test]
+    fn line_submit_semantics_match_across_profiles() {
+        for profile in [ReplProfile::NativeFull, ReplProfile::WasmLean] {
+            let mut state = ReplCoreState::new(profile);
+            assert!(matches!(
+                state.submit_line("class A:"),
+                ReplLineParseResult::NeedMoreInput
+            ));
+            assert!(matches!(
+                state.submit_line("    x = 1"),
+                ReplLineParseResult::NeedMoreInput
+            ));
+            assert!(matches!(
+                state.submit_line(""),
+                ReplLineParseResult::Ready { .. }
+            ));
+            assert!(state.is_empty());
+        }
+    }
+
+    #[test]
     fn execute_module_or_expression_echoes_expression_repr() {
         let mut vm = crate::vm::Vm::new();
         let module = crate::parser::parse_module("1 + 1").expect("module should parse");
