@@ -92,7 +92,10 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
 - [ ] `P1` `codecs` (line 2605)
 - [ ] `P1` `operator` (line 3439)
 - [ ] `P1` `_colorize` (line 3675)
-- [ ] `P1` `functools` (line 3722)
+- [x] `P1` `functools` (line 3722):
+  - added to `PURE_STDLIB_FUNCTOOLS_MODULES` unload preference group so `Lib/functools.py` is preferred when available;
+  - covered by `tests/vm.rs::functools_import_prefers_cpython_pure_module_when_lib_path_is_added`;
+  - follow-up parity debt remains in `_find_impl` fallback path (`_c3_mro` recursion over unregistered builtin classes currently errors with `cell has no attribute '__bases__'`).
 - [ ] `P1` `__future__` (line 4697)
 - [ ] `P1` `inspect` (line 5860)
 - [ ] `P1` `io` (line 5923)
