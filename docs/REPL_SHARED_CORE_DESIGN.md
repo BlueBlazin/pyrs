@@ -297,6 +297,7 @@ Design is complete when:
 - wasm `WasmReplSession` now uses `ReplCoreState` for line buffering/continuation state.
 - New `ReplCoreState` session API now includes:
   - `prompt_kind()` for adapter prompt selection (`>>>` vs `...` decisions),
-  - `submit_line_and_execute(...)` stateful execution method.
+  - `submit_line_prepare_module(...)` shared parse+compile preparation path,
+  - `submit_line_and_execute(...)` stateful execution method built on the same prepare path.
 - Website playground worker now forwards REPL prompt state (`prompt_continuation`)
   from `WasmReplSession` so UI prompt mode follows core interpreter state.

@@ -108,6 +108,23 @@ pub(crate) enum ReplLineParseResult {
     ParseError { source: String, error: ParseError },
 }
 
+pub(crate) enum ReplLinePrepareResult {
+    NeedMoreInput,
+    ParseError {
+        source: String,
+        error: ParseError,
+    },
+    CompileError {
+        source: String,
+        error: crate::compiler::CompileError,
+    },
+    Ready {
+        source: String,
+        module: Module,
+        code: crate::bytecode::CodeObject,
+    },
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ReplPromptKind {
     Primary,
@@ -228,6 +245,29 @@ impl ReplCoreState {
         self.input.submit_line(line)
     }
 
+    pub(crate) fn submit_line_prepare_module(
+        &mut self,
+        line: &str,
+        filename: &str,
+    ) -> ReplLinePrepareResult {
+        match self.submit_line(line) {
+            ReplLineParseResult::NeedMoreInput => ReplLinePrepareResult::NeedMoreInput,
+            ReplLineParseResult::ParseError { source, error } => {
+                ReplLinePrepareResult::ParseError { source, error }
+            }
+            ReplLineParseResult::Ready { source, module } => {
+                match crate::compiler::compile_module_with_filename(&module, filename) {
+                    Ok(code) => ReplLinePrepareResult::Ready {
+                        source,
+                        module,
+                        code,
+                    },
+                    Err(error) => ReplLinePrepareResult::CompileError { source, error },
+                }
+            }
+        }
+    }
+
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
     pub(crate) fn submit_line_and_execute(
         &mut self,
@@ -235,13 +275,23 @@ impl ReplCoreState {
         line: &str,
         filename: &str,
     ) -> ReplLineExecuteResult {
-        match self.submit_line(line) {
-            ReplLineParseResult::NeedMoreInput => ReplLineExecuteResult::NeedMoreInput,
-            ReplLineParseResult::ParseError { source, error } => {
+        match self.submit_line_prepare_module(line, filename) {
+            ReplLinePrepareResult::NeedMoreInput => ReplLineExecuteResult::NeedMoreInput,
+            ReplLinePrepareResult::ParseError { source, error } => {
                 ReplLineExecuteResult::ParseError { source, error }
             }
-            ReplLineParseResult::Ready { source, module } => {
-                match run_ready_module(vm, &source, &module, filename, None) {
+            ReplLinePrepareResult::CompileError { source, error } => {
+                ReplLineExecuteResult::ExecutionError {
+                    source,
+                    error: ReplExecutionError::Compile(error),
+                }
+            }
+            ReplLinePrepareResult::Ready {
+                source,
+                module,
+                code,
+            } => {
+                match run_ready_module(vm, &source, &module, filename, Some(&code)) {
                     Ok(display) => ReplLineExecuteResult::Executed {
                         module,
                         display,
@@ -372,7 +422,8 @@ mod tests {
     };
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
     use super::{
-        ReplLineExecuteResult, execute_module_or_expression, run_ready_module,
+        ReplLineExecuteResult, ReplLinePrepareResult, execute_module_or_expression,
+        run_ready_module,
     };
 
     #[test]
@@ -595,5 +646,19 @@ mod tests {
             ReplLineExecuteResult::NeedMoreInput
         ));
         assert!(!state.is_empty());
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
+    #[test]
+    fn submit_line_prepare_module_reports_compile_errors_with_source() {
+        let mut state = ReplCoreState::new(ReplProfile::NativeFull);
+        let result = state.submit_line_prepare_module("return 1", "<stdin>");
+        match result {
+            ReplLinePrepareResult::CompileError { source, .. } => {
+                assert_eq!(source, "return 1".to_string());
+            }
+            _ => panic!("expected compile error result"),
+        }
+        assert!(state.is_empty());
     }
 }

@@ -1081,11 +1081,14 @@ impl WasmReplSession {
             crate::repl_core::ReplProfile::WasmLean
         );
 
-        let ready = match self.repl_state.submit_line(source) {
-            crate::repl_core::ReplLineParseResult::NeedMoreInput => {
+        let prepared = match self
+            .repl_state
+            .submit_line_prepare_module(source, WASM_REPL_FILENAME)
+        {
+            crate::repl_core::ReplLinePrepareResult::NeedMoreInput => {
                 return self.finish_execution_result(execution_ok_result(String::new()));
             }
-            crate::repl_core::ReplLineParseResult::ParseError { error, .. } => {
+            crate::repl_core::ReplLinePrepareResult::ParseError { error, .. } => {
                 let message = format_parse_error(&error);
                 return self.finish_execution_result(execution_error_with_message(
                     WasmExecutionPhase::SyntaxError.key(),
@@ -1095,15 +1098,8 @@ impl WasmReplSession {
                     error.column,
                 ));
             }
-            crate::repl_core::ReplLineParseResult::Ready { source, module } => (source, module),
-        };
-        let (ready_source, ready_module) = ready;
-        #[cfg(not(feature = "wasm-vm-probe"))]
-        let _ = &ready_source;
-
-        let compile_code = match compile_module_for_wasm(&ready_module, WASM_REPL_FILENAME) {
-            Ok(code) => code,
-            Err((message, line, column)) => {
+            crate::repl_core::ReplLinePrepareResult::CompileError { error, .. } => {
+                let (message, line, column) = format_compile_error(&error);
                 return self.finish_execution_result(execution_error_with_message(
                     WasmExecutionPhase::CompileError.key(),
                     message,
@@ -1112,9 +1108,15 @@ impl WasmReplSession {
                     column,
                 ));
             }
+            crate::repl_core::ReplLinePrepareResult::Ready {
+                source,
+                module,
+                code,
+            } => (source, module, code),
         };
+        let (ready_source, ready_module, compile_code) = prepared;
         #[cfg(not(feature = "wasm-vm-probe"))]
-        let _ = &compile_code;
+        let _ = (&ready_source, &compile_code);
 
         let host = WasmHost;
         let import_roots = collect_import_roots(&ready_module);
