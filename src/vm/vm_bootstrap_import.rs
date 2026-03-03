@@ -4800,7 +4800,10 @@ impl Vm {
             vec![
                 ("Struct", Value::Class(struct_class)),
                 ("error", Value::ExceptionType("Exception".to_string())),
-                ("__doc__", Value::Str("pyrs _struct stub".to_string())),
+                (
+                    "__doc__",
+                    Value::Str("Functions to convert between Python values and C structs.".to_string()),
+                ),
             ],
         );
         self.install_builtin_module(

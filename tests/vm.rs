@@ -5280,6 +5280,19 @@ ok = (a == 22 and b == 22 and isinstance(packed, bytes))
 }
 
 #[test]
+fn struct_module_docstring_no_longer_uses_stub_marker() {
+    let source = r#"import _struct
+doc = _struct.__doc__
+ok = isinstance(doc, str) and ("stub" not in doc.lower()) and ("C structs" in doc)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn pickle_protocol_byte_regression_for_struct_pack_is_fixed() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pickle protocol regression test (CPython Lib path not available)");
