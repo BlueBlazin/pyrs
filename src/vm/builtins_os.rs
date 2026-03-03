@@ -138,6 +138,85 @@ impl Vm {
         RuntimeError::from_exception(exception)
     }
 
+    pub(super) fn bootstrap_resource_constants(&self) -> Vec<(&'static str, Value)> {
+        #[cfg(unix)]
+        {
+            return vec![
+                ("RLIMIT_STACK", Value::Int(libc::RLIMIT_STACK as i64)),
+                ("RLIM_INFINITY", Self::resource_rlim_to_value(libc::RLIM_INFINITY)),
+            ];
+        }
+        #[cfg(not(unix))]
+        {
+            vec![
+                ("RLIMIT_STACK", Value::Int(2)),
+                ("RLIM_INFINITY", Value::Int(-1)),
+            ]
+        }
+    }
+
+    #[cfg(unix)]
+    fn resource_rlim_to_value(limit: libc::rlim_t) -> Value {
+        if limit == libc::RLIM_INFINITY {
+            // CPython renders RLIM_INFINITY using a signed native interpretation.
+            return Value::Int(limit as i64);
+        }
+        let unsigned = limit as u128;
+        if unsigned <= i64::MAX as u128 {
+            Value::Int(unsigned as i64)
+        } else {
+            value_from_bigint(super::BigInt::from_u64(unsigned as u64))
+        }
+    }
+
+    pub(super) fn builtin_resource_getrlimit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "getrlimit() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "getrlimit() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let resource = value_to_int(args.remove(0))?;
+        if resource < 0 {
+            return Err(RuntimeError::value_error("invalid resource specified"));
+        }
+
+        #[cfg(unix)]
+        {
+            let mut limits = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+            // SAFETY: `limits` points to valid writable memory and remains live
+            // for the duration of the FFI call.
+            let status = unsafe { libc::getrlimit(resource as _, limits.as_mut_ptr()) };
+            if status != 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EINVAL) {
+                    return Err(RuntimeError::value_error("invalid resource specified"));
+                }
+                return Err(Self::os_error_from_io("getrlimit failed", err));
+            }
+            // SAFETY: the call above succeeded and initialized `limits`.
+            let limits = unsafe { limits.assume_init() };
+            return Ok(self.heap.alloc_tuple(vec![
+                Self::resource_rlim_to_value(limits.rlim_cur),
+                Self::resource_rlim_to_value(limits.rlim_max),
+            ]));
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = resource;
+            Err(RuntimeError::os_error("getrlimit not supported on this platform"))
+        }
+    }
+
     pub(super) fn builtin_os_uname(
         &mut self,
         args: Vec<Value>,

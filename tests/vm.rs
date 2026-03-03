@@ -15989,6 +15989,26 @@ fn os_terminal_size_is_unpackable_and_tuple_like() {
 }
 
 #[test]
+fn resource_getrlimit_returns_limit_tuple_not_range_placeholder() {
+    let source = "import resource\nv = resource.getrlimit(resource.RLIMIT_STACK)\nok = (isinstance(v, tuple) and len(v) == 2 and isinstance(v[0], int) and isinstance(v[1], int) and isinstance(resource.RLIM_INFINITY, int) and isinstance(resource.RLIMIT_STACK, int))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn resource_getrlimit_invalid_resource_raises_value_error() {
+    let source = "import resource\nok = False\ntry:\n    resource.getrlimit(-1)\nexcept ValueError:\n    ok = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn str_center_padding_matches_cpython() {
     let source =
         "a = 'x'.center(4, '-')\nb = 'x'.center(5, '-')\nok = (a == '-x--' and b == '--x--')\n";

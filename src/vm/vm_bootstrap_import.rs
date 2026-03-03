@@ -7255,11 +7255,8 @@ impl Vm {
         self.wire_io_class_hierarchy();
         self.install_builtin_module(
             "resource",
-            &[("getrlimit", BuiltinFunction::Range)],
-            vec![
-                ("RLIMIT_STACK", Value::Int(2)),
-                ("RLIM_INFINITY", Value::Int(-1)),
-            ],
+            &[("getrlimit", BuiltinFunction::ResourceGetRLimit)],
+            self.bootstrap_resource_constants(),
         );
         self.install_builtin_module(
             "_posixsubprocess",

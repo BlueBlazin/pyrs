@@ -12032,6 +12032,7 @@ impl Vm {
             BuiltinFunction::TimeStrFTime => self.builtin_time_strftime(args, kwargs),
             BuiltinFunction::TimeMonotonic => self.builtin_time_monotonic(args, kwargs),
             BuiltinFunction::TimeSleep => self.builtin_time_sleep(args, kwargs),
+            BuiltinFunction::ResourceGetRLimit => self.builtin_resource_getrlimit(args, kwargs),
             BuiltinFunction::OsGetPid => self.builtin_os_getpid(args, kwargs),
             BuiltinFunction::OsChDir => self.builtin_os_chdir(args, kwargs),
             BuiltinFunction::OsGetCwd => self.builtin_os_getcwd(args, kwargs),

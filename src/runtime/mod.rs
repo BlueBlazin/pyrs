@@ -3612,6 +3612,7 @@ pub enum BuiltinFunction {
     NoOp,
     Len,
     Range,
+    ResourceGetRLimit,
     Slice,
     Bool,
     Int,
@@ -5002,6 +5003,9 @@ impl BuiltinFunction {
                     _ => Err(RuntimeError::type_error("len() unsupported type")),
                 }
             }
+            BuiltinFunction::ResourceGetRLimit => Err(RuntimeError::new(
+                "getrlimit() builtin not available in runtime-only call path",
+            )),
             BuiltinFunction::Range => {
                 if args.is_empty() || args.len() > 3 {
                     return Err(RuntimeError::type_error("range() expects 1-3 arguments"));
@@ -10098,6 +10102,7 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::Ascii => "ascii".to_string(),
         BuiltinFunction::Len => "len".to_string(),
         BuiltinFunction::Range => "range".to_string(),
+        BuiltinFunction::ResourceGetRLimit => "getrlimit".to_string(),
         BuiltinFunction::Slice => "slice".to_string(),
         BuiltinFunction::Bool => "bool".to_string(),
         BuiltinFunction::Int => "int".to_string(),

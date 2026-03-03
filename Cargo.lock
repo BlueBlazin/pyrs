@@ -647,6 +647,7 @@ dependencies = [
  "getrandom 0.4.1",
  "hmac",
  "js-sys",
+ "libc",
  "md-5",
  "nu-ansi-term",
  "pbkdf2",
