@@ -13928,6 +13928,16 @@ fn exposes_platform_win32_is_iot_bool() {
 }
 
 #[test]
+fn platform_bootstrap_exports_return_cpython_shaped_values() {
+    let source = "import platform\nu = platform.uname()\nvals = (platform.system(), platform.node(), platform.release(), platform.version(), platform.machine(), platform.processor())\nok = (isinstance(u, tuple) and len(u) == 6 and all(isinstance(x, str) for x in u) and vals == u and isinstance(platform.platform(), str) and isinstance(platform.python_version(), str) and platform.python_implementation() == 'CPython')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn sys_flags_exposes_cpython_314_field_surface() {
     let source = "import sys\nfields = ['debug', 'inspect', 'interactive', 'optimize', 'dont_write_bytecode', 'no_user_site', 'no_site', 'ignore_environment', 'verbose', 'bytes_warning', 'quiet', 'hash_randomization', 'isolated', 'dev_mode', 'utf8_mode', 'warn_default_encoding', 'safe_path', 'int_max_str_digits', 'gil', 'thread_inherit_context', 'context_aware_warnings']\npresent = all(hasattr(sys.flags, name) for name in fields)\ntypes_ok = isinstance(sys.flags.warn_default_encoding, int) and isinstance(sys.flags.context_aware_warnings, int)\nok = present and types_ok\n";
     let module = parser::parse_module(source).expect("parse should succeed");

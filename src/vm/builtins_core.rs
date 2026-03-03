@@ -3,7 +3,8 @@ use super::wasm_c_float_format::format_float_with_c_pattern;
 use super::{
     AttrAccessOutcome, AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, BigInt, BoundMethod,
     BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, ClassBuildOutcome, ClassObject, CodeObject,
-    CompiledCodeMode, DICT_BACKING_STORAGE_ATTR, ExceptionObject, FLOAT_BACKING_STORAGE_ATTR,
+    Command, CompiledCodeMode, DICT_BACKING_STORAGE_ATTR, ExceptionObject,
+    FLOAT_BACKING_STORAGE_ATTR,
     FROZENSET_BACKING_STORAGE_ATTR, Frame, GeneratorResumeKind, GeneratorResumeOutcome, HashMap,
     INSTANCE_DICT_STORAGE_ATTR, INT_BACKING_STORAGE_ATTR, InstanceObject, InternalCallOutcome,
     IteratorKind, IteratorObject, LIST_BACKING_STORAGE_ATTR, MAPPING_PROXY_STORAGE_ATTR,
@@ -23,6 +24,7 @@ use super::{
     ordering_from_cmp_value, parse_hex_float_literal, parser, pos_value, round_float_with_ndigits,
     runtime_error_matches_exception, sub_values, value_from_bigint, value_from_object_ref,
     value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
+    is_truthy,
     with_bytes_like_source, xor_values,
 };
 use crate::ast::{
@@ -7233,6 +7235,220 @@ impl Vm {
             self.populate_syntax_error_attrs(&mut attrs, &call_args);
         }
         RuntimeError::from_exception(exception)
+    }
+
+    fn platform_uname_fields(&self) -> (String, String, String, String, String, String) {
+        let query_uname = |flag: &str| -> Option<String> {
+            Command::new("uname").arg(flag).output().ok().and_then(|out| {
+                if out.status.success() {
+                    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if text.is_empty() { None } else { Some(text) }
+                } else {
+                    None
+                }
+            })
+        };
+
+        let system = if cfg!(target_os = "macos") {
+            "Darwin".to_string()
+        } else if cfg!(target_os = "linux") {
+            "Linux".to_string()
+        } else if cfg!(target_os = "windows") {
+            "Windows".to_string()
+        } else {
+            self.host.os_name().to_string()
+        };
+        let node = self
+            .host
+            .env_var("HOSTNAME")
+            .or_else(|| self.host.env_var("COMPUTERNAME"))
+            .unwrap_or_else(|| "localhost".to_string());
+        let release = query_uname("-r").unwrap_or_default();
+        let version = query_uname("-v").unwrap_or_default();
+        let machine = query_uname("-m").unwrap_or_else(|| std::env::consts::ARCH.to_string());
+        let processor = machine.clone();
+        (system, node, release, version, machine, processor)
+    }
+
+    pub(super) fn builtin_platform_uname(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "platform.uname() takes no arguments",
+            ));
+        }
+        let (system, node, release, version, machine, processor) = self.platform_uname_fields();
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Str(system),
+            Value::Str(node),
+            Value::Str(release),
+            Value::Str(version),
+            Value::Str(machine),
+            Value::Str(processor),
+        ]))
+    }
+
+    pub(super) fn builtin_platform_system(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "platform.system() takes no arguments",
+            ));
+        }
+        let (system, ..) = self.platform_uname_fields();
+        Ok(Value::Str(system))
+    }
+
+    pub(super) fn builtin_platform_release(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "platform.release() takes no arguments",
+            ));
+        }
+        let (_, _, release, _, _, _) = self.platform_uname_fields();
+        Ok(Value::Str(release))
+    }
+
+    pub(super) fn builtin_platform_version(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "platform.version() takes no arguments",
+            ));
+        }
+        let (_, _, _, version, _, _) = self.platform_uname_fields();
+        Ok(Value::Str(version))
+    }
+
+    pub(super) fn builtin_platform_machine(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "platform.machine() takes no arguments",
+            ));
+        }
+        let (_, _, _, _, machine, _) = self.platform_uname_fields();
+        Ok(Value::Str(machine))
+    }
+
+    pub(super) fn builtin_platform_processor(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "platform.processor() takes no arguments",
+            ));
+        }
+        let (_, _, _, _, _, processor) = self.platform_uname_fields();
+        Ok(Value::Str(processor))
+    }
+
+    pub(super) fn builtin_platform_node(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "platform.node() takes no arguments",
+            ));
+        }
+        let (_, node, _, _, _, _) = self.platform_uname_fields();
+        Ok(Value::Str(node))
+    }
+
+    pub(super) fn builtin_platform_platform(
+        &self,
+        args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 2 {
+            return Err(RuntimeError::type_error(
+                "platform.platform() expects at most 2 arguments",
+            ));
+        }
+        let _aliased = if !args.is_empty() {
+            is_truthy(&args[0])
+        } else if let Some(value) = kwargs.remove("aliased") {
+            is_truthy(&value)
+        } else {
+            false
+        };
+        let _terse = if args.len() > 1 {
+            is_truthy(&args[1])
+        } else if let Some(value) = kwargs.remove("terse") {
+            is_truthy(&value)
+        } else {
+            false
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "platform.platform() got an unexpected keyword argument",
+            ));
+        }
+        let (system, _, release, _, machine, _) = self.platform_uname_fields();
+        Ok(Value::Str(format!("{system}-{release}-{machine}")))
+    }
+
+    pub(super) fn builtin_platform_python_version(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "platform.python_version() takes no arguments",
+            ));
+        }
+        let version = self
+            .modules
+            .get("sys")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("version").cloned(),
+                _ => None,
+            })
+            .and_then(|value| match value {
+                Value::Str(text) => Some(
+                    text.split_whitespace()
+                        .next()
+                        .unwrap_or("3.14.0")
+                        .to_string(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_else(|| "3.14.0".to_string());
+        Ok(Value::Str(version))
+    }
+
+    pub(super) fn builtin_platform_python_implementation(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "platform.python_implementation() takes no arguments",
+            ));
+        }
+        Ok(Value::Str("CPython".to_string()))
     }
 
     pub(super) fn builtin_platform_libc_ver(

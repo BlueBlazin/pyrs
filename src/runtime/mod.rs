@@ -3763,6 +3763,16 @@ pub enum BuiltinFunction {
     SysStdinFlush,
     SysStreamIsATty,
     SysconfigGetDataName,
+    PlatformSystem,
+    PlatformRelease,
+    PlatformVersion,
+    PlatformMachine,
+    PlatformProcessor,
+    PlatformNode,
+    PlatformPlatform,
+    PlatformPythonVersion,
+    PlatformPythonImplementation,
+    PlatformUname,
     PlatformLibcVer,
     PlatformWin32IsIot,
     Import,
@@ -7220,6 +7230,16 @@ impl BuiltinFunction {
             | BuiltinFunction::SysStdinFlush
             | BuiltinFunction::SysStreamIsATty
             | BuiltinFunction::SysconfigGetDataName
+            | BuiltinFunction::PlatformSystem
+            | BuiltinFunction::PlatformRelease
+            | BuiltinFunction::PlatformVersion
+            | BuiltinFunction::PlatformMachine
+            | BuiltinFunction::PlatformProcessor
+            | BuiltinFunction::PlatformNode
+            | BuiltinFunction::PlatformPlatform
+            | BuiltinFunction::PlatformPythonVersion
+            | BuiltinFunction::PlatformPythonImplementation
+            | BuiltinFunction::PlatformUname
             | BuiltinFunction::PlatformLibcVer
             | BuiltinFunction::PlatformWin32IsIot
             | BuiltinFunction::ImportlibInvalidateCaches

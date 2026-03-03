@@ -11850,6 +11850,20 @@ impl Vm {
             BuiltinFunction::BytesMakeTrans => self.builtin_bytes_maketrans(args, kwargs),
             BuiltinFunction::IntFromBytes => self.builtin_int_from_bytes(args, kwargs),
             BuiltinFunction::Compile => self.builtin_compile(args, kwargs),
+            BuiltinFunction::PlatformSystem => self.builtin_platform_system(args, kwargs),
+            BuiltinFunction::PlatformRelease => self.builtin_platform_release(args, kwargs),
+            BuiltinFunction::PlatformVersion => self.builtin_platform_version(args, kwargs),
+            BuiltinFunction::PlatformMachine => self.builtin_platform_machine(args, kwargs),
+            BuiltinFunction::PlatformProcessor => self.builtin_platform_processor(args, kwargs),
+            BuiltinFunction::PlatformNode => self.builtin_platform_node(args, kwargs),
+            BuiltinFunction::PlatformPlatform => self.builtin_platform_platform(args, kwargs),
+            BuiltinFunction::PlatformPythonVersion => {
+                self.builtin_platform_python_version(args, kwargs)
+            }
+            BuiltinFunction::PlatformPythonImplementation => {
+                self.builtin_platform_python_implementation(args, kwargs)
+            }
+            BuiltinFunction::PlatformUname => self.builtin_platform_uname(args, kwargs),
             BuiltinFunction::PlatformLibcVer => self.builtin_platform_libc_ver(args, kwargs),
             BuiltinFunction::PlatformWin32IsIot => self.builtin_platform_win32_is_iot(args, kwargs),
             BuiltinFunction::GetAttr => self.builtin_getattr(args, kwargs),
