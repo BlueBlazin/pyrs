@@ -67,6 +67,29 @@ fn vm_probe_repl_session_multiline_then_runtime_error_has_stable_shape() {
 }
 
 #[wasm_bindgen_test]
+fn vm_probe_repl_session_parse_error_clears_pending_multiline_state() {
+    let mut repl = WasmReplSession::new();
+
+    assert!(repl.execute_input("class Counter:").success());
+    assert!(repl.execute_input("    value = 3").success());
+
+    let parse_error = repl.execute_input("if True print(1)");
+    assert_eq!(parse_error.phase(), "syntax_error".to_string());
+    assert!(!parse_error.success());
+    assert!(parse_error.blocker_key().is_none());
+    assert!(parse_error.error().is_some());
+    assert!(!parse_error.stderr().is_empty());
+    assert!(parse_error.line() > 0);
+    assert!(parse_error.column() > 0);
+
+    let expression = repl.execute_input("1 + 1");
+    assert_eq!(expression.phase(), "ok".to_string());
+    assert!(expression.success());
+    assert_eq!(expression.stdout(), "2".to_string());
+    assert!(expression.stderr().is_empty());
+}
+
+#[wasm_bindgen_test]
 fn vm_probe_worker_state_gate_roundtrip() {
     let baseline = wasm_worker_info();
     assert_eq!(baseline.backend(), "vm_probe".to_string());
