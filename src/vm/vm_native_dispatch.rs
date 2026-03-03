@@ -12159,6 +12159,9 @@ impl Vm {
                 self.builtin_subprocess_pipe_close(args, kwargs)
             }
             BuiltinFunction::SubprocessCleanup => self.builtin_subprocess_cleanup(args, kwargs),
+            BuiltinFunction::SubprocessArgsFromInterpreterFlags => {
+                self.builtin_subprocess_args_from_interpreter_flags(args, kwargs)
+            }
             BuiltinFunction::SubprocessRun => self.builtin_subprocess_run(args, kwargs),
             BuiltinFunction::SubprocessCheckCall => {
                 self.builtin_subprocess_check_call(args, kwargs)

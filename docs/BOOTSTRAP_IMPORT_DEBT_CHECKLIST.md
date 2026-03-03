@@ -43,7 +43,8 @@ Audit date: 2026-03-04
   - `uname` currently mapped to raw `Tuple` (module install at line 912).
 - [ ] `P1` Replace `_opcode` placeholder lists:
   - `get_intrinsic1_descs`, `get_intrinsic2_descs`, `get_special_method_names`, `get_nb_ops` currently mapped to generic `List` (module install at line 5538).
-- [ ] `P1` Replace `subprocess._args_from_interpreter_flags` placeholder (`List`) with CPython-shaped behavior (module install at line 7351).
+- [x] `P1` Replace `subprocess._args_from_interpreter_flags` placeholder (`List`) with CPython-shaped behavior (module install at line 7351):
+  - wired to dedicated native builtin (`SubprocessArgsFromInterpreterFlags`) that mirrors CPython 3.14 flag/warnoption/xoption projection behavior.
 - [x] `P1` Replace `resource.getrlimit` placeholder (`Range`) with CPython-compatible return semantics (module install at line 7256):
   - wired `resource.getrlimit` to dedicated native builtin (`ResourceGetRLimit`) backed by host `getrlimit(2)`,
   - now returns CPython-shaped `(soft, hard)` tuple and raises `ValueError("invalid resource specified")` for invalid resource ids,

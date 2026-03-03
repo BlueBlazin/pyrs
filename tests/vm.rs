@@ -16340,7 +16340,7 @@ ok = caught
 
 #[test]
 fn subprocess_args_from_interpreter_flags_returns_list() {
-    let source = "import subprocess\nflags = subprocess._args_from_interpreter_flags()\nok = isinstance(flags, list)\n";
+    let source = "import subprocess\nimport sys\nsys.warnoptions[:] = ['ignore::DeprecationWarning']\nsys._xoptions = {'faulthandler': True, 'tracemalloc': '5'}\nflags = subprocess._args_from_interpreter_flags()\nok = (isinstance(flags, list) and flags == ['-Wignore::DeprecationWarning', '-X', 'faulthandler', '-X', 'tracemalloc=5'])\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

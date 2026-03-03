@@ -3971,6 +3971,7 @@ pub enum BuiltinFunction {
     SubprocessPipeFlush,
     SubprocessPipeClose,
     SubprocessCleanup,
+    SubprocessArgsFromInterpreterFlags,
     SubprocessRun,
     SubprocessCheckCall,
     SubprocessCompletedProcessInit,
@@ -7388,6 +7389,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SubprocessPipeFlush
             | BuiltinFunction::SubprocessPipeClose
             | BuiltinFunction::SubprocessCleanup
+            | BuiltinFunction::SubprocessArgsFromInterpreterFlags
             | BuiltinFunction::SubprocessRun
             | BuiltinFunction::SubprocessCheckCall
             | BuiltinFunction::SubprocessCompletedProcessInit

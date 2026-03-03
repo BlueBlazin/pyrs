@@ -7351,7 +7351,10 @@ impl Vm {
                 ("_cleanup", BuiltinFunction::SubprocessCleanup),
                 ("run", BuiltinFunction::SubprocessRun),
                 ("check_call", BuiltinFunction::SubprocessCheckCall),
-                ("_args_from_interpreter_flags", BuiltinFunction::List),
+                (
+                    "_args_from_interpreter_flags",
+                    BuiltinFunction::SubprocessArgsFromInterpreterFlags,
+                ),
             ],
             vec![
                 ("PIPE", Value::Int(-1)),

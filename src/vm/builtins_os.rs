@@ -3170,6 +3170,157 @@ impl Vm {
         Ok(Value::Bool(false))
     }
 
+    pub(super) fn builtin_subprocess_args_from_interpreter_flags(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "_args_from_interpreter_flags() takes no keyword arguments",
+            ));
+        }
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "_args_from_interpreter_flags() takes 0 positional arguments but {} were given",
+                args.len()
+            )));
+        }
+
+        let sys_module = self
+            .modules
+            .get("sys")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("module 'sys' not found"))?;
+        let (flags, warnoptions, xoptions) = {
+            let module_kind = sys_module.kind();
+            let Object::Module(module_data) = &*module_kind else {
+                return Err(RuntimeError::new("module 'sys' is invalid"));
+            };
+            (
+                module_data
+                    .globals
+                    .get("flags")
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new("sys.flags missing"))?,
+                module_data
+                    .globals
+                    .get("warnoptions")
+                    .cloned()
+                    .unwrap_or_else(|| self.heap.alloc_list(Vec::new())),
+                module_data
+                    .globals
+                    .get("_xoptions")
+                    .cloned()
+                    .unwrap_or_else(|| self.heap.alloc_dict(Vec::new())),
+            )
+        };
+
+        let mut read_flag_count = |name: &str| -> Result<i64, RuntimeError> {
+            let value = self
+                .maybe_get_attribute(flags.clone(), name)?
+                .ok_or_else(|| RuntimeError::new(format!("sys.flags.{name} missing")))?;
+            value_to_int(value)
+        };
+
+        let mut out: Vec<Value> = Vec::new();
+        let optimize = read_flag_count("optimize")?;
+        if optimize > 0 {
+            out.push(Value::Str(format!("-{}", "O".repeat(optimize as usize))));
+        }
+
+        for (flag, opt) in [
+            ("debug", 'd'),
+            ("dont_write_bytecode", 'B'),
+            ("no_site", 'S'),
+            ("verbose", 'v'),
+            ("bytes_warning", 'b'),
+            ("quiet", 'q'),
+        ] {
+            let count = read_flag_count(flag)?;
+            if count > 0 {
+                out.push(Value::Str(format!("-{}", opt.to_string().repeat(count as usize))));
+            }
+        }
+
+        if read_flag_count("isolated")? > 0 {
+            out.push(Value::Str("-I".to_string()));
+        } else {
+            if read_flag_count("ignore_environment")? > 0 {
+                out.push(Value::Str("-E".to_string()));
+            }
+            if read_flag_count("no_user_site")? > 0 {
+                out.push(Value::Str("-s".to_string()));
+            }
+            if read_flag_count("safe_path")? > 0 {
+                out.push(Value::Str("-P".to_string()));
+            }
+        }
+
+        let mut warnopts = Vec::new();
+        for entry in value_to_sequence_items(&warnoptions)? {
+            match entry {
+                Value::Str(text) => warnopts.push(text),
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "sys.warnoptions must contain only str entries",
+                    ));
+                }
+            }
+        }
+
+        let bytes_warning = read_flag_count("bytes_warning")?;
+        let dev_mode = read_flag_count("dev_mode")? > 0;
+        if bytes_warning > 1 {
+            if let Some(index) = warnopts.iter().position(|item| item == "error::BytesWarning") {
+                warnopts.remove(index);
+            }
+        } else if bytes_warning > 0
+            && let Some(index) = warnopts
+                .iter()
+                .position(|item| item == "default::BytesWarning")
+        {
+            warnopts.remove(index);
+        }
+        if dev_mode && let Some(index) = warnopts.iter().position(|item| item == "default") {
+            warnopts.remove(index);
+        }
+        for opt in warnopts {
+            out.push(Value::Str(format!("-W{opt}")));
+        }
+
+        if dev_mode {
+            out.push(Value::Str("-X".to_string()));
+            out.push(Value::Str("dev".to_string()));
+        }
+
+        for opt in [
+            "faulthandler",
+            "tracemalloc",
+            "importtime",
+            "frozen_modules",
+            "showrefcount",
+            "utf8",
+            "gil",
+        ] {
+            let Some(value) = (match &xoptions {
+                Value::Dict(dict) => dict_get_value(dict, &Value::Str(opt.to_string())),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let arg = if matches!(value, Value::Bool(true)) {
+                opt.to_string()
+            } else {
+                format!("{opt}={}", format_value(&value))
+            };
+            out.push(Value::Str("-X".to_string()));
+            out.push(Value::Str(arg));
+        }
+
+        Ok(self.heap.alloc_list(out))
+    }
+
     pub(super) fn builtin_subprocess_cleanup(
         &mut self,
         args: Vec<Value>,
