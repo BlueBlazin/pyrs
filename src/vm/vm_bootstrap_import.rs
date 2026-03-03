@@ -5708,6 +5708,140 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::WeakSetCopy),
             );
         }
+        let weakkeydict_class = match self
+            .heap
+            .alloc_class(ClassObject::new("WeakKeyDictionary".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *weakkeydict_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("weakref".to_string()));
+            class_data
+                .attrs
+                .insert("__pyrs_weakdict__".to_string(), Value::Bool(true));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictInit),
+            );
+            class_data.attrs.insert(
+                "__len__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictLen),
+            );
+            class_data.attrs.insert(
+                "__contains__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictContains),
+            );
+            class_data.attrs.insert(
+                "__iter__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictIter),
+            );
+            class_data.attrs.insert(
+                "__getitem__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictGetItem),
+            );
+            class_data.attrs.insert(
+                "__setitem__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictSetItem),
+            );
+            class_data.attrs.insert(
+                "__delitem__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictDelItem),
+            );
+            class_data.attrs.insert(
+                "clear".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictClear),
+            );
+            class_data.attrs.insert(
+                "get".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictGet),
+            );
+            class_data.attrs.insert(
+                "pop".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictPop),
+            );
+            class_data.attrs.insert(
+                "popitem".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictPopItem),
+            );
+            class_data.attrs.insert(
+                "update".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictUpdate),
+            );
+            class_data.attrs.insert(
+                "copy".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictCopy),
+            );
+        }
+        let weakvaluedict_class = match self
+            .heap
+            .alloc_class(ClassObject::new("WeakValueDictionary".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *weakvaluedict_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("weakref".to_string()));
+            class_data
+                .attrs
+                .insert("__pyrs_weakdict__".to_string(), Value::Bool(true));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictInit),
+            );
+            class_data.attrs.insert(
+                "__len__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictLen),
+            );
+            class_data.attrs.insert(
+                "__contains__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictContains),
+            );
+            class_data.attrs.insert(
+                "__iter__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictIter),
+            );
+            class_data.attrs.insert(
+                "__getitem__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictGetItem),
+            );
+            class_data.attrs.insert(
+                "__setitem__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictSetItem),
+            );
+            class_data.attrs.insert(
+                "__delitem__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictDelItem),
+            );
+            class_data.attrs.insert(
+                "clear".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictClear),
+            );
+            class_data.attrs.insert(
+                "get".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictGet),
+            );
+            class_data.attrs.insert(
+                "pop".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictPop),
+            );
+            class_data.attrs.insert(
+                "popitem".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictPopItem),
+            );
+            class_data.attrs.insert(
+                "update".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictUpdate),
+            );
+            class_data.attrs.insert(
+                "copy".to_string(),
+                Value::Builtin(BuiltinFunction::WeakDictCopy),
+            );
+        }
         self.install_builtin_module(
             "weakref",
             &[
@@ -5722,8 +5856,8 @@ impl Vm {
                 ("ProxyType", Value::Builtin(BuiltinFunction::Type)),
                 ("CallableProxyType", Value::Builtin(BuiltinFunction::Type)),
                 ("WeakSet", Value::Class(weakset_class.clone())),
-                ("WeakKeyDictionary", Value::Builtin(BuiltinFunction::Dict)),
-                ("WeakValueDictionary", Value::Builtin(BuiltinFunction::Dict)),
+                ("WeakKeyDictionary", Value::Class(weakkeydict_class.clone())),
+                ("WeakValueDictionary", Value::Class(weakvaluedict_class.clone())),
                 (
                     "ProxyTypes",
                     self.heap.alloc_tuple(vec![

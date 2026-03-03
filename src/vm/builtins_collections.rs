@@ -2125,6 +2125,351 @@ impl Vm {
         Ok(copy)
     }
 
+    fn weakdict_backing_dict(&mut self, receiver: &Value) -> Result<ObjRef, RuntimeError> {
+        let instance = match receiver {
+            Value::Instance(obj) => obj.clone(),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "weak dictionary method receiver must be weak dictionary",
+                ));
+            }
+        };
+        let mut instance_kind = instance.kind_mut();
+        let Object::Instance(instance_data) = &mut *instance_kind else {
+            return Err(RuntimeError::type_error(
+                "weak dictionary method receiver must be weak dictionary",
+            ));
+        };
+        let class_is_weakdict = match &*instance_data.class.kind() {
+            Object::Class(class_data) => matches!(
+                class_data.attrs.get("__pyrs_weakdict__"),
+                Some(Value::Bool(true))
+            ),
+            _ => false,
+        };
+        if !class_is_weakdict {
+            return Err(RuntimeError::type_error(
+                "weak dictionary method receiver must be weak dictionary",
+            ));
+        }
+        if !matches!(instance_data.attrs.get("_data"), Some(Value::Dict(_))) {
+            instance_data
+                .attrs
+                .insert("_data".to_string(), self.heap.alloc_dict(Vec::new()));
+        }
+        match instance_data.attrs.get("_data").cloned() {
+            Some(Value::Dict(dict_obj)) => Ok(dict_obj),
+            _ => Err(RuntimeError::new("weak dictionary backing storage is invalid")),
+        }
+    }
+
+    fn weakdict_entries_snapshot(&self, backing: &ObjRef) -> Result<Vec<(Value, Value)>, RuntimeError> {
+        match &*backing.kind() {
+            Object::Dict(entries) => Ok(entries
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()),
+            _ => Err(RuntimeError::new("weak dictionary backing storage is invalid")),
+        }
+    }
+
+    fn weakdict_update_from_source(
+        &mut self,
+        backing: &ObjRef,
+        source: Value,
+    ) -> Result<(), RuntimeError> {
+        let dict_source = match &source {
+            Value::Dict(dict_obj) => Some(dict_obj.clone()),
+            Value::Instance(instance) => self.instance_backing_dict(instance),
+            _ => None,
+        };
+        if let Some(dict_source) = dict_source {
+            for (key, value) in self.weakdict_entries_snapshot(&dict_source)? {
+                self.dict_set_value_checked_runtime(backing, key, value)?;
+            }
+            return Ok(());
+        }
+
+        for item in self.collect_iterable_values(source)? {
+            let parts = self.collect_iterable_values(item)?;
+            if parts.len() != 2 {
+                return Err(RuntimeError::type_error(
+                    "weak dictionary update sequence element has length != 2",
+                ));
+            }
+            self.dict_set_value_checked_runtime(backing, parts[0].clone(), parts[1].clone())?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn builtin_weakdict_init(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::type_error(
+                "weak dictionary __init__() takes at most 1 argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let backing = self.weakdict_backing_dict(&receiver)?;
+        if let Object::Dict(entries) = &mut *backing.kind_mut() {
+            entries.clear();
+        }
+        if let Some(source) = args.pop() {
+            self.weakdict_update_from_source(&backing, source)?;
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_weakdict_len(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "weak dictionary __len__() takes no arguments",
+            ));
+        }
+        let backing = self.weakdict_backing_dict(&args[0])?;
+        let Object::Dict(entries) = &*backing.kind() else {
+            return Err(RuntimeError::new("weak dictionary backing storage is invalid"));
+        };
+        Ok(Value::Int(entries.len() as i64))
+    }
+
+    pub(super) fn builtin_weakdict_contains(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "weak dictionary __contains__() takes exactly one argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let key = args.remove(0);
+        let backing = self.weakdict_backing_dict(&receiver)?;
+        Ok(Value::Bool(
+            self.dict_contains_key_checked_runtime(&backing, &key)?,
+        ))
+    }
+
+    pub(super) fn builtin_weakdict_iter(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "weak dictionary __iter__() takes no arguments",
+            ));
+        }
+        let backing = self.weakdict_backing_dict(&args[0])?;
+        let keys = self
+            .weakdict_entries_snapshot(&backing)?
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect::<Vec<_>>();
+        self.to_iterator_value(self.heap.alloc_list(keys))
+    }
+
+    pub(super) fn builtin_weakdict_getitem(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "weak dictionary __getitem__() takes exactly one argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let key = args.remove(0);
+        let backing = self.weakdict_backing_dict(&receiver)?;
+        if let Some(value) = self.dict_get_value_runtime(&backing, &key)? {
+            return Ok(value);
+        }
+        Err(RuntimeError::key_error("key not found"))
+    }
+
+    pub(super) fn builtin_weakdict_setitem(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 3 {
+            return Err(RuntimeError::type_error(
+                "weak dictionary __setitem__() takes exactly two arguments",
+            ));
+        }
+        let receiver = args.remove(0);
+        let key = args.remove(0);
+        let value = args.remove(0);
+        let backing = self.weakdict_backing_dict(&receiver)?;
+        self.dict_set_value_checked_runtime(&backing, key, value)?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_weakdict_delitem(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "weak dictionary __delitem__() takes exactly one argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let key = args.remove(0);
+        let backing = self.weakdict_backing_dict(&receiver)?;
+        if self.dict_remove_value_runtime(&backing, &key)?.is_none() {
+            return Err(RuntimeError::key_error("key not found"));
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_weakdict_clear(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "weak dictionary clear() takes no arguments",
+            ));
+        }
+        let backing = self.weakdict_backing_dict(&args[0])?;
+        if let Object::Dict(entries) = &mut *backing.kind_mut() {
+            entries.clear();
+            return Ok(Value::None);
+        }
+        Err(RuntimeError::new("weak dictionary backing storage is invalid"))
+    }
+
+    pub(super) fn builtin_weakdict_get(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::type_error(
+                "weak dictionary get() takes one or two arguments",
+            ));
+        }
+        let receiver = args.remove(0);
+        let key = args.remove(0);
+        let default = args.pop().unwrap_or(Value::None);
+        let backing = self.weakdict_backing_dict(&receiver)?;
+        Ok(self.dict_get_value_runtime(&backing, &key)?.unwrap_or(default))
+    }
+
+    pub(super) fn builtin_weakdict_pop(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::type_error(
+                "weak dictionary pop() takes one or two arguments",
+            ));
+        }
+        let receiver = args.remove(0);
+        let key = args.remove(0);
+        let default = args.pop();
+        let backing = self.weakdict_backing_dict(&receiver)?;
+        if let Some(value) = self.dict_remove_value_runtime(&backing, &key)? {
+            return Ok(value);
+        }
+        if let Some(default) = default {
+            return Ok(default);
+        }
+        Err(RuntimeError::key_error("key not found"))
+    }
+
+    pub(super) fn builtin_weakdict_popitem(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "weak dictionary popitem() takes no arguments",
+            ));
+        }
+        let backing = self.weakdict_backing_dict(&args[0])?;
+        let pair = match &mut *backing.kind_mut() {
+            Object::Dict(entries) if entries.is_empty() => None,
+            Object::Dict(entries) => Some(entries.remove(entries.len() - 1)),
+            _ => None,
+        };
+        let Some((key, value)) = pair else {
+            return Err(RuntimeError::key_error("popitem(): dictionary is empty"));
+        };
+        Ok(self.heap.alloc_tuple(vec![key, value]))
+    }
+
+    pub(super) fn builtin_weakdict_update(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "weak dictionary update() takes exactly one argument",
+            ));
+        }
+        let receiver = args.remove(0);
+        let source = args.remove(0);
+        let backing = self.weakdict_backing_dict(&receiver)?;
+        self.weakdict_update_from_source(&backing, source)?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_weakdict_copy(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "weak dictionary copy() takes no arguments",
+            ));
+        }
+        let receiver = match &args[0] {
+            Value::Instance(obj) => obj.clone(),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "weak dictionary method receiver must be weak dictionary",
+                ));
+            }
+        };
+        let backing = self.weakdict_backing_dict(&args[0])?;
+        let entries = self.weakdict_entries_snapshot(&backing)?;
+        let class = {
+            let receiver_kind = receiver.kind();
+            let Object::Instance(instance_data) = &*receiver_kind else {
+                return Err(RuntimeError::type_error(
+                    "weak dictionary method receiver must be weak dictionary",
+                ));
+            };
+            instance_data.class.clone()
+        };
+        let copy = self.heap.alloc_instance(InstanceObject::new(class));
+        if let Value::Instance(copy_obj) = &copy
+            && let Object::Instance(copy_data) = &mut *copy_obj.kind_mut()
+        {
+            copy_data
+                .attrs
+                .insert("_data".to_string(), self.heap.alloc_dict(entries));
+        }
+        Ok(copy)
+    }
+
     pub(super) fn builtin_collections_counter(
         &mut self,
         args: Vec<Value>,

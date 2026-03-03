@@ -3853,6 +3853,19 @@ pub enum BuiltinFunction {
     WeakSetClear,
     WeakSetUpdate,
     WeakSetCopy,
+    WeakDictInit,
+    WeakDictLen,
+    WeakDictContains,
+    WeakDictIter,
+    WeakDictGetItem,
+    WeakDictSetItem,
+    WeakDictDelItem,
+    WeakDictClear,
+    WeakDictGet,
+    WeakDictPop,
+    WeakDictPopItem,
+    WeakDictUpdate,
+    WeakDictCopy,
     ArrayArray,
     GcCollect,
     GcEnable,
@@ -7736,6 +7749,19 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::WeakSetClear
             | BuiltinFunction::WeakSetUpdate
             | BuiltinFunction::WeakSetCopy
+            | BuiltinFunction::WeakDictInit
+            | BuiltinFunction::WeakDictLen
+            | BuiltinFunction::WeakDictContains
+            | BuiltinFunction::WeakDictIter
+            | BuiltinFunction::WeakDictGetItem
+            | BuiltinFunction::WeakDictSetItem
+            | BuiltinFunction::WeakDictDelItem
+            | BuiltinFunction::WeakDictClear
+            | BuiltinFunction::WeakDictGet
+            | BuiltinFunction::WeakDictPop
+            | BuiltinFunction::WeakDictPopItem
+            | BuiltinFunction::WeakDictUpdate
+            | BuiltinFunction::WeakDictCopy
             | BuiltinFunction::InspectIsFunction
             | BuiltinFunction::InspectIsMethod
             | BuiltinFunction::InspectIsRoutine

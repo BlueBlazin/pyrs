@@ -62,7 +62,7 @@ Audit date: 2026-03-04
   - `weakref` is now included in pure-stdlib preference unloading, so CPython `Lib/weakref.py` wins when available on module path;
   - `_weakref.ref` now accepts builtin type objects represented as runtime `Value::Builtin(...)` type-constructors (for example `int`), matching CPython weakrefability needed by `functools.singledispatch` dispatch-cache paths;
   - builtin `dict` now exports native `popitem()` semantics, unblocking CPython `weakref.WeakKeyDictionary` internals when pure `Lib/weakref.py` is active;
-  - remaining debt: weak dict types are still mapped to builtin `Dict` (module install at line 5599).
+  - bootstrap fallback now exports dedicated `WeakKeyDictionary`/`WeakValueDictionary` classes (no direct `Dict` aliasing); remaining debt is semantic fidelity (fallback classes are still strong-reference-backed and do not yet implement CPython weak-entry lifecycle semantics).
 - [x] `P1` Replace `_weakrefset.WeakSet` placeholder mapped to builtin `Set` (module install at line 5624):
   - `_weakrefset.WeakSet` now materializes a dedicated class with explicit method surface (`__init__`, `__len__`, `__contains__`, `__iter__`, `add`, `discard`, `remove`, `clear`, `update`, `copy`),
   - `threading._dangling` now initializes as a `WeakSet` instance rather than a raw builtin set.

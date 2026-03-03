@@ -984,6 +984,19 @@ impl Vm {
             | BuiltinFunction::WeakSetClear
             | BuiltinFunction::WeakSetUpdate
             | BuiltinFunction::WeakSetCopy => "_weakrefset",
+            BuiltinFunction::WeakDictInit
+            | BuiltinFunction::WeakDictLen
+            | BuiltinFunction::WeakDictContains
+            | BuiltinFunction::WeakDictIter
+            | BuiltinFunction::WeakDictGetItem
+            | BuiltinFunction::WeakDictSetItem
+            | BuiltinFunction::WeakDictDelItem
+            | BuiltinFunction::WeakDictClear
+            | BuiltinFunction::WeakDictGet
+            | BuiltinFunction::WeakDictPop
+            | BuiltinFunction::WeakDictPopItem
+            | BuiltinFunction::WeakDictUpdate
+            | BuiltinFunction::WeakDictCopy => "weakref",
             _ => "builtins",
         }
         .to_string();

@@ -12136,6 +12136,40 @@ ok = (
 }
 
 #[test]
+fn weakref_bootstrap_weak_dict_classes_expose_mapping_baseline() {
+    let source = r#"import weakref
+class Box:
+    pass
+a = Box()
+b = Box()
+wk = weakref.WeakKeyDictionary()
+wk[a] = 1
+wk[b] = 2
+item = wk.popitem()
+wk_copy = wk.copy()
+wv = weakref.WeakValueDictionary()
+wv["a"] = a
+wv.update({"b": b})
+ok = (
+    isinstance(wk, weakref.WeakKeyDictionary)
+    and isinstance(wv, weakref.WeakValueDictionary)
+    and len(item) == 2
+    and len(wk) == 1
+    and len(wk_copy) == 1
+    and ("a" in wv)
+    and ("b" in wv)
+    and (wv["a"] is a)
+    and (wk.get(a, 0) in (0, 1))
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn faulthandler_exposes_explicit_unsupported_semantics() {
     let source = "import faulthandler\nok = (faulthandler.is_enabled() is False)\nkind = ''\nmsg = ''\ntry:\n    faulthandler.enable()\nexcept Exception as exc:\n    kind = type(exc).__name__\n    msg = str(exc)\nok = ok and (kind == 'RuntimeError') and ('not supported' in msg)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
