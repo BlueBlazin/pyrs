@@ -583,13 +583,10 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 
 					runtimeWorkerReady = true;
 					lastRuntimeInfo = response.runtimeInfo || null;
-					const backend = String(readField(lastRuntimeInfo, "execution_backend") || "wasm");
 					const executionEnabled = Boolean(readField(lastRuntimeInfo, "supports_execution"));
 					setStatus(
 						"ready",
-						executionEnabled
-							? `Runtime ready (${backend})`
-							: `Runtime compile-only (${backend})`,
+						executionEnabled ? "Runtime ready" : "Runtime compile-only",
 					);
 					renderStartupBanner();
 					applyContinuationPrompt(response.prompt_continuation);
@@ -757,8 +754,7 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 					applyContinuationPrompt(false);
 				}
 				clearTranscript(true);
-				const backend = String(readField(lastRuntimeInfo, "execution_backend") || "wasm");
-				setStatus("ready", `Runtime ready (${backend})`);
+				setStatus("ready", "Runtime ready");
 				setBusy(false);
 				focusInputAtEnd();
 			});
