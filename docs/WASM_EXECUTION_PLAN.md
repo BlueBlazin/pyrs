@@ -335,6 +335,10 @@ Completed on this branch:
 - `e7c24c50`: centralized execution-failure result construction, including optional-error compile
   contract paths.
 - `e2f4acc9`: centralized `WasmReplSession` `last_error` update sink via one result finalizer path.
+- `ca3eaa22`: simplified `WasmReplSession::execute_input` vm-probe vs no-probe control flow while
+  preserving unsupported-execution contract behavior.
+- `b2747c70`: added vm-probe browser smoke coverage proving REPL syntax errors clear pending
+  multiline state before subsequent inputs.
 - `afeed21`: initial isolated execution plan + branch-policy guardrails.
 - `7c92917`: wasm dependency lane + target-gated build/dependency isolation.
 - `302fa6b`: `VmHost`/`NativeHost`/`WasmHost` baseline + `Vm::new_with_host`.
