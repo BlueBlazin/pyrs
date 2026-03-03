@@ -936,6 +936,11 @@ impl Vm {
             | BuiltinFunction::FaulthandlerDisable
             | BuiltinFunction::FaulthandlerIsEnabled
             | BuiltinFunction::FaulthandlerUnregister => "faulthandler",
+            BuiltinFunction::LocaleSetLocale
+            | BuiltinFunction::LocaleLocaleConv
+            | BuiltinFunction::LocaleStrXfrm
+            | BuiltinFunction::LocaleStrColl
+            | BuiltinFunction::LocaleNLLangInfo => "_locale",
             _ => "builtins",
         }
         .to_string();

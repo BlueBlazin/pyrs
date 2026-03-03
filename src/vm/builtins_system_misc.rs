@@ -3294,6 +3294,76 @@ impl Vm {
         ]))
     }
 
+    pub(super) fn builtin_locale_strxfrm(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error("strxfrm() takes exactly one argument"));
+        }
+        let Value::Str(text) = args.remove(0) else {
+            return Err(RuntimeError::type_error("strxfrm() argument must be str"));
+        };
+        // Locale-aware transform is host-dependent; keep deterministic passthrough
+        // semantics until host collation substrate is wired.
+        Ok(Value::Str(text))
+    }
+
+    pub(super) fn builtin_locale_strcoll(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error("strcoll() takes exactly two arguments"));
+        }
+        let Value::Str(left) = args.remove(0) else {
+            return Err(RuntimeError::type_error("strcoll() arguments must be str"));
+        };
+        let Value::Str(right) = args.remove(0) else {
+            return Err(RuntimeError::type_error("strcoll() arguments must be str"));
+        };
+        let result = match left.cmp(&right) {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
+        };
+        Ok(Value::Int(result))
+    }
+
+    pub(super) fn builtin_locale_nl_langinfo(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "nl_langinfo() takes exactly one argument",
+            ));
+        }
+        let item = value_to_int(args.remove(0))?;
+        let module = self.locale_module_ref()?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return Err(RuntimeError::new("module '_locale' is invalid"));
+        };
+        let codeset = module_data
+            .globals
+            .get("CODESET")
+            .and_then(|value| match value {
+                Value::Int(v) => Some(*v),
+                _ => None,
+            })
+            .unwrap_or(14);
+        if item == codeset {
+            return Ok(Value::Str("utf-8".to_string()));
+        }
+        Err(RuntimeError::with_exception(
+            "ValueError",
+            Some("unsupported langinfo constant".to_string()),
+        ))
+    }
+
     pub(super) fn builtin_sysconfig_get_data_name(
         &mut self,
         args: Vec<Value>,

@@ -8006,9 +8006,9 @@ impl Vm {
             &[
                 ("setlocale", BuiltinFunction::LocaleSetLocale),
                 ("localeconv", BuiltinFunction::LocaleLocaleConv),
-                ("strxfrm", BuiltinFunction::Str),
-                ("strcoll", BuiltinFunction::NoOp),
-                ("nl_langinfo", BuiltinFunction::NoOp),
+                ("strxfrm", BuiltinFunction::LocaleStrXfrm),
+                ("strcoll", BuiltinFunction::LocaleStrColl),
+                ("nl_langinfo", BuiltinFunction::LocaleNLLangInfo),
                 ("getencoding", BuiltinFunction::SysGetFilesystemEncoding),
             ],
             vec![
@@ -8020,6 +8020,8 @@ impl Vm {
                 ("LC_MONETARY", Value::Int(4)),
                 ("LC_MESSAGES", Value::Int(5)),
                 ("LC_ALL", Value::Int(6)),
+                // POSIX nl_langinfo(CODESET) constant value.
+                ("CODESET", Value::Int(14)),
                 ("Error", Value::ExceptionType("Error".to_string())),
                 ("_pyrs_current_locale", Value::Str("C".to_string())),
             ],

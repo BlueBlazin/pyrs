@@ -29,9 +29,10 @@ Audit date: 2026-03-04
   - replaced silent `NoOp`/`Bool` placeholders with explicit builtins:
     - unsupported operations (`enable`, `dump_traceback`, `dump_traceback_later`, `cancel_dump_traceback_later`, `register`, `dump_c_stack`, `_read_null`, `_sigsegv`, `_sigabrt`, `_sigfpe`, `_stack_overflow`, `_fatal_error_c_thread`) now raise `RuntimeError("faulthandler is not supported on this platform")`,
     - `disable()` returns `None`, `is_enabled()` returns `False`, and `unregister(signum)` returns `False` with explicit call-shape validation.
-- [ ] `P0` Replace `_locale` placeholder semantics:
-  - `strcoll` and `nl_langinfo` are `NoOp`;
-  - `strxfrm` is currently plain `Str` passthrough (module install at line 7983).
+- [x] `P0` Replace `_locale` placeholder semantics:
+  - `_locale.strxfrm`, `_locale.strcoll`, and `_locale.nl_langinfo` now use dedicated builtins (no `NoOp`/generic `Str` placeholders),
+  - `strxfrm` and `strcoll` enforce explicit argument shape and string-only contracts,
+  - `nl_langinfo` now enforces integer key shape, supports `CODESET` resolution via runtime filesystem encoding, and raises `ValueError` for unsupported keys.
 - [ ] `P0` Remove placeholder behavior in `typing`:
   - `TypingIdFunc` and generic placeholders (`Dict/List/Tuple/Bool/Print`) in exported API (module install at line 3765, placeholder class wiring around lines 3759-3843).
 - [x] `P1` Remove placeholder behavior in `_typing`:

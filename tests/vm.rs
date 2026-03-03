@@ -1841,6 +1841,17 @@ fn imports_strptime_with_locale_setlocale_contract() {
 }
 
 #[test]
+fn locale_strcoll_strxfrm_and_nl_langinfo_have_explicit_contracts() {
+    let source = "import _locale\nleft = _locale.strcoll('a', 'b')\nright = _locale.strcoll('b', 'a')\nequal = _locale.strcoll('abc', 'abc')\nkey = _locale.strxfrm('abc')\nencoding = _locale.nl_langinfo(_locale.CODESET)\nkind = ''\ntry:\n    _locale.nl_langinfo(-1)\nexcept Exception as exc:\n    kind = type(exc).__name__\nok = (left < 0) and (right > 0) and (equal == 0) and (key == 'abc') and isinstance(encoding, str) and (kind == 'ValueError')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn os_popen_supports_basic_read_mode() {
     let source = "import os\npipe = os.popen('printf hello', 'r')\ntext = pipe.read()\npipe.close()\nok = (text == 'hello')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

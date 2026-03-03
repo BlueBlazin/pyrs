@@ -4594,6 +4594,9 @@ pub enum BuiltinFunction {
     SignalRaiseSignal,
     LocaleSetLocale,
     LocaleLocaleConv,
+    LocaleStrXfrm,
+    LocaleStrColl,
+    LocaleNLLangInfo,
     FaulthandlerUnsupported,
     FaulthandlerDisable,
     FaulthandlerIsEnabled,
@@ -7772,6 +7775,9 @@ impl BuiltinFunction {
             | BuiltinFunction::SignalRaiseSignal
             | BuiltinFunction::LocaleSetLocale
             | BuiltinFunction::LocaleLocaleConv
+            | BuiltinFunction::LocaleStrXfrm
+            | BuiltinFunction::LocaleStrColl
+            | BuiltinFunction::LocaleNLLangInfo
             | BuiltinFunction::SocketGetHostName
             | BuiltinFunction::SocketGetHostByName
             | BuiltinFunction::SocketGetAddrInfo
