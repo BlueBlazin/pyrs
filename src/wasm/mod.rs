@@ -1128,18 +1128,17 @@ impl WasmReplSession {
             ));
         }
 
-        if !wasm_vm_runtime_enabled() {
-            let message = wasm_execution_blocker_error(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED)
-                .unwrap_or_else(|| "wasm execution backend is not wired yet".to_string());
-            return self.finish_execution_result(unsupported_execution_result(
-                WasmExecutionPhase::UnsupportedExecution.key(),
-                message,
-                Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
-            ));
-        }
-
         #[cfg(feature = "wasm-vm-probe")]
         {
+            if !wasm_vm_runtime_enabled() {
+                let message = wasm_execution_blocker_error(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED)
+                    .unwrap_or_else(|| "wasm execution backend is not wired yet".to_string());
+                return self.finish_execution_result(unsupported_execution_result(
+                    WasmExecutionPhase::UnsupportedExecution.key(),
+                    message,
+                    Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
+                ));
+            }
             let result = match crate::repl_core::run_ready_module(
                 &mut self.vm,
                 &ready_source,
@@ -1169,11 +1168,11 @@ impl WasmReplSession {
         {
             let message = wasm_execution_blocker_error(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED)
                 .unwrap_or_else(|| "wasm execution backend is not wired yet".to_string());
-            self.finish_execution_result(unsupported_execution_result(
+            return self.finish_execution_result(unsupported_execution_result(
                 WasmExecutionPhase::UnsupportedExecution.key(),
                 message,
                 Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
-            ))
+            ));
         }
     }
 
