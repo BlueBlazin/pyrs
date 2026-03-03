@@ -50,23 +50,16 @@ struct DebugDepthGuard {
 }
 
 impl DebugDepthGuard {
+    #[inline(always)]
     fn enter_for_vm(
         vm: &Vm,
         key: &'static std::thread::LocalKey<Cell<usize>>,
         label: &'static str,
     ) -> Option<Self> {
-        if vm
-            .host
-            .env_var_os("PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH")
-            .is_none()
-        {
+        if !vm.debug_exception_unwind_depth_enabled {
             return None;
         }
-        let limit = vm
-            .host
-            .env_var("PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH_LIMIT")
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(256);
+        let limit = vm.debug_exception_unwind_depth_limit;
         let depth = key.with(|cell| {
             let next = cell.get().saturating_add(1);
             cell.set(next);

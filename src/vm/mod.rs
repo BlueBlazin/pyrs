@@ -1195,6 +1195,8 @@ pub struct Vm {
     warnings_bless_my_loader_depth: usize,
     fast_local_unbound_marker: Value,
     traceback_caret_enabled: bool,
+    debug_exception_unwind_depth_enabled: bool,
+    debug_exception_unwind_depth_limit: usize,
     instruction_step_limit: Option<u64>,
     instruction_steps: u64,
     execution_deadline: Option<VmExecutionDeadline>,
@@ -1346,6 +1348,16 @@ impl Vm {
 
         let module_paths = vec![host.current_dir().unwrap_or_else(|_| PathBuf::from("."))];
         let trace_flags = VmTraceFlags::from_host(host.as_ref());
+        let debug_exception_unwind_depth_enabled = host
+            .env_var_os("PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH")
+            .is_some();
+        let debug_exception_unwind_depth_limit = if debug_exception_unwind_depth_enabled {
+            host.env_var("PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH_LIMIT")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(256)
+        } else {
+            256
+        };
 
         let mut vm = Self {
             host: host.clone(),
@@ -1485,6 +1497,8 @@ impl Vm {
             warnings_bless_my_loader_depth: 0,
             fast_local_unbound_marker,
             traceback_caret_enabled: true,
+            debug_exception_unwind_depth_enabled,
+            debug_exception_unwind_depth_limit,
             instruction_step_limit: host
                 .env_var("PYRS_STEP_LIMIT")
                 .and_then(|value| value.parse::<u64>().ok())
