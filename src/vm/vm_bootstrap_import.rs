@@ -9831,7 +9831,7 @@ impl Vm {
             );
             class_data.attrs.insert(
                 "invalidate_caches".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::ImportlibFileFinderInvalidateCaches),
             );
         }
         let importer = match self.heap.alloc_instance(InstanceObject::new(class)) {

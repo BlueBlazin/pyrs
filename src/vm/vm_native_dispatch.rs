@@ -12019,6 +12019,9 @@ impl Vm {
             BuiltinFunction::ImportlibFileFinderFindSpec => {
                 self.builtin_importlib_file_finder_find_spec(args, kwargs)
             }
+            BuiltinFunction::ImportlibFileFinderInvalidateCaches => {
+                self.builtin_importlib_file_finder_invalidate_caches(args, kwargs)
+            }
             BuiltinFunction::FindSpec => self.builtin_find_spec(args, kwargs),
             BuiltinFunction::ImportlibInvalidateCaches => {
                 self.builtin_importlib_invalidate_caches(args, kwargs)

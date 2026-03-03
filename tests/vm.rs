@@ -9230,6 +9230,30 @@ fn populates_path_importer_cache_for_loaded_path_entry() {
 }
 
 #[test]
+fn path_importer_cache_filefinder_exposes_invalidate_caches_contract() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_path_cache_invalidate_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("mod.py"), "value = 97\n").expect("write module");
+    let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nsys.path = ['{path_literal}']\nimport mod\nfinder = sys.path_importer_cache['{path_literal}']\nname = type(finder).__name__\ncall_ok = True\ntry:\n    finder.invalidate_caches()\nexcept Exception:\n    call_ok = False\narg_type_error = False\ntry:\n    finder.invalidate_caches(1)\nexcept TypeError:\n    arg_type_error = True\nok = (name == 'FileFinder' and call_ok and arg_type_error)\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp_dir.join("mod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
 fn reuses_cached_importer_when_path_hooks_are_cleared() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

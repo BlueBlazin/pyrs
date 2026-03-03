@@ -844,6 +844,25 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_importlib_file_finder_invalidate_caches(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "invalidate_caches() got an unexpected keyword argument",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "invalidate_caches() takes 1 positional argument but {} were given",
+                args.len()
+            )));
+        }
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_importlib_spec_from_file_location(
         &mut self,
         mut args: Vec<Value>,

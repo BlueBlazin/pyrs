@@ -154,7 +154,8 @@ Local shim behavior:
 ## 7) Importlib Fallback Loader Debt
 
 - [ ] `P1` Remove `make_file_finder_importer_fallback` synthetic importer debt:
-  - currently constructs fallback `FileFinder` class with `invalidate_caches = NoOp` (line 9529; `NoOp` use at line 9552).
+  - fallback `FileFinder.invalidate_caches` now uses dedicated importlib finder invalidation builtin (no `NoOp` placeholder),
+  - remaining debt: synthetic fallback class identity/behavior still diverges from canonical importlib `FileFinder` construction.
 - [ ] `P1` Remove `fallback_loader_spec_value` synthetic loader instance debt (line 10123); prefer canonical importlib loader classes where available.
 - [ ] `P2` Verify fallback loader metadata parity (`__spec__`, loader identity/class, cache behavior) across source/bytecode/namespace/extension imports.
 

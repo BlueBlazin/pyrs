@@ -3790,6 +3790,7 @@ pub enum BuiltinFunction {
     PkgutilResolveName,
     ImportlibPathHook,
     ImportlibFileFinderFindSpec,
+    ImportlibFileFinderInvalidateCaches,
     FindSpec,
     ImportlibInvalidateCaches,
     ImportlibSourceFromCache,
@@ -7347,6 +7348,7 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::PkgutilResolveName
             | BuiltinFunction::ImportlibPathHook
             | BuiltinFunction::ImportlibFileFinderFindSpec
+            | BuiltinFunction::ImportlibFileFinderInvalidateCaches
             | BuiltinFunction::SysGetFrame
             | BuiltinFunction::SysGetFrameModuleName
             | BuiltinFunction::SysCurrentFrames
