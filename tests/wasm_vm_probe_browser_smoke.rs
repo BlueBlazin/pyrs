@@ -22,30 +22,35 @@ fn vm_probe_runtime_executes_basic_snippet() {
 #[wasm_bindgen_test]
 fn vm_probe_repl_session_continuation_executes_class_on_blank_line() {
     let mut repl = WasmReplSession::new();
+    assert!(!repl.continuation_prompt());
 
     let header = repl.execute_input("class Counter:");
     assert_eq!(header.phase(), "ok".to_string());
     assert!(header.success());
     assert!(header.stdout().is_empty());
     assert!(header.stderr().is_empty());
+    assert!(repl.continuation_prompt());
 
     let body = repl.execute_input("    value = 3");
     assert_eq!(body.phase(), "ok".to_string());
     assert!(body.success());
     assert!(body.stdout().is_empty());
     assert!(body.stderr().is_empty());
+    assert!(repl.continuation_prompt());
 
     let finalize = repl.execute_input("");
     assert_eq!(finalize.phase(), "ok".to_string());
     assert!(finalize.success());
     assert!(finalize.stdout().is_empty());
     assert!(finalize.stderr().is_empty());
+    assert!(!repl.continuation_prompt());
 
     let expression = repl.execute_input("Counter.value");
     assert_eq!(expression.phase(), "ok".to_string());
     assert!(expression.success());
     assert_eq!(expression.stdout(), "3".to_string());
     assert!(expression.stderr().is_empty());
+    assert!(!repl.continuation_prompt());
 }
 
 #[wasm_bindgen_test]
@@ -72,6 +77,7 @@ fn vm_probe_repl_session_parse_error_clears_pending_multiline_state() {
 
     assert!(repl.execute_input("class Counter:").success());
     assert!(repl.execute_input("    value = 3").success());
+    assert!(repl.continuation_prompt());
 
     let parse_error = repl.execute_input("if True print(1)");
     assert_eq!(parse_error.phase(), "syntax_error".to_string());
@@ -81,6 +87,7 @@ fn vm_probe_repl_session_parse_error_clears_pending_multiline_state() {
     assert!(!parse_error.stderr().is_empty());
     assert!(parse_error.line() > 0);
     assert!(parse_error.column() > 0);
+    assert!(!repl.continuation_prompt());
 
     let expression = repl.execute_input("1 + 1");
     assert_eq!(expression.phase(), "ok".to_string());
