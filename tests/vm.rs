@@ -3578,6 +3578,48 @@ ok = ok and hasattr(json, 'encoder') and hasattr(json, 'decoder')
 }
 
 #[test]
+fn weakref_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-weakref import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("weakref-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import weakref
+origin = getattr(weakref, '__file__', '')
+norm = origin.replace("\\", "/")
+class Box:
+    pass
+b = Box()
+r = weakref.ref(b)
+ws = weakref.WeakSet([b])
+wk = weakref.WeakKeyDictionary({b: 7})
+wv = weakref.WeakValueDictionary({'k': b})
+ok = (
+    norm.endswith('/weakref.py')
+    and (weakref.ReferenceType is weakref.ref)
+    and (r() is b)
+    and (b in ws)
+    and (wk[b] == 7)
+    and (wv['k'] is b)
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn weakref import preference thread");
+    handle
+        .join()
+        .expect("weakref import preference thread should complete");
+}
+
+#[test]
 #[ignore = "sqlite in-process lane currently overflows stack in vm harness"]
 fn sqlite3_import_and_basic_query_workflow_from_cpython_lib() {
     let Some(lib_path) = cpython_lib_path() else {
