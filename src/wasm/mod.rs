@@ -18,7 +18,6 @@ const WASM_EXECUTION_BACKEND_UNWIRED: &str = "unwired";
 const WASM_EXECUTION_BACKEND_VM_PROBE: &str = "vm_probe";
 const WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED: &str = "execution_backend_unwired";
 const WASM_EXECUTION_BLOCKER_VM_RUNTIME_UNAVAILABLE: &str = "vm_runtime_unavailable";
-#[cfg(feature = "wasm-vm-probe")]
 const WASM_EXECUTION_PHASE_OK: &str = "ok";
 #[cfg(feature = "wasm-vm-probe")]
 const WASM_EXECUTION_PHASE_RUNTIME_ERROR: &str = "runtime_error";
@@ -37,7 +36,6 @@ const WASM_WORKER_LIFECYCLE_PHASE_RECYCLED: &str = "worker_recycled";
 const WASM_WORKER_TIMEOUT_DEFAULT_MS: u32 = 5_000;
 const WASM_WORKER_TIMEOUT_MIN_MS: u32 = 50;
 const WASM_WORKER_TIMEOUT_MAX_MS: u32 = 120_000;
-#[cfg(feature = "wasm-vm-probe")]
 const WASM_REPL_FILENAME: &str = "<wasm-repl>";
 const WASM_WORKER_TIMEOUT_UNSUPPORTED_PHASE: &str = "unsupported_worker_timeout_enforcement";
 const WASM_WORKER_TIMEOUT_INVALID_PHASE: &str = "invalid_worker_timeout";
@@ -1110,6 +1108,8 @@ impl WasmReplSession {
             crate::repl_core::ReplLineParseResult::Ready { source, module } => (source, module),
         };
         let (ready_source, ready_module) = ready;
+        #[cfg(not(feature = "wasm-vm-probe"))]
+        let _ = &ready_source;
 
         let compile_code =
             match crate::compiler::compile_module_with_filename(&ready_module, WASM_REPL_FILENAME) {

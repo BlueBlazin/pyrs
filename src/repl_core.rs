@@ -247,6 +247,7 @@ pub(crate) fn submit_line_for_module(pending: &mut String, line: &str) -> ReplLi
 /// Unified module/expression execution path used by REPL adapters.
 ///
 /// Returns `Ok(Some(repr))` only when executing a single expression with a non-`None` value.
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
 pub(crate) fn execute_module_or_expression(
     vm: &mut crate::vm::Vm,
     module: &Module,
@@ -281,6 +282,7 @@ pub(crate) fn execute_module_or_expression(
 }
 
 /// Executes a parse-ready module through shared REPL semantics after caching source text.
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
 pub(crate) fn run_ready_module(
     vm: &mut crate::vm::Vm,
     source: &str,
@@ -292,6 +294,7 @@ pub(crate) fn run_ready_module(
     execute_module_or_expression(vm, module, filename, precompiled_module_code)
 }
 
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
 pub(crate) enum ReplLineExecuteResult {
     NeedMoreInput,
     ParseError {
@@ -309,6 +312,7 @@ pub(crate) enum ReplLineExecuteResult {
 }
 
 /// Shared submit+execute flow for line-based REPL adapters.
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
 pub(crate) fn submit_line_and_execute(
     state: &mut ReplCoreState,
     vm: &mut crate::vm::Vm,
@@ -335,6 +339,7 @@ pub(crate) fn submit_line_and_execute(
     }
 }
 
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
 #[derive(Debug)]
 pub(crate) enum ReplExecutionError {
     Compile(crate::compiler::CompileError),
@@ -344,10 +349,13 @@ pub(crate) enum ReplExecutionError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ReplCoreState, ReplInputSession, ReplLineExecuteResult, ReplLineParseResult, ReplProfile,
-        execute_module_or_expression, input_is_incomplete, parse_candidate_source,
-        parse_success_requires_more_input, run_ready_module, submit_line_and_execute,
-        submit_line_for_module,
+        ReplCoreState, ReplInputSession, ReplLineParseResult, ReplProfile, input_is_incomplete,
+        parse_candidate_source, parse_success_requires_more_input, submit_line_for_module,
+    };
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
+    use super::{
+        ReplLineExecuteResult, execute_module_or_expression, run_ready_module,
+        submit_line_and_execute,
     };
 
     #[test]
@@ -483,6 +491,7 @@ mod tests {
         }
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
     #[test]
     fn execute_module_or_expression_echoes_expression_repr() {
         let mut vm = crate::vm::Vm::new();
@@ -492,6 +501,7 @@ mod tests {
         assert_eq!(rendered.as_deref(), Some("2"));
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
     #[test]
     fn execute_module_or_expression_returns_none_for_statements() {
         let mut vm = crate::vm::Vm::new();
@@ -502,6 +512,7 @@ mod tests {
         assert!(matches!(vm.get_global("x"), Some(crate::runtime::Value::Int(1))));
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
     #[test]
     fn execute_module_or_expression_supports_precompiled_module_code() {
         let mut vm = crate::vm::Vm::new();
@@ -514,6 +525,7 @@ mod tests {
         assert!(matches!(vm.get_global("x"), Some(crate::runtime::Value::Int(5))));
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
     #[test]
     fn execute_module_or_expression_expression_path_ignores_precompiled_module_code_for_echo() {
         let mut vm = crate::vm::Vm::new();
@@ -525,6 +537,7 @@ mod tests {
         assert_eq!(rendered.as_deref(), Some("3"));
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
     #[test]
     fn run_ready_module_executes_statement_payload() {
         let mut vm = crate::vm::Vm::new();
@@ -536,6 +549,7 @@ mod tests {
         assert!(matches!(vm.get_global("x"), Some(crate::runtime::Value::Int(9))));
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
     #[test]
     fn submit_line_and_execute_runs_ready_input_and_returns_display() {
         let mut vm = crate::vm::Vm::new();
@@ -548,6 +562,7 @@ mod tests {
         }
     }
 
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
     #[test]
     fn submit_line_and_execute_preserves_need_more_input_state() {
         let mut vm = crate::vm::Vm::new();
