@@ -103,7 +103,10 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
 - [x] `P1` `__future__` (line 4697):
   - added to pure-stdlib unload preference group (`PURE_STDLIB_FUTURE_MODULES`) so CPython `Lib/__future__.py` is preferred when available;
   - covered by `tests/vm.rs::future_import_prefers_cpython_pure_module_when_lib_path_is_added`.
-- [ ] `P1` `inspect` (line 5860)
+- [x] `P1` `inspect` (line 5860):
+  - added to pure-stdlib unload preference group (`PURE_STDLIB_INSPECT_MODULES`) so CPython `Lib/inspect.py` is preferred when available;
+  - restored CPython-shaped `type.__dict__` getset-descriptor contract for `__mro__` and `__dict__` (including `getset_descriptor.__get__`), unblocking pure `inspect` initialization paths;
+  - covered by `tests/vm.rs::inspect_import_prefers_cpython_pure_module_when_lib_path_is_added` and `tests/vm.rs::type_getset_descriptors_expose_mro_and_dict_contract`.
 - [ ] `P1` `io` (line 5923)
 - [ ] `P1` `subprocess` (line 7351)
 - [ ] `P1` `uuid` (line 7637)

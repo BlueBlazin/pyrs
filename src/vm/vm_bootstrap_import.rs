@@ -5,7 +5,8 @@ use super::{
     LOCAL_SHIM_MODULES, LOCAL_SHIM_PRECEDENCE_MODULES, ModuleObject, ModuleSourceInfo,
     NAMESPACE_LOADER, NativeMethodKind, NativeMethodObject, ObjRef, Object,
     PURE_STDLIB_ABC_MODULES, PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_DECIMAL_MODULES,
-    PURE_STDLIB_FUNCTOOLS_MODULES, PURE_STDLIB_FUTURE_MODULES, PURE_STDLIB_OPERATOR_MODULES,
+    PURE_STDLIB_FUNCTOOLS_MODULES, PURE_STDLIB_FUTURE_MODULES, PURE_STDLIB_INSPECT_MODULES,
+    PURE_STDLIB_OPERATOR_MODULES,
     PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
     PURE_STDLIB_RE_MODULES, PURE_STDLIB_SIGNAL_MODULES, PURE_STDLIB_TYPES_MODULES,
     PURE_STDLIB_WEAKREF_MODULES, Path, PathBuf,
@@ -4330,6 +4331,16 @@ impl Vm {
                         .alloc_instance(InstanceObject::new(member_descriptor_class.clone())),
                 );
             }
+        }
+        if let Value::Class(class_obj) = &getset_descriptor_type_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data.attrs.insert(
+                "__get__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::GetSetDescriptorGet,
+                ))),
+            );
         }
         if let Some(builtins_module) = self.modules.get("builtins").cloned()
             && let Object::Module(module_data) = &mut *builtins_module.kind_mut()
@@ -8759,6 +8770,13 @@ impl Vm {
             }
         }
         for module_name in PURE_STDLIB_SIGNAL_MODULES {
+            if self.has_preferred_filesystem_module(module_name)
+                && self.module_preference_requires_unload(module_name)
+            {
+                self.unregister_module(module_name);
+            }
+        }
+        for module_name in PURE_STDLIB_INSPECT_MODULES {
             if self.has_preferred_filesystem_module(module_name)
                 && self.module_preference_requires_unload(module_name)
             {

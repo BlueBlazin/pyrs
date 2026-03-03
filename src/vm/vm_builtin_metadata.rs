@@ -2,13 +2,14 @@ use std::cell::Cell;
 
 use super::{
     AttrAccessOutcome, AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, Block, BoundMethod,
-    BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, CodeObject, DICT_BACKING_STORAGE_ATTR,
-    ExceptionObject, FLOAT_BACKING_STORAGE_ATTR, FROZENSET_BACKING_STORAGE_ATTR, Frame, HashMap,
-    INSTANCE_DICT_STORAGE_ATTR, INT_BACKING_STORAGE_ATTR, InstanceObject, InternalCallOutcome,
-    IteratorKind, LIST_BACKING_STORAGE_ATTR, MAPPING_PROXY_STORAGE_ATTR, ModuleObject,
-    NativeCallResult, NativeMethodKind, ObjRef, Object, Opcode, PY_TPFLAGS_HEAPTYPE, Rc,
-    RuntimeError, SET_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, TUPLE_BACKING_STORAGE_ATTR,
-    Value, Vm, apply_bindings, bind_arguments, bytes_like_source_is_readonly, class_attr_lookup,
+    BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, ClassObject, CodeObject,
+    DICT_BACKING_STORAGE_ATTR, ExceptionObject, FLOAT_BACKING_STORAGE_ATTR,
+    FROZENSET_BACKING_STORAGE_ATTR, Frame, HashMap, INSTANCE_DICT_STORAGE_ATTR,
+    INT_BACKING_STORAGE_ATTR, InstanceObject, InternalCallOutcome, IteratorKind,
+    LIST_BACKING_STORAGE_ATTR, MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeCallResult,
+    NativeMethodKind, ObjRef, Object, Opcode, PY_TPFLAGS_HEAPTYPE, Rc, RuntimeError,
+    SET_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, TUPLE_BACKING_STORAGE_ATTR, Value, Vm,
+    apply_bindings, bind_arguments, bytes_like_source_is_readonly, class_attr_lookup,
     class_attr_lookup_direct, class_attr_walk, class_inherits_dynamic_instance_dict,
     class_name_for_instance, collect_slot_names, dict_get_value, dict_remove_value, dict_set_value,
     env_var_present_cached, format_repr, memoryview_bounds, runtime_error_matches_exception,
@@ -227,6 +228,35 @@ impl Vm {
                 "__objclass__".to_string(),
                 Value::Class(owner_class.clone()),
             );
+        }
+        descriptor
+    }
+
+    fn getset_descriptor_value(&self, owner_class: Value, descriptor_name: &str) -> Value {
+        let descriptor_class = self
+            .types_module_or_private_class("GetSetDescriptorType")
+            .unwrap_or_else(|| {
+                match self.heap.alloc_class(ClassObject::new(
+                    "getset_descriptor".to_string(),
+                    Vec::new(),
+                )) {
+                    Value::Class(class) => class,
+                    _ => unreachable!(),
+                }
+            });
+        let descriptor = self
+            .heap
+            .alloc_instance(InstanceObject::new(descriptor_class));
+        if let Value::Instance(descriptor_obj) = &descriptor
+            && let Object::Instance(descriptor_data) = &mut *descriptor_obj.kind_mut()
+        {
+            descriptor_data.attrs.insert(
+                "__name__".to_string(),
+                Value::Str(descriptor_name.to_string()),
+            );
+            descriptor_data
+                .attrs
+                .insert("__objclass__".to_string(), owner_class);
         }
         descriptor
     }
@@ -738,6 +768,14 @@ impl Vm {
             entries.push((
                 Value::Str("__annotations__".to_string()),
                 Value::Module(descriptor),
+            ));
+            entries.push((
+                Value::Str("__mro__".to_string()),
+                self.getset_descriptor_value(Value::Builtin(BuiltinFunction::Type), "__mro__"),
+            ));
+            entries.push((
+                Value::Str("__dict__".to_string()),
+                self.getset_descriptor_value(Value::Builtin(BuiltinFunction::Type), "__dict__"),
             ));
         }
         entries

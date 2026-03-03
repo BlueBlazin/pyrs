@@ -6052,6 +6052,51 @@ impl Vm {
                     BoundMethod::new(receiver, bound_receiver),
                 )))
             }
+            NativeMethodKind::GetSetDescriptorGet => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new("__get__() expects 1-2 arguments"));
+                }
+                let obj = args.remove(0);
+                let owner_hint = args.first().cloned().unwrap_or(Value::None);
+                if matches!(obj, Value::None) {
+                    if matches!(owner_hint, Value::None) {
+                        return Err(RuntimeError::type_error("__get__(None, None) is invalid"));
+                    }
+                    return Ok(NativeCallResult::Value(Value::Instance(receiver)));
+                }
+                let (descriptor_name, descriptor_owner) = match &*receiver.kind() {
+                    Object::Instance(instance_data) => {
+                        let Some(Value::Str(name)) = instance_data.attrs.get("__name__") else {
+                            return Err(RuntimeError::type_error("invalid getset descriptor"));
+                        };
+                        let Some(owner) = instance_data.attrs.get("__objclass__") else {
+                            return Err(RuntimeError::type_error("invalid getset descriptor"));
+                        };
+                        (name.clone(), owner.clone())
+                    }
+                    _ => {
+                        return Err(RuntimeError::type_error("invalid getset descriptor"));
+                    }
+                };
+                if !self.value_is_instance_of(&obj, &descriptor_owner)? {
+                    let owner_name = match &descriptor_owner {
+                        Value::Builtin(builtin) => self.builtin_type_name(*builtin).to_string(),
+                        Value::Class(class_ref) => match &*class_ref.kind() {
+                            Object::Class(class_data) => class_data.name.clone(),
+                            _ => self.value_type_name_for_error(&descriptor_owner),
+                        },
+                        _ => self.value_type_name_for_error(&descriptor_owner),
+                    };
+                    let object_name = self.value_type_name_for_error(&obj);
+                    return Err(RuntimeError::type_error(format!(
+                        "descriptor '{}' for '{}' objects doesn't apply to a '{}' object",
+                        descriptor_name, owner_name, object_name
+                    )));
+                }
+                let value =
+                    self.builtin_getattr(vec![obj, Value::Str(descriptor_name)], HashMap::new())?;
+                Ok(NativeCallResult::Value(value))
+            }
             NativeMethodKind::ClassMethodDescriptorGet => {
                 if args.is_empty() || args.len() > 2 {
                     return Err(RuntimeError::new("__get__() expects 1-2 arguments"));

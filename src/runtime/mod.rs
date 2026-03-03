@@ -462,6 +462,7 @@ pub enum NativeMethodKind {
     MappingProxyItemsViewIter,
     BoundMethodDescriptorGet,
     FunctionDescriptorGet,
+    GetSetDescriptorGet,
     ClassMethodDescriptorGet,
     StaticMethodDescriptorGet,
     FunctionAnnotate,
@@ -9907,6 +9908,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::FunctionDescriptorGet => {
                         "<bound method function.__get__>".to_string()
+                    }
+                    NativeMethodKind::GetSetDescriptorGet => {
+                        "<bound method getset_descriptor.__get__>".to_string()
                     }
                     NativeMethodKind::ClassMethodDescriptorGet => {
                         "<bound method classmethod.__get__>".to_string()

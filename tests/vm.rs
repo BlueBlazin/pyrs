@@ -447,11 +447,13 @@ fn inspect_module_exports_isabstract_function() {
     let source = format!(
         "import sys\nsys.path = [{lib_path:?}]\nimport inspect\nok = hasattr(inspect, 'isabstract') and callable(inspect.isabstract)\n"
     );
-    let module = parser::parse_module(&source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    run_with_large_stack("vm-inspect-module-exports", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -3905,6 +3907,78 @@ ok = (
     handle
         .join()
         .expect("signal import preference thread should complete");
+}
+
+#[test]
+fn type_getset_descriptors_expose_mro_and_dict_contract() {
+    let source = r#"import types
+mro_desc = type.__dict__['__mro__']
+dict_desc = type.__dict__['__dict__']
+mro = mro_desc.__get__(int)
+dict_view = dict_desc.__get__(int)
+none_raises = False
+try:
+    mro_desc.__get__(None)
+except TypeError:
+    none_raises = True
+ok = (
+    type(mro_desc) is types.GetSetDescriptorType
+    and type(dict_desc) is types.GetSetDescriptorType
+    and (mro_desc.__name__ == '__mro__')
+    and (dict_desc.__name__ == '__dict__')
+    and (mro_desc.__objclass__ is type)
+    and (dict_desc.__objclass__ is type)
+    and (mro[0] is int)
+    and isinstance(dict_view, type(type.__dict__))
+    and ('__new__' in dict_view)
+    and none_raises
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn inspect_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-inspect import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("inspect-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import inspect, types
+origin = getattr(inspect, '__file__', '')
+norm = origin.replace("\\", "/")
+mro = inspect._static_getmro(int)
+dunder = inspect._get_dunder_dict_of_class(type)
+mro_desc = type.__dict__['__mro__']
+dict_desc = type.__dict__['__dict__']
+ok = (
+    norm.endswith('/inspect.py')
+    and ('/shims/' not in norm)
+    and (mro[0] is int)
+    and ('__mro__' in dunder)
+    and (type(mro_desc) is types.GetSetDescriptorType)
+    and (type(dict_desc) is types.GetSetDescriptorType)
+    and callable(inspect.signature)
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn inspect import preference thread");
+    handle
+        .join()
+        .expect("inspect import preference thread should complete");
 }
 
 #[test]
