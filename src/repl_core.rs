@@ -243,9 +243,9 @@ pub(crate) enum ReplExecutionError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ReplLineParseResult, execute_module_or_expression, input_is_incomplete,
-        parse_candidate_source, parse_success_requires_more_input, submit_line_for_module,
-        run_ready_module,
+        ReplInputSession, ReplLineParseResult, execute_module_or_expression, input_is_incomplete,
+        parse_candidate_source, parse_success_requires_more_input, run_ready_module,
+        submit_line_for_module,
     };
 
     #[test]
@@ -324,6 +324,26 @@ mod tests {
         let result = submit_line_for_module(&mut pending, "if True print(1)");
         assert!(matches!(result, ReplLineParseResult::ParseError { .. }));
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn input_session_tracks_pending_and_interrupt_reset_paths() {
+        let mut session = ReplInputSession::new();
+        assert!(session.is_empty());
+        assert!(!session.has_pending_nonempty());
+
+        session.append_paste_line("class User:");
+        assert!(!session.is_empty());
+        assert!(session.has_pending_nonempty());
+
+        session.interrupt();
+        assert!(session.is_empty());
+        assert!(!session.has_pending_nonempty());
+
+        session.append_paste_line("x = 1");
+        assert!(session.has_pending_nonempty());
+        session.reset();
+        assert!(session.is_empty());
     }
 
     #[test]
