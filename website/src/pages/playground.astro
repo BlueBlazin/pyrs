@@ -567,13 +567,15 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 
 		const runSource = async (source) => {
 			const normalized = source.replace(/\r/g, "").trimEnd();
-			if (!normalized.trim()) return;
+			const isBlankSubmission = normalized.trim().length === 0;
+			if (isBlankSubmission && !continuationPrompt) return;
 
-			if (commandHistory.at(-1) !== normalized) {
-				commandHistory.push(normalized);
+			const sourceForRuntime = isBlankSubmission ? "" : normalized;
+			if (!isBlankSubmission && commandHistory.at(-1) !== sourceForRuntime) {
+				commandHistory.push(sourceForRuntime);
 			}
 			historyIndex = commandHistory.length;
-			appendPromptInput(normalized, continuationPrompt);
+			appendPromptInput(sourceForRuntime, continuationPrompt);
 
 			setBusy(true);
 			const loaded = await ensureRuntimeLoaded();
@@ -583,7 +585,7 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 			}
 
 			try {
-				const response = await sendWorkerRequest("execute", { source: normalized });
+				const response = await sendWorkerRequest("execute", { source: sourceForRuntime });
 				if (response.ok && response.result) {
 					renderExecutionResult(response.result);
 					applyContinuationPrompt(response.prompt_continuation);
