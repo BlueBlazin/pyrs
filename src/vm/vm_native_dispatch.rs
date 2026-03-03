@@ -11995,6 +11995,16 @@ impl Vm {
             BuiltinFunction::OpcodeHasFree => self.builtin_opcode_has_free(args, kwargs),
             BuiltinFunction::OpcodeHasLocal => self.builtin_opcode_has_local(args, kwargs),
             BuiltinFunction::OpcodeHasExc => self.builtin_opcode_has_exc(args, kwargs),
+            BuiltinFunction::OpcodeGetIntrinsic1Descs => {
+                self.builtin_opcode_get_intrinsic1_descs(args, kwargs)
+            }
+            BuiltinFunction::OpcodeGetIntrinsic2Descs => {
+                self.builtin_opcode_get_intrinsic2_descs(args, kwargs)
+            }
+            BuiltinFunction::OpcodeGetSpecialMethodNames => {
+                self.builtin_opcode_get_special_method_names(args, kwargs)
+            }
+            BuiltinFunction::OpcodeGetNbOps => self.builtin_opcode_get_nb_ops(args, kwargs),
             BuiltinFunction::OpcodeGetExecutor => self.builtin_opcode_get_executor(args, kwargs),
             BuiltinFunction::RandomSeed => self.builtin_random_seed(args, kwargs),
             BuiltinFunction::RandomRandom => self.builtin_random_random(args, kwargs),

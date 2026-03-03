@@ -41,8 +41,8 @@ Audit date: 2026-03-04
 - [x] `P1` Replace `platform` placeholder exports:
   - bootstrap exports now use dedicated native platform builtins (`system`, `release`, `version`, `machine`, `processor`, `node`, `platform`, `python_version`, `python_implementation`, `uname`) instead of generic placeholders,
   - `uname` now returns a 6-field tuple `(system, node, release, version, machine, processor)` with string entries (CPython-shaped surface).
-- [ ] `P1` Replace `_opcode` placeholder lists:
-  - `get_intrinsic1_descs`, `get_intrinsic2_descs`, `get_special_method_names`, `get_nb_ops` currently mapped to generic `List` (module install at line 5538).
+- [x] `P1` Replace `_opcode` placeholder lists:
+  - `get_intrinsic1_descs`, `get_intrinsic2_descs`, `get_special_method_names`, and `get_nb_ops` now use dedicated opcode builtins returning CPython-shaped list payloads (module install at line 5538).
 - [x] `P1` Replace `subprocess._args_from_interpreter_flags` placeholder (`List`) with CPython-shaped behavior (module install at line 7351):
   - wired to dedicated native builtin (`SubprocessArgsFromInterpreterFlags`) that mirrors CPython 3.14 flag/warnoption/xoption projection behavior.
 - [x] `P1` Replace `resource.getrlimit` placeholder (`Range`) with CPython-compatible return semantics (module install at line 7256):

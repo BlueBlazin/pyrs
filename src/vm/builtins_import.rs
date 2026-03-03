@@ -1274,6 +1274,116 @@ impl Vm {
         Ok(Value::Bool(false))
     }
 
+    pub(super) fn builtin_opcode_get_intrinsic1_descs(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "get_intrinsic1_descs() expects no arguments",
+            ));
+        }
+        Ok(self.heap.alloc_list(vec![
+            Value::Str("INTRINSIC_1_INVALID".to_string()),
+            Value::Str("INTRINSIC_PRINT".to_string()),
+            Value::Str("INTRINSIC_IMPORT_STAR".to_string()),
+            Value::Str("INTRINSIC_STOPITERATION_ERROR".to_string()),
+            Value::Str("INTRINSIC_ASYNC_GEN_WRAP".to_string()),
+            Value::Str("INTRINSIC_UNARY_POSITIVE".to_string()),
+            Value::Str("INTRINSIC_LIST_TO_TUPLE".to_string()),
+            Value::Str("INTRINSIC_TYPEVAR".to_string()),
+            Value::Str("INTRINSIC_PARAMSPEC".to_string()),
+            Value::Str("INTRINSIC_TYPEVARTUPLE".to_string()),
+            Value::Str("INTRINSIC_SUBSCRIPT_GENERIC".to_string()),
+            Value::Str("INTRINSIC_TYPEALIAS".to_string()),
+        ]))
+    }
+
+    pub(super) fn builtin_opcode_get_intrinsic2_descs(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "get_intrinsic2_descs() expects no arguments",
+            ));
+        }
+        Ok(self.heap.alloc_list(vec![
+            Value::Str("INTRINSIC_2_INVALID".to_string()),
+            Value::Str("INTRINSIC_PREP_RERAISE_STAR".to_string()),
+            Value::Str("INTRINSIC_TYPEVAR_WITH_BOUND".to_string()),
+            Value::Str("INTRINSIC_TYPEVAR_WITH_CONSTRAINTS".to_string()),
+            Value::Str("INTRINSIC_SET_FUNCTION_TYPE_PARAMS".to_string()),
+            Value::Str("INTRINSIC_SET_TYPEPARAM_DEFAULT".to_string()),
+        ]))
+    }
+
+    pub(super) fn builtin_opcode_get_special_method_names(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "get_special_method_names() expects no arguments",
+            ));
+        }
+        Ok(self.heap.alloc_list(vec![
+            Value::Str("__enter__".to_string()),
+            Value::Str("__exit__".to_string()),
+            Value::Str("__aenter__".to_string()),
+            Value::Str("__aexit__".to_string()),
+        ]))
+    }
+
+    pub(super) fn builtin_opcode_get_nb_ops(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("get_nb_ops() expects no arguments"));
+        }
+        let mut rows = Vec::new();
+        for (name, symbol) in [
+            ("NB_ADD", "+"),
+            ("NB_AND", "&"),
+            ("NB_FLOOR_DIVIDE", "//"),
+            ("NB_LSHIFT", "<<"),
+            ("NB_MATRIX_MULTIPLY", "@"),
+            ("NB_MULTIPLY", "*"),
+            ("NB_REMAINDER", "%"),
+            ("NB_OR", "|"),
+            ("NB_POWER", "**"),
+            ("NB_RSHIFT", ">>"),
+            ("NB_SUBTRACT", "-"),
+            ("NB_TRUE_DIVIDE", "/"),
+            ("NB_XOR", "^"),
+            ("NB_INPLACE_ADD", "+="),
+            ("NB_INPLACE_AND", "&="),
+            ("NB_INPLACE_FLOOR_DIVIDE", "//="),
+            ("NB_INPLACE_LSHIFT", "<<="),
+            ("NB_INPLACE_MATRIX_MULTIPLY", "@="),
+            ("NB_INPLACE_MULTIPLY", "*="),
+            ("NB_INPLACE_REMAINDER", "%="),
+            ("NB_INPLACE_OR", "|="),
+            ("NB_INPLACE_POWER", "**="),
+            ("NB_INPLACE_RSHIFT", ">>="),
+            ("NB_INPLACE_SUBTRACT", "-="),
+            ("NB_INPLACE_TRUE_DIVIDE", "/="),
+            ("NB_INPLACE_XOR", "^="),
+            ("NB_SUBSCR", "[]"),
+        ] {
+            rows.push(self.heap.alloc_tuple(vec![
+                Value::Str(name.to_string()),
+                Value::Str(symbol.to_string()),
+            ]));
+        }
+        Ok(self.heap.alloc_list(rows))
+    }
+
     pub(super) fn builtin_opcode_get_executor(
         &self,
         args: Vec<Value>,

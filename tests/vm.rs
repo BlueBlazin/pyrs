@@ -15091,7 +15091,7 @@ fn executes_frozen_importlib_spec_from_loader_helper() {
 
 #[test]
 fn executes_opcode_metadata_helpers() {
-    let source = "import _opcode\nse = _opcode.stack_effect(82)\nexecutor_type_error = False\ntry:\n    _opcode.get_executor(None, 0)\nexcept TypeError:\n    executor_type_error = True\nok = (_opcode.has_arg(82) and _opcode.has_const(82) and _opcode.has_name(92) and _opcode.has_jump(70) and _opcode.has_free(97) and _opcode.has_local(84) and (not _opcode.has_exc(6)) and (not _opcode.has_arg(27)) and isinstance(se, int) and executor_type_error)\n";
+    let source = "import _opcode\nse = _opcode.stack_effect(82)\nintr1 = _opcode.get_intrinsic1_descs()\nintr2 = _opcode.get_intrinsic2_descs()\nspecial = _opcode.get_special_method_names()\nnb = _opcode.get_nb_ops()\nexecutor_type_error = False\ntry:\n    _opcode.get_executor(None, 0)\nexcept TypeError:\n    executor_type_error = True\nok = (_opcode.has_arg(82) and _opcode.has_const(82) and _opcode.has_name(92) and _opcode.has_jump(70) and _opcode.has_free(97) and _opcode.has_local(84) and (not _opcode.has_exc(6)) and (not _opcode.has_arg(27)) and isinstance(se, int) and intr1[:3] == ['INTRINSIC_1_INVALID', 'INTRINSIC_PRINT', 'INTRINSIC_IMPORT_STAR'] and intr2[-1] == 'INTRINSIC_SET_TYPEPARAM_DEFAULT' and special == ['__enter__', '__exit__', '__aenter__', '__aexit__'] and isinstance(nb, list) and nb[0] == ('NB_ADD', '+') and nb[-1] == ('NB_SUBSCR', '[]') and executor_type_error)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

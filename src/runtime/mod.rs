@@ -3811,6 +3811,10 @@ pub enum BuiltinFunction {
     OpcodeHasFree,
     OpcodeHasLocal,
     OpcodeHasExc,
+    OpcodeGetIntrinsic1Descs,
+    OpcodeGetIntrinsic2Descs,
+    OpcodeGetSpecialMethodNames,
+    OpcodeGetNbOps,
     OpcodeGetExecutor,
     RandomSeed,
     RandomRandom,
@@ -7264,6 +7268,10 @@ impl BuiltinFunction {
             | BuiltinFunction::OpcodeHasFree
             | BuiltinFunction::OpcodeHasLocal
             | BuiltinFunction::OpcodeHasExc
+            | BuiltinFunction::OpcodeGetIntrinsic1Descs
+            | BuiltinFunction::OpcodeGetIntrinsic2Descs
+            | BuiltinFunction::OpcodeGetSpecialMethodNames
+            | BuiltinFunction::OpcodeGetNbOps
             | BuiltinFunction::OpcodeGetExecutor
             | BuiltinFunction::RandomSeed
             | BuiltinFunction::RandomRandom

@@ -5546,10 +5546,19 @@ impl Vm {
                 ("has_free", BuiltinFunction::OpcodeHasFree),
                 ("has_local", BuiltinFunction::OpcodeHasLocal),
                 ("has_exc", BuiltinFunction::OpcodeHasExc),
-                ("get_intrinsic1_descs", BuiltinFunction::List),
-                ("get_intrinsic2_descs", BuiltinFunction::List),
-                ("get_special_method_names", BuiltinFunction::List),
-                ("get_nb_ops", BuiltinFunction::List),
+                (
+                    "get_intrinsic1_descs",
+                    BuiltinFunction::OpcodeGetIntrinsic1Descs,
+                ),
+                (
+                    "get_intrinsic2_descs",
+                    BuiltinFunction::OpcodeGetIntrinsic2Descs,
+                ),
+                (
+                    "get_special_method_names",
+                    BuiltinFunction::OpcodeGetSpecialMethodNames,
+                ),
+                ("get_nb_ops", BuiltinFunction::OpcodeGetNbOps),
                 ("get_executor", BuiltinFunction::OpcodeGetExecutor),
             ],
             Vec::new(),
