@@ -13456,6 +13456,12 @@ impl Vm {
             }
             BuiltinFunction::TypingIsTypedDict => self.builtin_typing_is_typeddict(args, kwargs),
             BuiltinFunction::TypingIsProtocol => self.builtin_typing_is_protocol(args, kwargs),
+            BuiltinFunction::TypingCast => self.builtin_typing_cast(args, kwargs),
+            BuiltinFunction::TypingAssertType => self.builtin_typing_assert_type(args, kwargs),
+            BuiltinFunction::TypingRevealType => self.builtin_typing_reveal_type(args, kwargs),
+            BuiltinFunction::TypingAssertNever => self.builtin_typing_assert_never(args, kwargs),
+            BuiltinFunction::TypingFinal => self.builtin_typing_final(args, kwargs),
+            BuiltinFunction::TypingOverride => self.builtin_typing_override(args, kwargs),
             BuiltinFunction::TypingNoDefaultNew => self.builtin_typing_nodefault_new(args, kwargs),
             BuiltinFunction::TypingNoDefaultRepr => {
                 self.builtin_typing_nodefault_repr(args, kwargs)

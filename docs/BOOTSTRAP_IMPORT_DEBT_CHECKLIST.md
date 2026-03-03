@@ -36,7 +36,8 @@ Audit date: 2026-03-04
   - `nl_langinfo` now enforces integer key shape, supports `CODESET` resolution via runtime filesystem encoding, and raises `ValueError` for unsupported keys.
 - [ ] `P0` Remove placeholder behavior in `typing`:
   - generic placeholders (`Dict/List/Tuple/Bool/Print`) for core `typing` helper exports were replaced with dedicated builtins (`get_type_hints`, `get_origin`, `get_args`, `get_protocol_members`, `get_overloads`, `clear_overloads`, `is_typeddict`, `is_protocol`);
-  - remaining debt: `TypingIdFunc` still backs decorator/identity helper exports (module install at line 3765, placeholder class wiring around lines 3759-3843).
+  - `cast`, `assert_type`, `reveal_type`, `assert_never`, `final`, and `override` now use dedicated runtime semantics (no shared identity placeholder path);
+  - remaining debt: `TypingIdFunc` still backs `overload`, `runtime_checkable`, `dataclass_transform`, `no_type_check`, and `no_type_check_decorator` (module install at line 3765, placeholder class wiring around lines 3759-3843).
 - [x] `P1` Remove placeholder behavior in `_typing`:
   - `_typing._idfunc` now uses dedicated builtin dispatch (`TypingInternalIdFunc`) with strict one-argument identity semantics (no shared `TypingIdFunc` placeholder surface).
 - [x] `P1` Remove placeholder behavior in `functools`:

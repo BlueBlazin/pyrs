@@ -15850,6 +15850,130 @@ impl Vm {
         Ok(Value::None)
     }
 
+    fn typing_try_set_bool_attr(
+        &mut self,
+        target: Value,
+        name: &str,
+    ) -> Result<(), RuntimeError> {
+        match self.builtin_setattr(
+            vec![target, Value::Str(name.to_string()), Value::Bool(true)],
+            HashMap::new(),
+        ) {
+            Ok(_) => Ok(()),
+            Err(err)
+                if runtime_error_matches_exception(&err, "AttributeError")
+                    || runtime_error_matches_exception(&err, "TypeError") =>
+            {
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn builtin_typing_cast(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "cast() takes exactly 2 positional arguments",
+            ));
+        }
+        let _typ = args.remove(0);
+        Ok(args.remove(0))
+    }
+
+    pub(super) fn builtin_typing_assert_type(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "assert_type() takes exactly 2 positional arguments",
+            ));
+        }
+        Ok(args.remove(0))
+    }
+
+    pub(super) fn builtin_typing_reveal_type(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "reveal_type() takes exactly 1 positional argument",
+            ));
+        }
+        let value = args.remove(0);
+        let type_name = self.runtime_format_type_name(&value);
+        self.write_text_to_sys_stderr_best_effort(&format!("Runtime type is '{type_name}'\n"));
+        Ok(value)
+    }
+
+    pub(super) fn builtin_typing_assert_never(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "assert_never() takes exactly 1 positional argument",
+            ));
+        }
+        let arg = args.remove(0);
+        let max_len = self
+            .typing_module_global_value("_ASSERT_NEVER_REPR_MAX_LENGTH")
+            .and_then(|value| match value {
+                Value::Int(number) if number > 0 => Some(number as usize),
+                _ => None,
+            })
+            .unwrap_or(100);
+        let mut rendered = format_repr(&arg);
+        if rendered.len() > max_len {
+            rendered.truncate(max_len);
+            rendered.push_str("...");
+        }
+        Err(RuntimeError::with_exception(
+            "AssertionError",
+            Some(format!(
+                "Expected code to be unreachable, but got: {rendered}"
+            )),
+        ))
+    }
+
+    pub(super) fn builtin_typing_final(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "final() takes exactly 1 positional argument",
+            ));
+        }
+        let value = args.remove(0);
+        self.typing_try_set_bool_attr(value.clone(), "__final__")?;
+        Ok(value)
+    }
+
+    pub(super) fn builtin_typing_override(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "override() takes exactly 1 positional argument",
+            ));
+        }
+        let value = args.remove(0);
+        self.typing_try_set_bool_attr(value.clone(), "__override__")?;
+        Ok(value)
+    }
+
     fn weakref_reference_type(&self) -> Result<ObjRef, RuntimeError> {
         let module = self
             .modules

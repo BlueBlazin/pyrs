@@ -3632,11 +3632,28 @@ origin = getattr(typing, '__file__', None)
 class Plain:
     pass
 origin_ok = origin is None
+cast_ok = typing.cast(int, 'v') == 'v'
+assert_type_ok = typing.assert_type('v', int) == 'v'
 origin_none_ok = typing.get_origin(int) is None
 args_none_ok = typing.get_args(int) == ()
 hints_ok = typing.get_type_hints(Plain) == {}
 is_typed_ok = typing.is_typeddict(dict) is False
 is_protocol_ok = typing.is_protocol(Plain) is False
+final_target = typing.final(type('FinalTarget', (), {}))
+final_ok = getattr(final_target, '__final__', False) is True
+def _override_target():
+    return 1
+override_target = typing.override(_override_target)
+override_ok = getattr(override_target, '__override__', False) is True
+assert_never_ok = False
+try:
+    typing.assert_never(123)
+except Exception as exc:
+    assert_never_ok = (
+        type(exc).__name__ == 'AssertionError'
+        and 'Expected code to be unreachable' in str(exc)
+    )
+reveal_ok = typing.reveal_type(1) == 1
 clear_ok = typing.clear_overloads() is None
 overloads_ok = typing.get_overloads(lambda: None) == []
 members_error = ''
@@ -3646,11 +3663,17 @@ except Exception as exc:
     members_error = type(exc).__name__
 ok = (
     origin_ok
+    and cast_ok
+    and assert_type_ok
     and origin_none_ok
     and args_none_ok
     and hints_ok
     and is_typed_ok
     and is_protocol_ok
+    and final_ok
+    and override_ok
+    and assert_never_ok
+    and reveal_ok
     and clear_ok
     and overloads_ok
     and members_error == 'TypeError'
@@ -3672,11 +3695,17 @@ print(ok)
         String::from_utf8_lossy(&output.stderr),
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     let last_line = stdout.lines().last().unwrap_or_default().trim();
     assert_eq!(
         last_line, "True",
         "expected typing bootstrap probe to print True, got:\n{}",
         stdout
+    );
+    assert!(
+        stderr.contains("Runtime type is 'int'"),
+        "expected reveal_type stderr output, got:\n{}",
+        stderr
     );
 }
 

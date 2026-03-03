@@ -932,6 +932,12 @@ impl Vm {
             | BuiltinFunction::TypingClearOverloads
             | BuiltinFunction::TypingIsTypedDict
             | BuiltinFunction::TypingIsProtocol
+            | BuiltinFunction::TypingCast
+            | BuiltinFunction::TypingAssertType
+            | BuiltinFunction::TypingRevealType
+            | BuiltinFunction::TypingAssertNever
+            | BuiltinFunction::TypingFinal
+            | BuiltinFunction::TypingOverride
             | BuiltinFunction::TypingNoDefaultNew
             | BuiltinFunction::TypingNoDefaultRepr
             | BuiltinFunction::TypingNoDefaultReduce

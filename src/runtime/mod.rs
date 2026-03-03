@@ -4363,6 +4363,12 @@ pub enum BuiltinFunction {
     TypingClearOverloads,
     TypingIsTypedDict,
     TypingIsProtocol,
+    TypingCast,
+    TypingAssertType,
+    TypingRevealType,
+    TypingAssertNever,
+    TypingFinal,
+    TypingOverride,
     TypingNoDefaultNew,
     TypingNoDefaultRepr,
     TypingNoDefaultReduce,
@@ -6608,7 +6614,13 @@ impl BuiltinFunction {
             | BuiltinFunction::TypingGetOverloads
             | BuiltinFunction::TypingClearOverloads
             | BuiltinFunction::TypingIsTypedDict
-            | BuiltinFunction::TypingIsProtocol => {
+            | BuiltinFunction::TypingIsProtocol
+            | BuiltinFunction::TypingCast
+            | BuiltinFunction::TypingAssertType
+            | BuiltinFunction::TypingRevealType
+            | BuiltinFunction::TypingAssertNever
+            | BuiltinFunction::TypingFinal
+            | BuiltinFunction::TypingOverride => {
                 Err(RuntimeError::new("typing helper is VM-only"))
             }
             BuiltinFunction::TypingTypeParamSubst
