@@ -18430,11 +18430,13 @@ fn itertools_helper_types_are_iterator_like_not_lists() {
     let source = r#"import itertools, operator
 objs = {
     "accumulate": itertools.accumulate([1, 2]),
+    "batched": itertools.batched([1, 2, 3], 2),
     "compress": itertools.compress([1, 2], [1, 0]),
     "dropwhile": itertools.dropwhile(lambda x: x < 2, [1, 2, 3]),
     "filterfalse": itertools.filterfalse(None, [0, 1]),
     "islice": itertools.islice(range(10), 3),
     "pairwise": itertools.pairwise([1, 2, 3]),
+    "repeat": itertools.repeat("x", 2),
     "starmap": itertools.starmap(operator.add, [(1, 2)]),
     "takewhile": itertools.takewhile(lambda x: x < 3, [1, 2, 3]),
     "zip_longest": itertools.zip_longest([1, 2], [10], fillvalue=0),
@@ -18445,11 +18447,13 @@ iter_identity = all(iter(v) is v for v in objs.values())
 ok = (
     iter_identity
     and not is_list["accumulate"]
+    and not is_list["batched"]
     and not is_list["compress"]
     and not is_list["dropwhile"]
     and not is_list["filterfalse"]
     and not is_list["islice"]
     and not is_list["pairwise"]
+    and not is_list["repeat"]
     and not is_list["starmap"]
     and not is_list["takewhile"]
     and not is_list["zip_longest"]
@@ -18480,6 +18484,7 @@ def probe(factory):
 
 checks = {
     "accumulate": probe(lambda x: itertools.accumulate(x)),
+    "batched": probe(lambda x: itertools.batched(x, 1)),
     "compress": probe(lambda x: itertools.compress(x, [1])),
     "dropwhile": probe(lambda x: itertools.dropwhile(lambda y: y < 0, x)),
     "filterfalse": probe(lambda x: itertools.filterfalse(None, x)),
@@ -18535,6 +18540,29 @@ ok = (
 }
 
 #[test]
+fn itertools_repeat_is_iterator_and_supports_optional_count() {
+    let source = r#"import itertools
+r = itertools.repeat("x")
+prefix = list(itertools.islice(r, 3))
+finite = list(itertools.repeat("x", 2))
+negative = list(itertools.repeat("x", -3))
+obj = itertools.repeat("x", 1)
+ok = (
+    prefix == ["x", "x", "x"]
+    and finite == ["x", "x"]
+    and negative == []
+    and (iter(obj) is obj)
+    and not isinstance(obj, list)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn itertools_tee_is_lazy_and_buffers_across_consumers() {
     let source = r#"import itertools
 events = []
@@ -18565,6 +18593,52 @@ ok = (
     and after_rest_a == ["yield1", "yield2", "yield3"]
     and rest_b == [2, 3]
     and repr_ok
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn itertools_batched_is_lazy_and_honors_strict() {
+    let source = r#"import itertools
+events = []
+def gen():
+    events.append("yield1")
+    yield 1
+    events.append("yield2")
+    yield 2
+    events.append("yield3")
+    yield 3
+batches = itertools.batched(gen(), 2)
+created = list(events)
+obj = itertools.batched([1], 1)
+first = next(batches)
+after_first = list(events)
+second = next(batches)
+after_second = list(events)
+done = False
+try:
+    next(batches)
+except StopIteration:
+    done = True
+strict_error = False
+try:
+    list(itertools.batched([1, 2, 3], 2, strict=True))
+except ValueError as exc:
+    strict_error = ("incomplete batch" in str(exc))
+ok = (
+    created == []
+    and first == (1, 2)
+    and after_first == ["yield1", "yield2"]
+    and second == (3,)
+    and after_second == ["yield1", "yield2", "yield3"]
+    and done
+    and strict_error
+    and (iter(obj) is obj)
 )
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");

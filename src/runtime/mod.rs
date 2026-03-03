@@ -1563,6 +1563,15 @@ pub enum IteratorKind {
         shared: Value,
         slot: usize,
     },
+    Repeat {
+        value: Value,
+        remaining: Option<usize>,
+    },
+    Batched {
+        iterator: Value,
+        size: usize,
+        strict: bool,
+    },
     Range {
         current: BigInt,
         stop: BigInt,
@@ -1750,6 +1759,21 @@ impl fmt::Debug for IteratorKind {
                 .debug_struct("Tee")
                 .field("shared", shared)
                 .field("slot", slot)
+                .finish(),
+            IteratorKind::Repeat { value, remaining } => f
+                .debug_struct("Repeat")
+                .field("value", value)
+                .field("remaining", remaining)
+                .finish(),
+            IteratorKind::Batched {
+                iterator,
+                size,
+                strict,
+            } => f
+                .debug_struct("Batched")
+                .field("iterator", iterator)
+                .field("size", size)
+                .field("strict", strict)
                 .finish(),
             IteratorKind::Range {
                 current,
@@ -2566,6 +2590,12 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             IteratorKind::Tee { shared, .. } => {
                 trace_value(shared, stack, marked);
             }
+            IteratorKind::Repeat { value, .. } => {
+                trace_value(value, stack, marked);
+            }
+            IteratorKind::Batched { iterator, .. } => {
+                trace_value(iterator, stack, marked);
+            }
             IteratorKind::SequenceGetItem { target, getitem } => {
                 trace_value(target, stack, marked);
                 trace_value(getitem, stack, marked);
@@ -2829,6 +2859,23 @@ fn clear_object_refs(obj: &ObjRef) {
                 IteratorKind::Tee { shared, slot } => {
                     *shared = Value::None;
                     *slot = 0;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Repeat { value, remaining } => {
+                    *value = Value::None;
+                    *remaining = Some(0);
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Batched {
+                    iterator: batched_iter,
+                    size,
+                    strict,
+                } => {
+                    *batched_iter = Value::None;
+                    *size = 0;
+                    *strict = false;
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -8112,7 +8159,11 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                 | IteratorKind::StarMap { .. }
                 | IteratorKind::TakeWhile { .. }
                 | IteratorKind::ZipLongest { .. }
-                | IteratorKind::Tee { .. } => Err(RuntimeError::type_error("expected iterable")),
+                | IteratorKind::Tee { .. }
+                | IteratorKind::Repeat { .. }
+                | IteratorKind::Batched { .. } => {
+                    Err(RuntimeError::type_error("expected iterable"))
+                }
             }
         }
         Value::Str(value) => Ok(value.chars().map(|ch| Value::Str(ch.to_string())).collect()),

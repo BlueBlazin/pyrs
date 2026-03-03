@@ -9383,6 +9383,8 @@ impl Vm {
                     IteratorKind::TakeWhile { .. } => "takewhile",
                     IteratorKind::ZipLongest { .. } => "zip_longest",
                     IteratorKind::Tee { .. } => "_tee",
+                    IteratorKind::Repeat { .. } => "repeat",
+                    IteratorKind::Batched { .. } => "batched",
                     IteratorKind::RangeObject { .. } => "range",
                     IteratorKind::Range { .. } => "range_iterator",
                     IteratorKind::SequenceGetItem { .. } => "iterator",
@@ -9485,6 +9487,11 @@ impl Vm {
             TeeAdvance {
                 shared: Value,
                 slot: usize,
+            },
+            BatchedAdvance {
+                iterator: Value,
+                size: usize,
+                strict: bool,
             },
         }
 
@@ -9819,6 +9826,31 @@ impl Vm {
                     pending_step = PendingIteratorStep::TeeAdvance {
                         shared: shared.clone(),
                         slot: *slot,
+                    };
+                }
+                IteratorKind::Repeat { value, remaining } => match remaining {
+                    None => {
+                        state.index = state.index.saturating_add(1);
+                        return Ok(Some(value.clone()));
+                    }
+                    Some(remaining) => {
+                        if *remaining == 0 {
+                            return Ok(None);
+                        }
+                        *remaining -= 1;
+                        state.index = state.index.saturating_add(1);
+                        return Ok(Some(value.clone()));
+                    }
+                },
+                IteratorKind::Batched {
+                    iterator,
+                    size,
+                    strict,
+                } => {
+                    pending_step = PendingIteratorStep::BatchedAdvance {
+                        iterator: iterator.clone(),
+                        size: *size,
+                        strict: *strict,
                     };
                 }
                 IteratorKind::RangeObject { start, stop, step } => {
@@ -10716,6 +10748,44 @@ impl Vm {
                         Err(self.iteration_error_from_state("tee() iteration failed")?)
                     }
                 }
+            }
+            PendingIteratorStep::BatchedAdvance {
+                iterator,
+                size,
+                strict,
+            } => {
+                let mut batch = Vec::with_capacity(size);
+                for _ in 0..size {
+                    match self.next_from_iterator_value(&iterator)? {
+                        GeneratorResumeOutcome::Yield(value) => batch.push(value),
+                        GeneratorResumeOutcome::Complete(_) => {
+                            if batch.is_empty() {
+                                return Ok(None);
+                            }
+                            if strict {
+                                return Err(RuntimeError::value_error(
+                                    "batched(): incomplete batch",
+                                ));
+                            }
+                            break;
+                        }
+                        GeneratorResumeOutcome::PropagatedException => {
+                            return Err(
+                                self.iteration_error_from_state("batched() iteration failed")?
+                            );
+                        }
+                    }
+                }
+                if batch.is_empty() {
+                    return Ok(None);
+                }
+                let mut iter = iterator_ref.kind_mut();
+                if let Object::Iterator(state) = &mut *iter
+                    && let IteratorKind::Batched { .. } = &mut state.kind
+                {
+                    state.index = state.index.saturating_add(1);
+                }
+                Ok(Some(self.heap.alloc_tuple(batch)))
             }
             PendingIteratorStep::SequenceGetItem {
                 target,

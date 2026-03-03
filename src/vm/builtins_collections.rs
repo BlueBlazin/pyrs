@@ -1046,21 +1046,32 @@ impl Vm {
 
     pub(super) fn builtin_itertools_repeat(
         &mut self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("repeat() expects value and count"));
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "repeat() expects value and optional count",
+            ));
         }
-        let count = value_to_int(args[1].clone())?;
-        if count < 0 {
-            return Err(RuntimeError::new("repeat count must be >= 0"));
-        }
-        let mut out = Vec::with_capacity(count as usize);
-        for _ in 0..count {
-            out.push(args[0].clone());
-        }
-        Ok(self.heap.alloc_list(out))
+        let value = args.remove(0);
+        let remaining = if args.is_empty() {
+            None
+        } else {
+            let count = value_to_int(args.remove(0))?;
+            if count <= 0 {
+                Some(0)
+            } else {
+                Some(
+                    usize::try_from(count)
+                        .map_err(|_| RuntimeError::new("repeat() count is too large"))?,
+                )
+            }
+        };
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Repeat { value, remaining },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_batched(
@@ -1088,20 +1099,18 @@ impl Vm {
         let iterable = args.remove(0);
         let n = value_to_int(args.remove(0))?;
         if n <= 0 {
-            return Err(RuntimeError::new("n must be at least one"));
+            return Err(RuntimeError::value_error("n must be at least one"));
         }
-        let values = self.collect_iterable_values(iterable)?;
-        let mut out = Vec::new();
-        let mut idx = 0usize;
-        while idx < values.len() {
-            let end = (idx + n as usize).min(values.len());
-            if strict && end - idx < n as usize {
-                return Err(RuntimeError::new("batched(): incomplete batch"));
-            }
-            out.push(self.heap.alloc_tuple(values[idx..end].to_vec()));
-            idx = end;
-        }
-        Ok(self.heap.alloc_list(out))
+        let size = usize::try_from(n).map_err(|_| RuntimeError::new("n is too large"))?;
+        let iterator = self.to_iterator_value(iterable)?;
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Batched {
+                iterator,
+                size,
+                strict,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_permutations(

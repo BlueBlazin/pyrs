@@ -2443,6 +2443,8 @@ impl Vm {
                         ("zip_longest", None, None, None, false, true)
                     }
                     IteratorKind::Tee { .. } => ("_tee", None, None, None, false, true),
+                    IteratorKind::Repeat { .. } => ("repeat", None, None, None, false, true),
+                    IteratorKind::Batched { .. } => ("batched", None, None, None, false, true),
                     IteratorKind::SequenceGetItem { .. } => {
                         ("iterator", None, None, None, false, true)
                     }
