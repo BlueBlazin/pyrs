@@ -107,7 +107,10 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
   - added to pure-stdlib unload preference group (`PURE_STDLIB_INSPECT_MODULES`) so CPython `Lib/inspect.py` is preferred when available;
   - restored CPython-shaped `type.__dict__` getset-descriptor contract for `__mro__` and `__dict__` (including `getset_descriptor.__get__`), unblocking pure `inspect` initialization paths;
   - covered by `tests/vm.rs::inspect_import_prefers_cpython_pure_module_when_lib_path_is_added` and `tests/vm.rs::type_getset_descriptors_expose_mro_and_dict_contract`.
-- [ ] `P1` `io` (line 5923)
+- [x] `P1` `io` (line 5923):
+  - added to pure-stdlib unload preference group (`PURE_STDLIB_IO_MODULES`) so CPython `Lib/io.py` is preferred when available;
+  - `_io` bootstrap export surface now includes `_io.text_encoding`, matching CPython `io.py` import requirements (`from _io import ... text_encoding ...`);
+  - covered by `tests/vm.rs::io_import_prefers_cpython_pure_module_when_lib_path_is_added` and `tests/vm.rs::_io_module_exports_text_encoding_helper`.
 - [ ] `P1` `subprocess` (line 7351)
 - [ ] `P1` `uuid` (line 7637)
 - [ ] `P1` `asyncio` (line 7659)
