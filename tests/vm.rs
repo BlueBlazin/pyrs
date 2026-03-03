@@ -552,6 +552,110 @@ fn pyc_call_function_ex_bound_method_email_set_content_regression() {
 }
 
 #[test]
+fn pyc_load_fast_and_clear_cellvar_roundtrip_regression() {
+    let Some(python) = python314_path() else {
+        return;
+    };
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+
+    let temp_dir = unique_temp_dir("pyrs_pyc_load_fast_and_clear_cellvar");
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let module_path = temp_dir.join("repro_cellvar.py");
+    let pyc_path = temp_dir.join("repro_cellvar.pyc");
+
+    std::fs::write(
+        &module_path,
+        r#"def rec(cls, abcs=None):
+    for i, base in enumerate(reversed(cls.__bases__)):
+        boundary = len(cls.__bases__) - i
+        break
+    else:
+        boundary = 0
+    abcs = list(abcs) if abcs else []
+    explicit_bases = list(cls.__bases__[:boundary])
+    abstract_bases = []
+    other_bases = list(cls.__bases__[boundary:])
+    for base in abcs:
+        if issubclass(cls, base) and not any(issubclass(b, base) for b in cls.__bases__):
+            abstract_bases.append(base)
+    for base in abstract_bases:
+        abcs.remove(base)
+    explicit_c3_mros = [rec(base, abcs=abcs) for base in explicit_bases]
+    abstract_c3_mros = [rec(base, abcs=abcs) for base in abstract_bases]
+    other_c3_mros = [rec(base, abcs=abcs) for base in other_bases]
+    return (
+        [[cls]]
+        + explicit_c3_mros
+        + abstract_c3_mros
+        + other_c3_mros
+        + [explicit_bases]
+        + [abstract_bases]
+        + [other_bases]
+    )
+
+out = rec(int)
+ok = (
+    isinstance(out, list)
+    and out
+    and out[0]
+    and out[0][0] is int
+    and len(out) > 1
+    and out[1]
+    and out[1][0]
+    and out[1][0][0] is object
+)
+print('ok' if ok else repr(out))
+"#,
+    )
+    .expect("write repro source");
+
+    let compile_cmd = format!(
+        "import py_compile\npy_compile.compile({src:?}, cfile={dst:?}, doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)\n",
+        src = module_path.to_string_lossy(),
+        dst = pyc_path.to_string_lossy(),
+    );
+    let compile_output = Command::new(python)
+        .arg("-S")
+        .arg("-c")
+        .arg(compile_cmd)
+        .output()
+        .expect("compile pyc repro");
+    assert!(
+        compile_output.status.success(),
+        "pyc compile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&compile_output.stdout),
+        String::from_utf8_lossy(&compile_output.stderr)
+    );
+
+    std::fs::remove_file(&module_path).expect("remove source to force pyc import");
+
+    let run_output = Command::new(pyrs_bin)
+        .env("PYRS_CPYTHON_LIB", &lib_path)
+        .env("PYRS_IMPORT_PREFER_PYC", "1")
+        .arg("-S")
+        .arg(&pyc_path)
+        .output()
+        .expect("run pyc load_fast_and_clear repro");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    assert!(
+        run_output.status.success(),
+        "pyc load_fast_and_clear repro failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(last_line, "ok");
+}
+
+#[test]
 fn concurrent_futures_threadpool_smoke_no_semaphore_overrelease() {
     let Some(lib_path) = cpython_lib_path() else {
         return;

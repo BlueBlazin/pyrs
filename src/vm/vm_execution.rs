@@ -1581,7 +1581,14 @@ impl Vm {
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing local argument"))?
                     as usize;
-                let (_, maybe_value) = self.take_fast_local_optional(idx)?;
+                let maybe_value = {
+                    let frame = self.frames.last_mut().expect("frame exists");
+                    let slot = frame
+                        .fast_locals
+                        .get_mut(idx)
+                        .ok_or_else(|| RuntimeError::new("name index out of range"))?;
+                    slot.take()
+                };
                 let value = maybe_value.unwrap_or_else(|| self.fast_local_unbound_marker.clone());
                 self.push_value(value);
             }
@@ -11192,27 +11199,10 @@ impl Vm {
             return Ok(());
         }
         if let Some(slot) = frame.fast_locals.get_mut(idx) {
-            if let Some(cell_idx) = frame.code.cellvar_to_index.get(&name).copied()
-                && let Some(cell) = frame.cells.get(cell_idx)
-            {
-                if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
-                    cell_data.value = Some(value.clone());
-                }
-                if matches!(slot, Some(Value::Cell(_))) {
-                    // Fast-local slots for initialized cellvars store the cell object.
-                    // Keep that shape and update cell contents only.
-                } else {
-                    Self::write_fast_local_slot(slot, value.clone());
-                }
-            } else {
-                if let Some(free_idx) = frame.code.freevars.iter().position(|free| free == &name)
-                    && let Some(cell) = frame.cells.get(frame.code.cellvars.len() + free_idx)
-                    && let Object::Cell(cell_data) = &mut *cell.kind_mut()
-                {
-                    cell_data.value = Some(value.clone());
-                }
-                Self::write_fast_local_slot(slot, value.clone());
-            }
+            // CPython STORE_FAST writes directly to the locals-plus slot, even when
+            // that slot temporarily backs a cellvar (for example LOAD_FAST_AND_CLEAR
+            // save/restore patterns in comprehensions).
+            Self::write_fast_local_slot(slot, value.clone());
         } else {
             return Err(RuntimeError::new("name index out of range"));
         }
