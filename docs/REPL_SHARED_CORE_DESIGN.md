@@ -299,5 +299,7 @@ Design is complete when:
   - `prompt_kind()` for adapter prompt selection (`>>>` vs `...` decisions),
   - `submit_line_prepare_module(...)` shared parse+compile preparation path,
   - `submit_line_and_execute(...)` stateful execution method built on the same prepare path.
+- Shared source-level parse+compile helper (`parse_and_compile_module_source(...)`)
+  now backs wasm snippet preflight parse/compile checks.
 - Website playground worker now forwards REPL prompt state (`prompt_continuation`)
   from `WasmReplSession` so UI prompt mode follows core interpreter state.

@@ -2227,16 +2227,6 @@ fn collect_import_roots(module: &crate::ast::Module) -> Vec<String> {
     roots
 }
 
-fn compile_module_for_wasm(
-    module: &crate::ast::Module,
-    filename: &str,
-) -> Result<crate::bytecode::CodeObject, (String, usize, usize)> {
-    crate::compiler::compile_module_with_filename(module, filename).map_err(|err| {
-        let (message, line, column) = format_compile_error(&err);
-        (message, line, column)
-    })
-}
-
 struct ParsedCompiledSnippet {
     module: crate::ast::Module,
     #[cfg(feature = "wasm-vm-probe")]
@@ -2244,21 +2234,8 @@ struct ParsedCompiledSnippet {
 }
 
 fn parse_and_compile_snippet(source: &str) -> Result<ParsedCompiledSnippet, WasmCompileResult> {
-    let module = match crate::parser::parse_module(source) {
-        Ok(module) => module,
-        Err(err) => {
-            return Err(WasmCompileResult {
-                ok: false,
-                phase: "syntax_error".to_string(),
-                error: Some(format_parse_error(&err)),
-                line: err.line,
-                column: err.column,
-            });
-        }
-    };
-
-    match compile_module_for_wasm(&module, "<wasm>") {
-        Ok(code) => {
+    match crate::repl_core::parse_and_compile_module_source(source, "<wasm>") {
+        Ok((module, code)) => {
             #[cfg(feature = "wasm-vm-probe")]
             {
                 Ok(ParsedCompiledSnippet { module, code })
@@ -2269,13 +2246,23 @@ fn parse_and_compile_snippet(source: &str) -> Result<ParsedCompiledSnippet, Wasm
                 Ok(ParsedCompiledSnippet { module })
             }
         }
-        Err((message, line, column)) => Err(WasmCompileResult {
+        Err(crate::repl_core::ReplSourcePrepareError::Parse(err)) => Err(WasmCompileResult {
             ok: false,
-            phase: "compile_error".to_string(),
-            error: Some(message),
-            line,
-            column,
+            phase: "syntax_error".to_string(),
+            error: Some(format_parse_error(&err)),
+            line: err.line,
+            column: err.column,
         }),
+        Err(crate::repl_core::ReplSourcePrepareError::Compile(err)) => {
+            let (message, line, column) = format_compile_error(&err);
+            Err(WasmCompileResult {
+                ok: false,
+                phase: "compile_error".to_string(),
+                error: Some(message),
+                line,
+                column,
+            })
+        }
     }
 }
 

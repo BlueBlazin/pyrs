@@ -76,6 +76,23 @@ pub(crate) fn input_is_incomplete(source: &str, err: &ParseError) -> bool {
         || lower_msg.contains("expected rbrace")
 }
 
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) enum ReplSourcePrepareError {
+    Parse(ParseError),
+    Compile(crate::compiler::CompileError),
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) fn parse_and_compile_module_source(
+    source: &str,
+    filename: &str,
+) -> Result<(Module, crate::bytecode::CodeObject), ReplSourcePrepareError> {
+    let module = crate::parser::parse_module(source).map_err(ReplSourcePrepareError::Parse)?;
+    let code = crate::compiler::compile_module_with_filename(&module, filename)
+        .map_err(ReplSourcePrepareError::Compile)?;
+    Ok((module, code))
+}
+
 fn has_unclosed_delimiters(source: &str) -> bool {
     let mut lexer = crate::parser::lexer::Lexer::new(source);
     let Ok(tokens) = lexer.tokenize() else {
@@ -417,7 +434,8 @@ pub(crate) enum ReplExecutionError {
 mod tests {
     use super::{
         ReplCoreState, ReplInputSession, ReplLineParseResult, ReplProfile, ReplPromptKind,
-        input_is_incomplete,
+        ReplSourcePrepareError, input_is_incomplete,
+        parse_and_compile_module_source,
         parse_candidate_source, parse_success_requires_more_input, submit_line_for_module,
     };
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
@@ -562,6 +580,25 @@ mod tests {
                 ReplLineParseResult::Ready { .. }
             ));
             assert!(state.is_empty());
+        }
+    }
+
+    #[test]
+    fn parse_and_compile_module_source_returns_parse_error_for_invalid_syntax() {
+        match parse_and_compile_module_source("def broken(:\n", "<stdin>") {
+            Err(ReplSourcePrepareError::Parse(err)) => {
+                assert!(err.line > 0);
+                assert!(err.column > 0);
+            }
+            _ => panic!("expected parse error"),
+        }
+    }
+
+    #[test]
+    fn parse_and_compile_module_source_returns_compile_error_for_semantic_failures() {
+        match parse_and_compile_module_source("return 1\n", "<stdin>") {
+            Err(ReplSourcePrepareError::Compile(_)) => {}
+            _ => panic!("expected compile error"),
         }
     }
 
