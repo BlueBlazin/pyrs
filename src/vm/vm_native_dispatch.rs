@@ -36,6 +36,17 @@ thread_local! {
 
 const SIMPLE_QUEUE_STORAGE_ATTR: &str = "__pyrs_simple_queue_items__";
 
+#[derive(Clone)]
+struct GroupBySharedSnapshot {
+    source: Value,
+    keyfunc: Value,
+    current_key: Option<Value>,
+    pending_value: Option<Value>,
+    pending_key: Option<Value>,
+    exhausted: bool,
+    group_index: usize,
+}
+
 /// Parse and validate the optional `shape=` argument for `memoryview.cast`.
 fn parse_memoryview_cast_shape(value: &Value) -> Result<Vec<usize>, RuntimeError> {
     let shape_items = match value {
@@ -9391,6 +9402,8 @@ impl Vm {
                     IteratorKind::Tee { .. } => "_tee",
                     IteratorKind::Repeat { .. } => "repeat",
                     IteratorKind::Batched { .. } => "batched",
+                    IteratorKind::GroupBy { .. } => "groupby",
+                    IteratorKind::GroupByGrouper { .. } => "_grouper",
                     IteratorKind::RangeObject { .. } => "range",
                     IteratorKind::Range { .. } => "range_iterator",
                     IteratorKind::SequenceGetItem { .. } => "iterator",
@@ -10038,6 +10051,94 @@ impl Vm {
                         size: *size,
                         strict: *strict,
                     };
+                }
+                IteratorKind::GroupBy { shared } => {
+                    let Value::Module(shared_module) = shared else {
+                        return Err(RuntimeError::new("invalid groupby shared state"));
+                    };
+                    let mut state_snapshot = self.groupby_shared_snapshot(shared_module)?;
+                    if let Some(current_key) = state_snapshot.current_key.clone() {
+                        loop {
+                            if state_snapshot.exhausted {
+                                break;
+                            }
+                            if state_snapshot.pending_value.is_none() {
+                                self.groupby_pull_pending(&mut state_snapshot)?;
+                                if state_snapshot.pending_value.is_none() {
+                                    break;
+                                }
+                            }
+                            let Some(pending_key) = state_snapshot.pending_key.clone() else {
+                                return Err(RuntimeError::new("groupby shared state missing key"));
+                            };
+                            let same_group =
+                                self.groupby_keys_equal(pending_key, current_key.clone())?;
+                            if same_group {
+                                state_snapshot.pending_value = None;
+                                state_snapshot.pending_key = None;
+                                continue;
+                            }
+                            break;
+                        }
+                    } else if state_snapshot.pending_value.is_none() && !state_snapshot.exhausted {
+                        self.groupby_pull_pending(&mut state_snapshot)?;
+                    }
+
+                    if state_snapshot.pending_value.is_none() {
+                        self.groupby_store_snapshot(shared_module, &state_snapshot)?;
+                        return Ok(None);
+                    }
+                    let Some(group_key) = state_snapshot.pending_key.clone() else {
+                        return Err(RuntimeError::new("groupby shared state missing key"));
+                    };
+                    state_snapshot.current_key = Some(group_key.clone());
+                    state_snapshot.group_index = state_snapshot.group_index.saturating_add(1);
+                    let group_index = state_snapshot.group_index;
+                    self.groupby_store_snapshot(shared_module, &state_snapshot)?;
+
+                    state.index = state.index.saturating_add(1);
+                    let grouper = self.heap.alloc_iterator(IteratorObject {
+                        kind: IteratorKind::GroupByGrouper {
+                            shared: Value::Module(shared_module.clone()),
+                            key: group_key.clone(),
+                            group_index,
+                        },
+                        index: 0,
+                    });
+                    return Ok(Some(self.heap.alloc_tuple(vec![group_key, grouper])));
+                }
+                IteratorKind::GroupByGrouper {
+                    shared,
+                    key,
+                    group_index,
+                } => {
+                    let Value::Module(shared_module) = shared else {
+                        return Err(RuntimeError::new("invalid groupby shared state"));
+                    };
+                    let mut state_snapshot = self.groupby_shared_snapshot(shared_module)?;
+                    if state_snapshot.group_index != *group_index {
+                        return Ok(None);
+                    }
+                    if state_snapshot.pending_value.is_none() && !state_snapshot.exhausted {
+                        self.groupby_pull_pending(&mut state_snapshot)?;
+                    }
+                    let Some(value) = state_snapshot.pending_value.clone() else {
+                        self.groupby_store_snapshot(shared_module, &state_snapshot)?;
+                        return Ok(None);
+                    };
+                    let Some(pending_key) = state_snapshot.pending_key.clone() else {
+                        return Err(RuntimeError::new("groupby shared state missing key"));
+                    };
+                    let in_group = self.groupby_keys_equal(pending_key, key.clone())?;
+                    if !in_group {
+                        self.groupby_store_snapshot(shared_module, &state_snapshot)?;
+                        return Ok(None);
+                    }
+                    state_snapshot.pending_value = None;
+                    state_snapshot.pending_key = None;
+                    self.groupby_store_snapshot(shared_module, &state_snapshot)?;
+                    state.index = state.index.saturating_add(1);
+                    return Ok(Some(value));
                 }
                 IteratorKind::RangeObject { start, stop, step } => {
                     if step.is_zero() {
@@ -11131,6 +11232,145 @@ impl Vm {
                     }
                 }
             }
+        }
+    }
+
+    fn groupby_shared_snapshot(
+        &self,
+        shared_module: &ObjRef,
+    ) -> Result<GroupBySharedSnapshot, RuntimeError> {
+        let module_kind = shared_module.kind();
+        let Object::Module(module_data) = &*module_kind else {
+            return Err(RuntimeError::new("invalid groupby shared state"));
+        };
+        let source = module_data
+            .globals
+            .get("source")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("groupby shared state missing source"))?;
+        let keyfunc = module_data
+            .globals
+            .get("keyfunc")
+            .cloned()
+            .unwrap_or(Value::None);
+        let current_key = module_data.globals.get("current_key").cloned();
+        let pending_value = module_data.globals.get("pending_value").cloned();
+        let pending_key = module_data.globals.get("pending_key").cloned();
+        let exhausted = module_data
+            .globals
+            .get("exhausted")
+            .and_then(|value| match value {
+                Value::Bool(flag) => Some(*flag),
+                _ => None,
+            })
+            .unwrap_or(false);
+        let group_index = module_data
+            .globals
+            .get("group_index")
+            .and_then(|value| match value {
+                Value::Int(index) => usize::try_from(*index).ok(),
+                _ => None,
+            })
+            .unwrap_or(0);
+        Ok(GroupBySharedSnapshot {
+            source,
+            keyfunc,
+            current_key,
+            pending_value,
+            pending_key,
+            exhausted,
+            group_index,
+        })
+    }
+
+    fn groupby_store_snapshot(
+        &self,
+        shared_module: &ObjRef,
+        snapshot: &GroupBySharedSnapshot,
+    ) -> Result<(), RuntimeError> {
+        let mut module_kind = shared_module.kind_mut();
+        let Object::Module(module_data) = &mut *module_kind else {
+            return Err(RuntimeError::new("invalid groupby shared state"));
+        };
+        module_data
+            .globals
+            .insert("source".to_string(), snapshot.source.clone());
+        module_data
+            .globals
+            .insert("keyfunc".to_string(), snapshot.keyfunc.clone());
+        module_data
+            .globals
+            .insert("exhausted".to_string(), Value::Bool(snapshot.exhausted));
+        module_data.globals.insert(
+            "group_index".to_string(),
+            Value::Int(snapshot.group_index as i64),
+        );
+
+        if let Some(current_key) = &snapshot.current_key {
+            module_data
+                .globals
+                .insert("current_key".to_string(), current_key.clone());
+        } else {
+            module_data.globals.remove("current_key");
+        }
+        if let Some(pending_value) = &snapshot.pending_value {
+            module_data
+                .globals
+                .insert("pending_value".to_string(), pending_value.clone());
+        } else {
+            module_data.globals.remove("pending_value");
+        }
+        if let Some(pending_key) = &snapshot.pending_key {
+            module_data
+                .globals
+                .insert("pending_key".to_string(), pending_key.clone());
+        } else {
+            module_data.globals.remove("pending_key");
+        }
+        Ok(())
+    }
+
+    fn groupby_compute_key(&mut self, keyfunc: &Value, item: Value) -> Result<Value, RuntimeError> {
+        if matches!(keyfunc, Value::None) {
+            return Ok(item);
+        }
+        match self.call_internal(keyfunc.clone(), vec![item], HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(RuntimeError::new("groupby() key raised"))
+            }
+        }
+    }
+
+    fn groupby_pull_pending(
+        &mut self,
+        snapshot: &mut GroupBySharedSnapshot,
+    ) -> Result<(), RuntimeError> {
+        if snapshot.exhausted || snapshot.pending_value.is_some() {
+            return Ok(());
+        }
+        match self.next_from_iterator_value(&snapshot.source)? {
+            GeneratorResumeOutcome::Yield(value) => {
+                let key = self.groupby_compute_key(&snapshot.keyfunc, value.clone())?;
+                snapshot.pending_value = Some(value);
+                snapshot.pending_key = Some(key);
+            }
+            GeneratorResumeOutcome::Complete(_) => {
+                snapshot.pending_value = None;
+                snapshot.pending_key = None;
+                snapshot.exhausted = true;
+            }
+            GeneratorResumeOutcome::PropagatedException => {
+                return Err(self.iteration_error_from_state("groupby() iteration failed")?);
+            }
+        }
+        Ok(())
+    }
+
+    fn groupby_keys_equal(&mut self, left: Value, right: Value) -> Result<bool, RuntimeError> {
+        match self.compare_eq_runtime(left, right)? {
+            Value::Bool(flag) => Ok(flag),
+            _ => Ok(false),
         }
     }
 

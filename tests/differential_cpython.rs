@@ -2629,6 +2629,7 @@ construct = {
     "compress": probe(lambda x: itertools.compress(x, [1])),
     "dropwhile": probe(lambda x: itertools.dropwhile(lambda y: y < 0, x)),
     "filterfalse": probe(lambda x: itertools.filterfalse(None, x)),
+    "groupby": probe(lambda x: itertools.groupby(x)),
     "islice": probe(lambda x: itertools.islice(x, 1)),
     "pairwise": probe(lambda x: itertools.pairwise(x)),
     "permutations": probe(lambda x: itertools.permutations(x, 1)),
@@ -2648,6 +2649,7 @@ objs = {
     "compress": itertools.compress([1, 2], [1, 0]),
     "dropwhile": itertools.dropwhile(lambda x: x < 2, [1, 2, 3]),
     "filterfalse": itertools.filterfalse(None, [0, 1]),
+    "groupby": itertools.groupby([1, 1, 2]),
     "islice": itertools.islice(range(10), 3),
     "pairwise": itertools.pairwise([1, 2, 3]),
     "permutations": itertools.permutations([1, 2, 3], 2),
@@ -2668,6 +2670,7 @@ values = {
     "compress": list(itertools.compress("ABCDEF", [1, 0, 1, 0, 1, 1])),
     "dropwhile": list(itertools.dropwhile(lambda x: x < 3, [1, 2, 3, 2, 1])),
     "filterfalse": list(itertools.filterfalse(lambda x: x % 2, [0, 1, 2, 3, 4])),
+    "groupby": [(k, list(g)) for k, g in itertools.groupby("AAABBC")],
     "islice": list(itertools.islice(range(10), 2, 8, 3)),
     "pairwise": list(itertools.pairwise([10, 20, 30])),
     "permutations": list(itertools.permutations([1, 2, 3], 2)),
@@ -2686,6 +2689,55 @@ result = {
     "is_list": is_list,
     "iter_identity": iter_identity,
     "values": values,
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
+fn differential_runtime_itertools_groupby_partial_consumption_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import itertools
+events = []
+def src():
+    for x in [1, 1, 2, 2, 3]:
+        events.append(x)
+        yield x
+g = itertools.groupby(src())
+created = list(events)
+k1, grp1 = next(g)
+after_outer_first = list(events)
+first_item = next(grp1)
+after_first_item = list(events)
+k2, grp2 = next(g)
+after_outer_second = list(events)
+old_group_tail = list(grp1)
+group2 = list(grp2)
+k3, grp3 = next(g)
+group3 = list(grp3)
+stopped = False
+try:
+    next(g)
+except StopIteration:
+    stopped = True
+result = {
+    "created": created,
+    "k1": k1,
+    "after_outer_first": after_outer_first,
+    "first_item": first_item,
+    "after_first_item": after_first_item,
+    "k2": k2,
+    "after_outer_second": after_outer_second,
+    "old_group_tail": old_group_tail,
+    "group2": group2,
+    "k3": k3,
+    "group3": group3,
+    "stopped": stopped,
 }
 "#;
     let py = run_cpython_json(source).expect("CPython JSON should run");

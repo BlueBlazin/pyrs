@@ -1600,6 +1600,14 @@ pub enum IteratorKind {
         size: usize,
         strict: bool,
     },
+    GroupBy {
+        shared: Value,
+    },
+    GroupByGrouper {
+        shared: Value,
+        key: Value,
+        group_index: usize,
+    },
     Range {
         current: BigInt,
         stop: BigInt,
@@ -1858,6 +1866,19 @@ impl fmt::Debug for IteratorKind {
                 .field("iterator", iterator)
                 .field("size", size)
                 .field("strict", strict)
+                .finish(),
+            IteratorKind::GroupBy { shared } => {
+                f.debug_struct("GroupBy").field("shared", shared).finish()
+            }
+            IteratorKind::GroupByGrouper {
+                shared,
+                key,
+                group_index,
+            } => f
+                .debug_struct("GroupByGrouper")
+                .field("shared", shared)
+                .field("key", key)
+                .field("group_index", group_index)
                 .finish(),
             IteratorKind::Range {
                 current,
@@ -2698,6 +2719,13 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             IteratorKind::Batched { iterator, .. } => {
                 trace_value(iterator, stack, marked);
             }
+            IteratorKind::GroupBy { shared } => {
+                trace_value(shared, stack, marked);
+            }
+            IteratorKind::GroupByGrouper { shared, key, .. } => {
+                trace_value(shared, stack, marked);
+                trace_value(key, stack, marked);
+            }
             IteratorKind::SequenceGetItem { target, getitem } => {
                 trace_value(target, stack, marked);
                 trace_value(getitem, stack, marked);
@@ -3038,6 +3066,22 @@ fn clear_object_refs(obj: &ObjRef) {
                     *batched_iter = Value::None;
                     *size = 0;
                     *strict = false;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::GroupBy { shared } => {
+                    *shared = Value::None;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::GroupByGrouper {
+                    shared,
+                    key,
+                    group_index,
+                } => {
+                    *shared = Value::None;
+                    *key = Value::None;
+                    *group_index = 0;
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -8327,7 +8371,9 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                 | IteratorKind::Combinations { .. }
                 | IteratorKind::CombinationsWithReplacement { .. }
                 | IteratorKind::Permutations { .. }
-                | IteratorKind::Product { .. } => {
+                | IteratorKind::Product { .. }
+                | IteratorKind::GroupBy { .. }
+                | IteratorKind::GroupByGrouper { .. } => {
                     Err(RuntimeError::type_error("expected iterable"))
                 }
             }
@@ -9265,6 +9311,12 @@ pub fn format_value(value: &Value) -> String {
                 }
                 IteratorKind::Tee { .. } => {
                     format!("<itertools._tee object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::GroupBy { .. } => {
+                    format!("<itertools.groupby object at 0x{:x}>", obj.id())
+                }
+                IteratorKind::GroupByGrouper { .. } => {
+                    format!("<itertools._grouper object at 0x{:x}>", obj.id())
                 }
                 _ => "<iterator>".to_string(),
             },

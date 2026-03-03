@@ -2460,6 +2460,10 @@ impl Vm {
                     IteratorKind::Tee { .. } => ("_tee", None, None, None, false, true),
                     IteratorKind::Repeat { .. } => ("repeat", None, None, None, false, true),
                     IteratorKind::Batched { .. } => ("batched", None, None, None, false, true),
+                    IteratorKind::GroupBy { .. } => ("groupby", None, None, None, false, true),
+                    IteratorKind::GroupByGrouper { .. } => {
+                        ("_grouper", None, None, None, false, true)
+                    }
                     IteratorKind::SequenceGetItem { .. } => {
                         ("iterator", None, None, None, false, true)
                     }

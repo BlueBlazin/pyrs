@@ -662,51 +662,32 @@ impl Vm {
                 "groupby() got an unexpected keyword argument",
             ));
         }
-        let values = self.collect_iterable_values(iterable)?;
-        if values.is_empty() {
-            return Ok(self.heap.alloc_list(Vec::new()));
-        }
-
-        let key_of = |vm: &mut Vm,
-                      item: Value,
-                      key: Option<Value>|
-         -> Result<Value, RuntimeError> {
-            match key {
-                None => Ok(item),
-                Some(Value::None) => Ok(item),
-                Some(callable) => match vm.call_internal(callable, vec![item], HashMap::new())? {
-                    InternalCallOutcome::Value(value) => Ok(value),
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        Err(RuntimeError::new("groupby() key raised"))
-                    }
-                },
-            }
+        let source = self.to_iterator_value(iterable)?;
+        let shared = match self
+            .heap
+            .alloc_module(ModuleObject::new("__itertools_groupby_shared__"))
+        {
+            Value::Module(module) => module,
+            _ => unreachable!(),
         };
-
-        let mut out = Vec::new();
-        let mut current_group = Vec::new();
-        let mut iter = values.into_iter();
-        let first_value = iter.next().expect("checked not empty");
-        let mut current_key = key_of(self, first_value.clone(), key_func.clone())?;
-        current_group.push(first_value);
-        for value in iter {
-            let key = key_of(self, value.clone(), key_func.clone())?;
-            if key == current_key {
-                current_group.push(value);
-            } else {
-                out.push(
-                    self.heap
-                        .alloc_tuple(vec![current_key, self.heap.alloc_list(current_group)]),
-                );
-                current_key = key;
-                current_group = vec![value];
-            }
+        if let Object::Module(module_data) = &mut *shared.kind_mut() {
+            module_data.globals.insert("source".to_string(), source);
+            module_data
+                .globals
+                .insert("keyfunc".to_string(), key_func.unwrap_or(Value::None));
+            module_data
+                .globals
+                .insert("exhausted".to_string(), Value::Bool(false));
+            module_data
+                .globals
+                .insert("group_index".to_string(), Value::Int(0));
         }
-        out.push(
-            self.heap
-                .alloc_tuple(vec![current_key, self.heap.alloc_list(current_group)]),
-        );
-        Ok(self.heap.alloc_list(out))
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::GroupBy {
+                shared: Value::Module(shared),
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_islice(

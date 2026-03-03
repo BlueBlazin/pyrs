@@ -18440,6 +18440,7 @@ objs = {
     "compress": itertools.compress([1, 2], [1, 0]),
     "dropwhile": itertools.dropwhile(lambda x: x < 2, [1, 2, 3]),
     "filterfalse": itertools.filterfalse(None, [0, 1]),
+    "groupby": itertools.groupby([1, 1, 2]),
     "islice": itertools.islice(range(10), 3),
     "pairwise": itertools.pairwise([1, 2, 3]),
     "permutations": itertools.permutations([1, 2, 3], 2),
@@ -18461,6 +18462,7 @@ ok = (
     and not is_list["compress"]
     and not is_list["dropwhile"]
     and not is_list["filterfalse"]
+    and not is_list["groupby"]
     and not is_list["islice"]
     and not is_list["pairwise"]
     and not is_list["permutations"]
@@ -18502,6 +18504,7 @@ checks = {
     "compress": probe(lambda x: itertools.compress(x, [1])),
     "dropwhile": probe(lambda x: itertools.dropwhile(lambda y: y < 0, x)),
     "filterfalse": probe(lambda x: itertools.filterfalse(None, x)),
+    "groupby": probe(lambda x: itertools.groupby(x)),
     "islice": probe(lambda x: itertools.islice(x, 1)),
     "pairwise": probe(lambda x: itertools.pairwise(x)),
     "permutations": probe(lambda x: itertools.permutations(x, 1)),
@@ -18608,6 +18611,58 @@ ok = (
     and rest_a == [2, 3]
     and after_rest_a == ["yield1", "yield2", "yield3"]
     and rest_b == [2, 3]
+    and repr_ok
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn itertools_groupby_is_lazy_and_invalidates_prior_groupers() {
+    let source = r#"import itertools
+events = []
+def src():
+    for x in [1, 1, 2, 2, 3]:
+        events.append(x)
+        yield x
+g = itertools.groupby(src())
+created = list(events)
+k1, grp1 = next(g)
+after_outer_first = list(events)
+first_item = next(grp1)
+after_first_item = list(events)
+k2, grp2 = next(g)
+after_outer_second = list(events)
+old_group_tail = list(grp1)
+group2 = list(grp2)
+k3, grp3 = next(g)
+group3 = list(grp3)
+stopped = False
+try:
+    next(g)
+except StopIteration:
+    stopped = True
+repr_ok = (
+    repr(itertools.groupby([1])).startswith("<itertools.groupby object at 0x")
+    and repr(next(iter(itertools.groupby([1])))[1]).startswith("<itertools._grouper object at 0x")
+)
+ok = (
+    created == []
+    and k1 == 1
+    and after_outer_first == [1]
+    and first_item == 1
+    and after_first_item == [1]
+    and k2 == 2
+    and after_outer_second == [1, 1, 2]
+    and old_group_tail == []
+    and group2 == [2, 2]
+    and k3 == 3
+    and group3 == [3]
+    and stopped
     and repr_ok
 )
 "#;
