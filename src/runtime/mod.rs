@@ -4371,6 +4371,8 @@ pub enum BuiltinFunction {
     TypingOverride,
     TypingRuntimeCheckable,
     TypingNoTypeCheck,
+    TypingOverload,
+    TypingOverloadDummy,
     TypingNoDefaultNew,
     TypingNoDefaultRepr,
     TypingNoDefaultReduce,
@@ -6624,9 +6626,19 @@ impl BuiltinFunction {
             | BuiltinFunction::TypingFinal
             | BuiltinFunction::TypingOverride
             | BuiltinFunction::TypingRuntimeCheckable
-            | BuiltinFunction::TypingNoTypeCheck => {
+            | BuiltinFunction::TypingNoTypeCheck
+            | BuiltinFunction::TypingOverload => {
                 Err(RuntimeError::new("typing helper is VM-only"))
             }
+            BuiltinFunction::TypingOverloadDummy => Err(RuntimeError::with_exception(
+                "NotImplementedError",
+                Some(
+                    "You should not call an overloaded function. A series of @overload-decorated \
+functions outside a stub module should always be followed by an implementation that is not \
+@overload-ed."
+                        .to_string(),
+                ),
+            )),
             BuiltinFunction::TypingTypeParamSubst
             | BuiltinFunction::TypingTypeParamPrepareSubst
             | BuiltinFunction::TypingTypeParamHasDefault

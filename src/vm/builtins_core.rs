@@ -15826,7 +15826,7 @@ impl Vm {
 
     pub(super) fn builtin_typing_get_overloads(
         &mut self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
@@ -15834,7 +15834,16 @@ impl Vm {
                 "get_overloads() takes exactly one argument",
             ));
         }
-        Ok(self.heap.alloc_list(Vec::new()))
+        let func = args.remove(0);
+        let Some((module, qualname)) = self.typing_overload_registry_key(func)? else {
+            return Ok(self.heap.alloc_list(Vec::new()));
+        };
+        let overloads = self
+            .typing_overload_registry
+            .get(&(module, qualname))
+            .cloned()
+            .unwrap_or_default();
+        Ok(self.heap.alloc_list(overloads))
     }
 
     pub(super) fn builtin_typing_clear_overloads(
@@ -15847,6 +15856,7 @@ impl Vm {
                 "clear_overloads() takes no arguments",
             ));
         }
+        self.typing_overload_registry.clear();
         Ok(Value::None)
     }
 
@@ -16043,6 +16053,59 @@ impl Vm {
         let value = args.remove(0);
         self.typing_try_set_bool_attr(value.clone(), "__no_type_check__")?;
         Ok(value)
+    }
+
+    fn typing_overload_registry_key(
+        &mut self,
+        func: Value,
+    ) -> Result<Option<(String, String)>, RuntimeError> {
+        let callable = match self.optional_getattr_value(func.clone(), "__func__") {
+            Ok(Some(value)) => value,
+            Ok(None) => func,
+            Err(_) => return Ok(None),
+        };
+        let module = match self.optional_getattr_value(callable.clone(), "__module__") {
+            Ok(Some(Value::Str(value))) => value,
+            Ok(_) | Err(_) => return Ok(None),
+        };
+        let qualname = match self.optional_getattr_value(callable, "__qualname__") {
+            Ok(Some(Value::Str(value))) => value,
+            Ok(_) | Err(_) => return Ok(None),
+        };
+        Ok(Some((module, qualname)))
+    }
+
+    pub(super) fn builtin_typing_overload(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "overload() takes exactly one argument",
+            ));
+        }
+        let func = args.remove(0);
+        if let Some(key) = self.typing_overload_registry_key(func.clone())? {
+            self.typing_overload_registry.entry(key).or_default().push(func);
+        }
+        Ok(Value::Builtin(BuiltinFunction::TypingOverloadDummy))
+    }
+
+    pub(super) fn builtin_typing_overload_dummy(
+        &mut self,
+        _args: Vec<Value>,
+        _kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        Err(RuntimeError::with_exception(
+            "NotImplementedError",
+            Some(
+                "You should not call an overloaded function. A series of @overload-decorated \
+functions outside a stub module should always be followed by an implementation that is not \
+@overload-ed."
+                    .to_string(),
+            ),
+        ))
     }
 
     fn weakref_reference_type(&self) -> Result<ObjRef, RuntimeError> {

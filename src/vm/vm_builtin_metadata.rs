@@ -940,6 +940,8 @@ impl Vm {
             | BuiltinFunction::TypingOverride
             | BuiltinFunction::TypingRuntimeCheckable
             | BuiltinFunction::TypingNoTypeCheck
+            | BuiltinFunction::TypingOverload
+            | BuiltinFunction::TypingOverloadDummy
             | BuiltinFunction::TypingNoDefaultNew
             | BuiltinFunction::TypingNoDefaultRepr
             | BuiltinFunction::TypingNoDefaultReduce

@@ -3675,8 +3675,24 @@ except Exception as exc:
         and 'Expected code to be unreachable' in str(exc)
     )
 reveal_ok = typing.reveal_type(1) == 1
+@typing.overload
+def _ov(x: int):
+    ...
+@typing.overload
+def _ov(x: str):
+    ...
+def _ov(x):
+    return x
+overloads = typing.get_overloads(_ov)
+overloads_ok = len(overloads) == 2
+dummy = typing.overload(lambda: None)
+dummy_error = ''
+try:
+    dummy()
+except Exception as exc:
+    dummy_error = type(exc).__name__
 clear_ok = typing.clear_overloads() is None
-overloads_ok = typing.get_overloads(lambda: None) == []
+overloads_cleared_ok = typing.get_overloads(_ov) == []
 members_error = ''
 try:
     typing.get_protocol_members(Plain)
@@ -3698,8 +3714,10 @@ ok = (
     and no_type_ok
     and assert_never_ok
     and reveal_ok
+    and dummy_error == 'NotImplementedError'
     and clear_ok
     and overloads_ok
+    and overloads_cleared_ok
     and members_error == 'TypeError'
 )
 print(ok)

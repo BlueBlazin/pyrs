@@ -13466,6 +13466,10 @@ impl Vm {
                 self.builtin_typing_runtime_checkable(args, kwargs)
             }
             BuiltinFunction::TypingNoTypeCheck => self.builtin_typing_no_type_check(args, kwargs),
+            BuiltinFunction::TypingOverload => self.builtin_typing_overload(args, kwargs),
+            BuiltinFunction::TypingOverloadDummy => {
+                self.builtin_typing_overload_dummy(args, kwargs)
+            }
             BuiltinFunction::TypingNoDefaultNew => self.builtin_typing_nodefault_new(args, kwargs),
             BuiltinFunction::TypingNoDefaultRepr => {
                 self.builtin_typing_nodefault_repr(args, kwargs)

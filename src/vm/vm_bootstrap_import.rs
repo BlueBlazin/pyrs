@@ -3770,7 +3770,7 @@ impl Vm {
             "typing",
             &[
                 ("assert_never", BuiltinFunction::TypingAssertNever),
-                ("overload", BuiltinFunction::TypingIdFunc),
+                ("overload", BuiltinFunction::TypingOverload),
                 ("final", BuiltinFunction::TypingFinal),
                 ("assert_type", BuiltinFunction::TypingAssertType),
                 ("cast", BuiltinFunction::TypingCast),
