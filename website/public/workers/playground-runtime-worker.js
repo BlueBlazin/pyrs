@@ -21,6 +21,7 @@ const readField = (object, key) => {
 const normalizeRuntimeInfo = (info) => ({
   api_version: Number(readField(info, "api_version") || 0),
   pyrs_version: String(readField(info, "pyrs_version") || "dev"),
+  cpython_compat_version: String(readField(info, "cpython_compat_version") || ""),
   supports_parse_compile: Boolean(readField(info, "supports_parse_compile")),
   supports_execution: Boolean(readField(info, "supports_execution")),
   execution_backend: String(readField(info, "execution_backend") || "wasm"),

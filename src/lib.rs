@@ -18,3 +18,6 @@ pub mod wasm;
 
 /// Public version for CLI and diagnostics.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// CPython minor line that pyrs currently targets for compatibility.
+pub const CPYTHON_COMPAT_VERSION: &str = "3.14";

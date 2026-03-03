@@ -556,6 +556,7 @@ pub struct WasmWorkerExecutionResult {
 pub struct WasmRuntimeInfo {
     api_version: u32,
     pyrs_version: String,
+    cpython_compat_version: String,
     supports_parse_compile: bool,
     supports_execution: bool,
     execution_backend: String,
@@ -758,6 +759,11 @@ impl WasmRuntimeInfo {
     #[wasm_bindgen(getter)]
     pub fn pyrs_version(&self) -> String {
         self.pyrs_version.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn cpython_compat_version(&self) -> String {
+        self.cpython_compat_version.clone()
     }
 
     #[wasm_bindgen(getter)]
@@ -1081,6 +1087,15 @@ impl WasmReplSession {
             self.repl_state.profile(),
             crate::repl_core::ReplProfile::WasmLean
         );
+
+        match source.trim() {
+            ":help" | ".help" => {
+                return self.finish_execution_result(execution_ok_result(
+                    wasm_repl_help_text().to_string(),
+                ));
+            }
+            _ => {}
+        }
 
         let prepared = match self
             .repl_state
@@ -1677,6 +1692,7 @@ pub fn wasm_runtime_info() -> WasmRuntimeInfo {
     WasmRuntimeInfo {
         api_version: wasm_api_version(),
         pyrs_version: pyrs_version(),
+        cpython_compat_version: crate::CPYTHON_COMPAT_VERSION.to_string(),
         supports_parse_compile: true,
         supports_execution,
         execution_backend,
@@ -2312,6 +2328,14 @@ fn execution_ok_result(stdout: String) -> WasmExecutionResult {
     }
 }
 
+fn wasm_repl_help_text() -> &'static str {
+    ":help / .help     show REPL help\n\
+Shift+Enter       insert newline\n\
+Enter             execute input\n\
+Clear             clear transcript\n\
+Reset             reset runtime session"
+}
+
 fn execution_error_with_message(
     phase_key: &str,
     message: String,
@@ -2926,6 +2950,18 @@ mod tests {
         assert!(finalize.success());
         assert_eq!(finalize.phase(), "ok".to_string());
         assert!(!session.continuation_prompt());
+    }
+
+    #[test]
+    fn wasm_repl_session_help_command_returns_help_text() {
+        let mut session = WasmReplSession::new();
+        let help = session.execute_input(":help");
+        assert!(help.success());
+        assert_eq!(help.phase(), "ok".to_string());
+        assert!(help.stderr().is_empty());
+        assert!(help.error().is_none());
+        assert!(help.stdout().contains(":help / .help"));
+        assert!(help.stdout().contains("Shift+Enter"));
     }
 
     #[cfg(feature = "wasm-vm-probe")]

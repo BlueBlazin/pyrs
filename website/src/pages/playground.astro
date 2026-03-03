@@ -426,12 +426,14 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 			if (!runtimeWorkerReady) return;
 			if (bannerRendered && !force) return;
 			const version = String(readField(lastRuntimeInfo, "pyrs_version") || "dev");
-			const backend = String(readField(lastRuntimeInfo, "execution_backend") || "wasm");
-			appendTranscriptLine(`PYRS ${version} (${backend})`, "banner");
+			const compatVersion = String(
+				readField(lastRuntimeInfo, "cpython_compat_version") || "3.14",
+			);
 			appendTranscriptLine(
-				'Type "help", "copyright", "credits" or "license" for more information.',
+				`PYRS ${version} (CPython ${compatVersion} compatible)`,
 				"banner",
 			);
+			appendTranscriptLine("Type :help for REPL commands.", "banner");
 			bannerRendered = true;
 		};
 

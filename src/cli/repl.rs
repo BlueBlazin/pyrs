@@ -17,12 +17,12 @@ use reedline::{
 use reedline::{EditCommand, Highlighter, Hinter};
 
 use super::{error_style, format_compile_error, format_syntax_error};
-use crate::VERSION;
 use crate::ast::{AssignTarget, ImportAlias, Module, StmtKind};
 use crate::compiler;
 use crate::parser::{self, ParseError};
 use crate::runtime::{Object, Value};
 use crate::vm::Vm;
+use crate::{CPYTHON_COMPAT_VERSION, VERSION};
 
 const HISTORY_CAPACITY: usize = 10_000;
 const INDENT_WIDTH: usize = 4;
@@ -348,7 +348,7 @@ fn run_interactive_session(
     import_site: bool,
     warnoptions: &[String],
 ) -> Result<i32, String> {
-    println!("PYRS {VERSION} (CPython 3.14 compatible)");
+    println!("PYRS {VERSION} (CPython {CPYTHON_COMPAT_VERSION} compatible)");
     println!("Type :help for REPL commands, Ctrl-D to exit.");
 
     let theme_mode = resolve_repl_theme_from_env();
