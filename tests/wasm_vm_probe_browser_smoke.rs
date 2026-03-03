@@ -49,6 +49,24 @@ fn vm_probe_repl_session_continuation_executes_class_on_blank_line() {
 }
 
 #[wasm_bindgen_test]
+fn vm_probe_repl_session_multiline_then_runtime_error_has_stable_shape() {
+    let mut repl = WasmReplSession::new();
+
+    assert!(repl.execute_input("class Counter:").success());
+    assert!(repl.execute_input("    value = 3").success());
+    assert!(repl.execute_input("").success());
+
+    let runtime_error = repl.execute_input("Counter.missing");
+    assert_eq!(runtime_error.phase(), "runtime_error".to_string());
+    assert!(!runtime_error.success());
+    assert!(runtime_error.blocker_key().is_none());
+    assert!(runtime_error.stdout().is_empty());
+    assert!(!runtime_error.stderr().is_empty());
+    assert!(runtime_error.error().is_some());
+    assert!(runtime_error.line() > 0);
+}
+
+#[wasm_bindgen_test]
 fn vm_probe_worker_state_gate_roundtrip() {
     let baseline = wasm_worker_info();
     assert_eq!(baseline.backend(), "vm_probe".to_string());

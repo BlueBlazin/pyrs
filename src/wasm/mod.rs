@@ -1077,31 +1077,19 @@ impl WasmReplSession {
 
         let ready = match self.repl_state.submit_line(source) {
             crate::repl_core::ReplLineParseResult::NeedMoreInput => {
-                let result = WasmExecutionResult {
-                    success: true,
-                    phase: WASM_EXECUTION_PHASE_OK.to_string(),
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    error: None,
-                    blocker_key: None,
-                    line: 0,
-                    column: 0,
-                };
+                let result = execution_ok_result(String::new());
                 self.last_error = None;
                 return result;
             }
             crate::repl_core::ReplLineParseResult::ParseError { error, .. } => {
                 let message = format_parse_error(&error);
-                let result = WasmExecutionResult {
-                    success: false,
-                    phase: WasmExecutionPhase::SyntaxError.key().to_string(),
-                    stdout: String::new(),
-                    stderr: message.clone(),
-                    error: Some(message),
-                    blocker_key: None,
-                    line: error.line,
-                    column: error.column,
-                };
+                let result = execution_error_with_message(
+                    WasmExecutionPhase::SyntaxError.key(),
+                    message,
+                    None,
+                    error.line,
+                    error.column,
+                );
                 self.last_error = result.error.clone();
                 return result;
             }
@@ -1114,16 +1102,13 @@ impl WasmReplSession {
         let compile_code = match compile_module_for_wasm(&ready_module, WASM_REPL_FILENAME) {
             Ok(code) => code,
             Err((message, line, column)) => {
-                let result = WasmExecutionResult {
-                    success: false,
-                    phase: WasmExecutionPhase::CompileError.key().to_string(),
-                    stdout: String::new(),
-                    stderr: message.clone(),
-                    error: Some(message),
-                    blocker_key: None,
+                let result = execution_error_with_message(
+                    WasmExecutionPhase::CompileError.key(),
+                    message,
+                    None,
                     line,
                     column,
-                };
+                );
                 self.last_error = result.error.clone();
                 return result;
             }
@@ -1167,28 +1152,16 @@ impl WasmReplSession {
                 WASM_REPL_FILENAME,
                 Some(&compile_code),
             ) {
-                Ok(stdout) => WasmExecutionResult {
-                    success: true,
-                    phase: WASM_EXECUTION_PHASE_OK.to_string(),
-                    stdout: stdout.unwrap_or_default(),
-                    stderr: String::new(),
-                    error: None,
-                    blocker_key: None,
-                    line: 0,
-                    column: 0,
-                },
+                Ok(stdout) => execution_ok_result(stdout.unwrap_or_default()),
                 Err(crate::repl_core::ReplExecutionError::Compile(err)) => {
                     let (message, line, column) = format_compile_error(&err);
-                    WasmExecutionResult {
-                        success: false,
-                        phase: WasmExecutionPhase::CompileError.key().to_string(),
-                        stdout: String::new(),
-                        stderr: message.clone(),
-                        error: Some(message),
-                        blocker_key: None,
+                    execution_error_with_message(
+                        WasmExecutionPhase::CompileError.key(),
+                        message,
+                        None,
                         line,
                         column,
-                    }
+                    )
                 }
                 Err(crate::repl_core::ReplExecutionError::Runtime(err)) => {
                     runtime_error_to_execution_result(err)
@@ -2312,10 +2285,25 @@ fn compile_failure_to_execution_result(
     }
 }
 
-fn unsupported_execution_result(
+fn execution_ok_result(stdout: String) -> WasmExecutionResult {
+    WasmExecutionResult {
+        success: true,
+        phase: WASM_EXECUTION_PHASE_OK.to_string(),
+        stdout,
+        stderr: String::new(),
+        error: None,
+        blocker_key: None,
+        line: 0,
+        column: 0,
+    }
+}
+
+fn execution_error_with_message(
     phase_key: &str,
     message: String,
     blocker_key: Option<String>,
+    line: usize,
+    column: usize,
 ) -> WasmExecutionResult {
     WasmExecutionResult {
         success: false,
@@ -2324,9 +2312,17 @@ fn unsupported_execution_result(
         stderr: message.clone(),
         error: Some(message),
         blocker_key,
-        line: 0,
-        column: 0,
+        line,
+        column,
     }
+}
+
+fn unsupported_execution_result(
+    phase_key: &str,
+    message: String,
+    blocker_key: Option<String>,
+) -> WasmExecutionResult {
+    execution_error_with_message(phase_key, message, blocker_key, 0, 0)
 }
 
 #[derive(Clone, Copy)]
@@ -2591,20 +2587,7 @@ fn execute_compiled_snippet_with_vm(
         vm.execute(code)
     };
     match execution {
-        Ok(_) => (
-            WasmExecutionResult {
-                success: true,
-                phase: WASM_EXECUTION_PHASE_OK.to_string(),
-                stdout: String::new(),
-                stderr: String::new(),
-                error: None,
-                blocker_key: None,
-                line: 0,
-                column: 0,
-            },
-            false,
-            false,
-        ),
+        Ok(_) => (execution_ok_result(String::new()), false, false),
         Err(err) => {
             let timeout_exceeded = runtime_error_is_execution_timeout(&err);
             let internal_failure = err.exception.is_none() && !timeout_exceeded;
@@ -2639,18 +2622,13 @@ fn execute_compiled_snippet_with_worker_vm(
         let Some(vm) = worker_vm.as_mut() else {
             let error = worker_unavailable_error_for_state(WasmWorkerState::Failed);
             return (
-                WasmExecutionResult {
-                    success: false,
-                    phase: WasmWorkerExecutePhase::UnsupportedExecution
-                        .key()
-                        .to_string(),
-                    stdout: String::new(),
-                    stderr: error.clone(),
-                    error: Some(error),
-                    blocker_key: Some(WASM_WORKER_BLOCKER_RUNTIME_FAILED.to_string()),
-                    line: 0,
-                    column: 0,
-                },
+                execution_error_with_message(
+                    WasmWorkerExecutePhase::UnsupportedExecution.key(),
+                    error,
+                    Some(WASM_WORKER_BLOCKER_RUNTIME_FAILED.to_string()),
+                    0,
+                    0,
+                ),
                 true,
                 false,
             );
@@ -2674,16 +2652,13 @@ fn execute_compiled_snippet_with_worker_vm(
 fn runtime_error_to_execution_result(err: crate::runtime::RuntimeError) -> WasmExecutionResult {
     let (line, column) = runtime_error_line_column(&err);
     let message = err.message.clone();
-    WasmExecutionResult {
-        success: false,
-        phase: WASM_EXECUTION_PHASE_RUNTIME_ERROR.to_string(),
-        stdout: String::new(),
-        stderr: message.clone(),
-        error: Some(message),
-        blocker_key: None,
+    execution_error_with_message(
+        WASM_EXECUTION_PHASE_RUNTIME_ERROR,
+        message,
+        None,
         line,
         column,
-    }
+    )
 }
 
 #[cfg(feature = "wasm-vm-probe")]
