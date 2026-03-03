@@ -111,6 +111,7 @@ pub(crate) enum ReplLineParseResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ReplProfile {
     NativeFull,
+    #[cfg(any(target_arch = "wasm32", feature = "wasm-vm-probe", test))]
     WasmLean,
 }
 

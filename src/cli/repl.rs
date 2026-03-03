@@ -369,6 +369,10 @@ fn run_interactive_session(
 
     let mut repl_state =
         crate::repl_core::ReplCoreState::new(crate::repl_core::ReplProfile::NativeFull);
+    debug_assert_eq!(
+        repl_state.profile(),
+        crate::repl_core::ReplProfile::NativeFull
+    );
     let mut paste_mode = false;
     let mut timing_enabled = false;
     loop {
