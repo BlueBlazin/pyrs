@@ -66,7 +66,9 @@ Audit date: 2026-03-04
 - [x] `P0` Replace `_struct` bootstrap stub with CPython-compatible substrate or proper fallback strategy:
   - `_struct` module exports are backed by dedicated native `calcsize`/`pack`/`unpack`/`iter_unpack`/`pack_into`/`unpack_from` substrate,
   - removed explicit `"pyrs _struct stub"` marker docstring in favor of CPython-shaped module description text.
-- [ ] `P1` Replace `_posixsubprocess` bootstrap stub with CPython-compatible substrate (`"pyrs _posixsubprocess stub"`, module install at line 7264; stub doc at line 7269).
+- [x] `P1` Replace `_posixsubprocess` bootstrap stub with CPython-compatible substrate:
+  - `fork_exec` is backed by native subprocess spawn substrate (`builtin_posixsubprocess_fork_exec`) with explicit unix/non-unix behavior,
+  - removed explicit `"pyrs _posixsubprocess stub"` marker docstring in favor of CPython-shaped module description text.
 - [ ] `P2` Decide final policy for `_testsinglephase` and `_testmultiphase` test modules in production bootstrap:
   - currently explicit stubs at lines 7383 and 7391.
 

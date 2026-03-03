@@ -7330,7 +7330,7 @@ impl Vm {
             &[("fork_exec", BuiltinFunction::PosixSubprocessForkExec)],
             vec![(
                 "__doc__",
-                Value::Str("pyrs _posixsubprocess stub".to_string()),
+                Value::Str("A POSIX helper for the subprocess module.".to_string()),
             )],
         );
         let subprocess_pipe_class = match self

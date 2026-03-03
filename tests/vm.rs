@@ -16436,6 +16436,19 @@ ok = caught
 }
 
 #[test]
+fn posixsubprocess_module_docstring_no_longer_uses_stub_marker() {
+    let source = r#"import _posixsubprocess
+doc = _posixsubprocess.__doc__
+ok = isinstance(doc, str) and ("stub" not in doc.lower()) and ("subprocess" in doc.lower())
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn subprocess_args_from_interpreter_flags_returns_list() {
     let source = "import subprocess\nimport sys\nsys.warnoptions[:] = ['ignore::DeprecationWarning']\nsys._xoptions = {'faulthandler': True, 'tracemalloc': '5'}\nflags = subprocess._args_from_interpreter_flags()\nok = (isinstance(flags, list) and flags == ['-Wignore::DeprecationWarning', '-X', 'faulthandler', '-X', 'tracemalloc=5'])\n";
     let module = parser::parse_module(source).expect("parse should succeed");
