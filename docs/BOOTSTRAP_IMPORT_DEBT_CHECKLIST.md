@@ -108,7 +108,9 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
 - [ ] `P1` `asyncio` (line 7659)
 - [ ] `P1` `threading` (line 7846)
 - [ ] `P1` `signal` (line 7877)
-- [ ] `P1` `abc` (line 8691)
+- [x] `P1` `abc` (line 8691):
+  - added to pure-stdlib unload preference group (`PURE_STDLIB_ABC_MODULES`) so CPython `Lib/abc.py` is preferred when available;
+  - covered by `tests/vm.rs::abc_import_prefers_cpython_pure_module_when_lib_path_is_added`.
 - [ ] `P1` `sysconfig` (line 8725)
 - [ ] `P1` `socket` (line 8768)
 

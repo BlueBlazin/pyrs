@@ -200,6 +200,7 @@ const PURE_STDLIB_RE_MODULES: &[&str] = &[
 const PURE_STDLIB_COLLECTIONS_MODULES: &[&str] = &["collections", "collections.abc"];
 const PURE_STDLIB_FUNCTOOLS_MODULES: &[&str] = &["functools"];
 const PURE_STDLIB_FUTURE_MODULES: &[&str] = &["__future__"];
+const PURE_STDLIB_ABC_MODULES: &[&str] = &["abc"];
 const PURE_STDLIB_DECIMAL_MODULES: &[&str] = &["decimal"];
 const PURE_STDLIB_PATHLIB_MODULES: &[&str] = &["pathlib"];
 const PURE_STDLIB_TYPES_MODULES: &[&str] = &["types", "typing"];
