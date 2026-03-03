@@ -108,6 +108,12 @@ pub(crate) enum ReplLineParseResult {
     ParseError { source: String, error: ParseError },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReplProfile {
+    NativeFull,
+    WasmLean,
+}
+
 /// Shared pending-input state for interactive REPL adapters.
 #[derive(Default)]
 pub(crate) struct ReplInputSession {
@@ -150,6 +156,57 @@ impl ReplInputSession {
 
     pub(crate) fn submit_line(&mut self, line: &str) -> ReplLineParseResult {
         submit_line_for_module(&mut self.pending, line)
+    }
+}
+
+/// Shared core state holder for REPL adapters with explicit behavior profile.
+pub(crate) struct ReplCoreState {
+    profile: ReplProfile,
+    input: ReplInputSession,
+}
+
+impl ReplCoreState {
+    pub(crate) fn new(profile: ReplProfile) -> Self {
+        Self {
+            profile,
+            input: ReplInputSession::new(),
+        }
+    }
+
+    pub(crate) fn profile(&self) -> ReplProfile {
+        self.profile
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.input.is_empty()
+    }
+
+    pub(crate) fn has_pending_nonempty(&self) -> bool {
+        self.input.has_pending_nonempty()
+    }
+
+    pub(crate) fn pending_source(&self) -> &str {
+        self.input.pending_source()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.input.clear();
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.input.reset();
+    }
+
+    pub(crate) fn interrupt(&mut self) {
+        self.input.interrupt();
+    }
+
+    pub(crate) fn append_paste_line(&mut self, line: &str) {
+        self.input.append_paste_line(line);
+    }
+
+    pub(crate) fn submit_line(&mut self, line: &str) -> ReplLineParseResult {
+        self.input.submit_line(line)
     }
 }
 
@@ -243,8 +300,9 @@ pub(crate) enum ReplExecutionError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ReplInputSession, ReplLineParseResult, execute_module_or_expression, input_is_incomplete,
-        parse_candidate_source, parse_success_requires_more_input, run_ready_module,
+        ReplCoreState, ReplInputSession, ReplLineParseResult, ReplProfile,
+        execute_module_or_expression, input_is_incomplete, parse_candidate_source,
+        parse_success_requires_more_input, run_ready_module,
         submit_line_for_module,
     };
 
@@ -344,6 +402,21 @@ mod tests {
         assert!(session.has_pending_nonempty());
         session.reset();
         assert!(session.is_empty());
+    }
+
+    #[test]
+    fn core_state_exposes_profile_and_input_session_ops() {
+        let mut state = ReplCoreState::new(ReplProfile::NativeFull);
+        assert_eq!(state.profile(), ReplProfile::NativeFull);
+        assert!(state.is_empty());
+
+        state.append_paste_line("x = 1");
+        assert!(state.has_pending_nonempty());
+        state.clear();
+        assert!(state.is_empty());
+
+        let lean = ReplCoreState::new(ReplProfile::WasmLean);
+        assert_eq!(lean.profile(), ReplProfile::WasmLean);
     }
 
     #[test]

@@ -367,11 +367,12 @@ fn run_interactive_session(
     let primary_prompt = ReplPrompt::primary();
     let continuation_prompt = ReplPrompt::continuation();
 
-    let mut input_session = crate::repl_core::ReplInputSession::new();
+    let mut repl_state =
+        crate::repl_core::ReplCoreState::new(crate::repl_core::ReplProfile::NativeFull);
     let mut paste_mode = false;
     let mut timing_enabled = false;
     loop {
-        let prompt = if input_session.is_empty() {
+        let prompt = if repl_state.is_empty() {
             &primary_prompt
         } else {
             &continuation_prompt
@@ -387,10 +388,10 @@ fn run_interactive_session(
                 if paste_mode {
                     if parse_meta_command(trimmed) == Some(MetaCommand::TogglePaste) {
                         paste_mode = false;
-                        if input_session.has_pending_nonempty() {
+                        if repl_state.has_pending_nonempty() {
                             if let Err(err) = execute_with_optional_timing(
                                 vm,
-                                input_session.pending_source(),
+                                repl_state.pending_source(),
                                 "<stdin>",
                                 false,
                                 timing_enabled,
@@ -399,11 +400,11 @@ fn run_interactive_session(
                             }
                             refresh_completion_state(vm, &completion_state);
                         }
-                        input_session.clear();
+                        repl_state.clear();
                         eprintln!("paste mode disabled");
                         continue;
                     }
-                    input_session.append_paste_line(&line);
+                    repl_state.append_paste_line(&line);
                     continue;
                 }
 
@@ -411,7 +412,7 @@ fn run_interactive_session(
                     if apply_meta_command(
                         command,
                         vm,
-                        &mut input_session,
+                        &mut repl_state,
                         &mut paste_mode,
                         &mut timing_enabled,
                         import_site,
@@ -423,7 +424,7 @@ fn run_interactive_session(
                     continue;
                 }
 
-                if input_session.is_empty()
+                if repl_state.is_empty()
                     && let Some(command) = parse_magic_command(trimmed)
                 {
                     let result = match command {
@@ -448,11 +449,11 @@ fn run_interactive_session(
                     continue;
                 }
 
-                if trimmed.is_empty() && input_session.is_empty() {
+                if trimmed.is_empty() && repl_state.is_empty() {
                     continue;
                 }
 
-                match input_session.submit_line(&line) {
+                match repl_state.submit_line(&line) {
                     crate::repl_core::ReplLineParseResult::NeedMoreInput => continue,
                     crate::repl_core::ReplLineParseResult::Ready { source, module } => {
                         let completion_plan = repl_module_completion_plan(&module);
@@ -488,13 +489,13 @@ fn run_interactive_session(
             }
             Ok(Signal::CtrlC) => {
                 eprintln!("KeyboardInterrupt");
-                input_session.interrupt();
+                repl_state.interrupt();
                 paste_mode = false;
             }
             Ok(Signal::CtrlD) => {
-                if paste_mode || input_session.has_pending_nonempty() {
+                if paste_mode || repl_state.has_pending_nonempty() {
                     eprintln!("KeyboardInterrupt");
-                    input_session.interrupt();
+                    repl_state.interrupt();
                     paste_mode = false;
                 } else {
                     break;
@@ -1939,7 +1940,7 @@ fn split_first_word(input: &str) -> (&str, &str) {
 fn apply_meta_command(
     command: MetaCommand,
     vm: &mut Vm,
-    input_session: &mut crate::repl_core::ReplInputSession,
+    repl_state: &mut crate::repl_core::ReplCoreState,
     paste_mode: &mut bool,
     timing_enabled: &mut bool,
     import_site: bool,
@@ -1963,7 +1964,7 @@ fn apply_meta_command(
             Ok(false)
         }
         MetaCommand::Clear => {
-            input_session.clear();
+            repl_state.clear();
             *paste_mode = false;
             Ok(false)
         }
@@ -1982,7 +1983,7 @@ fn apply_meta_command(
         }
         MetaCommand::TogglePaste => {
             *paste_mode = true;
-            input_session.clear();
+            repl_state.clear();
             eprintln!("paste mode enabled (finish with :paste)");
             Ok(false)
         }
@@ -1991,7 +1992,7 @@ fn apply_meta_command(
                 eprintln!("shutdown warning before reset: {}", err.message);
             }
             *vm = build_vm_with_warnoptions(import_site, true, warnoptions, None)?;
-            input_session.reset();
+            repl_state.reset();
             *paste_mode = false;
             refresh_completion_state(vm, completion_state);
             eprintln!("interpreter state reset");
@@ -2384,14 +2385,15 @@ mod tests {
         vm.set_global("x", crate::runtime::Value::Int(7));
         assert_eq!(vm.get_global("x"), Some(crate::runtime::Value::Int(7)));
 
-        let mut input_session = crate::repl_core::ReplInputSession::new();
+        let mut repl_state =
+            crate::repl_core::ReplCoreState::new(crate::repl_core::ReplProfile::NativeFull);
         let mut paste_mode = false;
         let mut timing_enabled = true;
         let completion_state = Arc::new(Mutex::new(CompletionState::default()));
         let should_exit = super::apply_meta_command(
             MetaCommand::Reset,
             &mut vm,
-            &mut input_session,
+            &mut repl_state,
             &mut paste_mode,
             &mut timing_enabled,
             false,
