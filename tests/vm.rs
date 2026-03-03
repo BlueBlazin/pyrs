@@ -4061,6 +4061,44 @@ ok = (
 }
 
 #[test]
+fn socket_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-socket import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("socket-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import socket
+origin = getattr(socket, '__file__', '')
+norm = origin.replace("\\", "/")
+timeout_before = socket.getdefaulttimeout()
+socket.setdefaulttimeout(1.25)
+timeout_after = socket.getdefaulttimeout()
+socket.setdefaulttimeout(timeout_before)
+ok = (
+    norm.endswith('/socket.py')
+    and ('/shims/' not in norm)
+    and isinstance(socket.AF_INET, int)
+    and callable(socket.socket)
+    and timeout_after == 1.25
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn socket import preference thread");
+    handle
+        .join()
+        .expect("socket import preference thread should complete");
+}
+
+#[test]
 fn typing_bootstrap_helpers_have_runtime_baseline_without_cpython_lib() {
     let Some(pyrs_bin) = pyrs_binary_path() else {
         eprintln!("skipping typing bootstrap helper test (pyrs binary not found)");

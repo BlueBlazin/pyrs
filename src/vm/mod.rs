@@ -206,6 +206,7 @@ const PURE_STDLIB_SIGNAL_MODULES: &[&str] = &["signal"];
 const PURE_STDLIB_INSPECT_MODULES: &[&str] = &["inspect"];
 const PURE_STDLIB_IO_MODULES: &[&str] = &["io"];
 const PURE_STDLIB_UUID_MODULES: &[&str] = &["uuid"];
+const PURE_STDLIB_SOCKET_MODULES: &[&str] = &["socket"];
 const PURE_STDLIB_DECIMAL_MODULES: &[&str] = &["decimal"];
 const PURE_STDLIB_PATHLIB_MODULES: &[&str] = &["pathlib"];
 const PURE_STDLIB_TYPES_MODULES: &[&str] = &["types", "typing"];
