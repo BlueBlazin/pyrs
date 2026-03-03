@@ -942,6 +942,16 @@ impl Vm {
             | BuiltinFunction::LocaleStrColl
             | BuiltinFunction::LocaleNLLangInfo => "_locale",
             BuiltinFunction::SymtableSymtable => "_symtable",
+            BuiltinFunction::WeakRefRef
+            | BuiltinFunction::WeakRefRefNew
+            | BuiltinFunction::WeakRefRefCall
+            | BuiltinFunction::WeakRefRefHash
+            | BuiltinFunction::WeakRefRefEq
+            | BuiltinFunction::WeakRefRefNe
+            | BuiltinFunction::WeakRefProxy
+            | BuiltinFunction::WeakRefGetWeakRefCount
+            | BuiltinFunction::WeakRefGetWeakRefs
+            | BuiltinFunction::WeakRefRemoveDead => "_weakref",
             BuiltinFunction::WeakSetInit
             | BuiltinFunction::WeakSetLen
             | BuiltinFunction::WeakSetContains

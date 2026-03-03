@@ -10,28 +10,40 @@ use super::{
 };
 
 fn cpython_is_runtime_weakref_ref(value: &Value) -> bool {
-    let Value::BoundMethod(bound_obj) = value else {
-        return false;
-    };
-    let Object::BoundMethod(bound_method) = &*bound_obj.kind() else {
-        return false;
-    };
-    let Object::NativeMethod(native_method) = &*bound_method.function.kind() else {
-        return false;
-    };
-    if !matches!(
-        native_method.kind,
-        NativeMethodKind::Builtin(BuiltinFunction::WeakRefRef)
-    ) {
-        return false;
+    if let Value::Instance(instance_obj) = value
+        && let Object::Instance(instance_data) = &*instance_obj.kind()
+    {
+        return matches!(
+            instance_data.attrs.get("__pyrs_weakref_ref__"),
+            Some(Value::Bool(true))
+        );
     }
-    let Object::Module(module_data) = &*bound_method.receiver.kind() else {
-        return false;
-    };
-    matches!(
-        module_data.globals.get("__pyrs_weakref_ref__"),
-        Some(Value::Bool(true))
-    )
+    if let Value::BoundMethod(bound_obj) = value
+        && let Object::BoundMethod(bound_method) = &*bound_obj.kind()
+        && let Object::NativeMethod(native_method) = &*bound_method.function.kind()
+    {
+        if matches!(
+            native_method.kind,
+            NativeMethodKind::Builtin(BuiltinFunction::WeakRefRef)
+        ) && let Object::Module(module_data) = &*bound_method.receiver.kind()
+        {
+            return matches!(
+                module_data.globals.get("__pyrs_weakref_ref__"),
+                Some(Value::Bool(true))
+            );
+        }
+        if matches!(
+            native_method.kind,
+            NativeMethodKind::Builtin(BuiltinFunction::WeakRefRefCall)
+        ) && let Object::Instance(instance_data) = &*bound_method.receiver.kind()
+        {
+            return matches!(
+                instance_data.attrs.get("__pyrs_weakref_ref__"),
+                Some(Value::Bool(true))
+            );
+        }
+    }
+    false
 }
 
 fn cpython_weakref_target_from_value(

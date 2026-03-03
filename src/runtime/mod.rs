@@ -3831,6 +3831,11 @@ pub enum BuiltinFunction {
     DecimalContextEnter,
     DecimalContextExit,
     WeakRefRef,
+    WeakRefRefNew,
+    WeakRefRefCall,
+    WeakRefRefHash,
+    WeakRefRefEq,
+    WeakRefRefNe,
     WeakRefProxy,
     WeakRefFinalize,
     WeakRefFinalizeDetach,
@@ -6948,6 +6953,13 @@ impl BuiltinFunction {
                 }
                 Ok(args[0].clone())
             }
+            BuiltinFunction::WeakRefRefNew
+            | BuiltinFunction::WeakRefRefCall
+            | BuiltinFunction::WeakRefRefHash
+            | BuiltinFunction::WeakRefRefEq
+            | BuiltinFunction::WeakRefRefNe => Err(RuntimeError::new(
+                "weakref reference methods require VM dispatch",
+            )),
             BuiltinFunction::WeakRefFinalize => {
                 if args.len() < 2 {
                     return Err(RuntimeError::new("finalize() expects object and callback"));

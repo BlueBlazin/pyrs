@@ -11919,6 +11919,11 @@ impl Vm {
             BuiltinFunction::Any => self.builtin_any(args, kwargs),
             BuiltinFunction::Enumerate => self.builtin_enumerate(args, kwargs),
             BuiltinFunction::WeakRefRef => self.builtin_weakref_ref(args, kwargs),
+            BuiltinFunction::WeakRefRefNew => self.builtin_weakref_ref_new(args, kwargs),
+            BuiltinFunction::WeakRefRefCall => self.builtin_weakref_ref_call(args, kwargs),
+            BuiltinFunction::WeakRefRefHash => self.builtin_weakref_ref_hash(args, kwargs),
+            BuiltinFunction::WeakRefRefEq => self.builtin_weakref_ref_eq(args, kwargs),
+            BuiltinFunction::WeakRefRefNe => self.builtin_weakref_ref_ne(args, kwargs),
             BuiltinFunction::WeakRefProxy => self.builtin_weakref_proxy(args, kwargs),
             BuiltinFunction::WeakRefFinalize => self.builtin_weakref_finalize(args, kwargs),
             BuiltinFunction::WeakRefFinalizeDetach => {

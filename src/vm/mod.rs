@@ -1724,46 +1724,86 @@ impl Vm {
 
     pub(super) fn clear_runtime_weakrefs_for_target_id(&mut self, target_id: u64) {
         self.mark_object_weakrefs_cleared(target_id);
-        let mut wrappers: Vec<(ObjRef, Option<Value>)> = Vec::new();
+        let mut wrappers: Vec<(Value, Option<Value>)> = Vec::new();
         for object in self.heap.snapshot_objects() {
-            let Object::Module(module_data) = &*object.kind() else {
-                continue;
-            };
-            if !matches!(
-                module_data.globals.get("__pyrs_weakref_ref__"),
-                Some(Value::Bool(true))
-            ) {
-                continue;
-            }
-            let wrapper_target_id = match module_data.globals.get("target_id") {
-                Some(Value::Int(value)) if *value >= 0 => *value as u64,
-                _ => continue,
-            };
-            if wrapper_target_id != target_id {
-                continue;
-            }
-            let callback = module_data
-                .globals
-                .get("callback")
-                .cloned()
-                .and_then(|value| {
-                    if matches!(value, Value::None) {
-                        None
-                    } else {
-                        Some(value)
+            match &*object.kind() {
+                Object::Module(module_data) => {
+                    if !matches!(
+                        module_data.globals.get("__pyrs_weakref_ref__"),
+                        Some(Value::Bool(true))
+                    ) {
+                        continue;
                     }
-                });
-            wrappers.push((object.clone(), callback));
+                    let wrapper_target_id = match module_data.globals.get("target_id") {
+                        Some(Value::Int(value)) if *value >= 0 => *value as u64,
+                        _ => continue,
+                    };
+                    if wrapper_target_id != target_id {
+                        continue;
+                    }
+                    let callback = module_data
+                        .globals
+                        .get("callback")
+                        .cloned()
+                        .and_then(|value| {
+                            if matches!(value, Value::None) {
+                                None
+                            } else {
+                                Some(value)
+                            }
+                        });
+                    wrappers.push((Value::Module(object.clone()), callback));
+                }
+                Object::Instance(instance_data) => {
+                    if !matches!(
+                        instance_data.attrs.get("__pyrs_weakref_ref__"),
+                        Some(Value::Bool(true))
+                    ) {
+                        continue;
+                    }
+                    let wrapper_target_id = match instance_data.attrs.get("target_id") {
+                        Some(Value::Int(value)) if *value >= 0 => *value as u64,
+                        _ => continue,
+                    };
+                    if wrapper_target_id != target_id {
+                        continue;
+                    }
+                    let callback = instance_data.attrs.get("callback").cloned().and_then(|value| {
+                        if matches!(value, Value::None) {
+                            None
+                        } else {
+                            Some(value)
+                        }
+                    });
+                    wrappers.push((Value::Instance(object.clone()), callback));
+                }
+                _ => continue,
+            }
         }
 
         for (wrapper, _) in &wrappers {
-            if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
-                module_data
-                    .globals
-                    .insert("target_id".to_string(), Value::Int(-1));
-                module_data
-                    .globals
-                    .insert("callback".to_string(), Value::None);
+            match wrapper {
+                Value::Module(wrapper_module) => {
+                    if let Object::Module(module_data) = &mut *wrapper_module.kind_mut() {
+                        module_data
+                            .globals
+                            .insert("callback".to_string(), Value::None);
+                        module_data
+                            .globals
+                            .insert("__pyrs_weakref_cleared__".to_string(), Value::Bool(true));
+                    }
+                }
+                Value::Instance(wrapper_instance) => {
+                    if let Object::Instance(instance_data) = &mut *wrapper_instance.kind_mut() {
+                        instance_data
+                            .attrs
+                            .insert("callback".to_string(), Value::None);
+                        instance_data
+                            .attrs
+                            .insert("__pyrs_weakref_cleared__".to_string(), Value::Bool(true));
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -1771,8 +1811,11 @@ impl Vm {
             let Some(callback) = callback else {
                 continue;
             };
-            let weakref_value =
-                self.alloc_builtin_bound_method(BuiltinFunction::WeakRefRef, wrapper.clone());
+            let weakref_value = if let Value::Module(wrapper_module) = &wrapper {
+                self.alloc_builtin_bound_method(BuiltinFunction::WeakRefRef, wrapper_module.clone())
+            } else {
+                wrapper.clone()
+            };
             match self.call_internal_preserving_caller(
                 callback,
                 vec![weakref_value],
@@ -1789,7 +1832,7 @@ impl Vm {
                     let exception = self.runtime_error_to_exception_value(err);
                     self.emit_unraisable_exception(
                         exception,
-                        Some(Value::Module(wrapper.clone())),
+                        Some(wrapper.clone()),
                         Some("Exception ignored while calling weakref callback"),
                     );
                     if let Some(frame) = self.frames.last_mut() {

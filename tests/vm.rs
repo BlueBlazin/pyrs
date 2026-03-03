@@ -11894,6 +11894,31 @@ fn imports_gc_errno_weakref_and_array_modules() {
 }
 
 #[test]
+fn weakref_ref_is_subclassable_type_surface() {
+    let source = r#"import weakref, _weakref
+class Box:
+    pass
+class MyRef(weakref.ref):
+    pass
+b = Box()
+r = MyRef(b)
+ok = (
+    isinstance(weakref.ref, type)
+    and isinstance(_weakref.ref, type)
+    and (weakref.ReferenceType is weakref.ref)
+    and (_weakref.ReferenceType is _weakref.ref)
+    and isinstance(r, weakref.ReferenceType)
+    and (r() is b)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn faulthandler_exposes_explicit_unsupported_semantics() {
     let source = "import faulthandler\nok = (faulthandler.is_enabled() is False)\nkind = ''\nmsg = ''\ntry:\n    faulthandler.enable()\nexcept Exception as exc:\n    kind = type(exc).__name__\n    msg = str(exc)\nok = ok and (kind == 'RuntimeError') and ('not supported' in msg)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

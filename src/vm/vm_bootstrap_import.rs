@@ -5596,17 +5596,52 @@ impl Vm {
             ],
             Vec::new(),
         );
+        let weakref_reference_type = match self
+            .heap
+            .alloc_class(ClassObject::new("ReferenceType".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *weakref_reference_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("weakref".to_string()));
+            class_data.attrs.insert(
+                "__new__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakRefRefNew),
+            );
+            class_data
+                .attrs
+                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            class_data.attrs.insert(
+                "__call__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakRefRefCall),
+            );
+            class_data.attrs.insert(
+                "__hash__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakRefRefHash),
+            );
+            class_data.attrs.insert(
+                "__eq__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakRefRefEq),
+            );
+            class_data.attrs.insert(
+                "__ne__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakRefRefNe),
+            );
+        }
         self.install_builtin_module(
             "_weakref",
             &[
-                ("ref", BuiltinFunction::WeakRefRef),
                 ("proxy", BuiltinFunction::WeakRefProxy),
                 ("getweakrefcount", BuiltinFunction::WeakRefGetWeakRefCount),
                 ("getweakrefs", BuiltinFunction::WeakRefGetWeakRefs),
                 ("_remove_dead_weakref", BuiltinFunction::WeakRefRemoveDead),
             ],
             vec![
-                ("ReferenceType", Value::Builtin(BuiltinFunction::Type)),
+                ("ref", Value::Class(weakref_reference_type.clone())),
+                ("ReferenceType", Value::Class(weakref_reference_type.clone())),
                 ("ProxyType", Value::Builtin(BuiltinFunction::Type)),
                 ("CallableProxyType", Value::Builtin(BuiltinFunction::Type)),
             ],
@@ -5666,14 +5701,14 @@ impl Vm {
         self.install_builtin_module(
             "weakref",
             &[
-                ("ref", BuiltinFunction::WeakRefRef),
                 ("proxy", BuiltinFunction::WeakRefProxy),
                 ("finalize", BuiltinFunction::WeakRefFinalize),
                 ("getweakrefcount", BuiltinFunction::WeakRefGetWeakRefCount),
                 ("getweakrefs", BuiltinFunction::WeakRefGetWeakRefs),
             ],
             vec![
-                ("ReferenceType", Value::Builtin(BuiltinFunction::Type)),
+                ("ref", Value::Class(weakref_reference_type.clone())),
+                ("ReferenceType", Value::Class(weakref_reference_type.clone())),
                 ("ProxyType", Value::Builtin(BuiltinFunction::Type)),
                 ("CallableProxyType", Value::Builtin(BuiltinFunction::Type)),
                 ("WeakSet", Value::Class(weakset_class.clone())),

@@ -15616,9 +15616,43 @@ impl Vm {
         Ok(self.heap.alloc_list(out))
     }
 
+    fn weakref_reference_type(&self) -> Result<ObjRef, RuntimeError> {
+        let module = self
+            .modules
+            .get("_weakref")
+            .cloned()
+            .ok_or_else(|| RuntimeError::module_not_found_error("module '_weakref' not found"))?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return Err(RuntimeError::new("module '_weakref' is invalid"));
+        };
+        match module_data.globals.get("ReferenceType") {
+            Some(Value::Class(class_obj)) => Ok(class_obj.clone()),
+            _ => Err(RuntimeError::new("weakref.ReferenceType is unavailable")),
+        }
+    }
+
+    fn weakref_ref_target_id_from_value(&self, value: &Value) -> Option<u64> {
+        let Value::Instance(instance) = value else {
+            return None;
+        };
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        if !matches!(
+            instance_data.attrs.get("__pyrs_weakref_ref__"),
+            Some(Value::Bool(true))
+        ) {
+            return None;
+        }
+        match instance_data.attrs.get("target_id") {
+            Some(Value::Int(value)) if *value >= 0 => Some(*value as u64),
+            _ => None,
+        }
+    }
+
     pub(super) fn builtin_weakref_ref(
         &mut self,
-        mut args: Vec<Value>,
+        args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
@@ -15626,57 +15660,120 @@ impl Vm {
                 "weakref helper expects object and optional callback",
             ));
         }
-
-        if args.len() == 1
-            && let Value::Module(wrapper) = &args[0]
-            && let Object::Module(module_data) = &*wrapper.kind()
-            && matches!(
-                module_data.globals.get("__pyrs_weakref_ref__"),
-                Some(Value::Bool(true))
-            )
-        {
-            let target_id = match module_data.globals.get("target_id") {
-                Some(Value::Int(value)) if *value >= 0 => *value as u64,
-                _ => return Ok(Value::None),
-            };
-            // CPython clears weakrefs when object finalization begins.
-            // Keep weakrefs dead even if the object is still temporarily reachable
-            // during __del__ side-effects (e.g. warnings source payloads).
-            if self.finalized_del_objects.contains(&target_id)
-                || self.cleared_weakref_objects.contains(&target_id)
-            {
-                return Ok(Value::None);
-            }
-            let Some(obj) = self.heap.find_object_by_id(target_id) else {
-                return Ok(Value::None);
-            };
-            return Ok(value_from_object_ref(obj).unwrap_or(Value::None));
+        let reference_type = self.weakref_reference_type()?;
+        let mut ctor_args = vec![Value::Class(reference_type), args[0].clone()];
+        if let Some(callback) = args.get(1) {
+            ctor_args.push(callback.clone());
         }
+        self.builtin_weakref_ref_new(ctor_args, HashMap::new())
+    }
 
+    pub(super) fn builtin_weakref_ref_new(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::type_error(
+                "__new__ expected cls, object and optional callback",
+            ));
+        }
+        let class = match args.remove(0) {
+            Value::Class(class_obj) => class_obj,
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "__new__ expected a class as first argument",
+                ));
+            }
+        };
         let target = args.remove(0);
         let Some(target_id) = weakref_target_id(&target) else {
-            return Ok(target);
+            return Err(RuntimeError::type_error(
+                "cannot create weak reference to object",
+            ));
         };
         let callback = args.into_iter().next().unwrap_or(Value::None);
-
-        let wrapper = match self
-            .heap
-            .alloc_module(ModuleObject::new("__weakref_ref__".to_string()))
-        {
-            Value::Module(obj) => obj,
-            _ => unreachable!(),
-        };
-        if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
-            module_data
-                .globals
-                .insert("__pyrs_weakref_ref__".to_string(), Value::Bool(true));
-            module_data
-                .globals
-                .insert("target_id".to_string(), Value::Int(target_id as i64));
-            module_data.globals.insert("callback".to_string(), callback);
+        if !matches!(callback, Value::None) && !self.is_callable_value(&callback) {
+            return Err(RuntimeError::type_error(
+                "weakref callback must be callable or None",
+            ));
         }
+        let weakref_obj = self.heap.alloc_instance(InstanceObject::new(class));
+        if let Value::Instance(instance_obj) = &weakref_obj
+            && let Object::Instance(instance_data) = &mut *instance_obj.kind_mut()
+        {
+            instance_data
+                .attrs
+                .insert("__pyrs_weakref_ref__".to_string(), Value::Bool(true));
+            instance_data
+                .attrs
+                .insert("target_id".to_string(), Value::Int(target_id as i64));
+            instance_data.attrs.insert("callback".to_string(), callback);
+        }
+        Ok(weakref_obj)
+    }
 
-        Ok(self.alloc_builtin_bound_method(BuiltinFunction::WeakRefRef, wrapper))
+    pub(super) fn builtin_weakref_ref_call(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error("__call__ expected only self argument"));
+        }
+        let Some(target_id) = self.weakref_ref_target_id_from_value(&args[0]) else {
+            return Err(RuntimeError::type_error("expected weakref reference instance"));
+        };
+        if self.finalized_del_objects.contains(&target_id)
+            || self.cleared_weakref_objects.contains(&target_id)
+        {
+            return Ok(Value::None);
+        }
+        let Some(obj) = self.heap.find_object_by_id(target_id) else {
+            return Ok(Value::None);
+        };
+        Ok(value_from_object_ref(obj).unwrap_or(Value::None))
+    }
+
+    pub(super) fn builtin_weakref_ref_hash(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error("__hash__ expected only self argument"));
+        }
+        let Some(target_id) = self.weakref_ref_target_id_from_value(&args[0]) else {
+            return Err(RuntimeError::type_error("expected weakref reference instance"));
+        };
+        Ok(Value::Int(target_id as i64))
+    }
+
+    pub(super) fn builtin_weakref_ref_eq(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error("__eq__ expected self and other"));
+        }
+        let left_id = self.weakref_ref_target_id_from_value(&args[0]);
+        let right_id = self.weakref_ref_target_id_from_value(&args[1]);
+        match (left_id, right_id) {
+            (Some(a), Some(b)) => Ok(Value::Bool(a == b)),
+            _ => Ok(Value::Bool(false)),
+        }
+    }
+
+    pub(super) fn builtin_weakref_ref_ne(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        match self.builtin_weakref_ref_eq(args, kwargs)? {
+            Value::Bool(value) => Ok(Value::Bool(!value)),
+            value => Ok(value),
+        }
     }
 
     pub(super) fn builtin_weakref_proxy(
