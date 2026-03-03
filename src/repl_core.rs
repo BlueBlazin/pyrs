@@ -331,4 +331,27 @@ mod tests {
         assert!(rendered.is_none());
         assert!(matches!(vm.get_global("x"), Some(crate::runtime::Value::Int(1))));
     }
+
+    #[test]
+    fn execute_module_or_expression_supports_precompiled_module_code() {
+        let mut vm = crate::vm::Vm::new();
+        let module = crate::parser::parse_module("x = 5").expect("module should parse");
+        let code =
+            crate::compiler::compile_module_with_filename(&module, "<stdin>").expect("compile");
+        let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>", Some(&code))
+            .expect("statement execution should succeed");
+        assert!(rendered.is_none());
+        assert!(matches!(vm.get_global("x"), Some(crate::runtime::Value::Int(5))));
+    }
+
+    #[test]
+    fn execute_module_or_expression_expression_path_ignores_precompiled_module_code_for_echo() {
+        let mut vm = crate::vm::Vm::new();
+        let module = crate::parser::parse_module("1 + 2").expect("module should parse");
+        let module_code =
+            crate::compiler::compile_module_with_filename(&module, "<stdin>").expect("compile");
+        let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>", Some(&module_code))
+            .expect("expression execution should succeed");
+        assert_eq!(rendered.as_deref(), Some("3"));
+    }
 }
