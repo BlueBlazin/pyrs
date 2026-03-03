@@ -1238,6 +1238,9 @@ pub struct Vm {
     instruction_step_limit: Option<u64>,
     instruction_steps: u64,
     execution_deadline: Option<VmExecutionDeadline>,
+    capture_sys_stream_output: bool,
+    captured_sys_stdout: String,
+    captured_sys_stderr: String,
 }
 
 impl Drop for Vm {
@@ -1545,6 +1548,9 @@ impl Vm {
                 .filter(|limit| *limit > 0),
             instruction_steps: 0,
             execution_deadline: None,
+            capture_sys_stream_output: false,
+            captured_sys_stdout: String::new(),
+            captured_sys_stderr: String::new(),
         };
         let main = vm.main_module.clone();
         vm.set_module_metadata(
@@ -1569,6 +1575,35 @@ impl Vm {
         vm.refresh_import_resolver_state();
         vm.gc_last_allocation_count = vm.heap.total_allocations();
         vm
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub(crate) fn set_sys_stream_capture_enabled(&mut self, enabled: bool) {
+        self.capture_sys_stream_output = enabled;
+        if !enabled {
+            self.captured_sys_stdout.clear();
+            self.captured_sys_stderr.clear();
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub(crate) fn take_captured_sys_stream_output(&mut self) -> (String, String) {
+        (
+            std::mem::take(&mut self.captured_sys_stdout),
+            std::mem::take(&mut self.captured_sys_stderr),
+        )
+    }
+
+    pub(super) fn capture_sys_stream_text(&mut self, stderr: bool, text: &str) -> bool {
+        if !self.capture_sys_stream_output {
+            return false;
+        }
+        if stderr {
+            self.captured_sys_stderr.push_str(text);
+        } else {
+            self.captured_sys_stdout.push_str(text);
+        }
+        true
     }
 
     pub(super) fn capi_registry_register_ptr(

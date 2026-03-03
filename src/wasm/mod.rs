@@ -1154,14 +1154,26 @@ impl WasmReplSession {
                     Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
                 ));
             }
-            let result = match crate::repl_core::run_ready_module(
+            begin_vm_stream_capture(&mut self.vm);
+            let execution = crate::repl_core::run_ready_module(
                 &mut self.vm,
                 &ready_source,
                 &ready_module,
                 WASM_REPL_FILENAME,
                 Some(&compile_code),
-            ) {
-                Ok(stdout) => execution_ok_result(stdout.unwrap_or_default()),
+            );
+            let (captured_stdout, captured_stderr) = finish_vm_stream_capture(&mut self.vm);
+            let result = match execution {
+                Ok(display) => {
+                    let mut stdout = captured_stdout;
+                    if let Some(display) = display {
+                        if !stdout.is_empty() && !stdout.ends_with('\n') {
+                            stdout.push('\n');
+                        }
+                        stdout.push_str(&display);
+                    }
+                    execution_ok_with_streams(stdout, captured_stderr)
+                }
                 Err(crate::repl_core::ReplExecutionError::Compile(err)) => {
                     let (message, line, column) = format_compile_error(&err);
                     execution_error_with_message(
@@ -1173,7 +1185,11 @@ impl WasmReplSession {
                     )
                 }
                 Err(crate::repl_core::ReplExecutionError::Runtime(err)) => {
-                    runtime_error_to_execution_result(err)
+                    runtime_error_to_execution_result_with_streams(
+                        err,
+                        captured_stdout,
+                        captured_stderr,
+                    )
                 }
             };
             return self.finish_execution_result(result);
@@ -2328,6 +2344,12 @@ fn execution_ok_result(stdout: String) -> WasmExecutionResult {
     }
 }
 
+fn execution_ok_with_streams(stdout: String, stderr: String) -> WasmExecutionResult {
+    let mut result = execution_ok_result(stdout);
+    result.stderr = stderr;
+    result
+}
+
 fn wasm_repl_help_text() -> &'static str {
     ":help / .help     show REPL help\n\
 Shift+Enter       insert newline\n\
@@ -2623,18 +2645,28 @@ fn execute_compiled_snippet_with_vm(
     code: &crate::bytecode::CodeObject,
     timeout_ms: Option<u32>,
 ) -> (WasmExecutionResult, bool, bool) {
+    begin_vm_stream_capture(vm);
     let execution = if let Some(timeout_ms) = timeout_ms {
         vm.execute_with_timeout_ms(code, timeout_ms)
     } else {
         vm.execute(code)
     };
+    let (captured_stdout, captured_stderr) = finish_vm_stream_capture(vm);
     match execution {
-        Ok(_) => (execution_ok_result(String::new()), false, false),
+        Ok(_) => (
+            execution_ok_with_streams(captured_stdout, captured_stderr),
+            false,
+            false,
+        ),
         Err(err) => {
             let timeout_exceeded = runtime_error_is_execution_timeout(&err);
             let internal_failure = err.exception.is_none() && !timeout_exceeded;
             (
-                runtime_error_to_execution_result(err),
+                runtime_error_to_execution_result_with_streams(
+                    err,
+                    captured_stdout,
+                    captured_stderr,
+                ),
                 internal_failure,
                 timeout_exceeded,
             )
@@ -2701,6 +2733,42 @@ fn runtime_error_to_execution_result(err: crate::runtime::RuntimeError) -> WasmE
         line,
         column,
     )
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn runtime_error_to_execution_result_with_streams(
+    err: crate::runtime::RuntimeError,
+    stdout: String,
+    stderr: String,
+) -> WasmExecutionResult {
+    let mut result = runtime_error_to_execution_result(err);
+    result.stdout = stdout;
+    if !stderr.is_empty() {
+        if result.stderr.is_empty() {
+            result.stderr = stderr;
+        } else {
+            let mut merged = stderr;
+            if !merged.ends_with('\n') {
+                merged.push('\n');
+            }
+            merged.push_str(&result.stderr);
+            result.stderr = merged;
+        }
+    }
+    result
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn begin_vm_stream_capture(vm: &mut Vm) {
+    vm.set_sys_stream_capture_enabled(true);
+    let _ = vm.take_captured_sys_stream_output();
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn finish_vm_stream_capture(vm: &mut Vm) -> (String, String) {
+    let (stdout, stderr) = vm.take_captured_sys_stream_output();
+    vm.set_sys_stream_capture_enabled(false);
+    (stdout, stderr)
 }
 
 #[cfg(feature = "wasm-vm-probe")]
@@ -2979,6 +3047,18 @@ mod tests {
         assert!(expression.success());
         assert_eq!(expression.stdout(), "42".to_string());
         assert!(expression.stderr().is_empty());
+    }
+
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
+    fn wasm_repl_session_vm_probe_print_writes_stdout() {
+        let mut session = WasmReplSession::new();
+
+        let printed = session.execute_input("print('hello')\n");
+        assert_eq!(printed.phase(), "ok".to_string());
+        assert!(printed.success());
+        assert_eq!(printed.stdout(), "hello\n".to_string());
+        assert!(printed.stderr().is_empty());
     }
 
     #[cfg(feature = "wasm-vm-probe")]

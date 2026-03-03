@@ -4975,6 +4975,25 @@ ok = ok and bad_sep and bad_end
 }
 
 #[test]
+fn print_default_target_respects_sys_stdout_redirection() {
+    let source = r#"import io, sys
+buf = io.StringIO()
+orig = sys.stdout
+sys.stdout = buf
+try:
+    print("hello")
+finally:
+    sys.stdout = orig
+ok = (buf.getvalue() == "hello\n")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn inspect_signature_uses_text_signature_for_sqlite_connection_callables() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping inspect-signature sqlite3 test (CPython Lib path not available)");

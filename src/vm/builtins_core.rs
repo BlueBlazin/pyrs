@@ -524,10 +524,7 @@ impl Vm {
         let rendered = format!("{}{}", parts.join(&sep), end);
 
         if matches!(file, Value::None) {
-            print!("{rendered}");
-            if flush_requested {
-                let _ = std::io::stdout().flush();
-            }
+            self.write_text_to_sys_stream_with_flush("stdout", &rendered, flush_requested)?;
             return Ok(Value::None);
         }
 
@@ -555,10 +552,11 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn write_text_to_sys_stream(
+    fn write_text_to_sys_stream_with_flush(
         &mut self,
         stream_name: &str,
         text: &str,
+        flush_after_write: bool,
     ) -> Result<(), RuntimeError> {
         let stream = self.modules.get("sys").and_then(|sys_module| {
             if let Object::Module(module_data) = &*sys_module.kind() {
@@ -585,10 +583,12 @@ impl Vm {
                 )));
             }
         }
-        if let Ok(flush) = self.builtin_getattr(
-            vec![stream, Value::Str("flush".to_string())],
-            HashMap::new(),
-        ) {
+        if flush_after_write
+            && let Ok(flush) = self.builtin_getattr(
+                vec![stream, Value::Str("flush".to_string())],
+                HashMap::new(),
+            )
+        {
             match self.call_internal(flush, Vec::new(), HashMap::new())? {
                 InternalCallOutcome::Value(_) => {}
                 InternalCallOutcome::CallerExceptionHandled => {
@@ -599,6 +599,14 @@ impl Vm {
             }
         }
         Ok(())
+    }
+
+    fn write_text_to_sys_stream(
+        &mut self,
+        stream_name: &str,
+        text: &str,
+    ) -> Result<(), RuntimeError> {
+        self.write_text_to_sys_stream_with_flush(stream_name, text, true)
     }
 
     fn write_text_to_sys_stderr(&mut self, text: &str) -> Result<(), RuntimeError> {
@@ -4372,7 +4380,7 @@ impl Vm {
     }
 
     pub(super) fn builtin_sys_stream_write(
-        &self,
+        &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
         stderr: bool,
@@ -4381,16 +4389,18 @@ impl Vm {
             return Err(RuntimeError::type_error("write() expects one argument"));
         }
         let text = format_value(&args[0]);
-        if stderr {
-            eprint!("{text}");
-        } else {
-            print!("{text}");
+        if !self.capture_sys_stream_text(stderr, &text) {
+            if stderr {
+                eprint!("{text}");
+            } else {
+                print!("{text}");
+            }
         }
         Ok(Value::Int(text.chars().count() as i64))
     }
 
     pub(super) fn builtin_sys_stream_buffer_write(
-        &self,
+        &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
         stderr: bool,
@@ -4400,7 +4410,10 @@ impl Vm {
             return Err(RuntimeError::type_error("write() expects one argument"));
         }
         let payload = bytes_like_from_value(args[0].clone())?;
-        if stderr {
+        if self.capture_sys_stream_output {
+            let text = String::from_utf8_lossy(&payload);
+            self.capture_sys_stream_text(stderr, &text);
+        } else if stderr {
             std::io::stderr()
                 .write_all(&payload)
                 .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
