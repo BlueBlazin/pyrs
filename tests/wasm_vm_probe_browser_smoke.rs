@@ -1,7 +1,7 @@
 #![cfg(all(target_arch = "wasm32", feature = "wasm-vm-probe"))]
 
 use pyrs::wasm::{
-    WasmWorkerSession, execute, wasm_runtime_info, wasm_worker_current_timeout_ms,
+    WasmReplSession, WasmWorkerSession, execute, wasm_runtime_info, wasm_worker_current_timeout_ms,
     wasm_worker_execute_with_operation, wasm_worker_force_failed_state_for_tests, wasm_worker_info,
     wasm_worker_recycle, wasm_worker_set_timeout, wasm_worker_start, wasm_worker_terminate,
 };
@@ -17,6 +17,35 @@ fn vm_probe_runtime_executes_basic_snippet() {
     assert_eq!(result.phase(), "ok".to_string());
     assert!(result.success());
     assert!(result.stderr().is_empty());
+}
+
+#[wasm_bindgen_test]
+fn vm_probe_repl_session_continuation_executes_class_on_blank_line() {
+    let mut repl = WasmReplSession::new();
+
+    let header = repl.execute_input("class Counter:");
+    assert_eq!(header.phase(), "ok".to_string());
+    assert!(header.success());
+    assert!(header.stdout().is_empty());
+    assert!(header.stderr().is_empty());
+
+    let body = repl.execute_input("    value = 3");
+    assert_eq!(body.phase(), "ok".to_string());
+    assert!(body.success());
+    assert!(body.stdout().is_empty());
+    assert!(body.stderr().is_empty());
+
+    let finalize = repl.execute_input("");
+    assert_eq!(finalize.phase(), "ok".to_string());
+    assert!(finalize.success());
+    assert!(finalize.stdout().is_empty());
+    assert!(finalize.stderr().is_empty());
+
+    let expression = repl.execute_input("Counter.value");
+    assert_eq!(expression.phase(), "ok".to_string());
+    assert!(expression.success());
+    assert_eq!(expression.stdout(), "3".to_string());
+    assert!(expression.stderr().is_empty());
 }
 
 #[wasm_bindgen_test]
