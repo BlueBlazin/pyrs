@@ -1395,6 +1395,24 @@ impl Vm {
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::DictPop, receiver))
             }
+            "popitem" if builtin == BuiltinFunction::Dict => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__dict_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
+                }
+                Ok(self.alloc_native_bound_method(
+                    NativeMethodKind::DictPopItem,
+                    receiver,
+                ))
+            }
             "copy" if builtin == BuiltinFunction::Dict => {
                 let receiver = match self
                     .heap
@@ -2843,6 +2861,7 @@ impl Vm {
             "__setitem__" => NativeMethodKind::DictSetItem,
             "__delitem__" => NativeMethodKind::DictDelItem,
             "pop" => NativeMethodKind::DictPop,
+            "popitem" => NativeMethodKind::DictPopItem,
             _ => {
                 if attr_name == "_member_names"
                     && env_var_present_cached("PYRS_TRACE_ENUM_MEMBER_NAMES")

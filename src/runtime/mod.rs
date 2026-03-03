@@ -304,6 +304,7 @@ pub enum NativeMethodKind {
     DictSetItem,
     DictDelItem,
     DictPop,
+    DictPopItem,
     DictCopy,
     DictInit,
     ContextVarGetMethod,
@@ -4264,6 +4265,7 @@ pub enum BuiltinFunction {
     FunctoolsSingleDispatch,
     FunctoolsSingleDispatchMethod,
     FunctoolsSingleDispatchRegister,
+    FunctoolsSingleDispatchRegisterDecorator,
     FunctoolsWraps,
     FunctoolsPartial,
     FunctoolsCmpToKey,
@@ -7694,6 +7696,7 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::FunctoolsSingleDispatch
             | BuiltinFunction::FunctoolsSingleDispatchMethod
             | BuiltinFunction::FunctoolsSingleDispatchRegister
+            | BuiltinFunction::FunctoolsSingleDispatchRegisterDecorator
             | BuiltinFunction::FunctoolsWraps
             | BuiltinFunction::FunctoolsPartial
             | BuiltinFunction::FunctoolsCmpToKey
@@ -9673,6 +9676,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::DictSetItem => "<bound method dict.__setitem__>".to_string(),
                     NativeMethodKind::DictDelItem => "<bound method dict.__delitem__>".to_string(),
                     NativeMethodKind::DictPop => "<bound method dict.pop>".to_string(),
+                    NativeMethodKind::DictPopItem => "<bound method dict.popitem>".to_string(),
                     NativeMethodKind::DictCopy => "<bound method dict.copy>".to_string(),
                     NativeMethodKind::DictInit => "<bound method dict.__init__>".to_string(),
                     NativeMethodKind::ContextVarGetMethod => {

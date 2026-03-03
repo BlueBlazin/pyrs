@@ -12116,6 +12116,26 @@ ok = (
 }
 
 #[test]
+fn weakref_ref_supports_builtin_type_objects() {
+    let source = r#"import weakref
+wr = weakref.ref(int)
+wk = weakref.WeakKeyDictionary()
+wk[int] = "ok"
+ok = (
+    (wr() is int)
+    and (hash(wr) == hash(int))
+    and (wr == weakref.ref(int))
+    and (wk[int] == "ok")
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn faulthandler_exposes_explicit_unsupported_semantics() {
     let source = "import faulthandler\nok = (faulthandler.is_enabled() is False)\nkind = ''\nmsg = ''\ntry:\n    faulthandler.enable()\nexcept Exception as exc:\n    kind = type(exc).__name__\n    msg = str(exc)\nok = ok and (kind == 'RuntimeError') and ('not supported' in msg)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

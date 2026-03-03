@@ -1371,6 +1371,49 @@ impl Vm {
                 }
                 Err(RuntimeError::key_error("key not found"))
             }
+            NativeMethodKind::DictPopItem => {
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => receiver.clone(),
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.is_empty() {
+                            return Err(RuntimeError::new("dict.popitem() receiver must be dict"));
+                        }
+                        match args.remove(0) {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new("dict.popitem() receiver must be dict")
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.popitem() receiver must be dict",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("dict.popitem() receiver must be dict"));
+                    }
+                };
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new("dict.popitem() expects no keyword arguments"));
+                }
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("dict.popitem() expects no arguments"));
+                }
+                let pair = match &mut *dict_receiver.kind_mut() {
+                    Object::Dict(entries) if entries.is_empty() => None,
+                    Object::Dict(entries) => Some(entries.remove(entries.len() - 1)),
+                    _ => None,
+                };
+                let Some((key, value)) = pair else {
+                    return Err(RuntimeError::key_error("popitem(): dictionary is empty"));
+                };
+                Ok(NativeCallResult::Value(self.heap.alloc_tuple(vec![key, value])))
+            }
             NativeMethodKind::ListAppend => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("list.append() expects one argument"));
@@ -12692,6 +12735,9 @@ impl Vm {
             }
             BuiltinFunction::FunctoolsSingleDispatchRegister => {
                 self.builtin_functools_singledispatch_register(args, kwargs)
+            }
+            BuiltinFunction::FunctoolsSingleDispatchRegisterDecorator => {
+                self.builtin_functools_singledispatch_register_decorator(args, kwargs)
             }
             BuiltinFunction::FunctoolsWraps => self.builtin_functools_wraps(args, kwargs),
             BuiltinFunction::FunctoolsPartial => self.builtin_functools_partial(args, kwargs),

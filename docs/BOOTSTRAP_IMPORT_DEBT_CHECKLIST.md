@@ -60,6 +60,8 @@ Audit date: 2026-03-04
   - `_weakref.ref` / `weakref.ref` now export a dedicated subclassable reference type (`ReferenceType`) with explicit `__new__` / `__call__` / comparison/hash method surface;
   - `PyObject_ClearWeakRefs` lifecycle now preserves weakref-object identity while transitioning refs to dead state for `PyWeakref_GetObject` / `PyWeakref_GetRef` parity;
   - `weakref` is now included in pure-stdlib preference unloading, so CPython `Lib/weakref.py` wins when available on module path;
+  - `_weakref.ref` now accepts builtin type objects represented as runtime `Value::Builtin(...)` type-constructors (for example `int`), matching CPython weakrefability needed by `functools.singledispatch` dispatch-cache paths;
+  - builtin `dict` now exports native `popitem()` semantics, unblocking CPython `weakref.WeakKeyDictionary` internals when pure `Lib/weakref.py` is active;
   - remaining debt: weak dict types are still mapped to builtin `Dict` (module install at line 5599).
 - [x] `P1` Replace `_weakrefset.WeakSet` placeholder mapped to builtin `Set` (module install at line 5624):
   - `_weakrefset.WeakSet` now materializes a dedicated class with explicit method surface (`__init__`, `__len__`, `__contains__`, `__iter__`, `add`, `discard`, `remove`, `clear`, `update`, `copy`),

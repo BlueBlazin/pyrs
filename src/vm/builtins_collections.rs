@@ -1216,9 +1216,39 @@ impl Vm {
             return Err(RuntimeError::new("register() expects 1-2 arguments"));
         }
         if args.len() == 1 {
-            return Ok(Value::Builtin(BuiltinFunction::TypingIdFunc));
+            let wrapper = match self.heap.alloc_module(ModuleObject::new(
+                "__functools_singledispatch_register__".to_string(),
+            )) {
+                Value::Module(obj) => obj,
+                _ => unreachable!(),
+            };
+            if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+                module_data.globals.insert(
+                    "__pyrs_singledispatch_register__".to_string(),
+                    Value::Bool(true),
+                );
+                module_data
+                    .globals
+                    .insert("registered_type".to_string(), args[0].clone());
+            }
+            return Ok(self.alloc_builtin_bound_method(
+                BuiltinFunction::FunctoolsSingleDispatchRegisterDecorator,
+                wrapper,
+            ));
         }
         Ok(args[1].clone())
+    }
+
+    pub(super) fn builtin_functools_singledispatch_register_decorator(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("register() decorator expects one callable"));
+        }
+        let _receiver = args.remove(0);
+        Ok(args.remove(0))
     }
 
     pub(super) fn builtin_enum_convert(

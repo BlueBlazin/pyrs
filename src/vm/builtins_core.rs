@@ -16332,6 +16332,22 @@ functions outside a stub module should always be followed by an implementation t
         }
     }
 
+    fn weakref_ref_target_value_from_value(&self, value: &Value) -> Option<Value> {
+        let Value::Instance(instance) = value else {
+            return None;
+        };
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        if !matches!(
+            instance_data.attrs.get("__pyrs_weakref_ref__"),
+            Some(Value::Bool(true))
+        ) {
+            return None;
+        }
+        instance_data.attrs.get("target_value").cloned()
+    }
+
     pub(super) fn builtin_weakref_ref(
         &mut self,
         args: Vec<Value>,
@@ -16369,11 +16385,18 @@ functions outside a stub module should always be followed by an implementation t
             }
         };
         let target = args.remove(0);
-        let Some(target_id) = weakref_target_id(&target) else {
+        let target_id = weakref_target_id(&target);
+        let target_value = match &target {
+            Value::Builtin(builtin) if self.builtin_is_type_object(*builtin) => {
+                Some(target.clone())
+            }
+            _ => None,
+        };
+        if target_id.is_none() && target_value.is_none() {
             return Err(RuntimeError::type_error(
                 "cannot create weak reference to object",
             ));
-        };
+        }
         let callback = args.into_iter().next().unwrap_or(Value::None);
         if !matches!(callback, Value::None) && !self.is_callable_value(&callback) {
             return Err(RuntimeError::type_error(
@@ -16387,9 +16410,16 @@ functions outside a stub module should always be followed by an implementation t
             instance_data
                 .attrs
                 .insert("__pyrs_weakref_ref__".to_string(), Value::Bool(true));
-            instance_data
-                .attrs
-                .insert("target_id".to_string(), Value::Int(target_id as i64));
+            if let Some(id) = target_id {
+                instance_data
+                    .attrs
+                    .insert("target_id".to_string(), Value::Int(id as i64));
+            }
+            if let Some(target_value) = target_value {
+                instance_data
+                    .attrs
+                    .insert("target_value".to_string(), target_value);
+            }
             instance_data.attrs.insert("callback".to_string(), callback);
         }
         Ok(weakref_obj)
@@ -16403,18 +16433,21 @@ functions outside a stub module should always be followed by an implementation t
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::type_error("__call__ expected only self argument"));
         }
-        let Some(target_id) = self.weakref_ref_target_id_from_value(&args[0]) else {
-            return Err(RuntimeError::type_error("expected weakref reference instance"));
-        };
-        if self.finalized_del_objects.contains(&target_id)
-            || self.cleared_weakref_objects.contains(&target_id)
-        {
-            return Ok(Value::None);
+        if let Some(target_id) = self.weakref_ref_target_id_from_value(&args[0]) {
+            if self.finalized_del_objects.contains(&target_id)
+                || self.cleared_weakref_objects.contains(&target_id)
+            {
+                return Ok(Value::None);
+            }
+            let Some(obj) = self.heap.find_object_by_id(target_id) else {
+                return Ok(Value::None);
+            };
+            return Ok(value_from_object_ref(obj).unwrap_or(Value::None));
         }
-        let Some(obj) = self.heap.find_object_by_id(target_id) else {
-            return Ok(Value::None);
-        };
-        Ok(value_from_object_ref(obj).unwrap_or(Value::None))
+        if let Some(target_value) = self.weakref_ref_target_value_from_value(&args[0]) {
+            return Ok(target_value);
+        }
+        Err(RuntimeError::type_error("expected weakref reference instance"))
     }
 
     pub(super) fn builtin_weakref_ref_hash(
@@ -16425,10 +16458,13 @@ functions outside a stub module should always be followed by an implementation t
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::type_error("__hash__ expected only self argument"));
         }
-        let Some(target_id) = self.weakref_ref_target_id_from_value(&args[0]) else {
-            return Err(RuntimeError::type_error("expected weakref reference instance"));
-        };
-        Ok(Value::Int(target_id as i64))
+        if let Some(target_id) = self.weakref_ref_target_id_from_value(&args[0]) {
+            return Ok(Value::Int(target_id as i64));
+        }
+        if let Some(target_value) = self.weakref_ref_target_value_from_value(&args[0]) {
+            return Ok(Value::Int(self.hash_value_runtime(&target_value)?));
+        }
+        Err(RuntimeError::type_error("expected weakref reference instance"))
     }
 
     pub(super) fn builtin_weakref_ref_eq(
@@ -16443,6 +16479,14 @@ functions outside a stub module should always be followed by an implementation t
         let right_id = self.weakref_ref_target_id_from_value(&args[1]);
         match (left_id, right_id) {
             (Some(a), Some(b)) => Ok(Value::Bool(a == b)),
+            (None, None) => {
+                let left_value = self.weakref_ref_target_value_from_value(&args[0]);
+                let right_value = self.weakref_ref_target_value_from_value(&args[1]);
+                match (left_value, right_value) {
+                    (Some(a), Some(b)) => Ok(Value::Bool(a == b)),
+                    _ => Ok(Value::Bool(false)),
+                }
+            }
             _ => Ok(Value::Bool(false)),
         }
     }
