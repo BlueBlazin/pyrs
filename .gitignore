@@ -7,3 +7,4 @@ perf/
 /.local/
 .pnpm-store/
 website/public/wasm/
+.claude
