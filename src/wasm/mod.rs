@@ -1056,6 +1056,11 @@ impl WasmSession {
 
 #[wasm_bindgen]
 impl WasmReplSession {
+    fn finish_execution_result(&mut self, result: WasmExecutionResult) -> WasmExecutionResult {
+        self.last_error = result.error.clone();
+        result
+    }
+
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         init_wasm_runtime();
@@ -1077,21 +1082,17 @@ impl WasmReplSession {
 
         let ready = match self.repl_state.submit_line(source) {
             crate::repl_core::ReplLineParseResult::NeedMoreInput => {
-                let result = execution_ok_result(String::new());
-                self.last_error = None;
-                return result;
+                return self.finish_execution_result(execution_ok_result(String::new()));
             }
             crate::repl_core::ReplLineParseResult::ParseError { error, .. } => {
                 let message = format_parse_error(&error);
-                let result = execution_error_with_message(
+                return self.finish_execution_result(execution_error_with_message(
                     WasmExecutionPhase::SyntaxError.key(),
                     message,
                     None,
                     error.line,
                     error.column,
-                );
-                self.last_error = result.error.clone();
-                return result;
+                ));
             }
             crate::repl_core::ReplLineParseResult::Ready { source, module } => (source, module),
         };
@@ -1102,15 +1103,13 @@ impl WasmReplSession {
         let compile_code = match compile_module_for_wasm(&ready_module, WASM_REPL_FILENAME) {
             Ok(code) => code,
             Err((message, line, column)) => {
-                let result = execution_error_with_message(
+                return self.finish_execution_result(execution_error_with_message(
                     WasmExecutionPhase::CompileError.key(),
                     message,
                     None,
                     line,
                     column,
-                );
-                self.last_error = result.error.clone();
-                return result;
+                ));
             }
         };
         #[cfg(not(feature = "wasm-vm-probe"))]
@@ -1122,25 +1121,21 @@ impl WasmReplSession {
             .into_iter()
             .next()
         {
-            let result = unsupported_execution_result(
+            return self.finish_execution_result(unsupported_execution_result(
                 WasmExecutionPhase::UnsupportedExecution.key(),
                 blocker.message,
                 Some(blocker.blocker_key),
-            );
-            self.last_error = result.error.clone();
-            return result;
+            ));
         }
 
         if !wasm_vm_runtime_enabled() {
             let message = wasm_execution_blocker_error(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED)
                 .unwrap_or_else(|| "wasm execution backend is not wired yet".to_string());
-            let result = unsupported_execution_result(
+            return self.finish_execution_result(unsupported_execution_result(
                 WasmExecutionPhase::UnsupportedExecution.key(),
                 message,
                 Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
-            );
-            self.last_error = result.error.clone();
-            return result;
+            ));
         }
 
         #[cfg(feature = "wasm-vm-probe")]
@@ -1167,21 +1162,18 @@ impl WasmReplSession {
                     runtime_error_to_execution_result(err)
                 }
             };
-            self.last_error = result.error.clone();
-            return result;
+            return self.finish_execution_result(result);
         }
 
         #[cfg(not(feature = "wasm-vm-probe"))]
         {
             let message = wasm_execution_blocker_error(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED)
                 .unwrap_or_else(|| "wasm execution backend is not wired yet".to_string());
-            let result = unsupported_execution_result(
+            self.finish_execution_result(unsupported_execution_result(
                 WasmExecutionPhase::UnsupportedExecution.key(),
                 message,
                 Some(WASM_EXECUTION_BLOCKER_BACKEND_UNWIRED.to_string()),
-            );
-            self.last_error = result.error.clone();
-            result
+            ))
         }
     }
 
