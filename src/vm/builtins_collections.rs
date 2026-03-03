@@ -1012,11 +1012,14 @@ impl Vm {
                 "chain() does not accept keyword arguments",
             ));
         }
-        let mut out = Vec::new();
-        for source in args {
-            out.extend(self.collect_iterable_values(source)?);
-        }
-        Ok(self.heap.alloc_list(out))
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Chain {
+                sources: args,
+                active: 0,
+                current: None,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_chain_from_iterable(
@@ -1029,12 +1032,16 @@ impl Vm {
                 "chain.from_iterable() expects one iterable argument",
             ));
         }
-        let sources = self.collect_iterable_values(args.remove(0))?;
-        let mut out = Vec::new();
-        for source in sources {
-            out.extend(self.collect_iterable_values(source)?);
-        }
-        Ok(self.heap.alloc_list(out))
+        let source_iterable = args.remove(0);
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::ChainFromIterable {
+                source_iterable,
+                source: None,
+                current: None,
+                source_exhausted: false,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_count(

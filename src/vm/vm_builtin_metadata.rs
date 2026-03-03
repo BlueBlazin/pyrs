@@ -2424,6 +2424,9 @@ impl Vm {
                     }
                     IteratorKind::Cycle { .. } => ("cycle", None, None, None, false, true),
                     IteratorKind::Count { .. } => ("count", None, None, None, false, true),
+                    IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => {
+                        ("chain", None, None, None, false, true)
+                    }
                     IteratorKind::SequenceGetItem { .. } => {
                         ("iterator", None, None, None, false, true)
                     }

@@ -18363,6 +18363,69 @@ ok = (values == [1, 2, 3])
 }
 
 #[test]
+fn itertools_chain_returns_lazy_iterator_and_expected_repr_shape() {
+    let source = r#"import itertools
+class Boom:
+    def __iter__(self):
+        raise RuntimeError("boom")
+c = itertools.chain(Boom(), [10, 11])
+constructed_without_iterating = True
+iter_identity = (iter(c) is c)
+try:
+    next(c)
+except RuntimeError as exc:
+    first_error_ok = (str(exc) == "boom")
+else:
+    first_error_ok = False
+c2 = itertools.chain([1, 2], [3])
+first = next(c2)
+rest = list(c2)
+repr_ok = repr(itertools.chain([1])).startswith("<itertools.chain object at 0x")
+ok = (
+    constructed_without_iterating
+    and iter_identity
+    and first_error_ok
+    and first == 1
+    and rest == [2, 3]
+    and repr_ok
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn itertools_chain_from_iterable_is_lazy_over_outer_iterator() {
+    let source = r#"import itertools
+events = []
+class Outer:
+    def __iter__(self):
+        events.append("outer_iter")
+        yield [1, 2]
+        yield [3]
+c = itertools.chain.from_iterable(Outer())
+created_events = list(events)
+first = next(c)
+events_after_first = list(events)
+rest = list(c)
+ok = (
+    created_events == []
+    and first == 1
+    and events_after_first == ["outer_iter"]
+    and rest == [2, 3]
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn stop_iteration_value_attribute_is_populated_from_constructor_args() {
     let source = r#"try:
     raise StopIteration(42)

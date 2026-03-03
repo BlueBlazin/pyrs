@@ -47,7 +47,11 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
                 | IteratorKind::CpythonSequence { .. }
                 | IteratorKind::MemoryView(_)
                 | IteratorKind::Cycle { .. }
-                | IteratorKind::Count { .. } => std::ptr::addr_of_mut!(PySeqIter_Type).cast(),
+                | IteratorKind::Count { .. }
+                | IteratorKind::Chain { .. }
+                | IteratorKind::ChainFromIterable { .. } => {
+                    std::ptr::addr_of_mut!(PySeqIter_Type).cast()
+                }
             },
             _ => std::ptr::addr_of_mut!(PyBaseObject_Type).cast(),
         },

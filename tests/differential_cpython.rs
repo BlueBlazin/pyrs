@@ -2548,6 +2548,60 @@ result = {
 }
 
 #[test]
+fn differential_runtime_itertools_chain_laziness_and_shape_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import itertools
+events = []
+class Boom:
+    def __iter__(self):
+        events.append("boom_iter")
+        raise RuntimeError("boom")
+
+c = itertools.chain(Boom(), [10, 11])
+constructed_events = list(events)
+iter_identity = (iter(c) is c)
+try:
+    next(c)
+except RuntimeError as exc:
+    first_error = str(exc)
+else:
+    first_error = ""
+events_after_first_next = list(events)
+
+class Outer:
+    def __iter__(self):
+        events.append("outer_iter")
+        yield [1, 2]
+        yield [3]
+
+c2 = itertools.chain.from_iterable(Outer())
+events_after_create_c2 = list(events)
+first = next(c2)
+events_after_first_c2 = list(events)
+rest = list(c2)
+
+result = {
+    "constructed_events": constructed_events,
+    "iter_identity": iter_identity,
+    "first_error": first_error,
+    "events_after_first_next": events_after_first_next,
+    "events_after_create_c2": events_after_create_c2,
+    "first": first,
+    "events_after_first_c2": events_after_first_c2,
+    "rest": rest,
+    "chain_repr_prefix": repr(itertools.chain([1])).startswith("<itertools.chain object at 0x"),
+    "chain_from_iterable_repr_prefix": repr(itertools.chain.from_iterable([[1]])).startswith("<itertools.chain object at 0x"),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
 fn differential_compile_parse_error_raises_syntaxerror_parity() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;

@@ -1502,6 +1502,17 @@ pub enum IteratorKind {
         strict: bool,
         exhausted: bool,
     },
+    Chain {
+        sources: Vec<Value>,
+        active: usize,
+        current: Option<Value>,
+    },
+    ChainFromIterable {
+        source_iterable: Value,
+        source: Option<Value>,
+        current: Option<Value>,
+        source_exhausted: bool,
+    },
     Range {
         current: BigInt,
         stop: BigInt,
@@ -1575,6 +1586,29 @@ impl fmt::Debug for IteratorKind {
                 .field("iterators_len", &iterators.len())
                 .field("strict", strict)
                 .field("exhausted", exhausted)
+                .finish(),
+            IteratorKind::Chain {
+                sources,
+                active,
+                current,
+            } => f
+                .debug_struct("Chain")
+                .field("sources_len", &sources.len())
+                .field("active", active)
+                .field("has_current", &current.is_some())
+                .finish(),
+            IteratorKind::ChainFromIterable {
+                source_iterable,
+                source,
+                current,
+                source_exhausted,
+            } => f
+                .debug_struct("ChainFromIterable")
+                .field("source_iterable", source_iterable)
+                .field("has_source", &source.is_some())
+                .field("source", source)
+                .field("has_current", &current.is_some())
+                .field("source_exhausted", source_exhausted)
                 .finish(),
             IteratorKind::Range {
                 current,
@@ -2294,6 +2328,30 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                     trace_value(iterator, stack, marked);
                 }
             }
+            IteratorKind::Chain {
+                sources, current, ..
+            } => {
+                for source in sources {
+                    trace_value(source, stack, marked);
+                }
+                if let Some(current) = current {
+                    trace_value(current, stack, marked);
+                }
+            }
+            IteratorKind::ChainFromIterable {
+                source_iterable,
+                source,
+                current,
+                ..
+            } => {
+                trace_value(source_iterable, stack, marked);
+                if let Some(source) = source {
+                    trace_value(source, stack, marked);
+                }
+                if let Some(current) = current {
+                    trace_value(current, stack, marked);
+                }
+            }
             IteratorKind::SequenceGetItem { target, getitem } => {
                 trace_value(target, stack, marked);
                 trace_value(getitem, stack, marked);
@@ -2440,6 +2498,26 @@ fn clear_object_refs(obj: &ObjRef) {
                 }
                 IteratorKind::Zip { iterators, .. } => {
                     iterators.clear();
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Chain {
+                    sources, current, ..
+                } => {
+                    sources.clear();
+                    *current = None;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::ChainFromIterable {
+                    source_iterable,
+                    source,
+                    current,
+                    ..
+                } => {
+                    *source_iterable = Value::None;
+                    *source = None;
+                    *current = None;
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -7711,7 +7789,11 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                 IteratorKind::CallIter { .. }
                 | IteratorKind::Count { .. }
                 | IteratorKind::Cycle { .. }
-                | IteratorKind::Zip { .. } => Err(RuntimeError::type_error("expected iterable")),
+                | IteratorKind::Zip { .. }
+                | IteratorKind::Chain { .. }
+                | IteratorKind::ChainFromIterable { .. } => {
+                    Err(RuntimeError::type_error("expected iterable"))
+                }
             }
         }
         Value::Str(value) => Ok(value.chars().map(|ch| Value::Str(ch.to_string())).collect()),
@@ -8637,7 +8719,15 @@ pub fn format_value(value: &Value) -> String {
             Object::MemoryView(view) => format!("<memory at 0x{:x}>", view.source.id()),
             _ => "<memoryview>".to_string(),
         },
-        Value::Iterator(_) => "<iterator>".to_string(),
+        Value::Iterator(obj) => match &*obj.kind() {
+            Object::Iterator(iterator) => match iterator.kind {
+                IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => {
+                    format!("<itertools.chain object at 0x{:x}>", obj.id())
+                }
+                _ => "<iterator>".to_string(),
+            },
+            _ => "<iterator>".to_string(),
+        },
         Value::Generator(obj) => match &*obj.kind() {
             Object::Generator(generator) if generator.is_async_generator => {
                 "<async_generator>".to_string()

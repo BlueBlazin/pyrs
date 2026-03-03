@@ -145,10 +145,10 @@ Local shim behavior:
 
 This investigation was triggered by `itertools` behavior and must remain explicitly tracked here.
 
-- [ ] `P0` `itertools.chain` currently returns an eager `list`, not a CPython `itertools.chain` iterator object:
+- [x] `P0` `itertools.chain` currently returns an eager `list`, not a CPython `itertools.chain` iterator object:
   - bootstrap export wiring: `itertools` install at lines 3693-3719
   - runtime implementation: `builtin_itertools_chain` at `src/vm/builtins_collections.rs:1005`
-- [ ] `P0` `itertools.chain.from_iterable` currently returns an eager `list`, not lazy iterator behavior:
+- [x] `P0` `itertools.chain.from_iterable` currently returns an eager `list`, not lazy iterator behavior:
   - runtime implementation: `builtin_itertools_chain_from_iterable` at `src/vm/builtins_collections.rs:1022`
 - [ ] `P1` Audit all exported `itertools` callables (lines 3696-3718) for iterator/laziness/type/repr parity, not just value parity.
 - [ ] `P1` Add differential tests for iterator object identity/repr/type and lazy consumption semantics for `itertools` surfaces before further stdlib closure work.

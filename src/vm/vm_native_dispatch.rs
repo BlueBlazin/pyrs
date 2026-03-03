@@ -9366,17 +9366,18 @@ impl Vm {
                     IteratorKind::Dict(_) => "dict_keyiterator",
                     IteratorKind::Set(_) => "set_iterator",
                     IteratorKind::Bytes(_) => "bytes_iterator",
-                    IteratorKind::ByteArray(_) => "bytearray_iterator",
-                    IteratorKind::MemoryView(_) => "memoryview_iterator",
-                    IteratorKind::Cycle { .. } => "cycle",
-                    IteratorKind::Count { .. } => "count",
-                    IteratorKind::Map { .. } => "map",
-                    IteratorKind::Zip { .. } => "zip",
-                    IteratorKind::RangeObject { .. } => "range",
-                    IteratorKind::Range { .. } => "range_iterator",
-                    IteratorKind::SequenceGetItem { .. } => "iterator",
-                    IteratorKind::CpythonSequence { .. } => "iterator",
-                    IteratorKind::CallIter { .. } => "callable_iterator",
+                IteratorKind::ByteArray(_) => "bytearray_iterator",
+                IteratorKind::MemoryView(_) => "memoryview_iterator",
+                IteratorKind::Cycle { .. } => "cycle",
+                IteratorKind::Count { .. } => "count",
+                IteratorKind::Map { .. } => "map",
+                IteratorKind::Zip { .. } => "zip",
+                IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => "chain",
+                IteratorKind::RangeObject { .. } => "range",
+                IteratorKind::Range { .. } => "range_iterator",
+                IteratorKind::SequenceGetItem { .. } => "iterator",
+                IteratorKind::CpythonSequence { .. } => "iterator",
+                IteratorKind::CallIter { .. } => "callable_iterator",
                 },
                 _ => "iterator",
             },
@@ -9413,6 +9414,17 @@ impl Vm {
             },
             CycleAdvance {
                 source: Value,
+            },
+            ChainAdvance {
+                sources: Vec<Value>,
+                active: usize,
+                current: Option<Value>,
+            },
+            ChainFromIterableAdvance {
+                source_iterable: Value,
+                source: Option<Value>,
+                current: Option<Value>,
+                source_exhausted: bool,
             },
         }
 
@@ -9624,6 +9636,30 @@ impl Vm {
                         strict: *strict,
                     };
                 }
+                IteratorKind::Chain {
+                    sources,
+                    active,
+                    current,
+                } => {
+                    pending_step = PendingIteratorStep::ChainAdvance {
+                        sources: sources.clone(),
+                        active: *active,
+                        current: current.clone(),
+                    };
+                }
+                IteratorKind::ChainFromIterable {
+                    source_iterable,
+                    source,
+                    current,
+                    source_exhausted,
+                } => {
+                    pending_step = PendingIteratorStep::ChainFromIterableAdvance {
+                        source_iterable: source_iterable.clone(),
+                        source: source.clone(),
+                        current: current.clone(),
+                        source_exhausted: *source_exhausted,
+                    };
+                }
                 IteratorKind::RangeObject { start, stop, step } => {
                     if step.is_zero() {
                         return Err(RuntimeError::value_error("range() arg 3 must not be zero"));
@@ -9797,6 +9833,161 @@ impl Vm {
                 }
                 Ok(None)
             }
+            PendingIteratorStep::ChainAdvance {
+                sources,
+                mut active,
+                mut current,
+            } => {
+                while active < sources.len() {
+                    if current.is_none() {
+                        current = Some(self.to_iterator_value(sources[active].clone())?);
+                    }
+                    let Some(iterator) = current.clone() else {
+                        continue;
+                    };
+                    match self.next_from_iterator_value(&iterator)? {
+                        GeneratorResumeOutcome::Yield(value) => {
+                            let mut iter = iterator_ref.kind_mut();
+                            if let Object::Iterator(state) = &mut *iter
+                                && let IteratorKind::Chain {
+                                    active: state_active,
+                                    current: state_current,
+                                    ..
+                                } = &mut state.kind
+                            {
+                                *state_active = active;
+                                *state_current = Some(iterator);
+                                state.index = state.index.saturating_add(1);
+                            }
+                            return Ok(Some(value));
+                        }
+                        GeneratorResumeOutcome::Complete(_) => {
+                            current = None;
+                            active += 1;
+                        }
+                        GeneratorResumeOutcome::PropagatedException => {
+                            return Err(self.iteration_error_from_state(
+                                "chain() iteration failed",
+                            )?);
+                        }
+                    }
+                }
+                let mut iter = iterator_ref.kind_mut();
+                if let Object::Iterator(state) = &mut *iter
+                    && let IteratorKind::Chain {
+                        active: state_active,
+                        current: state_current,
+                        ..
+                    } = &mut state.kind
+                {
+                    *state_active = sources.len();
+                    *state_current = None;
+                }
+                Ok(None)
+            }
+            PendingIteratorStep::ChainFromIterableAdvance {
+                source_iterable,
+                mut source,
+                mut current,
+                mut source_exhausted,
+            } => loop {
+                if let Some(inner) = current.clone() {
+                    match self.next_from_iterator_value(&inner)? {
+                        GeneratorResumeOutcome::Yield(value) => {
+                            let mut iter = iterator_ref.kind_mut();
+                            if let Object::Iterator(state) = &mut *iter
+                                && let IteratorKind::ChainFromIterable {
+                                    source: state_source,
+                                    current: state_current,
+                                    source_exhausted: state_source_exhausted,
+                                    ..
+                                } = &mut state.kind
+                            {
+                                *state_source = source.clone();
+                                *state_current = Some(inner);
+                                *state_source_exhausted = source_exhausted;
+                                state.index = state.index.saturating_add(1);
+                            }
+                            return Ok(Some(value));
+                        }
+                        GeneratorResumeOutcome::Complete(_) => {
+                            current = None;
+                        }
+                        GeneratorResumeOutcome::PropagatedException => {
+                            return Err(self.iteration_error_from_state(
+                                "chain.from_iterable() iteration failed",
+                            )?);
+                        }
+                    }
+                    continue;
+                }
+
+                if source_exhausted {
+                    let mut iter = iterator_ref.kind_mut();
+                    if let Object::Iterator(state) = &mut *iter
+                        && let IteratorKind::ChainFromIterable {
+                            source: state_source,
+                            current: state_current,
+                            source_exhausted: state_source_exhausted,
+                            ..
+                        } = &mut state.kind
+                    {
+                        *state_source = source.clone();
+                        *state_current = None;
+                        *state_source_exhausted = true;
+                    }
+                    return Ok(None);
+                }
+
+                if source.is_none() {
+                    source = Some(self.to_iterator_value(source_iterable.clone())?);
+                }
+                let Some(outer_source) = source.clone() else {
+                    continue;
+                };
+                match self.next_from_iterator_value(&outer_source)? {
+                    GeneratorResumeOutcome::Yield(value) => {
+                        let next_iterator = self.to_iterator_value(value).map_err(|_| {
+                            RuntimeError::type_error("chain.from_iterable() argument is not iterable")
+                        })?;
+                        current = Some(next_iterator);
+                        let mut iter = iterator_ref.kind_mut();
+                        if let Object::Iterator(state) = &mut *iter
+                            && let IteratorKind::ChainFromIterable {
+                                source: state_source,
+                                current: state_current,
+                                source_exhausted: state_source_exhausted,
+                                ..
+                            } = &mut state.kind
+                        {
+                            *state_source = source.clone();
+                            *state_current = current.clone();
+                            *state_source_exhausted = source_exhausted;
+                        }
+                    }
+                    GeneratorResumeOutcome::Complete(_) => {
+                        source_exhausted = true;
+                        let mut iter = iterator_ref.kind_mut();
+                        if let Object::Iterator(state) = &mut *iter
+                            && let IteratorKind::ChainFromIterable {
+                                source: state_source,
+                                current: state_current,
+                                source_exhausted: state_source_exhausted,
+                                ..
+                            } = &mut state.kind
+                        {
+                            *state_source = source.clone();
+                            *state_current = None;
+                            *state_source_exhausted = true;
+                        }
+                    }
+                    GeneratorResumeOutcome::PropagatedException => {
+                        return Err(self.iteration_error_from_state(
+                            "chain.from_iterable() iteration failed",
+                        )?);
+                    }
+                }
+            },
             PendingIteratorStep::SequenceGetItem {
                 target,
                 getitem,
