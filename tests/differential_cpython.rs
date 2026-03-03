@@ -2602,6 +2602,72 @@ result = {
 }
 
 #[test]
+fn differential_runtime_itertools_iterator_helper_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import itertools, operator
+
+def probe(factory):
+    events = []
+    class Boom:
+        def __iter__(self):
+            events.append("iter")
+            raise RuntimeError("boom")
+    try:
+        factory(Boom())
+    except RuntimeError as exc:
+        return {"events": events, "err": str(exc)}
+    return {"events": events, "err": "noerr"}
+
+construct = {
+    "accumulate": probe(lambda x: itertools.accumulate(x)),
+    "compress": probe(lambda x: itertools.compress(x, [1])),
+    "dropwhile": probe(lambda x: itertools.dropwhile(lambda y: y < 0, x)),
+    "filterfalse": probe(lambda x: itertools.filterfalse(None, x)),
+    "islice": probe(lambda x: itertools.islice(x, 1)),
+    "pairwise": probe(lambda x: itertools.pairwise(x)),
+    "starmap": probe(lambda x: itertools.starmap(operator.add, x)),
+    "takewhile": probe(lambda x: itertools.takewhile(lambda y: y < 0, x)),
+}
+
+objs = {
+    "accumulate": itertools.accumulate([1, 2]),
+    "compress": itertools.compress([1, 2], [1, 0]),
+    "dropwhile": itertools.dropwhile(lambda x: x < 2, [1, 2, 3]),
+    "filterfalse": itertools.filterfalse(None, [0, 1]),
+    "islice": itertools.islice(range(10), 3),
+    "pairwise": itertools.pairwise([1, 2, 3]),
+    "starmap": itertools.starmap(operator.add, [(1, 2)]),
+    "takewhile": itertools.takewhile(lambda x: x < 3, [1, 2, 3]),
+}
+is_list = {k: isinstance(v, list) for k, v in objs.items()}
+iter_identity = {k: (iter(v) is v) for k, v in objs.items()}
+values = {
+    "accumulate": list(itertools.accumulate([1, 2, 3])),
+    "compress": list(itertools.compress("ABCDEF", [1, 0, 1, 0, 1, 1])),
+    "dropwhile": list(itertools.dropwhile(lambda x: x < 3, [1, 2, 3, 2, 1])),
+    "filterfalse": list(itertools.filterfalse(lambda x: x % 2, [0, 1, 2, 3, 4])),
+    "islice": list(itertools.islice(range(10), 2, 8, 3)),
+    "pairwise": list(itertools.pairwise([10, 20, 30])),
+    "starmap": list(itertools.starmap(operator.add, [(1, 2), (3, 4)])),
+    "takewhile": list(itertools.takewhile(lambda x: x < 4, [1, 2, 3, 4, 1])),
+}
+
+result = {
+    "construct": construct,
+    "is_list": is_list,
+    "iter_identity": iter_identity,
+    "values": values,
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
 fn differential_compile_parse_error_raises_syntaxerror_parity() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;

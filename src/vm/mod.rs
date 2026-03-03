@@ -7660,7 +7660,15 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                 | IteratorKind::Cycle { .. }
                 | IteratorKind::Zip { .. }
                 | IteratorKind::Chain { .. }
-                | IteratorKind::ChainFromIterable { .. } => {
+                | IteratorKind::ChainFromIterable { .. }
+                | IteratorKind::Accumulate { .. }
+                | IteratorKind::Compress { .. }
+                | IteratorKind::DropWhile { .. }
+                | IteratorKind::FilterFalse { .. }
+                | IteratorKind::Islice { .. }
+                | IteratorKind::Pairwise { .. }
+                | IteratorKind::StarMap { .. }
+                | IteratorKind::TakeWhile { .. } => {
                     return Err(RuntimeError::type_error("expected bytes-like payload"));
                 }
             };

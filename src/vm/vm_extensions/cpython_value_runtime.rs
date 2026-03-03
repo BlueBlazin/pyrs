@@ -49,7 +49,15 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
                 | IteratorKind::Cycle { .. }
                 | IteratorKind::Count { .. }
                 | IteratorKind::Chain { .. }
-                | IteratorKind::ChainFromIterable { .. } => {
+                | IteratorKind::ChainFromIterable { .. }
+                | IteratorKind::Accumulate { .. }
+                | IteratorKind::Compress { .. }
+                | IteratorKind::DropWhile { .. }
+                | IteratorKind::FilterFalse { .. }
+                | IteratorKind::Islice { .. }
+                | IteratorKind::Pairwise { .. }
+                | IteratorKind::StarMap { .. }
+                | IteratorKind::TakeWhile { .. } => {
                     std::ptr::addr_of_mut!(PySeqIter_Type).cast()
                 }
             },

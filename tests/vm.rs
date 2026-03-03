@@ -18426,6 +18426,74 @@ ok = (
 }
 
 #[test]
+fn itertools_helper_types_are_iterator_like_not_lists() {
+    let source = r#"import itertools, operator
+objs = {
+    "accumulate": itertools.accumulate([1, 2]),
+    "compress": itertools.compress([1, 2], [1, 0]),
+    "dropwhile": itertools.dropwhile(lambda x: x < 2, [1, 2, 3]),
+    "filterfalse": itertools.filterfalse(None, [0, 1]),
+    "islice": itertools.islice(range(10), 3),
+    "pairwise": itertools.pairwise([1, 2, 3]),
+    "starmap": itertools.starmap(operator.add, [(1, 2)]),
+    "takewhile": itertools.takewhile(lambda x: x < 3, [1, 2, 3]),
+}
+is_list = {k: isinstance(v, list) for k, v in objs.items()}
+iter_identity = all(iter(v) is v for v in objs.values())
+ok = (
+    iter_identity
+    and not is_list["accumulate"]
+    and not is_list["compress"]
+    and not is_list["dropwhile"]
+    and not is_list["filterfalse"]
+    and not is_list["islice"]
+    and not is_list["pairwise"]
+    and not is_list["starmap"]
+    and not is_list["takewhile"]
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn itertools_non_chain_helpers_call_iter_at_construction() {
+    let source = r#"import itertools, operator
+def probe(factory):
+    events = []
+    class Boom:
+        def __iter__(self):
+            events.append("iter")
+            raise RuntimeError("boom")
+    try:
+        factory(Boom())
+    except RuntimeError as exc:
+        return (events, str(exc))
+    return (events, "noerr")
+
+checks = {
+    "accumulate": probe(lambda x: itertools.accumulate(x)),
+    "compress": probe(lambda x: itertools.compress(x, [1])),
+    "dropwhile": probe(lambda x: itertools.dropwhile(lambda y: y < 0, x)),
+    "filterfalse": probe(lambda x: itertools.filterfalse(None, x)),
+    "islice": probe(lambda x: itertools.islice(x, 1)),
+    "pairwise": probe(lambda x: itertools.pairwise(x)),
+    "starmap": probe(lambda x: itertools.starmap(operator.add, x)),
+    "takewhile": probe(lambda x: itertools.takewhile(lambda y: y < 0, x)),
+}
+ok = all(v[0] == ["iter"] and v[1] == "boom" for v in checks.values())
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn stop_iteration_value_attribute_is_populated_from_constructor_args() {
     let source = r#"try:
     raise StopIteration(42)

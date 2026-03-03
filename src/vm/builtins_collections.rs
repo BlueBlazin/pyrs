@@ -1,5 +1,5 @@
 use super::{
-    BoundMethod, BuiltinFunction, ClassObject, DEQUE_BACKING_STORAGE_ATTR, GeneratorResumeOutcome,
+    BoundMethod, BuiltinFunction, ClassObject, DEQUE_BACKING_STORAGE_ATTR,
     HashMap, Heap, InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject,
     MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeMethodKind, ObjRef, Object, RuntimeError,
     Value, Vm, add_values, and_values, binary_operator, bytes_like_from_value, class_attr_lookup,
@@ -506,43 +506,17 @@ impl Vm {
             ));
         }
 
-        let mut out = Vec::new();
-        let values = self.collect_iterable_values(iterable)?;
-        let mut running = initial;
-        if let Some(value) = running.clone() {
-            out.push(value);
-        }
-        for value in values {
-            match running.take() {
-                None => {
-                    running = Some(value.clone());
-                    out.push(value);
-                }
-                Some(current) => {
-                    let next = if let Some(callable) = func.clone() {
-                        if matches!(callable, Value::None) {
-                            add_values(current, value, &self.heap)?
-                        } else {
-                            match self.call_internal(
-                                callable,
-                                vec![current, value],
-                                HashMap::new(),
-                            )? {
-                                InternalCallOutcome::Value(value) => value,
-                                InternalCallOutcome::CallerExceptionHandled => {
-                                    return Err(RuntimeError::new("accumulate() function raised"));
-                                }
-                            }
-                        }
-                    } else {
-                        add_values(current, value, &self.heap)?
-                    };
-                    running = Some(next.clone());
-                    out.push(next);
-                }
-            }
-        }
-        Ok(self.heap.alloc_list(out))
+        let iterator = self.to_iterator_value(iterable)?;
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Accumulate {
+                iterator,
+                func,
+                total: None,
+                initial,
+                emitted_initial: false,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_combinations(
@@ -643,15 +617,12 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 2 {
             return Err(RuntimeError::new("compress() expects data and selectors"));
         }
-        let data = self.collect_iterable_values(args.remove(0))?;
-        let selectors = self.collect_iterable_values(args.remove(0))?;
-        let mut out = Vec::new();
-        for (item, selector) in data.into_iter().zip(selectors) {
-            if is_truthy(&selector) {
-                out.push(item);
-            }
-        }
-        Ok(self.heap.alloc_list(out))
+        let data = self.to_iterator_value(args.remove(0))?;
+        let selectors = self.to_iterator_value(args.remove(0))?;
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Compress { data, selectors },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_dropwhile(
@@ -665,29 +636,15 @@ impl Vm {
             ));
         }
         let predicate = args.remove(0);
-        let values = self.collect_iterable_values(args.remove(0))?;
-        let mut out = Vec::new();
-        let mut dropping = true;
-        for value in values {
-            if dropping {
-                let keep_dropping = match self.call_internal(
-                    predicate.clone(),
-                    vec![value.clone()],
-                    HashMap::new(),
-                )? {
-                    InternalCallOutcome::Value(result) => is_truthy(&result),
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(RuntimeError::new("dropwhile() predicate raised"));
-                    }
-                };
-                if keep_dropping {
-                    continue;
-                }
-                dropping = false;
-            }
-            out.push(value);
-        }
-        Ok(self.heap.alloc_list(out))
+        let iterator = self.to_iterator_value(args.remove(0))?;
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::DropWhile {
+                predicate,
+                iterator,
+                dropping: true,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_filterfalse(
@@ -701,24 +658,14 @@ impl Vm {
             ));
         }
         let predicate = args.remove(0);
-        let values = self.collect_iterable_values(args.remove(0))?;
-        let mut out = Vec::new();
-        for value in values {
-            let passed = if matches!(predicate, Value::None) {
-                is_truthy(&value)
-            } else {
-                match self.call_internal(predicate.clone(), vec![value.clone()], HashMap::new())? {
-                    InternalCallOutcome::Value(result) => is_truthy(&result),
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(RuntimeError::new("filterfalse() predicate raised"));
-                    }
-                }
-            };
-            if !passed {
-                out.push(value);
-            }
-        }
-        Ok(self.heap.alloc_list(out))
+        let iterator = self.to_iterator_value(args.remove(0))?;
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::FilterFalse {
+                predicate,
+                iterator,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_groupby(
@@ -842,28 +789,16 @@ impl Vm {
         }
 
         let iterator = self.to_iterator_value(iterable)?;
-        let mut out = Vec::new();
-        let mut index = 0_i64;
-        loop {
-            if let Some(stop_value) = stop
-                && index >= stop_value
-            {
-                break;
-            }
-            let next = self.next_from_iterator_value(&iterator)?;
-            let value = match next {
-                GeneratorResumeOutcome::Yield(value) => value,
-                GeneratorResumeOutcome::Complete(_) => break,
-                GeneratorResumeOutcome::PropagatedException => {
-                    return Err(self.iteration_error_from_state("islice() iterator failed")?);
-                }
-            };
-            if index >= start && (index - start) % step == 0 {
-                out.push(value);
-            }
-            index += 1;
-        }
-        Ok(self.heap.alloc_list(out))
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Islice {
+                iterator,
+                next_index: start,
+                stop,
+                step,
+                source_index: 0,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_pairwise(
@@ -876,18 +811,15 @@ impl Vm {
                 "pairwise() expects one iterable argument",
             ));
         }
-        let values = self.collect_iterable_values(args.remove(0))?;
-        if values.len() < 2 {
-            return Ok(self.heap.alloc_list(Vec::new()));
-        }
-        let mut out = Vec::with_capacity(values.len().saturating_sub(1));
-        for idx in 0..values.len() - 1 {
-            out.push(
-                self.heap
-                    .alloc_tuple(vec![values[idx].clone(), values[idx + 1].clone()]),
-            );
-        }
-        Ok(self.heap.alloc_list(out))
+        let iterator = self.to_iterator_value(args.remove(0))?;
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Pairwise {
+                iterator,
+                previous: None,
+                primed: false,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_starmap(
@@ -899,19 +831,11 @@ impl Vm {
             return Err(RuntimeError::new("starmap() expects function and iterable"));
         }
         let callable = args.remove(0);
-        let rows = self.collect_iterable_values(args.remove(0))?;
-        let mut out = Vec::new();
-        for row in rows {
-            let call_args = self.collect_iterable_values(row)?;
-            let value = match self.call_internal(callable.clone(), call_args, HashMap::new())? {
-                InternalCallOutcome::Value(value) => value,
-                InternalCallOutcome::CallerExceptionHandled => {
-                    return Err(RuntimeError::new("starmap() function raised"));
-                }
-            };
-            out.push(value);
-        }
-        Ok(self.heap.alloc_list(out))
+        let iterator = self.to_iterator_value(args.remove(0))?;
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::StarMap { callable, iterator },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_takewhile(
@@ -925,22 +849,15 @@ impl Vm {
             ));
         }
         let predicate = args.remove(0);
-        let values = self.collect_iterable_values(args.remove(0))?;
-        let mut out = Vec::new();
-        for value in values {
-            let keep =
-                match self.call_internal(predicate.clone(), vec![value.clone()], HashMap::new())? {
-                    InternalCallOutcome::Value(result) => is_truthy(&result),
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(RuntimeError::new("takewhile() predicate raised"));
-                    }
-                };
-            if !keep {
-                break;
-            }
-            out.push(value);
-        }
-        Ok(self.heap.alloc_list(out))
+        let iterator = self.to_iterator_value(args.remove(0))?;
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::TakeWhile {
+                predicate,
+                iterator,
+                done: false,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_tee(

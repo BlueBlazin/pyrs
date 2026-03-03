@@ -1513,6 +1513,47 @@ pub enum IteratorKind {
         current: Option<Value>,
         source_exhausted: bool,
     },
+    Accumulate {
+        iterator: Value,
+        func: Option<Value>,
+        total: Option<Value>,
+        initial: Option<Value>,
+        emitted_initial: bool,
+    },
+    Compress {
+        data: Value,
+        selectors: Value,
+    },
+    DropWhile {
+        predicate: Value,
+        iterator: Value,
+        dropping: bool,
+    },
+    FilterFalse {
+        predicate: Value,
+        iterator: Value,
+    },
+    Islice {
+        iterator: Value,
+        next_index: i64,
+        stop: Option<i64>,
+        step: i64,
+        source_index: i64,
+    },
+    Pairwise {
+        iterator: Value,
+        previous: Option<Value>,
+        primed: bool,
+    },
+    StarMap {
+        callable: Value,
+        iterator: Value,
+    },
+    TakeWhile {
+        predicate: Value,
+        iterator: Value,
+        done: bool,
+    },
     Range {
         current: BigInt,
         stop: BigInt,
@@ -1609,6 +1650,82 @@ impl fmt::Debug for IteratorKind {
                 .field("source", source)
                 .field("has_current", &current.is_some())
                 .field("source_exhausted", source_exhausted)
+                .finish(),
+            IteratorKind::Accumulate {
+                iterator,
+                func,
+                total,
+                initial,
+                emitted_initial,
+            } => f
+                .debug_struct("Accumulate")
+                .field("iterator", iterator)
+                .field("func", func)
+                .field("total", total)
+                .field("initial", initial)
+                .field("emitted_initial", emitted_initial)
+                .finish(),
+            IteratorKind::Compress { data, selectors } => f
+                .debug_struct("Compress")
+                .field("data", data)
+                .field("selectors", selectors)
+                .finish(),
+            IteratorKind::DropWhile {
+                predicate,
+                iterator,
+                dropping,
+            } => f
+                .debug_struct("DropWhile")
+                .field("predicate", predicate)
+                .field("iterator", iterator)
+                .field("dropping", dropping)
+                .finish(),
+            IteratorKind::FilterFalse {
+                predicate,
+                iterator,
+            } => f
+                .debug_struct("FilterFalse")
+                .field("predicate", predicate)
+                .field("iterator", iterator)
+                .finish(),
+            IteratorKind::Islice {
+                iterator,
+                next_index,
+                stop,
+                step,
+                source_index,
+            } => f
+                .debug_struct("Islice")
+                .field("iterator", iterator)
+                .field("next_index", next_index)
+                .field("stop", stop)
+                .field("step", step)
+                .field("source_index", source_index)
+                .finish(),
+            IteratorKind::Pairwise {
+                iterator,
+                previous,
+                primed,
+            } => f
+                .debug_struct("Pairwise")
+                .field("iterator", iterator)
+                .field("previous", previous)
+                .field("primed", primed)
+                .finish(),
+            IteratorKind::StarMap { callable, iterator } => f
+                .debug_struct("StarMap")
+                .field("callable", callable)
+                .field("iterator", iterator)
+                .finish(),
+            IteratorKind::TakeWhile {
+                predicate,
+                iterator,
+                done,
+            } => f
+                .debug_struct("TakeWhile")
+                .field("predicate", predicate)
+                .field("iterator", iterator)
+                .field("done", done)
                 .finish(),
             IteratorKind::Range {
                 current,
@@ -2352,6 +2469,66 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                     trace_value(current, stack, marked);
                 }
             }
+            IteratorKind::Accumulate {
+                iterator,
+                func,
+                total,
+                initial,
+                ..
+            } => {
+                trace_value(iterator, stack, marked);
+                if let Some(func) = func {
+                    trace_value(func, stack, marked);
+                }
+                if let Some(total) = total {
+                    trace_value(total, stack, marked);
+                }
+                if let Some(initial) = initial {
+                    trace_value(initial, stack, marked);
+                }
+            }
+            IteratorKind::Compress { data, selectors } => {
+                trace_value(data, stack, marked);
+                trace_value(selectors, stack, marked);
+            }
+            IteratorKind::DropWhile {
+                predicate,
+                iterator,
+                ..
+            } => {
+                trace_value(predicate, stack, marked);
+                trace_value(iterator, stack, marked);
+            }
+            IteratorKind::FilterFalse {
+                predicate,
+                iterator,
+            } => {
+                trace_value(predicate, stack, marked);
+                trace_value(iterator, stack, marked);
+            }
+            IteratorKind::Islice { iterator, .. } => {
+                trace_value(iterator, stack, marked);
+            }
+            IteratorKind::Pairwise {
+                iterator, previous, ..
+            } => {
+                trace_value(iterator, stack, marked);
+                if let Some(previous) = previous {
+                    trace_value(previous, stack, marked);
+                }
+            }
+            IteratorKind::StarMap { callable, iterator } => {
+                trace_value(callable, stack, marked);
+                trace_value(iterator, stack, marked);
+            }
+            IteratorKind::TakeWhile {
+                predicate,
+                iterator,
+                ..
+            } => {
+                trace_value(predicate, stack, marked);
+                trace_value(iterator, stack, marked);
+            }
             IteratorKind::SequenceGetItem { target, getitem } => {
                 trace_value(target, stack, marked);
                 trace_value(getitem, stack, marked);
@@ -2518,6 +2695,83 @@ fn clear_object_refs(obj: &ObjRef) {
                     *source_iterable = Value::None;
                     *source = None;
                     *current = None;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Accumulate {
+                    iterator: acc_iter,
+                    func,
+                    total,
+                    initial,
+                    emitted_initial,
+                } => {
+                    *acc_iter = Value::None;
+                    *func = None;
+                    *total = None;
+                    *initial = None;
+                    *emitted_initial = true;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Compress { data, selectors } => {
+                    *data = Value::None;
+                    *selectors = Value::None;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::DropWhile {
+                    predicate,
+                    iterator: drop_iter,
+                    dropping,
+                } => {
+                    *predicate = Value::None;
+                    *drop_iter = Value::None;
+                    *dropping = false;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::FilterFalse {
+                    predicate,
+                    iterator: filter_iter,
+                } => {
+                    *predicate = Value::None;
+                    *filter_iter = Value::None;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Islice { iterator: slice_iter, .. } => {
+                    *slice_iter = Value::None;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Pairwise {
+                    iterator: pair_iter,
+                    previous,
+                    primed,
+                } => {
+                    *pair_iter = Value::None;
+                    *previous = None;
+                    *primed = true;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::StarMap {
+                    callable,
+                    iterator: star_iter,
+                } => {
+                    *callable = Value::None;
+                    *star_iter = Value::None;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::TakeWhile {
+                    predicate,
+                    iterator: take_iter,
+                    done,
+                } => {
+                    *predicate = Value::None;
+                    *take_iter = Value::None;
+                    *done = true;
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -7791,7 +8045,15 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                 | IteratorKind::Cycle { .. }
                 | IteratorKind::Zip { .. }
                 | IteratorKind::Chain { .. }
-                | IteratorKind::ChainFromIterable { .. } => {
+                | IteratorKind::ChainFromIterable { .. }
+                | IteratorKind::Accumulate { .. }
+                | IteratorKind::Compress { .. }
+                | IteratorKind::DropWhile { .. }
+                | IteratorKind::FilterFalse { .. }
+                | IteratorKind::Islice { .. }
+                | IteratorKind::Pairwise { .. }
+                | IteratorKind::StarMap { .. }
+                | IteratorKind::TakeWhile { .. } => {
                     Err(RuntimeError::type_error("expected iterable"))
                 }
             }

@@ -9368,16 +9368,24 @@ impl Vm {
                     IteratorKind::Bytes(_) => "bytes_iterator",
                 IteratorKind::ByteArray(_) => "bytearray_iterator",
                 IteratorKind::MemoryView(_) => "memoryview_iterator",
-                IteratorKind::Cycle { .. } => "cycle",
-                IteratorKind::Count { .. } => "count",
-                IteratorKind::Map { .. } => "map",
-                IteratorKind::Zip { .. } => "zip",
-                IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => "chain",
-                IteratorKind::RangeObject { .. } => "range",
-                IteratorKind::Range { .. } => "range_iterator",
-                IteratorKind::SequenceGetItem { .. } => "iterator",
-                IteratorKind::CpythonSequence { .. } => "iterator",
-                IteratorKind::CallIter { .. } => "callable_iterator",
+                    IteratorKind::Cycle { .. } => "cycle",
+                    IteratorKind::Count { .. } => "count",
+                    IteratorKind::Map { .. } => "map",
+                    IteratorKind::Zip { .. } => "zip",
+                    IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => "chain",
+                    IteratorKind::Accumulate { .. } => "accumulate",
+                    IteratorKind::Compress { .. } => "compress",
+                    IteratorKind::DropWhile { .. } => "dropwhile",
+                    IteratorKind::FilterFalse { .. } => "filterfalse",
+                    IteratorKind::Islice { .. } => "islice",
+                    IteratorKind::Pairwise { .. } => "pairwise",
+                    IteratorKind::StarMap { .. } => "starmap",
+                    IteratorKind::TakeWhile { .. } => "takewhile",
+                    IteratorKind::RangeObject { .. } => "range",
+                    IteratorKind::Range { .. } => "range_iterator",
+                    IteratorKind::SequenceGetItem { .. } => "iterator",
+                    IteratorKind::CpythonSequence { .. } => "iterator",
+                    IteratorKind::CallIter { .. } => "callable_iterator",
                 },
                 _ => "iterator",
             },
@@ -9425,6 +9433,47 @@ impl Vm {
                 source: Option<Value>,
                 current: Option<Value>,
                 source_exhausted: bool,
+            },
+            AccumulateAdvance {
+                iterator: Value,
+                func: Option<Value>,
+                total: Option<Value>,
+                initial: Option<Value>,
+                emitted_initial: bool,
+            },
+            CompressAdvance {
+                data: Value,
+                selectors: Value,
+            },
+            DropWhileAdvance {
+                predicate: Value,
+                iterator: Value,
+                dropping: bool,
+            },
+            FilterFalseAdvance {
+                predicate: Value,
+                iterator: Value,
+            },
+            IsliceAdvance {
+                iterator: Value,
+                next_index: i64,
+                stop: Option<i64>,
+                step: i64,
+                source_index: i64,
+            },
+            PairwiseAdvance {
+                iterator: Value,
+                previous: Option<Value>,
+                primed: bool,
+            },
+            StarMapAdvance {
+                callable: Value,
+                iterator: Value,
+            },
+            TakeWhileAdvance {
+                predicate: Value,
+                iterator: Value,
+                done: bool,
             },
         }
 
@@ -9658,6 +9707,90 @@ impl Vm {
                         source: source.clone(),
                         current: current.clone(),
                         source_exhausted: *source_exhausted,
+                    };
+                }
+                IteratorKind::Accumulate {
+                    iterator,
+                    func,
+                    total,
+                    initial,
+                    emitted_initial,
+                } => {
+                    pending_step = PendingIteratorStep::AccumulateAdvance {
+                        iterator: iterator.clone(),
+                        func: func.clone(),
+                        total: total.clone(),
+                        initial: initial.clone(),
+                        emitted_initial: *emitted_initial,
+                    };
+                }
+                IteratorKind::Compress { data, selectors } => {
+                    pending_step = PendingIteratorStep::CompressAdvance {
+                        data: data.clone(),
+                        selectors: selectors.clone(),
+                    };
+                }
+                IteratorKind::DropWhile {
+                    predicate,
+                    iterator,
+                    dropping,
+                } => {
+                    pending_step = PendingIteratorStep::DropWhileAdvance {
+                        predicate: predicate.clone(),
+                        iterator: iterator.clone(),
+                        dropping: *dropping,
+                    };
+                }
+                IteratorKind::FilterFalse {
+                    predicate,
+                    iterator,
+                } => {
+                    pending_step = PendingIteratorStep::FilterFalseAdvance {
+                        predicate: predicate.clone(),
+                        iterator: iterator.clone(),
+                    };
+                }
+                IteratorKind::Islice {
+                    iterator,
+                    next_index,
+                    stop,
+                    step,
+                    source_index,
+                } => {
+                    pending_step = PendingIteratorStep::IsliceAdvance {
+                        iterator: iterator.clone(),
+                        next_index: *next_index,
+                        stop: *stop,
+                        step: *step,
+                        source_index: *source_index,
+                    };
+                }
+                IteratorKind::Pairwise {
+                    iterator,
+                    previous,
+                    primed,
+                } => {
+                    pending_step = PendingIteratorStep::PairwiseAdvance {
+                        iterator: iterator.clone(),
+                        previous: previous.clone(),
+                        primed: *primed,
+                    };
+                }
+                IteratorKind::StarMap { callable, iterator } => {
+                    pending_step = PendingIteratorStep::StarMapAdvance {
+                        callable: callable.clone(),
+                        iterator: iterator.clone(),
+                    };
+                }
+                IteratorKind::TakeWhile {
+                    predicate,
+                    iterator,
+                    done,
+                } => {
+                    pending_step = PendingIteratorStep::TakeWhileAdvance {
+                        predicate: predicate.clone(),
+                        iterator: iterator.clone(),
+                        done: *done,
                     };
                 }
                 IteratorKind::RangeObject { start, stop, step } => {
@@ -9988,6 +10121,373 @@ impl Vm {
                     }
                 }
             },
+            PendingIteratorStep::AccumulateAdvance {
+                iterator,
+                func,
+                mut total,
+                initial,
+                mut emitted_initial,
+            } => {
+                if !emitted_initial {
+                    emitted_initial = true;
+                    if let Some(initial_value) = initial.clone() {
+                        total = Some(initial_value.clone());
+                        let mut iter = iterator_ref.kind_mut();
+                        if let Object::Iterator(state) = &mut *iter
+                            && let IteratorKind::Accumulate {
+                                total: state_total,
+                                emitted_initial: state_emitted,
+                                ..
+                            } = &mut state.kind
+                        {
+                            *state_total = total.clone();
+                            *state_emitted = true;
+                            state.index = state.index.saturating_add(1);
+                        }
+                        return Ok(Some(initial_value));
+                    }
+                }
+                match self.next_from_iterator_value(&iterator)? {
+                    GeneratorResumeOutcome::Yield(value) => {
+                        let next_value = match total.clone() {
+                            None => value.clone(),
+                            Some(current_total) => {
+                                if let Some(callable) = func.clone() {
+                                    if matches!(callable, Value::None) {
+                                        self.binary_add_runtime(current_total, value)?
+                                    } else {
+                                        match self.call_internal(
+                                            callable,
+                                            vec![current_total, value],
+                                            HashMap::new(),
+                                        )? {
+                                            InternalCallOutcome::Value(result) => result,
+                                            InternalCallOutcome::CallerExceptionHandled => {
+                                                return Err(RuntimeError::new(
+                                                    "accumulate() function raised",
+                                                ));
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    self.binary_add_runtime(current_total, value)?
+                                }
+                            }
+                        };
+                        total = Some(next_value.clone());
+                        let mut iter = iterator_ref.kind_mut();
+                        if let Object::Iterator(state) = &mut *iter
+                            && let IteratorKind::Accumulate {
+                                total: state_total,
+                                emitted_initial: state_emitted,
+                                ..
+                            } = &mut state.kind
+                        {
+                            *state_total = total.clone();
+                            *state_emitted = emitted_initial;
+                            state.index = state.index.saturating_add(1);
+                        }
+                        Ok(Some(next_value))
+                    }
+                    GeneratorResumeOutcome::Complete(_) => {
+                        let mut iter = iterator_ref.kind_mut();
+                        if let Object::Iterator(state) = &mut *iter
+                            && let IteratorKind::Accumulate {
+                                emitted_initial: state_emitted,
+                                ..
+                            } = &mut state.kind
+                        {
+                            *state_emitted = true;
+                        }
+                        Ok(None)
+                    }
+                    GeneratorResumeOutcome::PropagatedException => Err(
+                        self.iteration_error_from_state("accumulate() iterator failed")?,
+                    ),
+                }
+            }
+            PendingIteratorStep::CompressAdvance { data, selectors } => loop {
+                let item = match self.next_from_iterator_value(&data)? {
+                    GeneratorResumeOutcome::Yield(value) => value,
+                    GeneratorResumeOutcome::Complete(_) => return Ok(None),
+                    GeneratorResumeOutcome::PropagatedException => {
+                        return Err(self.iteration_error_from_state(
+                            "compress() iteration failed",
+                        )?);
+                    }
+                };
+                let selector = match self.next_from_iterator_value(&selectors)? {
+                    GeneratorResumeOutcome::Yield(value) => value,
+                    GeneratorResumeOutcome::Complete(_) => return Ok(None),
+                    GeneratorResumeOutcome::PropagatedException => {
+                        return Err(self.iteration_error_from_state(
+                            "compress() iteration failed",
+                        )?);
+                    }
+                };
+                if self.truthy_from_value(&selector)? {
+                    let mut iter = iterator_ref.kind_mut();
+                    if let Object::Iterator(state) = &mut *iter
+                        && let IteratorKind::Compress { .. } = &mut state.kind
+                    {
+                        state.index = state.index.saturating_add(1);
+                    }
+                    return Ok(Some(item));
+                }
+            },
+            PendingIteratorStep::DropWhileAdvance {
+                predicate,
+                iterator,
+                mut dropping,
+            } => loop {
+                let item = match self.next_from_iterator_value(&iterator)? {
+                    GeneratorResumeOutcome::Yield(value) => value,
+                    GeneratorResumeOutcome::Complete(_) => return Ok(None),
+                    GeneratorResumeOutcome::PropagatedException => {
+                        return Err(self.iteration_error_from_state(
+                            "dropwhile() iterator failed",
+                        )?);
+                    }
+                };
+                if dropping {
+                    let keep_dropping = match self.call_internal(
+                        predicate.clone(),
+                        vec![item.clone()],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(result) => self.truthy_from_value(&result)?,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(RuntimeError::new("dropwhile() predicate raised"));
+                        }
+                    };
+                    if keep_dropping {
+                        continue;
+                    }
+                    dropping = false;
+                }
+                let mut iter = iterator_ref.kind_mut();
+                if let Object::Iterator(state) = &mut *iter
+                    && let IteratorKind::DropWhile {
+                        dropping: state_dropping,
+                        ..
+                    } = &mut state.kind
+                {
+                    *state_dropping = dropping;
+                    state.index = state.index.saturating_add(1);
+                }
+                return Ok(Some(item));
+            },
+            PendingIteratorStep::FilterFalseAdvance {
+                predicate,
+                iterator,
+            } => loop {
+                let item = match self.next_from_iterator_value(&iterator)? {
+                    GeneratorResumeOutcome::Yield(value) => value,
+                    GeneratorResumeOutcome::Complete(_) => return Ok(None),
+                    GeneratorResumeOutcome::PropagatedException => {
+                        return Err(self.iteration_error_from_state(
+                            "filterfalse() iterator failed",
+                        )?);
+                    }
+                };
+                let passed = if matches!(predicate, Value::None) {
+                    self.truthy_from_value(&item)?
+                } else {
+                    match self.call_internal(
+                        predicate.clone(),
+                        vec![item.clone()],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(result) => self.truthy_from_value(&result)?,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(RuntimeError::new("filterfalse() predicate raised"));
+                        }
+                    }
+                };
+                if !passed {
+                    let mut iter = iterator_ref.kind_mut();
+                    if let Object::Iterator(state) = &mut *iter
+                        && let IteratorKind::FilterFalse { .. } = &mut state.kind
+                    {
+                        state.index = state.index.saturating_add(1);
+                    }
+                    return Ok(Some(item));
+                }
+            },
+            PendingIteratorStep::IsliceAdvance {
+                iterator,
+                mut next_index,
+                stop,
+                step,
+                mut source_index,
+            } => loop {
+                if let Some(stop_value) = stop
+                    && source_index >= stop_value
+                {
+                    return Ok(None);
+                }
+                let value = match self.next_from_iterator_value(&iterator)? {
+                    GeneratorResumeOutcome::Yield(value) => value,
+                    GeneratorResumeOutcome::Complete(_) => return Ok(None),
+                    GeneratorResumeOutcome::PropagatedException => {
+                        return Err(self.iteration_error_from_state("islice() iterator failed")?);
+                    }
+                };
+                if source_index == next_index {
+                    next_index = next_index.saturating_add(step);
+                    source_index = source_index.saturating_add(1);
+                    let mut iter = iterator_ref.kind_mut();
+                    if let Object::Iterator(state) = &mut *iter
+                        && let IteratorKind::Islice {
+                            next_index: state_next,
+                            source_index: state_source,
+                            ..
+                        } = &mut state.kind
+                    {
+                        *state_next = next_index;
+                        *state_source = source_index;
+                        state.index = state.index.saturating_add(1);
+                    }
+                    return Ok(Some(value));
+                }
+                source_index = source_index.saturating_add(1);
+                let mut iter = iterator_ref.kind_mut();
+                if let Object::Iterator(state) = &mut *iter
+                    && let IteratorKind::Islice {
+                        next_index: state_next,
+                        source_index: state_source,
+                        ..
+                    } = &mut state.kind
+                {
+                    *state_next = next_index;
+                    *state_source = source_index;
+                }
+            },
+            PendingIteratorStep::PairwiseAdvance {
+                iterator,
+                mut previous,
+                mut primed,
+            } => {
+                if !primed {
+                    match self.next_from_iterator_value(&iterator)? {
+                        GeneratorResumeOutcome::Yield(value) => {
+                            previous = Some(value);
+                            primed = true;
+                            let mut iter = iterator_ref.kind_mut();
+                            if let Object::Iterator(state) = &mut *iter
+                                && let IteratorKind::Pairwise {
+                                    previous: state_prev,
+                                    primed: state_primed,
+                                    ..
+                                } = &mut state.kind
+                            {
+                                *state_prev = previous.clone();
+                                *state_primed = true;
+                            }
+                        }
+                        GeneratorResumeOutcome::Complete(_) => return Ok(None),
+                        GeneratorResumeOutcome::PropagatedException => {
+                            return Err(self.iteration_error_from_state(
+                                "pairwise() iterator failed",
+                            )?);
+                        }
+                    }
+                }
+                let next_value = match self.next_from_iterator_value(&iterator)? {
+                    GeneratorResumeOutcome::Yield(value) => value,
+                    GeneratorResumeOutcome::Complete(_) => return Ok(None),
+                    GeneratorResumeOutcome::PropagatedException => {
+                        return Err(self.iteration_error_from_state("pairwise() iterator failed")?);
+                    }
+                };
+                let left = previous.unwrap_or(Value::None);
+                let result = self.heap.alloc_tuple(vec![left, next_value.clone()]);
+                let mut iter = iterator_ref.kind_mut();
+                if let Object::Iterator(state) = &mut *iter
+                    && let IteratorKind::Pairwise {
+                        previous: state_prev,
+                        primed: state_primed,
+                        ..
+                    } = &mut state.kind
+                {
+                    *state_prev = Some(next_value);
+                    *state_primed = primed;
+                    state.index = state.index.saturating_add(1);
+                }
+                Ok(Some(result))
+            }
+            PendingIteratorStep::StarMapAdvance { callable, iterator } => {
+                let row = match self.next_from_iterator_value(&iterator)? {
+                    GeneratorResumeOutcome::Yield(value) => value,
+                    GeneratorResumeOutcome::Complete(_) => return Ok(None),
+                    GeneratorResumeOutcome::PropagatedException => {
+                        return Err(self.iteration_error_from_state("starmap() iterator failed")?);
+                    }
+                };
+                let call_args = self.collect_iterable_values(row)?;
+                let value = match self.call_internal(callable, call_args, HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(RuntimeError::new("starmap() function raised"));
+                    }
+                };
+                let mut iter = iterator_ref.kind_mut();
+                if let Object::Iterator(state) = &mut *iter
+                    && let IteratorKind::StarMap { .. } = &mut state.kind
+                {
+                    state.index = state.index.saturating_add(1);
+                }
+                Ok(Some(value))
+            }
+            PendingIteratorStep::TakeWhileAdvance {
+                predicate,
+                iterator,
+                done,
+            } => {
+                if done {
+                    return Ok(None);
+                }
+                let item = match self.next_from_iterator_value(&iterator)? {
+                    GeneratorResumeOutcome::Yield(value) => value,
+                    GeneratorResumeOutcome::Complete(_) => return Ok(None),
+                    GeneratorResumeOutcome::PropagatedException => {
+                        return Err(self.iteration_error_from_state(
+                            "takewhile() iterator failed",
+                        )?);
+                    }
+                };
+                let keep = match self.call_internal(
+                    predicate.clone(),
+                    vec![item.clone()],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(result) => self.truthy_from_value(&result)?,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(RuntimeError::new("takewhile() predicate raised"));
+                    }
+                };
+                if !keep {
+                    let mut iter = iterator_ref.kind_mut();
+                    if let Object::Iterator(state) = &mut *iter
+                        && let IteratorKind::TakeWhile {
+                            done: state_done, ..
+                        } = &mut state.kind
+                    {
+                        *state_done = true;
+                    }
+                    return Ok(None);
+                }
+                let mut iter = iterator_ref.kind_mut();
+                if let Object::Iterator(state) = &mut *iter
+                    && let IteratorKind::TakeWhile {
+                        done: state_done, ..
+                    } = &mut state.kind
+                {
+                    *state_done = false;
+                    state.index = state.index.saturating_add(1);
+                }
+                Ok(Some(item))
+            }
             PendingIteratorStep::SequenceGetItem {
                 target,
                 getitem,

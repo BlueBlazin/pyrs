@@ -2427,6 +2427,26 @@ impl Vm {
                     IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => {
                         ("chain", None, None, None, false, true)
                     }
+                    IteratorKind::Accumulate { .. } => {
+                        ("accumulate", None, None, None, false, true)
+                    }
+                    IteratorKind::Compress { .. } => {
+                        ("compress", None, None, None, false, true)
+                    }
+                    IteratorKind::DropWhile { .. } => {
+                        ("dropwhile", None, None, None, false, true)
+                    }
+                    IteratorKind::FilterFalse { .. } => {
+                        ("filterfalse", None, None, None, false, true)
+                    }
+                    IteratorKind::Islice { .. } => ("islice", None, None, None, false, true),
+                    IteratorKind::Pairwise { .. } => {
+                        ("pairwise", None, None, None, false, true)
+                    }
+                    IteratorKind::StarMap { .. } => ("starmap", None, None, None, false, true),
+                    IteratorKind::TakeWhile { .. } => {
+                        ("takewhile", None, None, None, false, true)
+                    }
                     IteratorKind::SequenceGetItem { .. } => {
                         ("iterator", None, None, None, false, true)
                     }
