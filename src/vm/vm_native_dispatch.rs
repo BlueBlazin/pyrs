@@ -9374,6 +9374,12 @@ impl Vm {
                     IteratorKind::Zip { .. } => "zip",
                     IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => "chain",
                     IteratorKind::Accumulate { .. } => "accumulate",
+                    IteratorKind::Combinations { .. } => "combinations",
+                    IteratorKind::CombinationsWithReplacement { .. } => {
+                        "combinations_with_replacement"
+                    }
+                    IteratorKind::Permutations { .. } => "permutations",
+                    IteratorKind::Product { .. } => "product",
                     IteratorKind::Compress { .. } => "compress",
                     IteratorKind::DropWhile { .. } => "dropwhile",
                     IteratorKind::FilterFalse { .. } => "filterfalse",
@@ -9741,6 +9747,186 @@ impl Vm {
                         initial: initial.clone(),
                         emitted_initial: *emitted_initial,
                     };
+                }
+                IteratorKind::Combinations {
+                    pool,
+                    r,
+                    indices,
+                    first,
+                    done,
+                } => {
+                    if *done {
+                        return Ok(None);
+                    }
+                    if *r == 0 {
+                        if *first {
+                            *first = false;
+                            state.index = state.index.saturating_add(1);
+                            return Ok(Some(self.heap.alloc_tuple(Vec::new())));
+                        }
+                        *done = true;
+                        return Ok(None);
+                    }
+                    if *first {
+                        *first = false;
+                    } else {
+                        let n = pool.len();
+                        let mut pivot = None;
+                        for i in (0..*r).rev() {
+                            if indices[i] != i + n - *r {
+                                pivot = Some(i);
+                                break;
+                            }
+                        }
+                        let Some(i) = pivot else {
+                            *done = true;
+                            return Ok(None);
+                        };
+                        indices[i] += 1;
+                        for j in (i + 1)..*r {
+                            indices[j] = indices[j - 1] + 1;
+                        }
+                    }
+                    let row = indices
+                        .iter()
+                        .take(*r)
+                        .map(|index| pool[*index].clone())
+                        .collect();
+                    state.index = state.index.saturating_add(1);
+                    return Ok(Some(self.heap.alloc_tuple(row)));
+                }
+                IteratorKind::CombinationsWithReplacement {
+                    pool,
+                    r,
+                    indices,
+                    first,
+                    done,
+                } => {
+                    if *done {
+                        return Ok(None);
+                    }
+                    if *r == 0 {
+                        if *first {
+                            *first = false;
+                            state.index = state.index.saturating_add(1);
+                            return Ok(Some(self.heap.alloc_tuple(Vec::new())));
+                        }
+                        *done = true;
+                        return Ok(None);
+                    }
+                    if *first {
+                        *first = false;
+                    } else {
+                        let n = pool.len();
+                        let mut pivot = None;
+                        for i in (0..*r).rev() {
+                            if indices[i] != n - 1 {
+                                pivot = Some(i);
+                                break;
+                            }
+                        }
+                        let Some(i) = pivot else {
+                            *done = true;
+                            return Ok(None);
+                        };
+                        let next = indices[i] + 1;
+                        for index in indices.iter_mut().skip(i) {
+                            *index = next;
+                        }
+                    }
+                    let row = indices
+                        .iter()
+                        .take(*r)
+                        .map(|index| pool[*index].clone())
+                        .collect();
+                    state.index = state.index.saturating_add(1);
+                    return Ok(Some(self.heap.alloc_tuple(row)));
+                }
+                IteratorKind::Permutations {
+                    pool,
+                    r,
+                    indices,
+                    cycles,
+                    first,
+                    done,
+                } => {
+                    if *done {
+                        return Ok(None);
+                    }
+                    if *first {
+                        *first = false;
+                        let row = indices
+                            .iter()
+                            .take(*r)
+                            .map(|index| pool[*index].clone())
+                            .collect();
+                        state.index = state.index.saturating_add(1);
+                        return Ok(Some(self.heap.alloc_tuple(row)));
+                    }
+                    if *r == 0 {
+                        *done = true;
+                        return Ok(None);
+                    }
+                    let n = pool.len();
+                    for i in (0..*r).rev() {
+                        cycles[i] = cycles[i].saturating_sub(1);
+                        if cycles[i] == 0 {
+                            let moved = indices.remove(i);
+                            indices.push(moved);
+                            cycles[i] = n - i;
+                        } else {
+                            let j = cycles[i];
+                            let swap_with = n - j;
+                            indices.swap(i, swap_with);
+                            let row = indices
+                                .iter()
+                                .take(*r)
+                                .map(|index| pool[*index].clone())
+                                .collect();
+                            state.index = state.index.saturating_add(1);
+                            return Ok(Some(self.heap.alloc_tuple(row)));
+                        }
+                    }
+                    *done = true;
+                    return Ok(None);
+                }
+                IteratorKind::Product {
+                    pools,
+                    indices,
+                    first,
+                    done,
+                } => {
+                    if *done {
+                        return Ok(None);
+                    }
+                    if *first {
+                        *first = false;
+                    } else if pools.is_empty() {
+                        *done = true;
+                        return Ok(None);
+                    } else {
+                        let mut carry = true;
+                        for i in (0..indices.len()).rev() {
+                            indices[i] += 1;
+                            if indices[i] >= pools[i].len() {
+                                indices[i] = 0;
+                            } else {
+                                carry = false;
+                                break;
+                            }
+                        }
+                        if carry {
+                            *done = true;
+                            return Ok(None);
+                        }
+                    }
+                    let row = pools
+                        .iter()
+                        .enumerate()
+                        .map(|(i, pool)| pool[indices[i]].clone())
+                        .collect();
+                    state.index = state.index.saturating_add(1);
+                    return Ok(Some(self.heap.alloc_tuple(row)));
                 }
                 IteratorKind::Compress { data, selectors } => {
                     pending_step = PendingIteratorStep::CompressAdvance {

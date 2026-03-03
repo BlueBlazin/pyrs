@@ -2430,6 +2430,21 @@ impl Vm {
                     IteratorKind::Accumulate { .. } => {
                         ("accumulate", None, None, None, false, true)
                     }
+                    IteratorKind::Combinations { .. } => {
+                        ("combinations", None, None, None, false, true)
+                    }
+                    IteratorKind::CombinationsWithReplacement { .. } => (
+                        "combinations_with_replacement",
+                        None,
+                        None,
+                        None,
+                        false,
+                        true,
+                    ),
+                    IteratorKind::Permutations { .. } => {
+                        ("permutations", None, None, None, false, true)
+                    }
+                    IteratorKind::Product { .. } => ("product", None, None, None, false, true),
                     IteratorKind::Compress { .. } => ("compress", None, None, None, false, true),
                     IteratorKind::DropWhile { .. } => ("dropwhile", None, None, None, false, true),
                     IteratorKind::FilterFalse { .. } => {

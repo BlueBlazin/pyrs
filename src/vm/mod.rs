@@ -7662,6 +7662,10 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                 | IteratorKind::Chain { .. }
                 | IteratorKind::ChainFromIterable { .. }
                 | IteratorKind::Accumulate { .. }
+                | IteratorKind::Combinations { .. }
+                | IteratorKind::CombinationsWithReplacement { .. }
+                | IteratorKind::Permutations { .. }
+                | IteratorKind::Product { .. }
                 | IteratorKind::Compress { .. }
                 | IteratorKind::DropWhile { .. }
                 | IteratorKind::FilterFalse { .. }

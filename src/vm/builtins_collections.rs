@@ -1,11 +1,11 @@
 use super::{
-    BoundMethod, BuiltinFunction, ClassObject, DEQUE_BACKING_STORAGE_ATTR, HashMap, Heap,
-    InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, MAPPING_PROXY_STORAGE_ATTR,
-    ModuleObject, NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values,
-    and_values, binary_operator, bytes_like_from_value, class_attr_lookup, class_name_for_instance,
-    compare_ge, compare_gt, compare_le, compare_lt, dict_remove_value, dict_set_value_checked,
-    div_values, ensure_hashable, floor_div_values, format_repr, is_missing_attribute_error,
-    is_truthy, lshift_values, mod_values, mul_values, pow_values, rshift_values,
+    BoundMethod, BuiltinFunction, ClassObject, DEQUE_BACKING_STORAGE_ATTR, HashMap, InstanceObject,
+    InternalCallOutcome, IteratorKind, IteratorObject, MAPPING_PROXY_STORAGE_ATTR, ModuleObject,
+    NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values, and_values,
+    binary_operator, bytes_like_from_value, class_attr_lookup, class_name_for_instance, compare_ge,
+    compare_gt, compare_le, compare_lt, dict_remove_value, dict_set_value_checked, div_values,
+    ensure_hashable, floor_div_values, format_repr, is_missing_attribute_error, is_truthy,
+    lshift_values, mod_values, mul_values, pow_values, rshift_values,
     runtime_error_matches_exception, sub_values, unary_predicate, value_to_int, xor_values,
 };
 use crate::runtime::FunctionObject;
@@ -531,35 +531,20 @@ impl Vm {
         if r < 0 {
             return Err(RuntimeError::new("r must be non-negative"));
         }
-        let r = r as usize;
-        if r > values.len() {
-            return Ok(self.heap.alloc_list(Vec::new()));
-        }
-        let mut out = Vec::new();
-        let mut current = Vec::with_capacity(r);
-        fn build_combinations(
-            values: &[Value],
-            start: usize,
-            target_len: usize,
-            current: &mut Vec<Value>,
-            out: &mut Vec<Vec<Value>>,
-        ) {
-            if current.len() == target_len {
-                out.push(current.clone());
-                return;
-            }
-            for idx in start..values.len() {
-                current.push(values[idx].clone());
-                build_combinations(values, idx + 1, target_len, current, out);
-                current.pop();
-            }
-        }
-        build_combinations(&values, 0, r, &mut current, &mut out);
-        Ok(self.heap.alloc_list(
-            out.into_iter()
-                .map(|row| self.heap.alloc_tuple(row))
-                .collect(),
-        ))
+        let r = usize::try_from(r).map_err(|_| RuntimeError::new("r is too large"))?;
+        let n = values.len();
+        let done = r > n;
+        let indices = if done { Vec::new() } else { (0..r).collect() };
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Combinations {
+                pool: values,
+                r,
+                indices,
+                first: true,
+                done,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_combinations_with_replacement(
@@ -577,35 +562,18 @@ impl Vm {
         if r < 0 {
             return Err(RuntimeError::new("r must be non-negative"));
         }
-        let r = r as usize;
-        if values.is_empty() && r > 0 {
-            return Ok(self.heap.alloc_list(Vec::new()));
-        }
-        let mut out = Vec::new();
-        let mut current = Vec::with_capacity(r);
-        fn build_combinations_replacement(
-            values: &[Value],
-            start: usize,
-            target_len: usize,
-            current: &mut Vec<Value>,
-            out: &mut Vec<Vec<Value>>,
-        ) {
-            if current.len() == target_len {
-                out.push(current.clone());
-                return;
-            }
-            for idx in start..values.len() {
-                current.push(values[idx].clone());
-                build_combinations_replacement(values, idx, target_len, current, out);
-                current.pop();
-            }
-        }
-        build_combinations_replacement(&values, 0, r, &mut current, &mut out);
-        Ok(self.heap.alloc_list(
-            out.into_iter()
-                .map(|row| self.heap.alloc_tuple(row))
-                .collect(),
-        ))
+        let r = usize::try_from(r).map_err(|_| RuntimeError::new("r is too large"))?;
+        let done = values.is_empty() && r > 0;
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::CombinationsWithReplacement {
+                pool: values,
+                r,
+                indices: vec![0; r],
+                first: true,
+                done,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_compress(
@@ -1130,43 +1098,29 @@ impl Vm {
         }
         let values = self.collect_iterable_values(args.remove(0))?;
         let r = if let Some(r) = args.pop() {
-            value_to_int(r)? as usize
+            let r = value_to_int(r)?;
+            if r < 0 {
+                return Err(RuntimeError::new("r must be non-negative"));
+            }
+            usize::try_from(r).map_err(|_| RuntimeError::new("r is too large"))?
         } else {
             values.len()
         };
-        if r > values.len() {
-            return Ok(self.heap.alloc_list(Vec::new()));
-        }
-        let mut out: Vec<Value> = Vec::new();
-        let mut used = vec![false; values.len()];
-        let mut current: Vec<Value> = Vec::with_capacity(r);
-
-        fn build_permutations(
-            heap: &Heap,
-            values: &[Value],
-            used: &mut [bool],
-            current: &mut Vec<Value>,
-            out: &mut Vec<Value>,
-            target_len: usize,
-        ) {
-            if current.len() == target_len {
-                out.push(heap.alloc_tuple(current.clone()));
-                return;
-            }
-            for idx in 0..values.len() {
-                if used[idx] {
-                    continue;
-                }
-                used[idx] = true;
-                current.push(values[idx].clone());
-                build_permutations(heap, values, used, current, out, target_len);
-                current.pop();
-                used[idx] = false;
-            }
-        }
-
-        build_permutations(&self.heap, &values, &mut used, &mut current, &mut out, r);
-        Ok(self.heap.alloc_list(out))
+        let n = values.len();
+        let done = r > n;
+        let indices: Vec<usize> = (0..n).collect();
+        let cycles: Vec<usize> = (0..r).map(|offset| n.saturating_sub(offset)).collect();
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Permutations {
+                pool: values,
+                r,
+                indices,
+                cycles,
+                first: true,
+                done,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_itertools_product(
@@ -1188,40 +1142,32 @@ impl Vm {
             ));
         }
 
-        let mut pools: Vec<Vec<Value>> = Vec::new();
+        let mut base_pools: Vec<Vec<Value>> = Vec::new();
         for arg in args {
-            pools.push(self.collect_iterable_values(arg)?);
+            base_pools.push(self.collect_iterable_values(arg)?);
         }
-        let base_pools = pools.clone();
-        for _ in 1..repeat {
-            pools.extend(base_pools.clone());
-        }
-
-        let mut out = Vec::new();
-        let mut current = Vec::new();
-        fn build_product(
-            heap: &Heap,
-            pools: &[Vec<Value>],
-            depth: usize,
-            current: &mut Vec<Value>,
-            out: &mut Vec<Value>,
-        ) {
-            if depth == pools.len() {
-                out.push(heap.alloc_tuple(current.clone()));
-                return;
-            }
-            for value in &pools[depth] {
-                current.push(value.clone());
-                build_product(heap, pools, depth + 1, current, out);
-                current.pop();
-            }
-        }
-        if pools.is_empty() {
-            out.push(self.heap.alloc_tuple(Vec::new()));
+        let repeat =
+            usize::try_from(repeat).map_err(|_| RuntimeError::new("repeat is too large"))?;
+        let pools = if repeat == 0 {
+            Vec::new()
         } else {
-            build_product(&self.heap, &pools, 0, &mut current, &mut out);
-        }
-        Ok(self.heap.alloc_list(out))
+            let mut expanded = Vec::with_capacity(base_pools.len().saturating_mul(repeat));
+            for _ in 0..repeat {
+                expanded.extend(base_pools.iter().cloned());
+            }
+            expanded
+        };
+        let done = !pools.is_empty() && pools.iter().any(Vec::is_empty);
+        let indices = vec![0; pools.len()];
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Product {
+                pools,
+                indices,
+                first: true,
+                done,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_functools_reduce(

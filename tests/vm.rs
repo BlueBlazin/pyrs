@@ -15193,6 +15193,8 @@ grp = [(k, list(g)) for k, g in itertools.groupby('AAABBC')]
 isl1 = list(itertools.islice(range(10), 3))
 isl2 = list(itertools.islice(range(10), 2, 8, 3))
 pw = list(itertools.pairwise([10, 20, 30]))
+perm = list(itertools.permutations([1, 2, 3], 2))
+prod = list(itertools.product([1, 2], repeat=2))
 sm = list(itertools.starmap(operator.add, [(1, 2), (3, 4)]))
 tw = list(itertools.takewhile(lambda x: x < 4, [1, 2, 3, 4, 1]))
 t1, t2 = itertools.tee([7, 8], 2)
@@ -15212,6 +15214,8 @@ ok = (
     and isl1 == [0, 1, 2]
     and isl2 == [2, 5]
     and pw == [(10, 20), (20, 30)]
+    and perm == [(1, 2), (1, 3), (2, 1), (2, 3), (3, 1), (3, 2)]
+    and prod == [(1, 1), (1, 2), (2, 1), (2, 2)]
     and sm == [3, 7]
     and tw == [1, 2, 3]
     and t1 == [7, 8]
@@ -18431,11 +18435,15 @@ fn itertools_helper_types_are_iterator_like_not_lists() {
 objs = {
     "accumulate": itertools.accumulate([1, 2]),
     "batched": itertools.batched([1, 2, 3], 2),
+    "combinations": itertools.combinations([1, 2, 3], 2),
+    "combinations_with_replacement": itertools.combinations_with_replacement([1, 2], 2),
     "compress": itertools.compress([1, 2], [1, 0]),
     "dropwhile": itertools.dropwhile(lambda x: x < 2, [1, 2, 3]),
     "filterfalse": itertools.filterfalse(None, [0, 1]),
     "islice": itertools.islice(range(10), 3),
     "pairwise": itertools.pairwise([1, 2, 3]),
+    "permutations": itertools.permutations([1, 2, 3], 2),
+    "product": itertools.product([1, 2], repeat=2),
     "repeat": itertools.repeat("x", 2),
     "starmap": itertools.starmap(operator.add, [(1, 2)]),
     "takewhile": itertools.takewhile(lambda x: x < 3, [1, 2, 3]),
@@ -18448,11 +18456,15 @@ ok = (
     iter_identity
     and not is_list["accumulate"]
     and not is_list["batched"]
+    and not is_list["combinations"]
+    and not is_list["combinations_with_replacement"]
     and not is_list["compress"]
     and not is_list["dropwhile"]
     and not is_list["filterfalse"]
     and not is_list["islice"]
     and not is_list["pairwise"]
+    and not is_list["permutations"]
+    and not is_list["product"]
     and not is_list["repeat"]
     and not is_list["starmap"]
     and not is_list["takewhile"]
@@ -18485,11 +18497,15 @@ def probe(factory):
 checks = {
     "accumulate": probe(lambda x: itertools.accumulate(x)),
     "batched": probe(lambda x: itertools.batched(x, 1)),
+    "combinations": probe(lambda x: itertools.combinations(x, 1)),
+    "combinations_with_replacement": probe(lambda x: itertools.combinations_with_replacement(x, 1)),
     "compress": probe(lambda x: itertools.compress(x, [1])),
     "dropwhile": probe(lambda x: itertools.dropwhile(lambda y: y < 0, x)),
     "filterfalse": probe(lambda x: itertools.filterfalse(None, x)),
     "islice": probe(lambda x: itertools.islice(x, 1)),
     "pairwise": probe(lambda x: itertools.pairwise(x)),
+    "permutations": probe(lambda x: itertools.permutations(x, 1)),
+    "product": probe(lambda x: itertools.product(x)),
     "starmap": probe(lambda x: itertools.starmap(operator.add, x)),
     "takewhile": probe(lambda x: itertools.takewhile(lambda y: y < 0, x)),
     "zip_longest": probe(lambda x: itertools.zip_longest(x, [1])),

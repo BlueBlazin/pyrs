@@ -1520,6 +1520,34 @@ pub enum IteratorKind {
         initial: Option<Value>,
         emitted_initial: bool,
     },
+    Combinations {
+        pool: Vec<Value>,
+        r: usize,
+        indices: Vec<usize>,
+        first: bool,
+        done: bool,
+    },
+    CombinationsWithReplacement {
+        pool: Vec<Value>,
+        r: usize,
+        indices: Vec<usize>,
+        first: bool,
+        done: bool,
+    },
+    Permutations {
+        pool: Vec<Value>,
+        r: usize,
+        indices: Vec<usize>,
+        cycles: Vec<usize>,
+        first: bool,
+        done: bool,
+    },
+    Product {
+        pools: Vec<Vec<Value>>,
+        indices: Vec<usize>,
+        first: bool,
+        done: bool,
+    },
     Compress {
         data: Value,
         selectors: Value,
@@ -1682,6 +1710,62 @@ impl fmt::Debug for IteratorKind {
                 .field("total", total)
                 .field("initial", initial)
                 .field("emitted_initial", emitted_initial)
+                .finish(),
+            IteratorKind::Combinations {
+                pool,
+                r,
+                indices,
+                first,
+                done,
+            } => f
+                .debug_struct("Combinations")
+                .field("pool_len", &pool.len())
+                .field("r", r)
+                .field("indices", indices)
+                .field("first", first)
+                .field("done", done)
+                .finish(),
+            IteratorKind::CombinationsWithReplacement {
+                pool,
+                r,
+                indices,
+                first,
+                done,
+            } => f
+                .debug_struct("CombinationsWithReplacement")
+                .field("pool_len", &pool.len())
+                .field("r", r)
+                .field("indices", indices)
+                .field("first", first)
+                .field("done", done)
+                .finish(),
+            IteratorKind::Permutations {
+                pool,
+                r,
+                indices,
+                cycles,
+                first,
+                done,
+            } => f
+                .debug_struct("Permutations")
+                .field("pool_len", &pool.len())
+                .field("r", r)
+                .field("indices", indices)
+                .field("cycles", cycles)
+                .field("first", first)
+                .field("done", done)
+                .finish(),
+            IteratorKind::Product {
+                pools,
+                indices,
+                first,
+                done,
+            } => f
+                .debug_struct("Product")
+                .field("pools_len", &pools.len())
+                .field("indices", indices)
+                .field("first", first)
+                .field("done", done)
                 .finish(),
             IteratorKind::Compress { data, selectors } => f
                 .debug_struct("Compress")
@@ -2535,6 +2619,24 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                     trace_value(initial, stack, marked);
                 }
             }
+            IteratorKind::Combinations { pool, .. }
+            | IteratorKind::CombinationsWithReplacement { pool, .. } => {
+                for value in pool {
+                    trace_value(value, stack, marked);
+                }
+            }
+            IteratorKind::Permutations { pool, .. } => {
+                for value in pool {
+                    trace_value(value, stack, marked);
+                }
+            }
+            IteratorKind::Product { pools, .. } => {
+                for pool in pools {
+                    for value in pool {
+                        trace_value(value, stack, marked);
+                    }
+                }
+            }
             IteratorKind::Compress { data, selectors } => {
                 trace_value(data, stack, marked);
                 trace_value(selectors, stack, marked);
@@ -2777,6 +2879,66 @@ fn clear_object_refs(obj: &ObjRef) {
                     *total = None;
                     *initial = None;
                     *emitted_initial = true;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Combinations {
+                    pool,
+                    r,
+                    indices,
+                    first,
+                    done,
+                } => {
+                    pool.clear();
+                    *r = 0;
+                    indices.clear();
+                    *first = false;
+                    *done = true;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::CombinationsWithReplacement {
+                    pool,
+                    r,
+                    indices,
+                    first,
+                    done,
+                } => {
+                    pool.clear();
+                    *r = 0;
+                    indices.clear();
+                    *first = false;
+                    *done = true;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Permutations {
+                    pool,
+                    r,
+                    indices,
+                    cycles,
+                    first,
+                    done,
+                } => {
+                    pool.clear();
+                    *r = 0;
+                    indices.clear();
+                    cycles.clear();
+                    *first = false;
+                    *done = true;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Product {
+                    pools,
+                    indices,
+                    first,
+                    done,
+                } => {
+                    pools.clear();
+                    indices.clear();
+                    *first = false;
+                    *done = true;
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -8161,7 +8323,11 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                 | IteratorKind::ZipLongest { .. }
                 | IteratorKind::Tee { .. }
                 | IteratorKind::Repeat { .. }
-                | IteratorKind::Batched { .. } => {
+                | IteratorKind::Batched { .. }
+                | IteratorKind::Combinations { .. }
+                | IteratorKind::CombinationsWithReplacement { .. }
+                | IteratorKind::Permutations { .. }
+                | IteratorKind::Product { .. } => {
                     Err(RuntimeError::type_error("expected iterable"))
                 }
             }

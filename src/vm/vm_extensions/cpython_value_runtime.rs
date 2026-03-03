@@ -51,6 +51,10 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
                 | IteratorKind::Chain { .. }
                 | IteratorKind::ChainFromIterable { .. }
                 | IteratorKind::Accumulate { .. }
+                | IteratorKind::Combinations { .. }
+                | IteratorKind::CombinationsWithReplacement { .. }
+                | IteratorKind::Permutations { .. }
+                | IteratorKind::Product { .. }
                 | IteratorKind::Compress { .. }
                 | IteratorKind::DropWhile { .. }
                 | IteratorKind::FilterFalse { .. }
