@@ -2273,15 +2273,33 @@ fn compile_failure_to_execution_result(
     } else {
         compile_phase_key.to_string()
     };
+    execution_failure_result(
+        &phase,
+        stderr,
+        error,
+        None,
+        compile.line,
+        compile.column,
+    )
+}
+
+fn execution_failure_result(
+    phase_key: &str,
+    stderr: String,
+    error: Option<String>,
+    blocker_key: Option<String>,
+    line: usize,
+    column: usize,
+) -> WasmExecutionResult {
     WasmExecutionResult {
         success: false,
-        phase,
+        phase: phase_key.to_string(),
         stdout: String::new(),
         stderr,
         error,
-        blocker_key: None,
-        line: compile.line,
-        column: compile.column,
+        blocker_key,
+        line,
+        column,
     }
 }
 
@@ -2305,16 +2323,14 @@ fn execution_error_with_message(
     line: usize,
     column: usize,
 ) -> WasmExecutionResult {
-    WasmExecutionResult {
-        success: false,
-        phase: phase_key.to_string(),
-        stdout: String::new(),
-        stderr: message.clone(),
-        error: Some(message),
+    execution_failure_result(
+        phase_key,
+        message.clone(),
+        Some(message),
         blocker_key,
         line,
         column,
-    }
+    )
 }
 
 fn unsupported_execution_result(
