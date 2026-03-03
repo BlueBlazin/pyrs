@@ -434,10 +434,10 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 			appendBeforeInlineEntry(line);
 		};
 
-		const appendPromptInput = (source) => {
+		const appendPromptInput = (source, startsContinuation) => {
 			const lines = source.split("\n");
 			lines.forEach((line, index) => {
-				appendPromptLine(index === 0 ? ">>> " : "... ", line);
+				appendPromptLine(index === 0 && !startsContinuation ? ">>> " : "... ", line);
 			});
 		};
 
@@ -616,7 +616,7 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 				commandHistory.push(normalized);
 			}
 			historyIndex = commandHistory.length;
-			appendPromptInput(normalized);
+			appendPromptInput(normalized, continuationPrompt);
 
 			setBusy(true);
 			const loaded = await ensureRuntimeLoaded();
