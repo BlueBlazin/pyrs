@@ -11849,6 +11849,17 @@ fn imports_gc_errno_weakref_and_array_modules() {
 }
 
 #[test]
+fn faulthandler_exposes_explicit_unsupported_semantics() {
+    let source = "import faulthandler\nok = (faulthandler.is_enabled() is False)\nkind = ''\nmsg = ''\ntry:\n    faulthandler.enable()\nexcept Exception as exc:\n    kind = type(exc).__name__\n    msg = str(exc)\nok = ok and (kind == 'RuntimeError') and ('not supported' in msg)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn gc_module_exposes_threshold_and_state_controls() {
     let source = "import gc\nbefore = gc.get_threshold()\ngc.set_threshold(17, 3, 2)\nafter = gc.get_threshold()\ngc.disable()\ndisabled = gc.isenabled() is False\ngc.enable()\nenabled = gc.isenabled() is True\ncounts = gc.get_count()\ncollected = gc.collect()\nok = len(before) == 3 and after[0] == 17 and after[1] == 3 and disabled and enabled and len(counts) == 3 and isinstance(collected, int)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

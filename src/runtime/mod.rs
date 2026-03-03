@@ -4594,6 +4594,10 @@ pub enum BuiltinFunction {
     SignalRaiseSignal,
     LocaleSetLocale,
     LocaleLocaleConv,
+    FaulthandlerUnsupported,
+    FaulthandlerDisable,
+    FaulthandlerIsEnabled,
+    FaulthandlerUnregister,
     SocketGetHostName,
     SocketGetHostByName,
     SocketGetAddrInfo,
@@ -6481,6 +6485,29 @@ impl BuiltinFunction {
                     ));
                 }
                 Ok(args[0].clone())
+            }
+            BuiltinFunction::FaulthandlerUnsupported => Err(RuntimeError::new(
+                "faulthandler is not supported on this platform",
+            )),
+            BuiltinFunction::FaulthandlerDisable => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error("disable() takes no arguments"));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::FaulthandlerIsEnabled => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error("is_enabled() takes no arguments"));
+                }
+                Ok(Value::Bool(false))
+            }
+            BuiltinFunction::FaulthandlerUnregister => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error(
+                        "unregister() takes exactly one argument",
+                    ));
+                }
+                Ok(Value::Bool(false))
             }
             BuiltinFunction::TypingNoDefaultRepr => Ok(Value::Str("typing.NoDefault".to_string())),
             BuiltinFunction::TypingNoDefaultReduce => Ok(Value::Str("NoDefault".to_string())),

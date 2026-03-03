@@ -932,6 +932,10 @@ impl Vm {
             | BuiltinFunction::TypingTypeParamHasDefault
             | BuiltinFunction::TypingGenericClassGetItem
             | BuiltinFunction::TypingGenericInitSubclass => "typing",
+            BuiltinFunction::FaulthandlerUnsupported
+            | BuiltinFunction::FaulthandlerDisable
+            | BuiltinFunction::FaulthandlerIsEnabled
+            | BuiltinFunction::FaulthandlerUnregister => "faulthandler",
             _ => "builtins",
         }
         .to_string();
