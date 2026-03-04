@@ -251,6 +251,31 @@ This investigation was triggered by `itertools` behavior and must remain explici
 - [x] `P1` Audited exported `itertools` callables (lines 3696-3718) for iterator/laziness/type/repr parity and converted eager helpers to iterator objects with CPython-shaped repr/type behavior where applicable.
 - [x] `P1` Added differential + vm tests for iterator object identity/repr/type and lazy consumption semantics across `itertools` helper surfaces (including partial-consumption `groupby` behavior).
 
+## 10) Investigation Trigger: Iterator Type-Identity Debt (`type(...)` / `__class__`)
+
+This investigation was triggered by `type(range(3))` returning `'iterator'` (string) instead of a CPython-shaped type object. Keep this debt explicitly tracked until fully closed.
+
+- [ ] `P0` Remove legacy iterator string-marker type fallback from runtime type resolution:
+  - current fallback path returns string markers for iterators (`Value::Iterator(_) => Value::Str("iterator".to_string())`) in `src/runtime/mod.rs` (`builtin_type_of`),
+  - related `"iterator"` marker use is still present in `value_type_name` (`src/runtime/mod.rs`) and VM utility type-name paths (`src/vm/builtins_core.rs`, `src/vm/containers.rs`, `src/vm/stdlib/{json,csv}.rs`, `src/vm/vm_extensions/cpython_iter_api.rs`),
+  - closure criteria: iterator type identity must come from runtime class/type objects, not marker strings.
+- [ ] `P0` Unify iterator type resolution across `type(x)` and `x.__class__`:
+  - `type(x)` currently has VM-side special handling in `src/vm/builtins_core.rs::builtin_type` plus legacy runtime fallback through `BuiltinFunction::Type.call(...)`,
+  - `__class__` currently routes through `src/vm/vm_execution.rs::load_dunder_class_attr`, which only uses `class_of_value` for `Instance`/`Class`/`Super` and then falls back to legacy type path,
+  - closure criteria: a single CPython-aligned iterator type mapping is shared by both `type(...)` and `__class__` surfaces.
+- [ ] `P1` Close `RangeObject` vs `Range` split and ensure CPython `range` object identity/iterator behavior is coherent:
+  - `range(...)` currently materializes `Value::Iterator(IteratorKind::RangeObject { ... })` (`src/vm/builtins_core.rs`),
+  - `next(range_obj)` is rejected via explicit guard while `iter(range_obj)` converts to `IteratorKind::Range` iterator path,
+  - closure criteria: `range` object type identity and iterator type identity match CPython (`range` vs `range_iterator`) without marker shims.
+- [ ] `P1` Audit all iterator families for CPython type identity parity:
+  - runtime currently has 37 `IteratorKind` variants (`src/runtime/mod.rs::IteratorKind`),
+  - `src/vm/vm_builtin_metadata.rs::load_attr_iterator` already contains a kind->type-name matrix (e.g. `list_iterator`, `tuple_iterator`, `dict_keyiterator`, `range_iterator`, `callable_iterator`) that can diverge from `type(...)` fallback behavior,
+  - closure criteria: each iterator family resolves to correct CPython type object/name in both attribute and `type(...)` paths, with no generic `'iterator'` collapse.
+- [ ] `P1` Add/expand regression coverage for iterator type identity:
+  - vm + differential tests for `type(...)` and `.__class__` on representative iterator families (`range`, `iter(list)`, `iter(tuple)`, `iter(dict)`, `map`, `zip`, `itertools.chain`, callable iterator),
+  - include negative guard rails ensuring no `'iterator'` string marker appears as `type(...)` result for iterator objects,
+  - closure criteria: parity tests are green and fail if string-marker fallback regresses.
+
 ## Recommended Fix Order
 
 1. Close all `NoOp` and placeholder semantics in section 1 (`P0` first).  
@@ -258,4 +283,5 @@ This investigation was triggered by `itertools` behavior and must remain explici
 3. Resolve alias-copy identity drift in section 4.  
 4. Trim builtin-first pure-stdlib shadowing (section 3), module family by module family.  
 5. Harden import/finder fallback correctness (sections 5 and 7).  
-6. Reconfirm shim and inventory policy (sections 6 and 8) with CI enforcement.
+6. Close iterator type-identity debt (section 10) with a single shared type-resolution path.  
+7. Reconfirm shim and inventory policy (sections 6 and 8) with CI enforcement.
