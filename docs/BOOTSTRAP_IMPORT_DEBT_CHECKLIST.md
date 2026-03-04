@@ -95,6 +95,7 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
   - incremental substrate parity landed to support this closure:
     - native `os.getuid` / `posix.getuid` on unix hosts;
     - native `os.readlink` / `posix.readlink` with CPython-shaped return-type behavior (`str` for str-path input, `bytes` for bytes-path input);
+    - `posix` now exports open/access/seek constants (`O_RDONLY`, `O_DIRECTORY`, `F_OK`, `SEEK_*`, etc.) required by pure `Lib/os.py` consumers such as `glob`/`pathlib`.
   - covered by `tests/vm.rs::os_import_prefers_cpython_pure_module_when_lib_path_is_added`.
 - [x] `P1` `_osx_support` (line 1536):
   - added to pure-stdlib unload preference group (`PURE_STDLIB_OSX_SUPPORT_MODULES`) so CPython `Lib/_osx_support.py` is preferred when available;
