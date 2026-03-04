@@ -20424,6 +20424,18 @@ try:
     list(itertools.batched([1, 2, 3], 2, strict=True))
 except ValueError as exc:
     strict_error = ("incomplete batch" in str(exc))
+kw_n = list(itertools.batched("ABCDEFG", n=3))
+kw_all = list(itertools.batched(iterable="ABCDEFG", n=3, strict=False))
+duplicate_n_error = False
+try:
+    itertools.batched("ABCDEFG", 3, n=4)
+except TypeError as exc:
+    duplicate_n_error = ("given by name" in str(exc) and "position (2)" in str(exc))
+positional_strict_error = False
+try:
+    itertools.batched("ABCDEFG", 3, True)
+except TypeError as exc:
+    positional_strict_error = ("positional arguments" in str(exc))
 ok = (
     created == []
     and first == (1, 2)
@@ -20433,6 +20445,10 @@ ok = (
     and done
     and strict_error
     and (iter(obj) is obj)
+    and kw_n == [("A", "B", "C"), ("D", "E", "F"), ("G",)]
+    and kw_all == [("A", "B", "C"), ("D", "E", "F"), ("G",)]
+    and duplicate_n_error
+    and positional_strict_error
 )
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");

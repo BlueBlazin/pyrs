@@ -1028,25 +1028,60 @@ impl Vm {
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if args.len() < 2 || args.len() > 3 {
-            return Err(RuntimeError::new(
-                "batched() expects iterable, n, optional strict",
-            ));
+        if args.len() > 2 {
+            return Err(RuntimeError::type_error(format!(
+                "batched() takes exactly 2 positional arguments ({} given)",
+                args.len()
+            )));
         }
-        let strict = if args.len() == 3 {
-            is_truthy(&args[2])
-        } else if let Some(value) = kwargs.remove("strict") {
+
+        let mut iterable_arg = if args.is_empty() {
+            None
+        } else {
+            Some(args.remove(0))
+        };
+        let mut n_arg = if args.is_empty() {
+            None
+        } else {
+            Some(args.remove(0))
+        };
+
+        if let Some(value) = kwargs.remove("iterable") {
+            if iterable_arg.is_some() {
+                return Err(RuntimeError::type_error(
+                    "argument for batched() given by name ('iterable') and position (1)",
+                ));
+            }
+            iterable_arg = Some(value);
+        }
+        if let Some(value) = kwargs.remove("n") {
+            if n_arg.is_some() {
+                return Err(RuntimeError::type_error(
+                    "argument for batched() given by name ('n') and position (2)",
+                ));
+            }
+            n_arg = Some(value);
+        }
+        let strict = if let Some(value) = kwargs.remove("strict") {
             is_truthy(&value)
         } else {
             false
         };
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "batched() got an unexpected keyword argument",
-            ));
+            let mut keys: Vec<String> = kwargs.keys().cloned().collect();
+            keys.sort();
+            let unexpected = keys.first().cloned().unwrap_or_default();
+            return Err(RuntimeError::type_error(format!(
+                "batched() got an unexpected keyword argument '{}'",
+                unexpected
+            )));
         }
-        let iterable = args.remove(0);
-        let n = value_to_int(args.remove(0))?;
+
+        let iterable = iterable_arg
+            .ok_or_else(|| RuntimeError::type_error("batched() missing required argument 'iterable' (pos 1)"))?;
+        let n = value_to_int(
+            n_arg.ok_or_else(|| RuntimeError::type_error("batched() missing required argument 'n' (pos 2)"))?,
+        )?;
         if n <= 0 {
             return Err(RuntimeError::value_error("n must be at least one"));
         }
