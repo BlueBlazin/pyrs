@@ -66,6 +66,10 @@ if [[ "${PYRS_WASM_SKIP_CORE_SMOKE:-0}" != "1" ]]; then
   python3 scripts/audit_wasm_host_seam.py \
     --out perf/wasm_host_seam_audit_latest.json
 
+  echo "[wasm-contract] wasm artifact input hash summary snapshot"
+  python3 scripts/generate_wasm_artifact_input_hashes.py \
+    --out perf/wasm_artifact_input_hashes_latest.json
+
   echo "[wasm-contract] wasm local evidence-pack snapshot"
   python3 scripts/collect_wasm_evidence_pack.py \
     --out-dir perf/wasm_evidence_pack_latest

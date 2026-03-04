@@ -22,6 +22,13 @@ This document defines the JS-facing contract currently exported by
   - Returns wasm API contract version.
 - `init_wasm_runtime()`
   - Installs panic hook once for browser-console diagnostics.
+- `wasm_virtual_stdlib_clear()`
+  - Clears registered virtual stdlib module sources for wasm VM sessions.
+- `wasm_virtual_stdlib_register(module_name: &str, source: &str, is_package: bool) -> bool`
+  - Registers a virtual stdlib module source in wasm runtime registry.
+  - Returns `false` for empty module names; otherwise `true` when accepted.
+- `wasm_virtual_stdlib_count() -> u32`
+  - Returns number of currently registered virtual stdlib module sources.
 - `wasm_runtime_info() -> WasmRuntimeInfo`
   - Returns bridge/runtime status summary.
 - `wasm_worker_info() -> WasmWorkerInfo`
@@ -180,6 +187,7 @@ This document defines the JS-facing contract currently exported by
 
 - `api_version: u32`
 - `pyrs_version: String`
+- `cpython_compat_version: String`
 - `supports_parse_compile: bool`
 - `supports_execution: bool`
 - `execution_backend: String` (default `"unwired"`, `wasm-vm-probe` => `"vm_probe"`)
