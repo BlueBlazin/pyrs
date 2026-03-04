@@ -3021,6 +3021,26 @@ mod tests {
     }
 
     #[test]
+    fn wasm_repl_session_single_quote_newline_errors_without_sticky_continuation() {
+        let mut session = WasmReplSession::new();
+        assert!(!session.continuation_prompt());
+
+        let invalid = session.execute_input("\"hello\n\"");
+        assert!(!invalid.success());
+        assert_eq!(invalid.phase(), "syntax_error".to_string());
+        assert!(invalid.error().is_some());
+        assert!(!session.continuation_prompt());
+
+        let follow_up = session.execute_input("x = 1\n");
+        if vm_probe_enabled() {
+            assert_eq!(follow_up.phase(), "ok".to_string());
+        } else {
+            assert_eq!(follow_up.phase(), "unsupported_execution".to_string());
+        }
+        assert!(!session.continuation_prompt());
+    }
+
+    #[test]
     fn wasm_repl_session_help_command_returns_help_text() {
         let mut session = WasmReplSession::new();
         let help = session.execute_input(":help");

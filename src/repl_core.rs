@@ -51,9 +51,11 @@ pub(crate) fn input_is_incomplete(source: &str, err: &ParseError) -> bool {
     }
 
     let lower_msg = err.message.to_ascii_lowercase();
-    if lower_msg.contains("unterminated string literal")
-        || lower_msg.contains("unterminated escape sequence")
-    {
+    if lower_msg.contains("unterminated string literal") {
+        return starts_with_triple_quote_at(source, err.line, err.column);
+    }
+
+    if lower_msg.contains("unterminated escape sequence") {
         return true;
     }
 
@@ -74,6 +76,81 @@ pub(crate) fn input_is_incomplete(source: &str, err: &ParseError) -> bool {
         || lower_msg.contains("expected rparen")
         || lower_msg.contains("expected rbracket")
         || lower_msg.contains("expected rbrace")
+}
+
+fn starts_with_triple_quote_at(source: &str, line: usize, column: usize) -> bool {
+    let Some(line_text) = source.lines().nth(line.saturating_sub(1)) else {
+        return false;
+    };
+    let mut chars = line_text.chars();
+    for _ in 1..column {
+        if chars.next().is_none() {
+            return false;
+        }
+    }
+    let rest = chars.collect::<String>();
+    starts_with_triple_quote_token(rest.as_str())
+}
+
+fn starts_with_triple_quote_token(rest: &str) -> bool {
+    if rest.starts_with("'''") || rest.starts_with("\"\"\"") {
+        return true;
+    }
+
+    let mut seen_r = false;
+    let mut seen_u = false;
+    let mut seen_b = false;
+    let mut seen_f = false;
+    let mut seen_t = false;
+    let mut consumed = 0usize;
+    let mut prefix_len = 0usize;
+
+    for (idx, ch) in rest.char_indices() {
+        if prefix_len >= 2 || !ch.is_ascii_alphabetic() {
+            break;
+        }
+        let lowered = ch.to_ascii_lowercase();
+        let already_seen = match lowered {
+            'r' => {
+                let seen = seen_r;
+                seen_r = true;
+                seen
+            }
+            'u' => {
+                let seen = seen_u;
+                seen_u = true;
+                seen
+            }
+            'b' => {
+                let seen = seen_b;
+                seen_b = true;
+                seen
+            }
+            'f' => {
+                let seen = seen_f;
+                seen_f = true;
+                seen
+            }
+            't' => {
+                let seen = seen_t;
+                seen_t = true;
+                seen
+            }
+            _ => return false,
+        };
+        if already_seen {
+            return false;
+        }
+        consumed = idx + ch.len_utf8();
+        prefix_len += 1;
+    }
+
+    if prefix_len == 0 {
+        return false;
+    }
+
+    let after_prefix = &rest[consumed..];
+    after_prefix.starts_with("'''") || after_prefix.starts_with("\"\"\"")
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -459,6 +536,27 @@ mod tests {
     }
 
     #[test]
+    fn treats_unterminated_single_quoted_string_as_complete_error() {
+        let source = "\"hello\n\"";
+        let err = crate::parser::parse_module(source).expect_err("parse should fail");
+        assert!(!input_is_incomplete(source, &err));
+    }
+
+    #[test]
+    fn keeps_unterminated_triple_quoted_string_incomplete() {
+        let source = "\"\"\"hello";
+        let err = crate::parser::parse_module(source).expect_err("parse should fail while incomplete");
+        assert!(input_is_incomplete(source, &err));
+    }
+
+    #[test]
+    fn keeps_unterminated_prefixed_triple_quoted_string_incomplete() {
+        let source = "r\"\"\"hello";
+        let err = crate::parser::parse_module(source).expect_err("parse should fail while incomplete");
+        assert!(input_is_incomplete(source, &err));
+    }
+
+    #[test]
     fn candidate_source_omits_latest_synthetic_newline() {
         assert_eq!(
             parse_candidate_source("class A:\n    x = 1\n"),
@@ -509,6 +607,14 @@ mod tests {
     fn submit_line_clears_pending_on_non_incomplete_parse_error() {
         let mut pending = String::new();
         let result = submit_line_for_module(&mut pending, "if True print(1)");
+        assert!(matches!(result, ReplLineParseResult::ParseError { .. }));
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn submit_line_clears_pending_for_single_quote_with_embedded_newline() {
+        let mut pending = String::new();
+        let result = submit_line_for_module(&mut pending, "\"hello\n\"");
         assert!(matches!(result, ReplLineParseResult::ParseError { .. }));
         assert!(pending.is_empty());
     }
