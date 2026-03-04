@@ -100,7 +100,9 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
 - [x] `P1` `_osx_support` (line 1536):
   - added to pure-stdlib unload preference group (`PURE_STDLIB_OSX_SUPPORT_MODULES`) so CPython `Lib/_osx_support.py` is preferred when available;
   - covered by `tests/vm.rs::osx_support_import_prefers_cpython_pure_module_when_lib_path_is_added`.
-- [ ] `P1` `ssl` (line 1904)
+- [x] `P1` `ssl` (line 1904):
+  - added to pure-stdlib unload preference group (`PURE_STDLIB_SSL_MODULES`) so CPython `Lib/ssl.py` is preferred when available;
+  - covered by `tests/vm.rs::ssl_import_prefers_cpython_pure_module_when_lib_path_is_added`.
 - [x] `P1` `codecs` (line 2605):
   - added to pure-stdlib unload preference group (`PURE_STDLIB_CODECS_MODULES`) so CPython `Lib/codecs.py` is preferred when available;
   - `_codecs` substrate now exports `register_error` and `lookup_error`, with built-in handler registry entries for `strict`, `ignore`, `replace`, `xmlcharrefreplace`, `backslashreplace`, and `namereplace`;

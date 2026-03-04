@@ -4273,6 +4273,40 @@ ok = (
 }
 
 #[test]
+fn ssl_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-ssl import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("ssl-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import ssl
+origin = getattr(ssl, '__file__', '')
+norm = origin.replace("\\", "/")
+ok = (
+    norm.endswith('/ssl.py')
+    and ('/shims/' not in norm)
+    and isinstance(ssl.Purpose.SERVER_AUTH, ssl.Purpose)
+    and callable(ssl.create_default_context)
+    and hasattr(ssl, 'SSLContext')
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn ssl import preference thread");
+    handle
+        .join()
+        .expect("ssl import preference thread should complete");
+}
+
+#[test]
 fn sysconfig_import_prefers_cpython_pure_module_when_lib_path_is_added() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!(
