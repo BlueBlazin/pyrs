@@ -6649,9 +6649,7 @@ impl BuiltinFunction {
             | BuiltinFunction::TypingOverride
             | BuiltinFunction::TypingRuntimeCheckable
             | BuiltinFunction::TypingNoTypeCheck
-            | BuiltinFunction::TypingOverload => {
-                Err(RuntimeError::new("typing helper is VM-only"))
-            }
+            | BuiltinFunction::TypingOverload => Err(RuntimeError::new("typing helper is VM-only")),
             BuiltinFunction::TypingDataclassTransform
             | BuiltinFunction::TypingDataclassTransformApply
             | BuiltinFunction::TypingNoTypeCheckDecorator

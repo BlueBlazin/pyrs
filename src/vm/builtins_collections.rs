@@ -1245,7 +1245,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("register() decorator expects one callable"));
+            return Err(RuntimeError::new(
+                "register() decorator expects one callable",
+            ));
         }
         let _receiver = args.remove(0);
         Ok(args.remove(0))
@@ -2055,7 +2057,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::type_error("WeakSet.clear() takes no arguments"));
+            return Err(RuntimeError::type_error(
+                "WeakSet.clear() takes no arguments",
+            ));
         }
         let backing = self.weakset_backing_set(&args[0])?;
         if let Object::Set(values) = &mut *backing.kind_mut() {
@@ -2090,7 +2094,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::type_error("WeakSet.copy() takes no arguments"));
+            return Err(RuntimeError::type_error(
+                "WeakSet.copy() takes no arguments",
+            ));
         }
         let receiver = match &args[0] {
             Value::Instance(obj) => obj.clone(),
@@ -2159,17 +2165,24 @@ impl Vm {
         }
         match instance_data.attrs.get("_data").cloned() {
             Some(Value::Dict(dict_obj)) => Ok(dict_obj),
-            _ => Err(RuntimeError::new("weak dictionary backing storage is invalid")),
+            _ => Err(RuntimeError::new(
+                "weak dictionary backing storage is invalid",
+            )),
         }
     }
 
-    fn weakdict_entries_snapshot(&self, backing: &ObjRef) -> Result<Vec<(Value, Value)>, RuntimeError> {
+    fn weakdict_entries_snapshot(
+        &self,
+        backing: &ObjRef,
+    ) -> Result<Vec<(Value, Value)>, RuntimeError> {
         match &*backing.kind() {
             Object::Dict(entries) => Ok(entries
                 .iter()
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect()),
-            _ => Err(RuntimeError::new("weak dictionary backing storage is invalid")),
+            _ => Err(RuntimeError::new(
+                "weak dictionary backing storage is invalid",
+            )),
         }
     }
 
@@ -2235,7 +2248,9 @@ impl Vm {
         }
         let backing = self.weakdict_backing_dict(&args[0])?;
         let Object::Dict(entries) = &*backing.kind() else {
-            return Err(RuntimeError::new("weak dictionary backing storage is invalid"));
+            return Err(RuntimeError::new(
+                "weak dictionary backing storage is invalid",
+            ));
         };
         Ok(Value::Int(entries.len() as i64))
     }
@@ -2348,7 +2363,9 @@ impl Vm {
             entries.clear();
             return Ok(Value::None);
         }
-        Err(RuntimeError::new("weak dictionary backing storage is invalid"))
+        Err(RuntimeError::new(
+            "weak dictionary backing storage is invalid",
+        ))
     }
 
     pub(super) fn builtin_weakdict_get(
@@ -2365,7 +2382,9 @@ impl Vm {
         let key = args.remove(0);
         let default = args.pop().unwrap_or(Value::None);
         let backing = self.weakdict_backing_dict(&receiver)?;
-        Ok(self.dict_get_value_runtime(&backing, &key)?.unwrap_or(default))
+        Ok(self
+            .dict_get_value_runtime(&backing, &key)?
+            .unwrap_or(default))
     }
 
     pub(super) fn builtin_weakdict_pop(

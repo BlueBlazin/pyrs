@@ -207,6 +207,7 @@ const PURE_STDLIB_INSPECT_MODULES: &[&str] = &["inspect"];
 const PURE_STDLIB_IO_MODULES: &[&str] = &["io"];
 const PURE_STDLIB_UUID_MODULES: &[&str] = &["uuid"];
 const PURE_STDLIB_SOCKET_MODULES: &[&str] = &["socket"];
+const PURE_STDLIB_PLATFORM_MODULES: &[&str] = &["platform"];
 const PURE_STDLIB_DECIMAL_MODULES: &[&str] = &["decimal"];
 const PURE_STDLIB_PATHLIB_MODULES: &[&str] = &["pathlib"];
 const PURE_STDLIB_TYPES_MODULES: &[&str] = &["types", "typing"];
@@ -1780,13 +1781,17 @@ impl Vm {
                     if wrapper_target_id != target_id {
                         continue;
                     }
-                    let callback = instance_data.attrs.get("callback").cloned().and_then(|value| {
-                        if matches!(value, Value::None) {
-                            None
-                        } else {
-                            Some(value)
-                        }
-                    });
+                    let callback = instance_data
+                        .attrs
+                        .get("callback")
+                        .cloned()
+                        .and_then(|value| {
+                            if matches!(value, Value::None) {
+                                None
+                            } else {
+                                Some(value)
+                            }
+                        });
                     wrappers.push((Value::Instance(object.clone()), callback));
                 }
                 _ => continue,
@@ -4296,7 +4301,7 @@ impl Vm {
                 .insert("api_version".to_string(), Value::Int(1013));
             module_data.globals.insert(
                 "version".to_string(),
-                Value::Str("3.14.0 (pyrs)".to_string()),
+                Value::Str("3.14.0 (pyrs, Jan 01 1970, 00:00:00) [pyrs]".to_string()),
             );
             module_data.globals.insert(
                 "copyright".to_string(),
@@ -7836,6 +7841,23 @@ struct ReCharClass {
     negated: bool,
     singles: Vec<char>,
     ranges: Vec<(char, char)>,
+    escapes: Vec<ReCharClassEscape>,
+}
+
+#[derive(Clone)]
+enum ReCharClassEscape {
+    Digit,
+    NotDigit,
+    Word,
+    NotWord,
+    Space,
+    NotSpace,
+}
+
+#[derive(Clone)]
+enum ReCharClassItem {
+    Literal(char),
+    Escape(ReCharClassEscape),
 }
 
 #[derive(Clone)]
@@ -7880,6 +7902,7 @@ fn digit_class(negated: bool) -> ReCharClass {
         negated,
         singles: Vec::new(),
         ranges: vec![('0', '9')],
+        escapes: Vec::new(),
     }
 }
 
@@ -7888,6 +7911,7 @@ fn word_class(negated: bool) -> ReCharClass {
         negated,
         singles: vec!['_'],
         ranges: vec![('0', '9'), ('A', 'Z'), ('a', 'z')],
+        escapes: Vec::new(),
     }
 }
 
@@ -7896,6 +7920,7 @@ fn space_class(negated: bool) -> ReCharClass {
         negated,
         singles: vec![' ', '\t', '\n', '\r', '\u{000b}', '\u{000c}'],
         ranges: Vec::new(),
+        escapes: Vec::new(),
     }
 }
 
@@ -7914,7 +7939,7 @@ fn parse_simple_escape(ch: char) -> ReAtom {
     }
 }
 
-fn parse_char_class_char(chars: &[char], idx: &mut usize) -> Option<char> {
+fn parse_char_class_item(chars: &[char], idx: &mut usize) -> Option<ReCharClassItem> {
     if *idx >= chars.len() {
         return None;
     }
@@ -7927,14 +7952,31 @@ fn parse_char_class_char(chars: &[char], idx: &mut usize) -> Option<char> {
         let escaped = chars[*idx];
         *idx += 1;
         return Some(match escaped {
-            'n' => '\n',
-            'r' => '\r',
-            't' => '\t',
-            other => other,
+            'd' => ReCharClassItem::Escape(ReCharClassEscape::Digit),
+            'D' => ReCharClassItem::Escape(ReCharClassEscape::NotDigit),
+            'w' => ReCharClassItem::Escape(ReCharClassEscape::Word),
+            'W' => ReCharClassItem::Escape(ReCharClassEscape::NotWord),
+            's' => ReCharClassItem::Escape(ReCharClassEscape::Space),
+            'S' => ReCharClassItem::Escape(ReCharClassEscape::NotSpace),
+            'n' => ReCharClassItem::Literal('\n'),
+            'r' => ReCharClassItem::Literal('\r'),
+            't' => ReCharClassItem::Literal('\t'),
+            other => ReCharClassItem::Literal(other),
         });
     }
     *idx += 1;
-    Some(ch)
+    Some(ReCharClassItem::Literal(ch))
+}
+
+fn push_char_class_item(
+    item: ReCharClassItem,
+    singles: &mut Vec<char>,
+    escapes: &mut Vec<ReCharClassEscape>,
+) {
+    match item {
+        ReCharClassItem::Literal(ch) => singles.push(ch),
+        ReCharClassItem::Escape(escape) => escapes.push(escape),
+    }
 }
 
 fn parse_char_class(chars: &[char], idx: &mut usize) -> Option<ReCharClass> {
@@ -7950,6 +7992,7 @@ fn parse_char_class(chars: &[char], idx: &mut usize) -> Option<ReCharClass> {
 
     let mut singles = Vec::new();
     let mut ranges = Vec::new();
+    let mut escapes = Vec::new();
     let mut seen_item = false;
     while *idx < chars.len() {
         if chars[*idx] == ']' && seen_item {
@@ -7958,17 +8001,26 @@ fn parse_char_class(chars: &[char], idx: &mut usize) -> Option<ReCharClass> {
                 negated,
                 singles,
                 ranges,
+                escapes,
             });
         }
-        let start = parse_char_class_char(chars, idx)?;
+        let start = parse_char_class_item(chars, idx)?;
         seen_item = true;
-        if *idx + 1 < chars.len() && chars[*idx] == '-' && chars[*idx + 1] != ']' {
+        if let ReCharClassItem::Literal(start_char) = start.clone()
+            && *idx + 1 < chars.len()
+            && chars[*idx] == '-'
+            && chars[*idx + 1] != ']'
+        {
+            let hyphen_index = *idx;
             *idx += 1;
-            let end = parse_char_class_char(chars, idx)?;
-            ranges.push((start, end));
-        } else {
-            singles.push(start);
+            let end = parse_char_class_item(chars, idx)?;
+            if let ReCharClassItem::Literal(end_char) = end {
+                ranges.push((start_char, end_char));
+                continue;
+            }
+            *idx = hyphen_index;
         }
+        push_char_class_item(start, &mut singles, &mut escapes);
     }
     None
 }
@@ -8372,6 +8424,20 @@ fn class_matches(class: &ReCharClass, ch: char) -> bool {
             let start_code = *start as u32;
             let end_code = *end as u32;
             code >= start_code && code <= end_code
+        });
+    }
+    if !matched {
+        matched = class.escapes.iter().any(|escape| match escape {
+            ReCharClassEscape::Digit => ch.is_ascii_digit(),
+            ReCharClassEscape::NotDigit => !ch.is_ascii_digit(),
+            ReCharClassEscape::Word => ch == '_' || ch.is_ascii_alphanumeric(),
+            ReCharClassEscape::NotWord => !(ch == '_' || ch.is_ascii_alphanumeric()),
+            ReCharClassEscape::Space => {
+                matches!(ch, ' ' | '\t' | '\n' | '\r' | '\u{000b}' | '\u{000c}')
+            }
+            ReCharClassEscape::NotSpace => {
+                !matches!(ch, ' ' | '\t' | '\n' | '\r' | '\u{000b}' | '\u{000c}')
+            }
         });
     }
     if class.negated { !matched } else { matched }

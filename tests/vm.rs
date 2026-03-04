@@ -4099,6 +4099,39 @@ ok = (
 }
 
 #[test]
+fn platform_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-platform import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("platform-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import platform
+origin = getattr(platform, '__file__', '')
+norm = origin.replace("\\", "/")
+ok = (
+    norm.endswith('/platform.py')
+    and ('/shims/' not in norm)
+    and platform.python_implementation() == 'CPython'
+    and isinstance(platform.python_version(), str)
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn platform import preference thread");
+    handle
+        .join()
+        .expect("platform import preference thread should complete");
+}
+
+#[test]
 fn typing_bootstrap_helpers_have_runtime_baseline_without_cpython_lib() {
     let Some(pyrs_bin) = pyrs_binary_path() else {
         eprintln!("skipping typing bootstrap helper test (pyrs binary not found)");
@@ -5801,6 +5834,45 @@ ok = (
         vm.execute(&code).expect("execution should succeed");
         assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
     });
+}
+
+#[test]
+fn re_character_class_escapes_inside_brackets_follow_cpython_shape() {
+    let source = r#"import re
+wordish = re.match(r"([\w.+]+)", "3.14.0")
+non_word = re.match(r"([\W]+)", "++")
+digit_hex = re.match(r"([\dA-F]+)", "7F")
+ok = (
+    wordish is not None
+    and wordish.group(1) == "3.14.0"
+    and non_word is not None
+    and non_word.group(1) == "++"
+    and digit_hex is not None
+    and digit_hex.group(1) == "7F"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn re_platform_sys_version_parser_pattern_matches_cpython_shape() {
+    let source = r#"import re
+pat = re.compile(
+    r'([\w.+]+)\s*(?:free-threading build\s+)?\(#?([^,]+)(?:,\s*([\w ]*)(?:,\s*([\w :]*))?)?\)\s*\[([^\]]+)\]?',
+    re.ASCII,
+)
+m = pat.match("3.14.3 (main, Feb 25 2026, 14:22:18) [Clang 16.0.0 (clang-1600.0.26.6)]")
+ok = (m is not None and len(m.groups()) == 5)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]

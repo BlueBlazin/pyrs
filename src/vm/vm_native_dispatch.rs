@@ -1399,7 +1399,9 @@ impl Vm {
                     }
                 };
                 if !kwargs.is_empty() {
-                    return Err(RuntimeError::new("dict.popitem() expects no keyword arguments"));
+                    return Err(RuntimeError::new(
+                        "dict.popitem() expects no keyword arguments",
+                    ));
                 }
                 if !args.is_empty() {
                     return Err(RuntimeError::new("dict.popitem() expects no arguments"));
@@ -1412,7 +1414,9 @@ impl Vm {
                 let Some((key, value)) = pair else {
                     return Err(RuntimeError::key_error("popitem(): dictionary is empty"));
                 };
-                Ok(NativeCallResult::Value(self.heap.alloc_tuple(vec![key, value])))
+                Ok(NativeCallResult::Value(
+                    self.heap.alloc_tuple(vec![key, value]),
+                ))
             }
             NativeMethodKind::ListAppend => {
                 if args.len() != 1 {

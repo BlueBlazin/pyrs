@@ -1461,10 +1461,7 @@ impl Vm {
                         .globals
                         .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
                 }
-                Ok(self.alloc_native_bound_method(
-                    NativeMethodKind::DictPopItem,
-                    receiver,
-                ))
+                Ok(self.alloc_native_bound_method(NativeMethodKind::DictPopItem, receiver))
             }
             "copy" if builtin == BuiltinFunction::Dict => {
                 let receiver = match self

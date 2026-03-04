@@ -3300,7 +3300,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::type_error("strxfrm() takes exactly one argument"));
+            return Err(RuntimeError::type_error(
+                "strxfrm() takes exactly one argument",
+            ));
         }
         let Value::Str(text) = args.remove(0) else {
             return Err(RuntimeError::type_error("strxfrm() argument must be str"));
@@ -3316,7 +3318,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::type_error("strcoll() takes exactly two arguments"));
+            return Err(RuntimeError::type_error(
+                "strcoll() takes exactly two arguments",
+            ));
         }
         let Value::Str(left) = args.remove(0) else {
             return Err(RuntimeError::type_error("strcoll() arguments must be str"));

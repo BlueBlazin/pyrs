@@ -6,16 +6,14 @@ use super::{
     NAMESPACE_LOADER, NativeMethodKind, NativeMethodObject, ObjRef, Object,
     PURE_STDLIB_ABC_MODULES, PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_DECIMAL_MODULES,
     PURE_STDLIB_FUNCTOOLS_MODULES, PURE_STDLIB_FUTURE_MODULES, PURE_STDLIB_INSPECT_MODULES,
-    PURE_STDLIB_IO_MODULES, PURE_STDLIB_OPERATOR_MODULES, PURE_STDLIB_SOCKET_MODULES,
-    PURE_STDLIB_UUID_MODULES,
-    PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
-    PURE_STDLIB_RE_MODULES, PURE_STDLIB_SIGNAL_MODULES, PURE_STDLIB_TYPES_MODULES,
-    PURE_STDLIB_WEAKREF_MODULES, Path, PathBuf,
-    Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
-    SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
-    SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler, cpython, dict_get_value,
-    dict_remove_value, dict_set_value, matches_finder_kind, parse_uuid_like_string, parser,
-    source_path_from_cache_path,
+    PURE_STDLIB_IO_MODULES, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_OPERATOR_MODULES,
+    PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_PLATFORM_MODULES,
+    PURE_STDLIB_RE_MODULES, PURE_STDLIB_SIGNAL_MODULES, PURE_STDLIB_SOCKET_MODULES,
+    PURE_STDLIB_TYPES_MODULES, PURE_STDLIB_UUID_MODULES, PURE_STDLIB_WEAKREF_MODULES, Path,
+    PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM,
+    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm,
+    cached_module_path, compiler, cpython, dict_get_value, dict_remove_value, dict_set_value,
+    matches_finder_kind, parse_uuid_like_string, parser, source_path_from_cache_path,
 };
 use crate::extensions::{
     PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
@@ -4826,7 +4824,9 @@ impl Vm {
                 ("error", Value::ExceptionType("Exception".to_string())),
                 (
                     "__doc__",
-                    Value::Str("Functions to convert between Python values and C structs.".to_string()),
+                    Value::Str(
+                        "Functions to convert between Python values and C structs.".to_string(),
+                    ),
                 ),
             ],
         );
@@ -5635,9 +5635,10 @@ impl Vm {
                 "__new__".to_string(),
                 Value::Builtin(BuiltinFunction::WeakRefRefNew),
             );
-            class_data
-                .attrs
-                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::WeakRefRefInit));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::WeakRefRefInit),
+            );
             class_data.attrs.insert(
                 "__call__".to_string(),
                 Value::Builtin(BuiltinFunction::WeakRefRefCall),
@@ -5665,7 +5666,10 @@ impl Vm {
             ],
             vec![
                 ("ref", Value::Class(weakref_reference_type.clone())),
-                ("ReferenceType", Value::Class(weakref_reference_type.clone())),
+                (
+                    "ReferenceType",
+                    Value::Class(weakref_reference_type.clone()),
+                ),
                 ("ProxyType", Value::Builtin(BuiltinFunction::Type)),
                 ("CallableProxyType", Value::Builtin(BuiltinFunction::Type)),
             ],
@@ -5678,9 +5682,10 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Class(class_data) = &mut *weakset_class.kind_mut() {
-            class_data
-                .attrs
-                .insert("__module__".to_string(), Value::Str("_weakrefset".to_string()));
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("_weakrefset".to_string()),
+            );
             class_data.attrs.insert(
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::WeakSetInit),
@@ -5722,10 +5727,10 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::WeakSetCopy),
             );
         }
-        let weakkeydict_class = match self
-            .heap
-            .alloc_class(ClassObject::new("WeakKeyDictionary".to_string(), Vec::new()))
-        {
+        let weakkeydict_class = match self.heap.alloc_class(ClassObject::new(
+            "WeakKeyDictionary".to_string(),
+            Vec::new(),
+        )) {
             Value::Class(obj) => obj,
             _ => unreachable!(),
         };
@@ -5789,10 +5794,10 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::WeakDictCopy),
             );
         }
-        let weakvaluedict_class = match self
-            .heap
-            .alloc_class(ClassObject::new("WeakValueDictionary".to_string(), Vec::new()))
-        {
+        let weakvaluedict_class = match self.heap.alloc_class(ClassObject::new(
+            "WeakValueDictionary".to_string(),
+            Vec::new(),
+        )) {
             Value::Class(obj) => obj,
             _ => unreachable!(),
         };
@@ -5866,12 +5871,18 @@ impl Vm {
             ],
             vec![
                 ("ref", Value::Class(weakref_reference_type.clone())),
-                ("ReferenceType", Value::Class(weakref_reference_type.clone())),
+                (
+                    "ReferenceType",
+                    Value::Class(weakref_reference_type.clone()),
+                ),
                 ("ProxyType", Value::Builtin(BuiltinFunction::Type)),
                 ("CallableProxyType", Value::Builtin(BuiltinFunction::Type)),
                 ("WeakSet", Value::Class(weakset_class.clone())),
                 ("WeakKeyDictionary", Value::Class(weakkeydict_class.clone())),
-                ("WeakValueDictionary", Value::Class(weakvaluedict_class.clone())),
+                (
+                    "WeakValueDictionary",
+                    Value::Class(weakvaluedict_class.clone()),
+                ),
                 (
                     "ProxyTypes",
                     self.heap.alloc_tuple(vec![
@@ -8105,7 +8116,9 @@ impl Vm {
             );
         }
         let dangling_weakset = {
-            let instance = self.heap.alloc_instance(InstanceObject::new(weakset_class.clone()));
+            let instance = self
+                .heap
+                .alloc_instance(InstanceObject::new(weakset_class.clone()));
             if let Value::Instance(obj) = &instance
                 && let Object::Instance(instance_data) = &mut *obj.kind_mut()
             {
@@ -8800,6 +8813,13 @@ impl Vm {
             }
         }
         for module_name in PURE_STDLIB_SOCKET_MODULES {
+            if self.has_preferred_filesystem_module(module_name)
+                && self.module_preference_requires_unload(module_name)
+            {
+                self.unregister_module(module_name);
+            }
+        }
+        for module_name in PURE_STDLIB_PLATFORM_MODULES {
             if self.has_preferred_filesystem_module(module_name)
                 && self.module_preference_requires_unload(module_name)
             {

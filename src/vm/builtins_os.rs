@@ -143,7 +143,10 @@ impl Vm {
         {
             return vec![
                 ("RLIMIT_STACK", Value::Int(libc::RLIMIT_STACK as i64)),
-                ("RLIM_INFINITY", Self::resource_rlim_to_value(libc::RLIM_INFINITY)),
+                (
+                    "RLIM_INFINITY",
+                    Self::resource_rlim_to_value(libc::RLIM_INFINITY),
+                ),
             ];
         }
         #[cfg(not(unix))]
@@ -213,7 +216,9 @@ impl Vm {
         #[cfg(not(unix))]
         {
             let _ = resource;
-            Err(RuntimeError::os_error("getrlimit not supported on this platform"))
+            Err(RuntimeError::os_error(
+                "getrlimit not supported on this platform",
+            ))
         }
     }
 
@@ -3239,7 +3244,10 @@ impl Vm {
         ] {
             let count = read_flag_count(flag)?;
             if count > 0 {
-                out.push(Value::Str(format!("-{}", opt.to_string().repeat(count as usize))));
+                out.push(Value::Str(format!(
+                    "-{}",
+                    opt.to_string().repeat(count as usize)
+                )));
             }
         }
 
@@ -3272,7 +3280,10 @@ impl Vm {
         let bytes_warning = read_flag_count("bytes_warning")?;
         let dev_mode = read_flag_count("dev_mode")? > 0;
         if bytes_warning > 1 {
-            if let Some(index) = warnopts.iter().position(|item| item == "error::BytesWarning") {
+            if let Some(index) = warnopts
+                .iter()
+                .position(|item| item == "error::BytesWarning")
+            {
                 warnopts.remove(index);
             }
         } else if bytes_warning > 0

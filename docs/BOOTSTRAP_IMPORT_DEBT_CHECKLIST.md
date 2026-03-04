@@ -85,7 +85,11 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
 
 ### 3.1 Not currently in `PURE_STDLIB_*` unload preference groups
 
-- [ ] `P1` `platform` (line 912)
+- [x] `P1` `platform` (line 912):
+  - added to pure-stdlib unload preference group (`PURE_STDLIB_PLATFORM_MODULES`) so CPython `Lib/platform.py` is preferred when available;
+  - regex fallback parser now supports class escapes inside character classes (`\w/\W/\d/\D/\s/\S`), including CPython `platform._sys_version` pattern fragments like `[\w.+]`;
+  - `sys.version` now follows CPython parser shape (`version (buildno, builddate, buildtime) [compiler]`) so pure `platform.py` can parse interpreter metadata without bootstrap fallbacks;
+  - covered by `tests/vm.rs::platform_import_prefers_cpython_pure_module_when_lib_path_is_added` and `tests/vm.rs::re_platform_sys_version_parser_pattern_matches_cpython_shape`.
 - [ ] `P1` `os` (line 1014)
 - [ ] `P1` `_osx_support` (line 1536)
 - [ ] `P1` `ssl` (line 1904)

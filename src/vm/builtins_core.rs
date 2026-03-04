@@ -4,27 +4,26 @@ use super::{
     AttrAccessOutcome, AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, BigInt, BoundMethod,
     BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, ClassBuildOutcome, ClassObject, CodeObject,
     Command, CompiledCodeMode, DICT_BACKING_STORAGE_ATTR, ExceptionObject,
-    FLOAT_BACKING_STORAGE_ATTR,
-    FROZENSET_BACKING_STORAGE_ATTR, Frame, GeneratorResumeKind, GeneratorResumeOutcome, HashMap,
-    INSTANCE_DICT_STORAGE_ATTR, INT_BACKING_STORAGE_ATTR, InstanceObject, InternalCallOutcome,
-    IteratorKind, IteratorObject, LIST_BACKING_STORAGE_ATTR, MAPPING_PROXY_STORAGE_ATTR,
-    MONITORING_EVENT_BRANCH, MONITORING_EVENT_BRANCH_LEFT, MONITORING_EVENT_BRANCH_RIGHT,
-    MONITORING_EVENT_C_RAISE, MONITORING_EVENT_C_RETURN, MONITORING_EVENT_CALL,
-    MONITORING_EVENT_SET_MAX, MONITORING_LOCAL_EVENT_SET_MAX, MONITORING_MAX_USER_TOOL_ID,
-    ModuleObject, NativeMethodKind, NativeMethodObject, ObjRef, Object, Ordering,
-    PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE, Rc, RuntimeError, SET_BACKING_STORAGE_ATTR,
-    STR_BACKING_STORAGE_ATTR, SuperObject, TUPLE_BACKING_STORAGE_ATTR, Value, Vm, Write,
-    add_values, bigint_from_bytes, bytes_like_from_value, call_builtin_with_kwargs,
-    class_attr_lookup, class_attr_walk, compare_ge, compare_gt, compare_in, compare_le, compare_lt,
-    compare_order, compiler, decode_text_bytes, dict_remove_value, dict_set_value,
-    dict_set_value_checked, div_values, encode_text_bytes, format_float_hex, format_repr,
-    format_value, frame_cell_value, invert_value, is_import_error_family,
-    is_missing_attribute_error, is_os_error_family, is_runtime_type_name_marker, matmul_values,
-    mul_values, neg_value, normalize_codec_encoding, normalize_codec_errors, or_values,
-    ordering_from_cmp_value, parse_hex_float_literal, parser, pos_value, round_float_with_ndigits,
+    FLOAT_BACKING_STORAGE_ATTR, FROZENSET_BACKING_STORAGE_ATTR, Frame, GeneratorResumeKind,
+    GeneratorResumeOutcome, HashMap, INSTANCE_DICT_STORAGE_ATTR, INT_BACKING_STORAGE_ATTR,
+    InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, LIST_BACKING_STORAGE_ATTR,
+    MAPPING_PROXY_STORAGE_ATTR, MONITORING_EVENT_BRANCH, MONITORING_EVENT_BRANCH_LEFT,
+    MONITORING_EVENT_BRANCH_RIGHT, MONITORING_EVENT_C_RAISE, MONITORING_EVENT_C_RETURN,
+    MONITORING_EVENT_CALL, MONITORING_EVENT_SET_MAX, MONITORING_LOCAL_EVENT_SET_MAX,
+    MONITORING_MAX_USER_TOOL_ID, ModuleObject, NativeMethodKind, NativeMethodObject, ObjRef,
+    Object, Ordering, PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE, Rc, RuntimeError,
+    SET_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, SuperObject, TUPLE_BACKING_STORAGE_ATTR,
+    Value, Vm, Write, add_values, bigint_from_bytes, bytes_like_from_value,
+    call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, compare_ge, compare_gt,
+    compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
+    dict_remove_value, dict_set_value, dict_set_value_checked, div_values, encode_text_bytes,
+    format_float_hex, format_repr, format_value, frame_cell_value, invert_value,
+    is_import_error_family, is_missing_attribute_error, is_os_error_family,
+    is_runtime_type_name_marker, is_truthy, matmul_values, mul_values, neg_value,
+    normalize_codec_encoding, normalize_codec_errors, or_values, ordering_from_cmp_value,
+    parse_hex_float_literal, parser, pos_value, round_float_with_ndigits,
     runtime_error_matches_exception, sub_values, value_from_bigint, value_from_object_ref,
     value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
-    is_truthy,
     with_bytes_like_source, xor_values,
 };
 use crate::ast::{
@@ -7239,14 +7238,18 @@ impl Vm {
 
     fn platform_uname_fields(&self) -> (String, String, String, String, String, String) {
         let query_uname = |flag: &str| -> Option<String> {
-            Command::new("uname").arg(flag).output().ok().and_then(|out| {
-                if out.status.success() {
-                    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                    if text.is_empty() { None } else { Some(text) }
-                } else {
-                    None
-                }
-            })
+            Command::new("uname")
+                .arg(flag)
+                .output()
+                .ok()
+                .and_then(|out| {
+                    if out.status.success() {
+                        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                        if text.is_empty() { None } else { Some(text) }
+                    } else {
+                        None
+                    }
+                })
         };
 
         let system = if cfg!(target_os = "macos") {
@@ -15684,10 +15687,13 @@ impl Vm {
         if let Value::Class(class_obj) = &tp
             && let Object::Class(class_data) = &*class_obj.kind()
         {
-            let module_name = class_data.attrs.get("__module__").and_then(|value| match value {
-                Value::Str(module) => Some(module.as_str()),
-                _ => None,
-            });
+            let module_name = class_data
+                .attrs
+                .get("__module__")
+                .and_then(|value| match value {
+                    Value::Str(module) => Some(module.as_str()),
+                    _ => None,
+                });
             if matches!(module_name, Some("typing" | "_typing")) && class_data.name == "Generic" {
                 return Ok(tp.clone());
             }
@@ -15748,12 +15754,14 @@ impl Vm {
         };
         let class_value = Value::Class(class_obj.clone());
         if let Object::Class(class_data) = &*class_obj.kind() {
-            let module_name = class_data.attrs.get("__module__").and_then(|value| match value {
-                Value::Str(module_name) => Some(module_name.as_str()),
-                _ => None,
-            });
-            if matches!(module_name, Some("typing" | "_typing")) && class_data.name == "TypedDict"
-            {
+            let module_name = class_data
+                .attrs
+                .get("__module__")
+                .and_then(|value| match value {
+                    Value::Str(module_name) => Some(module_name.as_str()),
+                    _ => None,
+                });
+            if matches!(module_name, Some("typing" | "_typing")) && class_data.name == "TypedDict" {
                 return Ok(Value::Bool(false));
             }
         }
@@ -15781,10 +15789,13 @@ impl Vm {
             return Ok(Value::Bool(false));
         };
         if let Object::Class(class_data) = &*class_obj.kind() {
-            let module_name = class_data.attrs.get("__module__").and_then(|value| match value {
-                Value::Str(module_name) => Some(module_name.as_str()),
-                _ => None,
-            });
+            let module_name = class_data
+                .attrs
+                .get("__module__")
+                .and_then(|value| match value {
+                    Value::Str(module_name) => Some(module_name.as_str()),
+                    _ => None,
+                });
             if matches!(module_name, Some("typing" | "_typing")) && class_data.name == "Protocol" {
                 return Ok(Value::Bool(false));
             }
@@ -15806,11 +15817,10 @@ impl Vm {
             ));
         }
         let tp = args.remove(0);
-        let is_protocol =
-            matches!(
-                self.builtin_typing_is_protocol(vec![tp.clone()], HashMap::new())?,
-                Value::Bool(true)
-            );
+        let is_protocol = matches!(
+            self.builtin_typing_is_protocol(vec![tp.clone()], HashMap::new())?,
+            Value::Bool(true)
+        );
         if !is_protocol {
             return Err(RuntimeError::type_error(format!(
                 "{} is not a Protocol",
@@ -15860,11 +15870,7 @@ impl Vm {
         Ok(Value::None)
     }
 
-    fn typing_try_set_bool_attr(
-        &mut self,
-        target: Value,
-        name: &str,
-    ) -> Result<(), RuntimeError> {
+    fn typing_try_set_bool_attr(&mut self, target: Value, name: &str) -> Result<(), RuntimeError> {
         match self.builtin_setattr(
             vec![target, Value::Str(name.to_string()), Value::Bool(true)],
             HashMap::new(),
@@ -16007,7 +16013,8 @@ impl Vm {
         }
         self.typing_try_set_bool_attr(cls.clone(), "_is_runtime_protocol")?;
         let mut non_callable_members = Vec::new();
-        if let Some(protocol_attrs) = self.optional_getattr_value(cls.clone(), "__protocol_attrs__")?
+        if let Some(protocol_attrs) =
+            self.optional_getattr_value(cls.clone(), "__protocol_attrs__")?
         {
             for member in self.collect_iterable_values(protocol_attrs)? {
                 let Value::Str(member_name) = member else {
@@ -16087,7 +16094,10 @@ impl Vm {
         }
         let func = args.remove(0);
         if let Some(key) = self.typing_overload_registry_key(func.clone())? {
-            self.typing_overload_registry.entry(key).or_default().push(func);
+            self.typing_overload_registry
+                .entry(key)
+                .or_default()
+                .push(func);
         }
         Ok(Value::Builtin(BuiltinFunction::TypingOverloadDummy))
     }
@@ -16155,7 +16165,10 @@ functions outside a stub module should always be followed by an implementation t
                 .collect(),
         );
         let payload = self.heap.alloc_dict(vec![
-            (Value::Str("eq_default".to_string()), Value::Bool(eq_default)),
+            (
+                Value::Str("eq_default".to_string()),
+                Value::Bool(eq_default),
+            ),
             (
                 Value::Str("order_default".to_string()),
                 Value::Bool(order_default),
@@ -16184,10 +16197,12 @@ functions outside a stub module should always be followed by an implementation t
             );
             module_data.globals.insert("payload".to_string(), payload);
         }
-        Ok(self.alloc_builtin_bound_method(
-            BuiltinFunction::TypingDataclassTransformApply,
-            wrapper,
-        ))
+        Ok(
+            self.alloc_builtin_bound_method(
+                BuiltinFunction::TypingDataclassTransformApply,
+                wrapper,
+            ),
+        )
     }
 
     pub(super) fn builtin_typing_dataclass_transform_apply(
@@ -16242,25 +16257,23 @@ functions outside a stub module should always be followed by an implementation t
                 "no_type_check_decorator() argument must be callable",
             ));
         }
-        let wrapper =
-            match self.heap.alloc_module(ModuleObject::new(
-                "__typing_no_type_check_decorator__".to_string(),
-            )) {
-                Value::Module(obj) => obj,
-                _ => unreachable!(),
-            };
+        let wrapper = match self.heap.alloc_module(ModuleObject::new(
+            "__typing_no_type_check_decorator__".to_string(),
+        )) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
         if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
-            module_data
-                .globals
-                .insert("__pyrs_typing_no_type_check_decorator__".to_string(), Value::Bool(true));
+            module_data.globals.insert(
+                "__pyrs_typing_no_type_check_decorator__".to_string(),
+                Value::Bool(true),
+            );
             module_data
                 .globals
                 .insert("decorator".to_string(), decorator);
         }
-        Ok(self.alloc_builtin_bound_method(
-            BuiltinFunction::TypingNoTypeCheckDecoratorCall,
-            wrapper,
-        ))
+        Ok(self
+            .alloc_builtin_bound_method(BuiltinFunction::TypingNoTypeCheckDecoratorCall, wrapper))
     }
 
     pub(super) fn builtin_typing_no_type_check_decorator_call(
@@ -16288,22 +16301,19 @@ functions outside a stub module should always be followed by an implementation t
         let decorated = match self.call_internal(decorator, args, kwargs)? {
             InternalCallOutcome::Value(value) => value,
             InternalCallOutcome::CallerExceptionHandled => {
-                return Err(
-                    self.runtime_error_from_active_exception(
-                        "no_type_check_decorator wrapped decorator failed",
-                    ),
-                );
+                return Err(self.runtime_error_from_active_exception(
+                    "no_type_check_decorator wrapped decorator failed",
+                ));
             }
         };
         self.builtin_typing_no_type_check(vec![decorated], HashMap::new())
     }
 
     fn weakref_reference_type(&self) -> Result<ObjRef, RuntimeError> {
-        let module = self
-            .modules
-            .get("_weakref")
-            .cloned()
-            .ok_or_else(|| RuntimeError::module_not_found_error("module '_weakref' not found"))?;
+        let module =
+            self.modules.get("_weakref").cloned().ok_or_else(|| {
+                RuntimeError::module_not_found_error("module '_weakref' not found")
+            })?;
         let Object::Module(module_data) = &*module.kind() else {
             return Err(RuntimeError::new("module '_weakref' is invalid"));
         };
@@ -16437,7 +16447,9 @@ functions outside a stub module should always be followed by an implementation t
         }
         let Some(_target_id) = self.weakref_ref_target_id_from_value(&args[0]) else {
             if self.weakref_ref_target_value_from_value(&args[0]).is_none() {
-                return Err(RuntimeError::type_error("expected weakref reference instance"));
+                return Err(RuntimeError::type_error(
+                    "expected weakref reference instance",
+                ));
             }
             if let Some(callback) = args.get(2)
                 && !matches!(callback, Value::None)
@@ -16466,7 +16478,9 @@ functions outside a stub module should always be followed by an implementation t
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::type_error("__call__ expected only self argument"));
+            return Err(RuntimeError::type_error(
+                "__call__ expected only self argument",
+            ));
         }
         if let Some(target_id) = self.weakref_ref_target_id_from_value(&args[0]) {
             if self.finalized_del_objects.contains(&target_id)
@@ -16482,7 +16496,9 @@ functions outside a stub module should always be followed by an implementation t
         if let Some(target_value) = self.weakref_ref_target_value_from_value(&args[0]) {
             return Ok(target_value);
         }
-        Err(RuntimeError::type_error("expected weakref reference instance"))
+        Err(RuntimeError::type_error(
+            "expected weakref reference instance",
+        ))
     }
 
     pub(super) fn builtin_weakref_ref_hash(
@@ -16491,7 +16507,9 @@ functions outside a stub module should always be followed by an implementation t
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::type_error("__hash__ expected only self argument"));
+            return Err(RuntimeError::type_error(
+                "__hash__ expected only self argument",
+            ));
         }
         if let Some(target_id) = self.weakref_ref_target_id_from_value(&args[0]) {
             return Ok(Value::Int(target_id as i64));
@@ -16499,7 +16517,9 @@ functions outside a stub module should always be followed by an implementation t
         if let Some(target_value) = self.weakref_ref_target_value_from_value(&args[0]) {
             return Ok(Value::Int(self.hash_value_runtime(&target_value)?));
         }
-        Err(RuntimeError::type_error("expected weakref reference instance"))
+        Err(RuntimeError::type_error(
+            "expected weakref reference instance",
+        ))
     }
 
     pub(super) fn builtin_weakref_ref_eq(
