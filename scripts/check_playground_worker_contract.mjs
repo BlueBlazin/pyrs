@@ -28,10 +28,18 @@ const checks = [
     label: "playground worker entrypoint dataset",
     patterns: [
       "data-worker-entrypoint={workerEntrypoint}",
+      "data-stdlib-pack={stdlibPackPath}",
       "new Worker(workerEntrypoint, { type: \"module\" })",
       "sendWorkerRequest(\"load\"",
       "sendWorkerRequest(\"execute\"",
       "sendWorkerRequest(\"reset\"",
+      "stdlibPackPath,",
+      "const loaded = await ensureRuntimeLoaded();",
+    ],
+    ordered_patterns: [
+      "sendWorkerRequest(\"load\"",
+      "stdlibPackPath,",
+      "sendWorkerRequest(\"execute\"",
     ],
   },
   {
@@ -43,6 +51,13 @@ const checks = [
       "action === \"reset\"",
       "requestId",
       "self.postMessage({",
+      "await loadStdlibPack(stdlibPackPath);",
+      "ensureReplSession();",
+      "stdlibInfo: lastStdlibInfo,",
+    ],
+    ordered_patterns: [
+      "await loadStdlibPack(stdlibPackPath);",
+      "ensureReplSession();",
     ],
   },
 ];
@@ -75,12 +90,35 @@ for (const check of checks) {
       matchedPatterns.push(pattern);
     }
   }
+
+  const matchedOrderedPatterns = [];
+  const missingOrderedPatterns = [];
+  let lastOrderedIndex = -1;
+  for (const pattern of check.ordered_patterns || []) {
+    const nextIndex = content.indexOf(pattern);
+    if (nextIndex === -1) {
+      failures.push(`${check.label}: missing ordered pattern '${pattern}' in ${check.file}`);
+      missingOrderedPatterns.push(pattern);
+      continue;
+    }
+    if (nextIndex < lastOrderedIndex) {
+      failures.push(
+        `${check.label}: ordered pattern '${pattern}' appears before previous ordered pattern in ${check.file}`
+      );
+      missingOrderedPatterns.push(pattern);
+      continue;
+    }
+    matchedOrderedPatterns.push(pattern);
+    lastOrderedIndex = nextIndex;
+  }
   details.push({
     file: check.file,
     label: check.label,
     missing_file: false,
     matched_patterns: matchedPatterns,
     missing_patterns: missingPatterns,
+    matched_ordered_patterns: matchedOrderedPatterns,
+    missing_ordered_patterns: missingOrderedPatterns,
   });
 }
 
