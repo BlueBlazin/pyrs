@@ -71,6 +71,11 @@ def parse_args() -> argparse.Namespace:
         help="Output manifest path.",
     )
     parser.add_argument(
+        "--out-pack",
+        default="website/public/wasm/stdlib_subset_v1.json",
+        help="Output JSON source-pack path consumed by wasm runtime.",
+    )
+    parser.add_argument(
         "--pack-version",
         default="v1",
         help="Pack version label recorded in manifest.",
@@ -240,6 +245,8 @@ def write_manifest(
     closure: dict[str, ModuleSource],
     zip_path: Path,
     zip_bytes: int,
+    pack_path: Path,
+    pack_bytes: int,
 ) -> None:
     out_manifest.parent.mkdir(parents=True, exist_ok=True)
     files = []
@@ -268,6 +275,8 @@ def write_manifest(
             "raw_bytes": raw_bytes,
             "zip_bytes": zip_bytes,
             "zip_sha256": sha256_file(zip_path),
+            "pack_bytes": pack_bytes,
+            "pack_sha256": sha256_file(pack_path),
         },
     }
     out_manifest.write_text(
@@ -275,11 +284,43 @@ def write_manifest(
     )
 
 
+def write_source_pack(
+    out_pack: Path,
+    pack_version: str,
+    lib_root: Path,
+    closure: dict[str, ModuleSource],
+) -> int:
+    out_pack.parent.mkdir(parents=True, exist_ok=True)
+    modules = []
+    for module_name in sorted(closure):
+        source = closure[module_name]
+        modules.append(
+            {
+                "module": module_name,
+                "path": source.path.relative_to(lib_root).as_posix(),
+                "is_package": source.is_package,
+                "source": source.path.read_text(encoding="utf-8"),
+            }
+        )
+    payload = {
+        "pack_version": pack_version,
+        "python_version_target": "3.14",
+        "module_count": len(modules),
+        "modules": modules,
+    }
+    out_pack.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    return out_pack.stat().st_size
+
+
 def main() -> int:
     args = parse_args()
     lib_root = detect_cpython_lib(args.cpython_lib)
     out_zip = Path(args.out_zip)
     out_manifest = Path(args.out_manifest)
+    out_pack = Path(args.out_pack)
     seed_modules = list(DEFAULT_SEED_MODULES)
     closure = collect_runtime_import_closure(lib_root, seed_modules)
     if not closure:
@@ -297,6 +338,7 @@ def main() -> int:
         )
         return 1
 
+    pack_bytes = write_source_pack(out_pack, args.pack_version, lib_root, closure)
     write_manifest(
         out_manifest,
         args.pack_version,
@@ -305,8 +347,11 @@ def main() -> int:
         closure,
         out_zip,
         zip_bytes,
+        out_pack,
+        pack_bytes,
     )
     print(f"wrote {out_zip} ({zip_bytes} bytes)")
+    print(f"wrote {out_pack} ({pack_bytes} bytes)")
     print(f"wrote {out_manifest}")
     return 0
 

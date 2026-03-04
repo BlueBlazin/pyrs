@@ -4,6 +4,7 @@ import SiteLayout from "../layouts/SiteLayout.astro";
 const baseUrl = import.meta.env.BASE_URL || "/";
 const wasmEntrypoint = `${baseUrl.replace(/\/?$/, "/")}wasm/pyrs.js`;
 const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runtime-worker.js`;
+const stdlibPackPath = `${baseUrl.replace(/\/?$/, "/")}wasm/stdlib_subset_v1.json`;
 ---
 
 <SiteLayout
@@ -16,6 +17,7 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 		class="playground-page"
 		data-wasm-entrypoint={wasmEntrypoint}
 		data-worker-entrypoint={workerEntrypoint}
+		data-stdlib-pack={stdlibPackPath}
 	>
 		<section class="playground-shell is-loading" aria-label="Browser REPL">
 			<div class="shell-chrome">
@@ -93,6 +95,10 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 			pageRoot instanceof HTMLElement && pageRoot.dataset.workerEntrypoint
 				? pageRoot.dataset.workerEntrypoint
 				: "/workers/playground-runtime-worker.js";
+		const stdlibPackPath =
+			pageRoot instanceof HTMLElement && pageRoot.dataset.stdlibPack
+				? pageRoot.dataset.stdlibPack
+				: "/wasm/stdlib_subset_v1.json";
 
 		let runtimeWorker = null;
 		let runtimeWorkerReady = false;
@@ -536,7 +542,10 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 				let lastLoadError = "runtime failed to load";
 				for (let attempt = 0; attempt <= runtimeLoadRetryDelaysMs.length; attempt += 1) {
 					try {
-						const response = await sendWorkerRequest("load", { wasmEntrypoint });
+						const response = await sendWorkerRequest("load", {
+							wasmEntrypoint,
+							stdlibPackPath,
+						});
 						if (response.ok) {
 							runtimeWorkerReady = true;
 							lastRuntimeInfo = response.runtimeInfo || null;

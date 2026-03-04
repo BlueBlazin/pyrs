@@ -41,6 +41,7 @@ python3 scripts/generate_wasm_env_shim.py \
 
 python3 scripts/build_wasm_stdlib_subset.py \
   --out-zip website/public/wasm/stdlib_subset_v1.zip \
+  --out-pack website/public/wasm/stdlib_subset_v1.json \
   --out-manifest website/public/wasm/stdlib_subset_manifest_v1.json
 
 echo "WASM bundle generated in website/public/wasm/ using release-wasm (size-focused profile)."

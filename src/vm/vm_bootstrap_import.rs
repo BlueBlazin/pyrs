@@ -9793,10 +9793,8 @@ impl Vm {
             NAMESPACE_LOADER => Ok(()),
             SOURCE_FILE_LOADER => {
                 if source_info.is_virtual_source {
-                    let virtual_module_name = source_info
-                        .virtual_module_name
-                        .as_deref()
-                        .ok_or_else(|| {
+                    let virtual_module_name =
+                        source_info.virtual_module_name.as_deref().ok_or_else(|| {
                             RuntimeError::new(format!(
                                 "virtual module metadata missing for '{name}'"
                             ))

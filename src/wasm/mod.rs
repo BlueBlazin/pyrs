@@ -1,5 +1,7 @@
 #[cfg(feature = "wasm-vm-probe")]
 use std::cell::RefCell;
+#[cfg(feature = "wasm-vm-probe")]
+use std::collections::HashMap;
 use std::collections::HashSet;
 #[cfg(feature = "wasm-vm-probe")]
 use std::sync::Arc;
@@ -400,8 +402,18 @@ static NEXT_WASM_WORKER_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
 static CURRENT_WASM_WORKER_STATE: AtomicU8 = AtomicU8::new(worker_state_baseline() as u8);
 static CURRENT_WASM_WORKER_TIMEOUT_MS: AtomicU32 = AtomicU32::new(WASM_WORKER_TIMEOUT_DEFAULT_MS);
 #[cfg(feature = "wasm-vm-probe")]
+#[derive(Clone)]
+struct WasmVirtualModuleSource {
+    module_name: String,
+    source: String,
+    is_package: bool,
+}
+
+#[cfg(feature = "wasm-vm-probe")]
 thread_local! {
     static WASM_WORKER_VM: RefCell<Option<Vm>> = const { RefCell::new(None) };
+    static WASM_VIRTUAL_STDLIB_SOURCES: RefCell<HashMap<String, WasmVirtualModuleSource>> =
+        RefCell::new(HashMap::new());
 }
 
 fn next_worker_operation_id(action: &str) -> String {
@@ -415,9 +427,102 @@ pub fn init_wasm_runtime() {
     PANIC_HOOK_ONCE.call_once(console_error_panic_hook::set_once);
 }
 
+/// Clears previously registered virtual stdlib module sources used by wasm VM sessions.
+#[wasm_bindgen]
+pub fn wasm_virtual_stdlib_clear() {
+    #[cfg(feature = "wasm-vm-probe")]
+    {
+        clear_virtual_stdlib_registry();
+        refresh_worker_vm_virtual_stdlib_sources();
+    }
+}
+
+/// Registers a virtual stdlib module source for wasm VM sessions.
+#[wasm_bindgen]
+pub fn wasm_virtual_stdlib_register(module_name: &str, source: &str, is_package: bool) -> bool {
+    if module_name.trim().is_empty() {
+        return false;
+    }
+    #[cfg(feature = "wasm-vm-probe")]
+    {
+        register_virtual_stdlib_source(module_name, source, is_package);
+        refresh_worker_vm_virtual_stdlib_sources();
+        true
+    }
+    #[cfg(not(feature = "wasm-vm-probe"))]
+    {
+        let _ = (source, is_package);
+        false
+    }
+}
+
+/// Returns the number of registered virtual stdlib module sources in wasm runtime.
+#[wasm_bindgen]
+pub fn wasm_virtual_stdlib_count() -> u32 {
+    #[cfg(feature = "wasm-vm-probe")]
+    {
+        return virtual_stdlib_source_count() as u32;
+    }
+    #[cfg(not(feature = "wasm-vm-probe"))]
+    {
+        0
+    }
+}
+
 #[cfg(feature = "wasm-vm-probe")]
 fn new_wasm_repl_vm() -> Vm {
-    Vm::new_with_host(Arc::new(WasmHost))
+    let mut vm = Vm::new_with_host(Arc::new(WasmHost));
+    apply_virtual_stdlib_sources_to_vm(&mut vm);
+    vm
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn apply_virtual_stdlib_sources_to_vm(vm: &mut Vm) {
+    vm.clear_virtual_module_sources();
+    WASM_VIRTUAL_STDLIB_SOURCES.with(|sources| {
+        for entry in sources.borrow().values() {
+            vm.register_virtual_module_source(
+                entry.module_name.clone(),
+                entry.source.clone(),
+                entry.is_package,
+            );
+        }
+    });
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn refresh_worker_vm_virtual_stdlib_sources() {
+    WASM_WORKER_VM.with(|slot| {
+        if let Some(vm) = slot.borrow_mut().as_mut() {
+            apply_virtual_stdlib_sources_to_vm(vm);
+        }
+    });
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn clear_virtual_stdlib_registry() {
+    WASM_VIRTUAL_STDLIB_SOURCES.with(|sources| {
+        sources.borrow_mut().clear();
+    });
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn register_virtual_stdlib_source(module_name: &str, source: &str, is_package: bool) {
+    WASM_VIRTUAL_STDLIB_SOURCES.with(|sources| {
+        sources.borrow_mut().insert(
+            module_name.to_string(),
+            WasmVirtualModuleSource {
+                module_name: module_name.to_string(),
+                source: source.to_string(),
+                is_package,
+            },
+        );
+    });
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn virtual_stdlib_source_count() -> usize {
+    WASM_VIRTUAL_STDLIB_SOURCES.with(|sources| sources.borrow().len())
 }
 
 #[cfg(feature = "wasm-vm-probe")]
@@ -2678,7 +2783,7 @@ fn execute_compiled_snippet_with_vm(
 fn execute_compiled_snippet_with_fresh_vm(
     code: &crate::bytecode::CodeObject,
 ) -> WasmExecutionResult {
-    let mut vm = Vm::new_with_host(Arc::new(WasmHost));
+    let mut vm = new_wasm_repl_vm();
     let (result, _internal_failure, _timeout_exceeded) =
         execute_compiled_snippet_with_vm(&mut vm, code, None);
     result

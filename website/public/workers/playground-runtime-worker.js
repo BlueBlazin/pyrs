@@ -4,6 +4,9 @@ let runtimeModule = null;
 let runtimeLoadPromise = null;
 let replSession = null;
 let lastRuntimeInfo = null;
+let stdlibPackLoaded = false;
+let stdlibPackPathLoaded = null;
+let lastStdlibInfo = null;
 
 const readField = (object, key) => {
   if (!object) return undefined;
@@ -59,11 +62,76 @@ const readContinuationPrompt = (session) => {
   return Boolean(readField(session, "continuation_prompt"));
 };
 
-const loadRuntime = async (wasmEntrypoint) => {
+const loadStdlibPack = async (stdlibPackPath) => {
+  if (!runtimeModule) {
+    return { ok: false, error: "runtime not loaded" };
+  }
+  if (
+    stdlibPackLoaded &&
+    stdlibPackPathLoaded === stdlibPackPath
+  ) {
+    return { ok: true, stdlibInfo: lastStdlibInfo };
+  }
+  if (!stdlibPackPath || typeof stdlibPackPath !== "string") {
+    stdlibPackLoaded = true;
+    stdlibPackPathLoaded = null;
+    lastStdlibInfo = { pack_version: null, module_count: 0 };
+    return { ok: true, stdlibInfo: lastStdlibInfo };
+  }
+  if (typeof runtimeModule.wasm_virtual_stdlib_register !== "function") {
+    stdlibPackLoaded = true;
+    stdlibPackPathLoaded = stdlibPackPath;
+    lastStdlibInfo = { pack_version: null, module_count: 0 };
+    return { ok: true, stdlibInfo: lastStdlibInfo };
+  }
+
+  const response = await fetch(stdlibPackPath, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`stdlib subset fetch failed (${response.status}) at ${stdlibPackPath}`);
+  }
+  const payload = await response.json();
+  const modules = Array.isArray(payload?.modules) ? payload.modules : [];
+
+  if (typeof runtimeModule.wasm_virtual_stdlib_clear === "function") {
+    runtimeModule.wasm_virtual_stdlib_clear();
+  }
+
+  let registered = 0;
+  for (const entry of modules) {
+    if (!entry || typeof entry !== "object") continue;
+    const moduleName = typeof entry.module === "string" ? entry.module : "";
+    const sourceText = typeof entry.source === "string" ? entry.source : "";
+    const isPackage = Boolean(entry.is_package);
+    if (!moduleName || !sourceText) continue;
+    const accepted = runtimeModule.wasm_virtual_stdlib_register(moduleName, sourceText, isPackage);
+    if (accepted) {
+      registered += 1;
+    }
+  }
+
+  const runtimeCount =
+    typeof runtimeModule.wasm_virtual_stdlib_count === "function"
+      ? Number(runtimeModule.wasm_virtual_stdlib_count() || 0)
+      : registered;
+  stdlibPackLoaded = true;
+  stdlibPackPathLoaded = stdlibPackPath;
+  lastStdlibInfo = {
+    pack_version: typeof payload?.pack_version === "string" ? payload.pack_version : null,
+    module_count: runtimeCount,
+  };
+  return { ok: true, stdlibInfo: lastStdlibInfo };
+};
+
+const loadRuntime = async (wasmEntrypoint, stdlibPackPath) => {
   if (runtimeModule) {
+    const stdlib = await loadStdlibPack(stdlibPackPath);
+    if (!stdlib.ok) {
+      return stdlib;
+    }
     return {
       ok: true,
       runtimeInfo: lastRuntimeInfo,
+      stdlibInfo: lastStdlibInfo,
       prompt_continuation: readContinuationPrompt(ensureReplSession()),
     };
   }
@@ -82,6 +150,10 @@ const loadRuntime = async (wasmEntrypoint) => {
 
     runtimeModule = moduleRef;
     replSession = null;
+    stdlibPackLoaded = false;
+    stdlibPackPathLoaded = null;
+    lastStdlibInfo = null;
+    await loadStdlibPack(stdlibPackPath);
     ensureReplSession();
 
     lastRuntimeInfo =
@@ -91,6 +163,7 @@ const loadRuntime = async (wasmEntrypoint) => {
     return {
       ok: true,
       runtimeInfo: lastRuntimeInfo,
+      stdlibInfo: lastStdlibInfo,
       prompt_continuation: readContinuationPrompt(ensureReplSession()),
     };
   })()
@@ -98,6 +171,9 @@ const loadRuntime = async (wasmEntrypoint) => {
       runtimeModule = null;
       replSession = null;
       lastRuntimeInfo = null;
+      stdlibPackLoaded = false;
+      stdlibPackPathLoaded = null;
+      lastStdlibInfo = null;
       const message = error instanceof Error ? error.message : String(error);
       return { ok: false, error: message };
     })
@@ -165,7 +241,7 @@ self.addEventListener("message", async (event) => {
 
   let response;
   if (action === "load") {
-    response = await loadRuntime(payload.wasmEntrypoint);
+    response = await loadRuntime(payload.wasmEntrypoint, payload.stdlibPackPath);
   } else if (action === "execute") {
     response = executeSource(typeof payload.source === "string" ? payload.source : "");
   } else if (action === "reset") {
