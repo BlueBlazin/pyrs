@@ -4167,6 +4167,44 @@ ok = (
 }
 
 #[test]
+fn sysconfig_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping pure-sysconfig import preference test (CPython Lib path not available)"
+        );
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("sysconfig-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import sysconfig
+origin = getattr(sysconfig, '__file__', '')
+norm = origin.replace("\\", "/")
+name = sysconfig._get_sysconfigdata_name()
+mod = __import__(name)
+import _sysconfig
+ok = (
+    norm.endswith('/sysconfig/__init__.py')
+    and ('/shims/' not in norm)
+    and hasattr(mod, 'build_time_vars')
+    and (_sysconfig._get_sysconfigdata_name() == name)
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn sysconfig import preference thread");
+    handle
+        .join()
+        .expect("sysconfig import preference thread should complete");
+}
+
+#[test]
 fn typing_bootstrap_helpers_have_runtime_baseline_without_cpython_lib() {
     let Some(pyrs_bin) = pyrs_binary_path() else {
         eprintln!("skipping typing bootstrap helper test (pyrs binary not found)");

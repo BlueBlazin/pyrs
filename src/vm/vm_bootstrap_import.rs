@@ -8,7 +8,7 @@ use super::{
     PURE_STDLIB_FUNCTOOLS_MODULES, PURE_STDLIB_FUTURE_MODULES, PURE_STDLIB_INSPECT_MODULES,
     PURE_STDLIB_IO_MODULES, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_OPERATOR_MODULES,
     PURE_STDLIB_OSX_SUPPORT_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
-    PURE_STDLIB_PLATFORM_MODULES,
+    PURE_STDLIB_PLATFORM_MODULES, PURE_STDLIB_SYSCONFIG_MODULES,
     PURE_STDLIB_RE_MODULES, PURE_STDLIB_SIGNAL_MODULES, PURE_STDLIB_SOCKET_MODULES,
     PURE_STDLIB_TYPES_MODULES, PURE_STDLIB_UUID_MODULES, PURE_STDLIB_WEAKREF_MODULES, Path,
     PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM,
@@ -8711,6 +8711,7 @@ impl Vm {
     fn module_source_alias(module_name: &str) -> Option<&'static str> {
         match module_name {
             "collections.abc" => Some("_collections_abc"),
+            "_sysconfig" => Some("sysconfig"),
             _ => None,
         }
     }
@@ -8828,6 +8829,13 @@ impl Vm {
             }
         }
         for module_name in PURE_STDLIB_OSX_SUPPORT_MODULES {
+            if self.has_preferred_filesystem_module(module_name)
+                && self.module_preference_requires_unload(module_name)
+            {
+                self.unregister_module(module_name);
+            }
+        }
+        for module_name in PURE_STDLIB_SYSCONFIG_MODULES {
             if self.has_preferred_filesystem_module(module_name)
                 && self.module_preference_requires_unload(module_name)
             {

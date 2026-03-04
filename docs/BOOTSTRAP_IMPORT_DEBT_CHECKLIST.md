@@ -129,7 +129,10 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
 - [x] `P1` `abc` (line 8691):
   - added to pure-stdlib unload preference group (`PURE_STDLIB_ABC_MODULES`) so CPython `Lib/abc.py` is preferred when available;
   - covered by `tests/vm.rs::abc_import_prefers_cpython_pure_module_when_lib_path_is_added`.
-- [ ] `P1` `sysconfig` (line 8725)
+- [x] `P1` `sysconfig` (line 8725):
+  - added to pure-stdlib unload preference group (`PURE_STDLIB_SYSCONFIG_MODULES`) so CPython `Lib/sysconfig/__init__.py` is preferred when available;
+  - `_sysconfig` module preference now aliases filesystem presence to `sysconfig`, so stale bootstrap alias modules are unloaded alongside `sysconfig`;
+  - covered by `tests/vm.rs::sysconfig_import_prefers_cpython_pure_module_when_lib_path_is_added`.
 - [x] `P1` `socket` (line 8768):
   - added to pure-stdlib unload preference group (`PURE_STDLIB_SOCKET_MODULES`) so CPython `Lib/socket.py` is preferred when available;
   - covered by `tests/vm.rs::socket_import_prefers_cpython_pure_module_when_lib_path_is_added`.
