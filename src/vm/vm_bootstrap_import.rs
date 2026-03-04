@@ -5,8 +5,9 @@ use super::{
     LOCAL_SHIM_MODULES, LOCAL_SHIM_PRECEDENCE_MODULES, ModuleObject, ModuleSourceInfo,
     NAMESPACE_LOADER, NativeMethodKind, NativeMethodObject, ObjRef, Object,
     PURE_STDLIB_ABC_MODULES, PURE_STDLIB_CODECS_MODULES, PURE_STDLIB_COLLECTIONS_MODULES,
-    PURE_STDLIB_DECIMAL_MODULES, PURE_STDLIB_FUNCTOOLS_MODULES, PURE_STDLIB_FUTURE_MODULES,
-    PURE_STDLIB_INSPECT_MODULES, PURE_STDLIB_IO_MODULES, PURE_STDLIB_JSON_MODULES,
+    PURE_STDLIB_COLORIZE_MODULES, PURE_STDLIB_DECIMAL_MODULES, PURE_STDLIB_FUNCTOOLS_MODULES,
+    PURE_STDLIB_FUTURE_MODULES, PURE_STDLIB_INSPECT_MODULES, PURE_STDLIB_IO_MODULES,
+    PURE_STDLIB_JSON_MODULES,
     PURE_STDLIB_OPERATOR_MODULES, PURE_STDLIB_OS_MODULES, PURE_STDLIB_OSX_SUPPORT_MODULES,
     PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_PLATFORM_MODULES,
     PURE_STDLIB_RE_MODULES, PURE_STDLIB_SIGNAL_MODULES, PURE_STDLIB_SOCKET_MODULES,
@@ -8858,6 +8859,13 @@ impl Vm {
             }
         }
         for module_name in PURE_STDLIB_CODECS_MODULES {
+            if self.has_preferred_filesystem_module(module_name)
+                && self.module_preference_requires_unload(module_name)
+            {
+                self.unregister_module(module_name);
+            }
+        }
+        for module_name in PURE_STDLIB_COLORIZE_MODULES {
             if self.has_preferred_filesystem_module(module_name)
                 && self.module_preference_requires_unload(module_name)
             {

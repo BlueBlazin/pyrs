@@ -4062,6 +4062,42 @@ ok = (
 }
 
 #[test]
+fn colorize_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-_colorize import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("colorize-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import _colorize
+origin = getattr(_colorize, '__file__', '')
+norm = origin.replace("\\", "/")
+theme = _colorize.get_theme(force_color=True)
+items = dict(_colorize.default_theme.traceback.items())
+ok = (
+    norm.endswith('/_colorize.py')
+    and ('/shims/' not in norm)
+    and isinstance(theme, _colorize.Theme)
+    and ('filename' in items)
+    and ('reset' in items)
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn _colorize import preference thread");
+    handle
+        .join()
+        .expect("_colorize import preference thread should complete");
+}
+
+#[test]
 fn uuid_import_prefers_cpython_pure_module_when_lib_path_is_added() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pure-uuid import preference test (CPython Lib path not available)");

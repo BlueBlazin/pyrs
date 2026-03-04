@@ -206,6 +206,7 @@ const PURE_STDLIB_SIGNAL_MODULES: &[&str] = &["signal"];
 const PURE_STDLIB_INSPECT_MODULES: &[&str] = &["inspect"];
 const PURE_STDLIB_IO_MODULES: &[&str] = &["io"];
 const PURE_STDLIB_CODECS_MODULES: &[&str] = &["codecs"];
+const PURE_STDLIB_COLORIZE_MODULES: &[&str] = &["_colorize"];
 const PURE_STDLIB_UUID_MODULES: &[&str] = &["uuid"];
 const PURE_STDLIB_SOCKET_MODULES: &[&str] = &["socket"];
 const PURE_STDLIB_PLATFORM_MODULES: &[&str] = &["platform"];
