@@ -3073,3 +3073,59 @@ fn wasm_vm_probe_random_values_change_after_repl_reset_and_worker_recycle() {
         "random.random() should not deterministically repeat after worker recycle"
     );
 }
+
+#[cfg(feature = "wasm-vm-probe")]
+#[wasm_bindgen_test]
+fn wasm_vm_probe_dataclasses_repl_parity_smoke() {
+    reset_top_level_worker_state_for_contract_tests();
+    load_curated_stdlib_pack_into_runtime();
+
+    let mut session = WasmReplSession::new();
+    let define = session.execute_input(
+        "from dataclasses import dataclass\n\
+@dataclass\n\
+class User:\n\
+    name: str\n\
+    id: int\n\
+user = User('ada', 7)\n",
+    );
+    assert_eq!(define.phase(), "ok".to_string());
+    assert!(define.success());
+    assert!(define.error().is_none());
+    assert!(define.stderr().is_empty());
+
+    let repr_value = session.execute_input("user\n");
+    assert_eq!(repr_value.phase(), "ok".to_string());
+    assert!(repr_value.success());
+    assert!(repr_value.error().is_none());
+    assert!(repr_value.stderr().is_empty());
+    assert_eq!(repr_value.stdout().trim(), "User(name='ada', id=7)");
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+#[wasm_bindgen_test]
+fn wasm_vm_probe_statistics_repl_parity_smoke() {
+    reset_top_level_worker_state_for_contract_tests();
+    load_curated_stdlib_pack_into_runtime();
+
+    let mut session = WasmReplSession::new();
+    let compute = session.execute_input(
+        "import statistics as st\n\
+data = [3.2, 5.1, 7.8, 9.0]\n\
+mean_value = st.mean(data)\n\
+median_value = st.median(data)\n\
+assert abs(mean_value - 6.275) < 1e-12\n\
+assert median_value == (5.1 + 7.8) / 2\n",
+    );
+    assert_eq!(compute.phase(), "ok".to_string());
+    assert!(compute.success());
+    assert!(compute.error().is_none());
+    assert!(compute.stderr().is_empty());
+
+    let show = session.execute_input("(mean_value, median_value)\n");
+    assert_eq!(show.phase(), "ok".to_string());
+    assert!(show.success());
+    assert!(show.error().is_none());
+    assert!(show.stderr().is_empty());
+    assert_eq!(show.stdout().trim(), "(6.275, 6.449999999999999)");
+}

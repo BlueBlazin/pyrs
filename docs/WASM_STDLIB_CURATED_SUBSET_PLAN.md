@@ -228,6 +228,14 @@ Exit criteria:
 - `functools.cache` memoization behavior matches native for representative cases.
 - REPL session reset does not force deterministic `random` repeats from fixed seed state.
 
+Status: in progress (advanced)
+- Added wasm contract tests in `tests/wasm_contract.rs` (`wasm-vm-probe` lane):
+  - `wasm_vm_probe_functools_cache_semantics_match_contract`
+  - `wasm_vm_probe_random_values_change_after_repl_reset_and_worker_recycle`
+  - `wasm_vm_probe_dataclasses_repl_parity_smoke`
+  - `wasm_vm_probe_statistics_repl_parity_smoke`
+- These tests explicitly load the curated stdlib source pack into runtime virtual-module registry before REPL/worker execution.
+
 ## M5: CI + Evidence
 
 Deliverables:
@@ -238,6 +246,12 @@ Deliverables:
 Exit criteria:
 
 - CI demonstrates stable load+import behavior for subset modules.
+
+Status: in progress
+- `scripts/check_playground_worker_contract.mjs` now gates stdlib pack wiring:
+  - verifies `stdlibPackPath` propagation from page to worker load request,
+  - verifies worker stdlib load sequence appears before REPL session creation/execute flow.
+- Curated pack builder now enforces exclusion guardrails so `os` cannot silently re-enter the subset (`scripts/build_wasm_stdlib_subset.py`).
 
 ## Test Plan
 
