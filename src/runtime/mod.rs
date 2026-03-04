@@ -8,8 +8,8 @@ mod dict_backend;
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;

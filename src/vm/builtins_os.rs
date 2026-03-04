@@ -1,8 +1,8 @@
 use super::{
-    AtexitHandler, BuiltinFunction, ClassObject, Command, ExceptionObject,
-    FormatterFieldKey, HashMap, InstanceObject, InternalCallOutcome, IsTerminal, ModuleObject,
-    NativeMethodKind, ObjRef, Object, Path, PathBuf, Read, RuntimeError, Seek, SeekFrom, Stdio,
-    SystemTime, TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH, Value, Vm, Write, bytes_like_from_value,
+    AtexitHandler, BuiltinFunction, ClassObject, Command, ExceptionObject, FormatterFieldKey,
+    HashMap, InstanceObject, InternalCallOutcome, IsTerminal, ModuleObject, NativeMethodKind,
+    ObjRef, Object, Path, PathBuf, Read, RuntimeError, Seek, SeekFrom, Stdio, SystemTime,
+    TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH, Value, Vm, Write, bytes_like_from_value,
     decode_escape_bytes, decode_text_bytes, dict_get_value, dict_set_value, encode_text_bytes,
     format_value, fs, is_pyrs_executable, is_truthy, mul_values, normalize_codec_encoding,
     normalize_codec_errors, parse_decimal_bigint_literal, parse_modules_to_block_literal,
@@ -407,7 +407,9 @@ impl Vm {
         }
         #[cfg(not(unix))]
         {
-            Err(RuntimeError::new("getuid() is not supported on this platform"))
+            Err(RuntimeError::new(
+                "getuid() is not supported on this platform",
+            ))
         }
     }
 
@@ -5706,10 +5708,9 @@ impl Vm {
         let existing = {
             let module_kind = codecs_module.kind();
             match &*module_kind {
-                Object::Module(module_data) => module_data
-                    .globals
-                    .get(CODECS_ERROR_REGISTRY_ATTR)
-                    .cloned(),
+                Object::Module(module_data) => {
+                    module_data.globals.get(CODECS_ERROR_REGISTRY_ATTR).cloned()
+                }
                 _ => return Err(RuntimeError::new("invalid codecs module")),
             }
         };
@@ -5756,7 +5757,10 @@ impl Vm {
             .unwrap_or(start + 1);
         let normalized_end = end.max(start);
         let span = normalized_end.saturating_sub(start);
-        let span_len = usize::try_from(span).ok().filter(|len| *len > 0).unwrap_or(1);
+        let span_len = usize::try_from(span)
+            .ok()
+            .filter(|len| *len > 0)
+            .unwrap_or(1);
         Ok((exception.name, span_len, normalized_end))
     }
 
@@ -5884,10 +5888,9 @@ impl Vm {
         } else {
             "\u{fffd}"
         };
-        Ok(self.heap.alloc_tuple(vec![
-            Value::Str(unit.repeat(span_len)),
-            Value::Int(end),
-        ]))
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::Str(unit.repeat(span_len)), Value::Int(end)]))
     }
 
     pub(super) fn builtin_codecs_xmlcharrefreplace_errors(
@@ -5918,10 +5921,9 @@ impl Vm {
             ));
         }
         let (_, span_len, end) = self.codec_error_handler_metadata(args.remove(0))?;
-        Ok(self.heap.alloc_tuple(vec![
-            Value::Str("\\x3f".repeat(span_len)),
-            Value::Int(end),
-        ]))
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::Str("\\x3f".repeat(span_len)), Value::Int(end)]))
     }
 
     pub(super) fn builtin_codecs_namereplace_errors(

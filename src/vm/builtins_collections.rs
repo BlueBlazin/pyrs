@@ -1077,11 +1077,12 @@ impl Vm {
             )));
         }
 
-        let iterable = iterable_arg
-            .ok_or_else(|| RuntimeError::type_error("batched() missing required argument 'iterable' (pos 1)"))?;
-        let n = value_to_int(
-            n_arg.ok_or_else(|| RuntimeError::type_error("batched() missing required argument 'n' (pos 2)"))?,
-        )?;
+        let iterable = iterable_arg.ok_or_else(|| {
+            RuntimeError::type_error("batched() missing required argument 'iterable' (pos 1)")
+        })?;
+        let n = value_to_int(n_arg.ok_or_else(|| {
+            RuntimeError::type_error("batched() missing required argument 'n' (pos 2)")
+        })?)?;
         if n <= 0 {
             return Err(RuntimeError::value_error("n must be at least one"));
         }

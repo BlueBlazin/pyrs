@@ -2199,7 +2199,9 @@ impl Vm {
                 return Err(RuntimeError::new("module '_contextvars' is invalid"));
             };
             let Some(Value::Class(class)) = module_data.globals.get("Context").cloned() else {
-                return Err(RuntimeError::new("module '_contextvars' is missing Context"));
+                return Err(RuntimeError::new(
+                    "module '_contextvars' is missing Context",
+                ));
             };
             class
         };
@@ -2392,7 +2394,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || !args.is_empty() {
-            return Err(RuntimeError::new("daemon_threads_allowed() expects no arguments"));
+            return Err(RuntimeError::new(
+                "daemon_threads_allowed() expects no arguments",
+            ));
         }
         Ok(Value::Bool(true))
     }
@@ -2437,7 +2441,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("_make_thread_handle() expects one argument"));
+            return Err(RuntimeError::new(
+                "_make_thread_handle() expects one argument",
+            ));
         }
         let ident = value_to_int(args.remove(0))?;
         Ok(Value::Instance(
@@ -2451,7 +2457,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || !args.is_empty() {
-            return Err(RuntimeError::new("_get_main_thread_ident() expects no arguments"));
+            return Err(RuntimeError::new(
+                "_get_main_thread_ident() expects no arguments",
+            ));
         }
         Ok(Value::Int(self.current_thread_ident_value()))
     }
@@ -2462,7 +2470,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || !args.is_empty() {
-            return Err(RuntimeError::new("_is_main_interpreter() expects no arguments"));
+            return Err(RuntimeError::new(
+                "_is_main_interpreter() expects no arguments",
+            ));
         }
         Ok(Value::Bool(true))
     }
@@ -2473,7 +2483,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("_ThreadHandle.__init__() expects no arguments"));
+            return Err(RuntimeError::new(
+                "_ThreadHandle.__init__() expects no arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "_ThreadHandle.__init__")?;
         Self::instance_attr_set(&instance, "ident", Value::None)?;
@@ -2503,7 +2515,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("_ThreadHandle.is_done() expects no arguments"));
+            return Err(RuntimeError::new(
+                "_ThreadHandle.is_done() expects no arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "_ThreadHandle.is_done")?;
         Ok(Value::Bool(matches!(
@@ -2518,7 +2532,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("_ThreadHandle._set_done() expects no arguments"));
+            return Err(RuntimeError::new(
+                "_ThreadHandle._set_done() expects no arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "_ThreadHandle._set_done")?;
         Self::instance_attr_set(&instance, "_done", Value::Bool(true))?;
@@ -3491,7 +3507,8 @@ impl Vm {
             let next_line = match self.call_internal(source.clone(), Vec::new(), HashMap::new()) {
                 Ok(InternalCallOutcome::Value(value)) => value,
                 Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                    let err = self.runtime_error_from_active_exception("TokenizerIter source failed");
+                    let err =
+                        self.runtime_error_from_active_exception("TokenizerIter source failed");
                     if runtime_error_matches_exception(&err, "StopIteration") {
                         self.clear_active_exception();
                         break;
@@ -3621,10 +3638,14 @@ impl Vm {
             token_rows.push(self.heap.alloc_tuple(vec![
                 Value::Int(token_type),
                 Value::Str(token.lexeme),
-                self.heap
-                    .alloc_tuple(vec![Value::Int(token.line as i64), Value::Int(start_col as i64)]),
-                self.heap
-                    .alloc_tuple(vec![Value::Int(token.line as i64), Value::Int(end_col as i64)]),
+                self.heap.alloc_tuple(vec![
+                    Value::Int(token.line as i64),
+                    Value::Int(start_col as i64),
+                ]),
+                self.heap.alloc_tuple(vec![
+                    Value::Int(token.line as i64),
+                    Value::Int(end_col as i64),
+                ]),
                 Value::Str(line_text),
             ]));
         }
@@ -4018,7 +4039,9 @@ impl Vm {
             };
             if status != 0 {
                 let err = std::io::Error::last_os_error();
-                return Err(RuntimeError::os_error(format!("socketpair() failed: {err}")));
+                return Err(RuntimeError::os_error(format!(
+                    "socketpair() failed: {err}"
+                )));
             }
             let left = self.alloc_socket_instance_with_fd(fds[0] as i64)?;
             let right = self.alloc_socket_instance_with_fd(fds[1] as i64)?;
@@ -4386,7 +4409,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("socket.setblocking() expects one argument"));
+            return Err(RuntimeError::new(
+                "socket.setblocking() expects one argument",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "socket.setblocking")?;
         let blocking = is_truthy(&args.remove(0));
@@ -4434,9 +4459,7 @@ impl Vm {
         let instance = self.take_bound_instance_arg(&mut args, "socket.recv")?;
         let bufsize = value_to_int(args.remove(0))?;
         if bufsize < 0 {
-            return Err(RuntimeError::value_error(
-                "negative buffersize in recv()",
-            ));
+            return Err(RuntimeError::value_error("negative buffersize in recv()"));
         }
         let flags = if let Some(value) = args.pop() {
             value_to_int(value)? as i32
@@ -4470,7 +4493,9 @@ impl Vm {
         #[cfg(not(unix))]
         {
             let _ = (fd, flags);
-            Err(RuntimeError::new("recv() is not supported on this platform"))
+            Err(RuntimeError::new(
+                "recv() is not supported on this platform",
+            ))
         }
     }
 
@@ -4516,7 +4541,9 @@ impl Vm {
         #[cfg(not(unix))]
         {
             let _ = (fd, payload, flags);
-            Err(RuntimeError::new("send() is not supported on this platform"))
+            Err(RuntimeError::new(
+                "send() is not supported on this platform",
+            ))
         }
     }
 

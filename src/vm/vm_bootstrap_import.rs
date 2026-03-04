@@ -7,11 +7,10 @@ use super::{
     PURE_STDLIB_ABC_MODULES, PURE_STDLIB_CODECS_MODULES, PURE_STDLIB_COLLECTIONS_MODULES,
     PURE_STDLIB_COLORIZE_MODULES, PURE_STDLIB_DECIMAL_MODULES, PURE_STDLIB_FUNCTOOLS_MODULES,
     PURE_STDLIB_FUTURE_MODULES, PURE_STDLIB_INSPECT_MODULES, PURE_STDLIB_IO_MODULES,
-    PURE_STDLIB_JSON_MODULES,
-    PURE_STDLIB_OPERATOR_MODULES, PURE_STDLIB_OS_MODULES, PURE_STDLIB_OSX_SUPPORT_MODULES,
-    PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_PLATFORM_MODULES,
-    PURE_STDLIB_RE_MODULES, PURE_STDLIB_SIGNAL_MODULES, PURE_STDLIB_SOCKET_MODULES,
-    PURE_STDLIB_SSL_MODULES, PURE_STDLIB_SUBPROCESS_MODULES,
+    PURE_STDLIB_JSON_MODULES, PURE_STDLIB_OPERATOR_MODULES, PURE_STDLIB_OS_MODULES,
+    PURE_STDLIB_OSX_SUPPORT_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
+    PURE_STDLIB_PLATFORM_MODULES, PURE_STDLIB_RE_MODULES, PURE_STDLIB_SIGNAL_MODULES,
+    PURE_STDLIB_SOCKET_MODULES, PURE_STDLIB_SSL_MODULES, PURE_STDLIB_SUBPROCESS_MODULES,
     PURE_STDLIB_SYSCONFIG_MODULES, PURE_STDLIB_TYPES_MODULES, PURE_STDLIB_UUID_MODULES,
     PURE_STDLIB_WEAKREF_MODULES, Path, PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
     SIGNAL_SIGINT, SIGNAL_SIGKILL, SIGNAL_SIGTERM, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
@@ -4812,7 +4811,10 @@ impl Vm {
                 ),
                 ("stack_size", BuiltinFunction::ThreadStackSize),
                 ("_shutdown", BuiltinFunction::ThreadShutdown),
-                ("_make_thread_handle", BuiltinFunction::ThreadMakeThreadHandle),
+                (
+                    "_make_thread_handle",
+                    BuiltinFunction::ThreadMakeThreadHandle,
+                ),
                 (
                     "_get_main_thread_ident",
                     BuiltinFunction::ThreadGetMainThreadIdent,
@@ -4859,9 +4861,10 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Class(class_data) = &mut *context_class.kind_mut() {
-            class_data
-                .attrs
-                .insert("run".to_string(), Value::Builtin(BuiltinFunction::ContextRun));
+            class_data.attrs.insert(
+                "run".to_string(),
+                Value::Builtin(BuiltinFunction::ContextRun),
+            );
         }
         self.install_builtin_module(
             "_contextvars",
@@ -8501,12 +8504,14 @@ impl Vm {
                 "setblocking".to_string(),
                 Value::Builtin(BuiltinFunction::SocketObjectSetBlocking),
             );
-            class_data
-                .attrs
-                .insert("recv".to_string(), Value::Builtin(BuiltinFunction::SocketObjectRecv));
-            class_data
-                .attrs
-                .insert("send".to_string(), Value::Builtin(BuiltinFunction::SocketObjectSend));
+            class_data.attrs.insert(
+                "recv".to_string(),
+                Value::Builtin(BuiltinFunction::SocketObjectRecv),
+            );
+            class_data.attrs.insert(
+                "send".to_string(),
+                Value::Builtin(BuiltinFunction::SocketObjectSend),
+            );
             class_data.attrs.insert(
                 "close".to_string(),
                 Value::Builtin(BuiltinFunction::SocketObjectClose),

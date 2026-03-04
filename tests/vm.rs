@@ -4132,7 +4132,9 @@ fn io_open_with_utf8_encoding_works_with_pure_codecs() {
 #[test]
 fn colorize_import_prefers_cpython_pure_module_when_lib_path_is_added() {
     let Some(lib_path) = cpython_lib_path() else {
-        eprintln!("skipping pure-_colorize import preference test (CPython Lib path not available)");
+        eprintln!(
+            "skipping pure-_colorize import preference test (CPython Lib path not available)"
+        );
         return;
     };
     let handle = std::thread::Builder::new()
@@ -4410,7 +4412,9 @@ ok = (
 #[test]
 fn subprocess_import_prefers_cpython_pure_module_when_lib_path_is_added() {
     let Some(lib_path) = cpython_lib_path() else {
-        eprintln!("skipping pure-subprocess import preference test (CPython Lib path not available)");
+        eprintln!(
+            "skipping pure-subprocess import preference test (CPython Lib path not available)"
+        );
         return;
     };
     let handle = std::thread::Builder::new()
@@ -12526,15 +12530,18 @@ fn executes_asyncio_run_with_pure_cpython_lib_path() {
         eprintln!("skipping pure-asyncio run probe (CPython Lib path not available)");
         return;
     };
-    run_with_large_stack("executes_asyncio_run_with_pure_cpython_lib_path", move || {
-        let source = "import sys\nsys.modules.pop('asyncio', None)\nsys.modules.pop('socket', None)\nimport asyncio\norigin = getattr(asyncio, '__file__', '').replace('\\\\', '/')\nasync def f():\n    return 21\nresult = asyncio.run(f())\nok = (origin.endswith('/asyncio/__init__.py') and result == 21)\n";
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.add_module_path(lib_path.clone());
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+    run_with_large_stack(
+        "executes_asyncio_run_with_pure_cpython_lib_path",
+        move || {
+            let source = "import sys\nsys.modules.pop('asyncio', None)\nsys.modules.pop('socket', None)\nimport asyncio\norigin = getattr(asyncio, '__file__', '').replace('\\\\', '/')\nasync def f():\n    return 21\nresult = asyncio.run(f())\nok = (origin.endswith('/asyncio/__init__.py') and result == 21)\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib_path.clone());
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        },
+    );
 }
 
 #[test]
@@ -16458,7 +16465,8 @@ fn posixpath_dirname_bytes_works_when_cpython_lib_is_present() {
         eprintln!("skipping posixpath bytes dirname test (CPython Lib path not available)");
         return;
     };
-    let source = "import posixpath\npath = b'/tmp/demo.py'\nok = (posixpath.dirname(path) == b'/tmp')\n";
+    let source =
+        "import posixpath\npath = b'/tmp/demo.py'\nok = (posixpath.dirname(path) == b'/tmp')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -17632,8 +17640,7 @@ fn threading_local_baseline_type_is_available() {
 
 #[test]
 fn contextvars_copy_context_run_executes_callable_with_args() {
-    let source =
-        "import _contextvars\nctx = _contextvars.copy_context()\nout = ctx.run(lambda a, b: a + b, 2, 3)\nok = (out == 5)\n";
+    let source = "import _contextvars\nctx = _contextvars.copy_context()\nout = ctx.run(lambda a, b: a + b, 2, 3)\nok = (out == 5)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

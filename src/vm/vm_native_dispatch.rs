@@ -3194,7 +3194,9 @@ impl Vm {
                 let found = if needle.is_empty() {
                     Some(if reverse { haystack.len() } else { 0 })
                 } else if reverse {
-                    haystack.windows(needle.len()).rposition(|window| window == needle)
+                    haystack
+                        .windows(needle.len())
+                        .rposition(|window| window == needle)
                 } else {
                     find_bytes_subslice(haystack, &needle)
                 };
@@ -13303,9 +13305,7 @@ impl Vm {
             BuiltinFunction::DateIsoWeekday => self.builtin_date_isoweekday(args, kwargs),
             BuiltinFunction::DateIsoFormat => self.builtin_date_isoformat(args, kwargs),
             BuiltinFunction::DateStrFTime => self.builtin_date_strftime(args, kwargs),
-            BuiltinFunction::ContextCopyContext => {
-                self.builtin_context_copy_context(args, kwargs)
-            }
+            BuiltinFunction::ContextCopyContext => self.builtin_context_copy_context(args, kwargs),
             BuiltinFunction::ContextRun => self.builtin_context_run(args, kwargs),
             BuiltinFunction::TimeInit => self.builtin_time_init(args, kwargs),
             BuiltinFunction::TimeReplace => self.builtin_time_replace(args, kwargs),
