@@ -48,6 +48,11 @@ PACK_EXCLUDED_MODULES = {
     "os",
 }
 
+# Guardrail: these modules must never silently re-enter the curated wasm pack.
+REQUIRED_PACK_EXCLUDED_MODULES = {
+    "os",
+}
+
 
 @dataclass(frozen=True)
 class ModuleSource:
@@ -259,6 +264,24 @@ print(
     return closure
 
 
+def validate_exclusion_policy() -> None:
+    missing_required = sorted(REQUIRED_PACK_EXCLUDED_MODULES - PACK_EXCLUDED_MODULES)
+    if missing_required:
+        lines = "\n".join(f"- {name}" for name in missing_required)
+        raise SystemExit(
+            "required wasm stdlib exclusions are missing from PACK_EXCLUDED_MODULES:\n" + lines
+        )
+
+
+def validate_closure_exclusions(closure: dict[str, ModuleSource]) -> None:
+    leaked = sorted(module for module in closure if module in PACK_EXCLUDED_MODULES)
+    if leaked:
+        lines = "\n".join(f"- {name}" for name in leaked)
+        raise SystemExit(
+            "excluded modules leaked into wasm stdlib curated closure:\n" + lines
+        )
+
+
 def write_deterministic_zip(
     out_zip: Path,
     lib_root: Path,
@@ -322,6 +345,7 @@ def write_manifest(
         "python_version_target": "3.14",
         "source_lib_root": str(lib_root),
         "seed_modules": seed_modules,
+        "excluded_modules": sorted(PACK_EXCLUDED_MODULES),
         "module_count": len(closure),
         "files": files,
         "totals": {
@@ -370,12 +394,14 @@ def write_source_pack(
 
 def main() -> int:
     args = parse_args()
+    validate_exclusion_policy()
     lib_root = detect_cpython_lib(args.cpython_lib)
     out_zip = Path(args.out_zip)
     out_manifest = Path(args.out_manifest)
     out_pack = Path(args.out_pack)
     seed_modules = list(DEFAULT_SEED_MODULES)
     closure = collect_runtime_import_closure(lib_root, seed_modules)
+    validate_closure_exclusions(closure)
     if not closure:
         print("stdlib subset closure is empty", file=sys.stderr)
         return 1
