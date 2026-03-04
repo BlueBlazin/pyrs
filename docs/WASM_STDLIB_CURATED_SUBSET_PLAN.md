@@ -1,6 +1,6 @@
 # WASM Curated Stdlib Subset Plan (Top 26, `.py`-only)
 
-Status: in progress (M1-M3 implemented)  
+Status: in progress (M1-M3 complete, M4 in progress)  
 Date: 2026-03-04  
 Owner: runtime/wasm track
 
@@ -78,6 +78,12 @@ Target budget for initial subset pack:
 - `stdlib_subset_v1.zip <= 500 KB` compressed
 - Keep wasm binary size growth minimal (prefer external pack asset, lazy-loaded)
 
+Current generated pack snapshot (`website/public/wasm/stdlib_subset_manifest_v1.json`):
+
+- module_count: `57`
+- zip_bytes: `489,945`
+- json_pack_bytes: `2,022,235`
+
 ## Architecture Plan
 
 ## 1) Build-Time Stdlib Pack Generation
@@ -104,7 +110,7 @@ Responsibilities:
 
 Add a wasm-only stdlib provider in `src/wasm/mod.rs` flow:
 
-- Load/decode the zip asset once at runtime init.
+- Load JSON stdlib source pack once at runtime init.
 - Build in-memory map:
   - module name -> source text,
   - package name -> `__init__.py` source.
@@ -193,13 +199,18 @@ Exit criteria:
 
 - `import functools` on WASM resolves from packed source.
 
-Status: in progress (2026-03-04)
+Status: complete (2026-03-04)
 - wasm runtime exports virtual-stdlib registration API:
   - `wasm_virtual_stdlib_clear`
   - `wasm_virtual_stdlib_register`
   - `wasm_virtual_stdlib_count`
 - playground worker now auto-loads `wasm/stdlib_subset_v1.json` during runtime load and registers all module sources before creating `WasmReplSession`.
 - Builder now also emits JSON source pack (`stdlib_subset_v1.json`) alongside zip + manifest.
+- Closure probe now runs with CPython frozen modules disabled (`-X frozen_modules=off`) to avoid missing pure-Python dependencies behind frozen stdlib modules.
+- WASM curated pack explicitly excludes `os` and keeps native `os` substrate ownership in browser runtime, preventing `os.py` dependency cascades (`stat`, etc.) from breaking common imports.
+- Verified interactive imports in WASM REPL:
+  - `import functools` (including `functools.cache` behavior path),
+  - `import random` (including `collections/_collections_abc` dependency chain).
 
 ## M4: Parity Targets (Initial)
 
@@ -210,11 +221,12 @@ Deliverables:
   - `functools.lru_cache`,
   - `dataclasses`,
   - `statistics`,
-  - `pathlib` basic object construction.
+  - `random` import + runtime behavior (including reset/lifecycle stability).
 
 Exit criteria:
 
 - `functools.cache` memoization behavior matches native for representative cases.
+- REPL session reset does not force deterministic `random` repeats from fixed seed state.
 
 ## M5: CI + Evidence
 
@@ -246,6 +258,8 @@ Exit criteria:
 
 - `@functools.cache` recursive fib call-count is reduced vs uncached baseline.
 - `functools.cache` exposes CPython-shaped wrapper attrs expected by stdlib paths (`cache_info`, `cache_clear` where applicable via CPython `Lib/functools.py` behavior).
+- `random` auto-seed path is not constant across fresh VMs (`seed(None)` / constructor default).
+- Curated subset resolution keeps `collections` / `_collections_abc` available for `random` import chain.
 
 ## Risks and Mitigations
 
@@ -272,3 +286,5 @@ Exit criteria:
 
 - Adopt Option 1 (curated subset) as initial production demo strategy.
 - Keep Option 2 (larger general stdlib pack) as future fallback if product scope changes.
+- For WASM demo runtime, keep native `os` substrate as policy and do not pack `os.py` by default.
+- Drive closure discovery with CPython frozen modules disabled to avoid hidden-dependency omissions.
