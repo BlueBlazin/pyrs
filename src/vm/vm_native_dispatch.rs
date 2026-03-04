@@ -13269,6 +13269,10 @@ impl Vm {
             BuiltinFunction::DateIsoWeekday => self.builtin_date_isoweekday(args, kwargs),
             BuiltinFunction::DateIsoFormat => self.builtin_date_isoformat(args, kwargs),
             BuiltinFunction::DateStrFTime => self.builtin_date_strftime(args, kwargs),
+            BuiltinFunction::ContextCopyContext => {
+                self.builtin_context_copy_context(args, kwargs)
+            }
+            BuiltinFunction::ContextRun => self.builtin_context_run(args, kwargs),
             BuiltinFunction::TimeInit => self.builtin_time_init(args, kwargs),
             BuiltinFunction::TimeReplace => self.builtin_time_replace(args, kwargs),
             BuiltinFunction::AsyncioRun => self.builtin_asyncio_run(args, kwargs),

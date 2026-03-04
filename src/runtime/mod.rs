@@ -3695,6 +3695,7 @@ pub enum BuiltinFunction {
     ContextVarGet,
     ContextVarSet,
     ContextCopyContext,
+    ContextRun,
     ThreadRLock,
     ThreadStartNewThread,
     ThreadStartJoinableThread,
@@ -7895,6 +7896,7 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::DateIsoWeekday
             | BuiltinFunction::DateIsoFormat
             | BuiltinFunction::DateStrFTime
+            | BuiltinFunction::ContextRun
             | BuiltinFunction::TimeInit
             | BuiltinFunction::TimeReplace
             | BuiltinFunction::AsyncioRun

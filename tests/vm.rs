@@ -17405,6 +17405,17 @@ fn threading_local_baseline_type_is_available() {
 }
 
 #[test]
+fn contextvars_copy_context_run_executes_callable_with_args() {
+    let source =
+        "import _contextvars\nctx = _contextvars.copy_context()\nout = ctx.run(lambda a, b: a + b, 2, 3)\nok = (out == 5)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn thread_module_exports_local_type() {
     let source = "import _thread\nok = hasattr(_thread, '_local')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -17459,6 +17470,40 @@ ok = (
     handle
         .join()
         .expect("pure-threading import probe thread should complete");
+}
+
+#[test]
+fn threading_pure_module_thread_start_executes_target_with_cpython_lib_path() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-threading start probe (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("threading-pure-start".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import sys
+sys.modules.pop('threading', None)
+import threading
+values = []
+def task():
+    values.append(1)
+t = threading.Thread(target=task)
+t.start()
+t.join()
+ok = (values == [1] and (t.is_alive() is False))
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn pure-threading start probe");
+    handle
+        .join()
+        .expect("pure-threading start probe thread should complete");
 }
 
 #[test]

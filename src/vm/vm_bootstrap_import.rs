@@ -4843,6 +4843,18 @@ impl Vm {
                 ("barry_as_FLUFL", Value::None),
             ],
         );
+        let context_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Context".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *context_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("run".to_string(), Value::Builtin(BuiltinFunction::ContextRun));
+        }
         self.install_builtin_module(
             "_contextvars",
             &[
@@ -4850,11 +4862,7 @@ impl Vm {
                 ("copy_context", BuiltinFunction::ContextCopyContext),
             ],
             vec![
-                (
-                    "Context",
-                    self.heap
-                        .alloc_class(ClassObject::new("Context".to_string(), Vec::new())),
-                ),
+                ("Context", Value::Class(context_class)),
                 (
                     "Token",
                     self.heap

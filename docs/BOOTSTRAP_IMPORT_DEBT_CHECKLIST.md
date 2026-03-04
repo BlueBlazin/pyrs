@@ -141,7 +141,9 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
 - [ ] `P1` `asyncio` (line 7659)
 - [ ] `P1` `threading` (line 7846)
   - `_thread` substrate now exports CPython 3.14-required joinable-thread API symbols needed by pure `Lib/threading.py` import (`start_joinable_thread`, `daemon_threads_allowed`, `_shutdown`, `_make_thread_handle`, `_ThreadHandle`, `_get_main_thread_ident`, `_is_main_interpreter`, `LockType`, `error`);
+  - `_thread.stack_size` and `_contextvars.Context.run` / `_contextvars.copy_context()` now follow CPython call shape closely enough for pure `threading.Thread.start()` to execute target callables under current synthetic-thread model;
   - pure `Lib/threading.py` import now succeeds under CPython Lib-path execution without bootstrap `threading` module, covered by `tests/vm.rs::threading_pure_module_can_import_with_cpython_lib_path`;
+  - pure `threading.Thread.start()` baseline now executes targets under CPython Lib-path import, covered by `tests/vm.rs::threading_pure_module_thread_start_executes_target_with_cpython_lib_path`;
   - remaining closure work: full runtime semantic parity of pure `threading` execution model (joinability/lifecycle/concurrency behavior), not just import-surface compatibility.
 - [x] `P1` `signal` (line 7877):
   - added to pure-stdlib unload preference group (`PURE_STDLIB_SIGNAL_MODULES`) so CPython `Lib/signal.py` is preferred when available;

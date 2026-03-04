@@ -2157,6 +2157,59 @@ impl Vm {
         }
     }
 
+    pub(super) fn builtin_context_run(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 2 {
+            return Err(RuntimeError::new(
+                "Context.run() expects at least a callable argument",
+            ));
+        }
+        let _context = self.take_bound_instance_arg(&mut args, "Context.run")?;
+        let callable = args.remove(0);
+        if !self.is_callable_value(&callable) {
+            return Err(RuntimeError::type_error(
+                "Context.run() first argument must be callable",
+            ));
+        }
+        match self.call_internal(callable, args, kwargs)? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("Context.run() failed"))
+            }
+        }
+    }
+
+    pub(super) fn builtin_context_copy_context(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("copy_context() expects no arguments"));
+        }
+        let context_class = {
+            let module = self
+                .modules
+                .get("_contextvars")
+                .ok_or_else(|| RuntimeError::new("module '_contextvars' not found"))?;
+            let Object::Module(module_data) = &*module.kind() else {
+                return Err(RuntimeError::new("module '_contextvars' is invalid"));
+            };
+            let Some(Value::Class(class)) = module_data.globals.get("Context").cloned() else {
+                return Err(RuntimeError::new("module '_contextvars' is missing Context"));
+            };
+            class
+        };
+        let instance = match self.heap.alloc_instance(InstanceObject::new(context_class)) {
+            Value::Instance(obj) => obj,
+            _ => unreachable!(),
+        };
+        Ok(Value::Instance(instance))
+    }
+
     fn thread_handle_class(&self) -> Option<ObjRef> {
         let module = self.modules.get("_thread")?;
         let Object::Module(module_data) = &*module.kind() else {
