@@ -9860,6 +9860,37 @@ same = (a1 == a2) and (b1 == b2) and (c1 == c2) and (d1 == d2) and (x == y) and 
 }
 
 #[test]
+fn random_seed_none_is_not_constant_across_fresh_vms() {
+    let source = "\
+import _random\n\
+r = _random.Random()\n\
+vals = (r.getrandbits(64), r.getrandbits(64), r.getrandbits(64), r.getrandbits(64))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+
+    let mut vm_one = Vm::new();
+    vm_one.execute(&code).expect("first execution should succeed");
+    let first = tuple_values(vm_one.get_global("vals"))
+        .expect("first vals tuple should exist")
+        .iter()
+        .map(|value| int_string(Some(value.clone())).expect("tuple value should be int"))
+        .collect::<Vec<_>>();
+
+    let mut vm_two = Vm::new();
+    vm_two.execute(&code).expect("second execution should succeed");
+    let second = tuple_values(vm_two.get_global("vals"))
+        .expect("second vals tuple should exist")
+        .iter()
+        .map(|value| int_string(Some(value.clone())).expect("tuple value should be int"))
+        .collect::<Vec<_>>();
+
+    assert_ne!(
+        first, second,
+        "auto-seeded random output should not be identical across fresh VMs"
+    );
+}
+
+#[test]
 fn imports_with_meta_path_finder_object_entry() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

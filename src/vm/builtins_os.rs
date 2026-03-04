@@ -1325,11 +1325,21 @@ impl Vm {
         let size = size as usize;
         let mut out = vec![0u8; size];
 
-        // Use system entropy where available; fall back to VM RNG only if unavailable.
-        let os_fill_ok = fs::File::open("/dev/urandom")
-            .and_then(|mut file| file.read_exact(&mut out))
-            .is_ok();
-        if !os_fill_ok {
+        let entropy_fill_ok = {
+            #[cfg(target_arch = "wasm32")]
+            {
+                // On wasm, source entropy from browser-provided randomness.
+                getrandom::fill(&mut out).is_ok()
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                // Use host system entropy where available.
+                fs::File::open("/dev/urandom")
+                .and_then(|mut file| file.read_exact(&mut out))
+                .is_ok()
+            }
+        };
+        if !entropy_fill_ok {
             for chunk in out.chunks_mut(4) {
                 let bytes = self.random.next_u32().to_le_bytes();
                 let len = chunk.len();

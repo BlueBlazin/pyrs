@@ -38,7 +38,7 @@ use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -263,6 +263,7 @@ static MONOTONIC_START: OnceLock<Instant> = OnceLock::new();
 static OPCODE_METADATA: OnceLock<OpcodeMetadata> = OnceLock::new();
 static SUBMODULE_TRACE_COUNT: AtomicUsize = AtomicUsize::new(0);
 static NEXT_VM_FRAME_ID: AtomicUsize = AtomicUsize::new(1);
+static RANDOM_SEED_FALLBACK_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StructEndian {
@@ -1462,7 +1463,7 @@ impl Vm {
             trace_text_filters,
             import_perf_counters: ImportPerfCounters::default(),
             heap,
-            random: Mt19937::new(5489),
+            random: Mt19937::new(fresh_random_seed_u64()),
             generator_states: HashMap::new(),
             generator_returns: HashMap::new(),
             pending_generator_exception: None,
@@ -6182,13 +6183,7 @@ fn normalize_decimal_int_digits(digits: &str) -> Option<String> {
 
 fn seed_from_value(value: &Value) -> Result<u64, RuntimeError> {
     match value {
-        Value::None => {
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or(0);
-            Ok(nanos as u64)
-        }
+        Value::None => Ok(fresh_random_seed_u64()),
         Value::Int(value) => Ok(*value as u64),
         Value::BigInt(value) => match value.to_i64() {
             Some(number) => Ok(number as u64),
@@ -6214,6 +6209,26 @@ fn seed_from_value(value: &Value) -> Result<u64, RuntimeError> {
         }
         _ => Err(RuntimeError::new("seed() unsupported type")),
     }
+}
+
+fn fresh_random_seed_u64() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut bytes = [0u8; 8];
+        if getrandom::fill(&mut bytes).is_ok() {
+            return u64::from_le_bytes(bytes);
+        }
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0);
+    let counter = RANDOM_SEED_FALLBACK_COUNTER
+        .fetch_add(1, AtomicOrdering::Relaxed)
+        .wrapping_add(1);
+    nanos
+        ^ counter.rotate_left(17)
+        ^ nanos.wrapping_mul(0x9E37_79B9_7F4A_7C15)
 }
 
 fn random_range_count(start: i64, stop: i64, step: i64) -> Result<i64, RuntimeError> {
