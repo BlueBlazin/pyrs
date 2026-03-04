@@ -7,6 +7,12 @@ cargo check
 echo "[wasm-branch] cargo check (wasm32-unknown-unknown)"
 cargo check --target wasm32-unknown-unknown --no-default-features
 
+echo "[wasm-branch] build curated wasm stdlib source pack"
+python3 scripts/build_wasm_stdlib_subset.py \
+  --out-zip website/public/wasm/stdlib_subset_v1.zip \
+  --out-pack website/public/wasm/stdlib_subset_v1.json \
+  --out-manifest website/public/wasm/stdlib_subset_manifest_v1.json
+
 echo "[wasm-branch] cargo check wasm contract harness"
 cargo check --target wasm32-unknown-unknown --test wasm_contract --no-default-features
 
