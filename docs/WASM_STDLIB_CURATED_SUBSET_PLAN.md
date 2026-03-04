@@ -1,6 +1,6 @@
 # WASM Curated Stdlib Subset Plan (Top 26, `.py`-only)
 
-Status: in progress (M1-M3 complete, M4 in progress)  
+Status: in progress (M1-M4 complete, M5 maintenance-only)  
 Date: 2026-03-04  
 Owner: runtime/wasm track
 
@@ -228,7 +228,7 @@ Exit criteria:
 - `functools.cache` memoization behavior matches native for representative cases.
 - REPL session reset does not force deterministic `random` repeats from fixed seed state.
 
-Status: in progress (advanced)
+Status: complete (2026-03-05)
 - Added wasm contract tests in `tests/wasm_contract.rs` (`wasm-vm-probe` lane):
   - `wasm_vm_probe_functools_cache_semantics_match_contract`
   - `wasm_vm_probe_random_values_change_after_repl_reset_and_worker_recycle`
@@ -237,6 +237,9 @@ Status: in progress (advanced)
   - `wasm_vm_probe_combined_curated_subset_repl_scenario`
   - `wasm_vm_probe_combined_curated_subset_worker_scenario`
 - These tests explicitly load the curated stdlib source pack into runtime virtual-module registry before REPL/worker execution.
+- Browser contract lane is green on latest promoted wasm-track run:
+  - run: [22673172834](https://github.com/BlueBlazin/pyrs/actions/runs/22673172834)
+  - jobs: `wasm-contract-gate=success`, `wasm-browser-smoke=success`
 
 ## M5: CI + Evidence
 
@@ -249,7 +252,7 @@ Exit criteria:
 
 - CI demonstrates stable load+import behavior for subset modules.
 
-Status: in progress (CI blocker closure complete for current lane)
+Status: maintenance-only (2026-03-05)
 - `scripts/check_playground_worker_contract.mjs` now gates stdlib pack wiring:
   - verifies `stdlibPackPath` propagation from page to worker load request,
   - verifies worker stdlib load sequence appears before REPL session creation/execute flow.
@@ -271,6 +274,51 @@ Status: in progress (CI blocker closure complete for current lane)
     `website/public/wasm/stdlib_subset_v1.json` is always available,
   - `scripts/run_wasm_contract_smoke.sh` now uses `rg` or `grep` fallback for
     output-collision detection (no hard failure when `rg` is absent in runner).
+
+## Remaining Work to Close Plan
+
+No additional functional work remains for the curated subset M1-M4 scope.
+The plan is now in maintenance mode under M5.
+
+Maintenance-only actions:
+
+1. Keep `website/public/wasm/stdlib_subset_manifest_v1.json` and
+   `perf/wasm_stdlib_subset_summary_latest.json` in sync when seed or closure changes.
+2. Keep wasm artifact-hash evidence current in `docs/WASM_PROMOTION_GATE.md`.
+3. Re-run browser contract lane when wasm toolchain or browser-driver versions change.
+4. Only open new milestones if product scope expands beyond current curated subset.
+
+## M4 Strict Closure Checklist
+
+1. Curated pack contains target modules (`functools`, `random`, `dataclasses`, `statistics`).
+2. Virtual stdlib worker wiring is verified (pack path + load-before-session flow).
+3. `wasm_contract` vm-probe target compiles for `wasm32-unknown-unknown`.
+4. Browser contract lane passes in CI for `wasm-vm-probe` (M4 parity tests green).
+
+Checklist status (2026-03-05):
+
+- [x] 1. Module presence validated in generated subset artifacts.
+- [x] 2. Worker contract check is passing.
+- [x] 3. `wasm_contract` vm-probe compile check is passing.
+- [x] 4. CI browser lane is passing on run `22673172834`.
+
+## Local + CI Evidence Snapshot (2026-03-05)
+
+Local checks run:
+
+1. `python3 scripts/build_wasm_stdlib_subset.py --out-zip website/public/wasm/stdlib_subset_v1.zip --out-pack website/public/wasm/stdlib_subset_v1.json --out-manifest website/public/wasm/stdlib_subset_manifest_v1.json`
+   - pass (`zip=489,945`, `json_pack=2,022,235` bytes).
+2. `python3 scripts/generate_wasm_stdlib_subset_summary.py --manifest website/public/wasm/stdlib_subset_manifest_v1.json --out perf/wasm_stdlib_subset_summary_latest.json`
+   - pass.
+3. `node scripts/check_playground_worker_contract.mjs --out perf/wasm_playground_worker_contract_latest.json`
+   - pass.
+4. `cargo check --target wasm32-unknown-unknown --test wasm_contract --no-default-features --features wasm-vm-probe`
+   - pass.
+5. `cargo nextest run --lib wasm_host_capability_matrix_is_explicit wasm_host_unsupported_messages_are_stable wasm_host_unsupported_message_matrix_matches_supports --status-level fail --final-status-level fail`
+   - pass (`3 passed`).
+6. `wasm-pack test --headless --chrome --test wasm_contract --no-default-features --features wasm-vm-probe`
+   - local host failure (`chromedriver` process killed with `signal: 9` before test completion).
+   - classification: local webdriver instability; CI browser run remains green for the same contract surface.
 
 ## Test Plan
 
