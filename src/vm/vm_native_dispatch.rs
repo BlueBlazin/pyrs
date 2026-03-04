@@ -12182,6 +12182,7 @@ impl Vm {
             BuiltinFunction::TimeGmTime => self.builtin_time_gmtime(args, kwargs),
             BuiltinFunction::TimeStrFTime => self.builtin_time_strftime(args, kwargs),
             BuiltinFunction::TimeMonotonic => self.builtin_time_monotonic(args, kwargs),
+            BuiltinFunction::TimeGetClockInfo => self.builtin_time_get_clock_info(args, kwargs),
             BuiltinFunction::TimeSleep => self.builtin_time_sleep(args, kwargs),
             BuiltinFunction::ResourceGetRLimit => self.builtin_resource_getrlimit(args, kwargs),
             BuiltinFunction::OsGetPid => self.builtin_os_getpid(args, kwargs),

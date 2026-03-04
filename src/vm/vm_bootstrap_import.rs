@@ -898,6 +898,7 @@ impl Vm {
                 ("gmtime", BuiltinFunction::TimeGmTime),
                 ("strftime", BuiltinFunction::TimeStrFTime),
                 ("monotonic", BuiltinFunction::TimeMonotonic),
+                ("get_clock_info", BuiltinFunction::TimeGetClockInfo),
                 ("perf_counter", BuiltinFunction::TimeMonotonic),
                 ("perf_counter_ns", BuiltinFunction::TimeTimeNs),
                 ("sleep", BuiltinFunction::TimeSleep),

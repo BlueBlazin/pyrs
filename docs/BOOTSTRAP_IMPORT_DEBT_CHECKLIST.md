@@ -139,6 +139,13 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
   - added to pure-stdlib unload preference group (`PURE_STDLIB_UUID_MODULES`) so CPython `Lib/uuid.py` is preferred when available;
   - covered by `tests/vm.rs::uuid_import_prefers_cpython_pure_module_when_lib_path_is_added`.
 - [ ] `P1` `asyncio` (line 7659)
+  - `time.get_clock_info` now follows CPython `timemodule.c` name contract for
+    `time`/`monotonic`/`perf_counter` (plus `process_time`/`thread_time` metadata rows)
+    and returns a `types.SimpleNamespace` with
+    `implementation`/`monotonic`/`adjustable`/`resolution` attributes;
+  - pure `Lib/asyncio` import under CPython Lib-path now has a dedicated regression
+    (`tests/vm.rs::asyncio_pure_module_can_import_with_cpython_lib_path`) to prevent
+    fallback regressions through missing `time` metadata substrate.
 - [ ] `P1` `threading` (line 7846)
   - `_thread` substrate now exports CPython 3.14-required joinable-thread API symbols needed by pure `Lib/threading.py` import (`start_joinable_thread`, `daemon_threads_allowed`, `_shutdown`, `_make_thread_handle`, `_ThreadHandle`, `_get_main_thread_ident`, `_is_main_interpreter`, `LockType`, `error`);
   - `_thread.stack_size` and `_contextvars.Context.run` / `_contextvars.copy_context()` now follow CPython call shape closely enough for pure `threading.Thread.start()` to execute target callables under current synthetic-thread model;

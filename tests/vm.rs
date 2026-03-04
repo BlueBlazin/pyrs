@@ -1826,6 +1826,17 @@ fn exposes_time_perf_counter_helpers() {
 }
 
 #[test]
+fn time_get_clock_info_returns_namespace_shape() {
+    let source = "import time\nmono = time.get_clock_info('monotonic')\nperf = time.get_clock_info('perf_counter')\nwall = time.get_clock_info('time')\nbad = False\ntry:\n    time.get_clock_info('missing')\nexcept ValueError as exc:\n    bad = ('unknown clock' in str(exc))\nok = (\n    type(mono).__name__ == 'SimpleNamespace'\n    and isinstance(mono.implementation, str)\n    and isinstance(mono.monotonic, bool)\n    and isinstance(mono.adjustable, bool)\n    and isinstance(mono.resolution, float)\n    and mono.monotonic is True\n    and mono.adjustable is False\n    and mono.resolution > 0.0\n    and perf.monotonic is True\n    and wall.monotonic is False\n    and wall.adjustable is True\n    and bad\n)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_jit_probe_flags() {
     let source = "import sys\nok = (hasattr(sys, '_jit') and hasattr(sys._jit, 'is_active') and isinstance(sys._jit.is_enabled(), bool) and isinstance(sys._jit.is_available(), bool) and isinstance(sys._jit.is_active(), bool) and (sys._jit.is_active() is False))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -17470,6 +17481,44 @@ ok = (
     handle
         .join()
         .expect("pure-threading import probe thread should complete");
+}
+
+#[test]
+fn asyncio_pure_module_can_import_with_cpython_lib_path() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-asyncio import probe (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("asyncio-pure-import".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import sys
+sys.modules.pop('asyncio', None)
+import asyncio
+import time
+origin = getattr(asyncio, '__file__', '')
+norm = origin.replace("\\", "/")
+info = time.get_clock_info('monotonic')
+ok = (
+    norm.endswith('/asyncio/__init__.py')
+    and ('/shims/' not in norm)
+    and isinstance(info.resolution, float)
+    and info.monotonic is True
+    and info.adjustable is False
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn pure-asyncio import probe");
+    handle
+        .join()
+        .expect("pure-asyncio import probe thread should complete");
 }
 
 #[test]

@@ -1,8 +1,9 @@
 use super::{
-    BigInt, Duration, HashMap, InstanceObject, Instant, MONOTONIC_START, Object, RuntimeError,
-    SystemTime, TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH, Value, Vm, erfc_approx, format_strftime,
-    random_range_count, seed_from_value, split_unix_timestamp, time_parts_from_value,
-    unix_seconds_now, value_from_bigint, value_to_bigint, value_to_f64, value_to_int,
+    BigInt, Duration, HashMap, InstanceObject, Instant, InternalCallOutcome, MONOTONIC_START,
+    Object, RuntimeError, SystemTime, TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH, Value, Vm,
+    erfc_approx, format_strftime, random_range_count, seed_from_value, split_unix_timestamp,
+    time_parts_from_value, unix_seconds_now, value_from_bigint, value_to_bigint, value_to_f64,
+    value_to_int,
 };
 
 #[cfg(any(
@@ -1336,6 +1337,106 @@ impl Vm {
         }
         let start = MONOTONIC_START.get_or_init(Instant::now);
         Ok(Value::Float(start.elapsed().as_secs_f64()))
+    }
+
+    pub(super) fn builtin_time_get_clock_info(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "get_clock_info() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "get_clock_info() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let name = match args.remove(0) {
+            Value::Str(name) => name,
+            other => {
+                return Err(RuntimeError::type_error(format!(
+                    "get_clock_info() argument 1 must be str, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        let (implementation, monotonic, adjustable, resolution) = match name.as_str() {
+            "time" => ("clock_gettime(CLOCK_REALTIME)", false, true, 1e-9_f64),
+            "monotonic" | "perf_counter" => {
+                ("clock_gettime(CLOCK_MONOTONIC)", true, false, 1e-9_f64)
+            }
+            "process_time" => (
+                "clock_gettime(CLOCK_PROCESS_CPUTIME_ID)",
+                true,
+                false,
+                1e-9_f64,
+            ),
+            "thread_time" => (
+                "clock_gettime(CLOCK_THREAD_CPUTIME_ID)",
+                true,
+                false,
+                1e-9_f64,
+            ),
+            _ => return Err(RuntimeError::value_error("unknown clock")),
+        };
+        let simple_namespace_class = self
+            .types_module_or_private_class("SimpleNamespace")
+            .ok_or_else(|| RuntimeError::new("types.SimpleNamespace missing"))?;
+        let info = match self.call_internal(
+            Value::Class(simple_namespace_class),
+            Vec::new(),
+            HashMap::new(),
+        )? {
+            InternalCallOutcome::Value(Value::Instance(instance)) => instance,
+            InternalCallOutcome::Value(other) => {
+                return Err(RuntimeError::type_error(format!(
+                    "types.SimpleNamespace() returned {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception(
+                    "get_clock_info() failed to construct namespace",
+                ));
+            }
+        };
+        self.builtin_setattr(
+            vec![
+                Value::Instance(info.clone()),
+                Value::Str("implementation".to_string()),
+                Value::Str(implementation.to_string()),
+            ],
+            HashMap::new(),
+        )?;
+        self.builtin_setattr(
+            vec![
+                Value::Instance(info.clone()),
+                Value::Str("monotonic".to_string()),
+                Value::Bool(monotonic),
+            ],
+            HashMap::new(),
+        )?;
+        self.builtin_setattr(
+            vec![
+                Value::Instance(info.clone()),
+                Value::Str("adjustable".to_string()),
+                Value::Bool(adjustable),
+            ],
+            HashMap::new(),
+        )?;
+        self.builtin_setattr(
+            vec![
+                Value::Instance(info.clone()),
+                Value::Str("resolution".to_string()),
+                Value::Float(resolution),
+            ],
+            HashMap::new(),
+        )?;
+        Ok(Value::Instance(info))
     }
 
     pub(super) fn builtin_time_sleep(
