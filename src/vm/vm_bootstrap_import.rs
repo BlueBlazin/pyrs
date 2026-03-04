@@ -538,6 +538,41 @@ impl Vm {
             .map_err(|err| {
                 RuntimeError::new(format!("failed to read module '{name}': {}", err.message))
             })?;
+        self.queue_source_module_execution_from_text(module, name, &source_filename, source)
+    }
+
+    fn queue_virtual_source_module_execution(
+        &mut self,
+        module: &ObjRef,
+        name: &str,
+        virtual_module_name: &str,
+        source_filename: &str,
+    ) -> Result<(), RuntimeError> {
+        if self.import_perf_enabled {
+            self.import_perf_counters.fs_source_compiles = self
+                .import_perf_counters
+                .fs_source_compiles
+                .saturating_add(1);
+        }
+        let source = self
+            .virtual_module_sources
+            .get(virtual_module_name)
+            .map(|entry| entry.source.clone())
+            .ok_or_else(|| {
+                RuntimeError::new(format!(
+                    "virtual source for module '{virtual_module_name}' is unavailable"
+                ))
+            })?;
+        self.queue_source_module_execution_from_text(module, name, source_filename, source)
+    }
+
+    fn queue_source_module_execution_from_text(
+        &mut self,
+        module: &ObjRef,
+        name: &str,
+        source_filename: &str,
+        source: String,
+    ) -> Result<(), RuntimeError> {
         self.cache_source_text(&source_filename, &source);
 
         let module_ast = parser::parse_module(&source).map_err(|err| {
@@ -9757,7 +9792,25 @@ impl Vm {
         match loader_name {
             NAMESPACE_LOADER => Ok(()),
             SOURCE_FILE_LOADER => {
-                self.queue_source_module_execution(module, name, &source_info.path)
+                if source_info.is_virtual_source {
+                    let virtual_module_name = source_info
+                        .virtual_module_name
+                        .as_deref()
+                        .ok_or_else(|| {
+                            RuntimeError::new(format!(
+                                "virtual module metadata missing for '{name}'"
+                            ))
+                        })?;
+                    let source_filename = source_info.path.to_string_lossy().to_string();
+                    self.queue_virtual_source_module_execution(
+                        module,
+                        name,
+                        virtual_module_name,
+                        &source_filename,
+                    )
+                } else {
+                    self.queue_source_module_execution(module, name, &source_info.path)
+                }
             }
             EXTENSION_FILE_LOADER => {
                 self.mark_module_initializing(module);
@@ -9843,7 +9896,32 @@ impl Vm {
         self.path_finder_find_spec(name)
     }
 
+    fn virtual_module_source_info(&self, name: &str) -> Option<ModuleSourceInfo> {
+        let entry = self.virtual_module_sources.get(name)?;
+        let package_dirs = if entry.is_package {
+            vec![PathBuf::from(format!(
+                "<wasm-stdlib>/{}",
+                name.replace('.', "/")
+            ))]
+        } else {
+            Vec::new()
+        };
+        Some(ModuleSourceInfo {
+            path: PathBuf::from(&entry.filename),
+            is_package: entry.is_package,
+            package_dirs,
+            is_namespace: false,
+            is_bytecode: false,
+            is_extension: false,
+            is_virtual_source: true,
+            virtual_module_name: Some(name.to_string()),
+        })
+    }
+
     pub(super) fn path_finder_find_spec(&mut self, name: &str) -> Option<ModuleSourceInfo> {
+        if let Some(source) = self.virtual_module_source_info(name) {
+            return Some(source);
+        }
         if LOCAL_SHIM_PRECEDENCE_MODULES.contains(&name)
             && let Some(shim_source) = self.preferred_local_shim_source(name)
         {
@@ -9942,6 +10020,8 @@ impl Vm {
                 is_namespace: true,
                 is_bytecode: false,
                 is_extension: false,
+                is_virtual_source: false,
+                virtual_module_name: None,
             });
         }
         None
@@ -10262,6 +10342,8 @@ impl Vm {
                         is_namespace: false,
                         is_bytecode: true,
                         is_extension: false,
+                        is_virtual_source: false,
+                        virtual_module_name: None,
                     },
                 ));
             }
@@ -10278,6 +10360,8 @@ impl Vm {
                         is_namespace: false,
                         is_bytecode: true,
                         is_extension: false,
+                        is_virtual_source: false,
+                        virtual_module_name: None,
                     },
                 ));
             }
@@ -10290,6 +10374,8 @@ impl Vm {
                     is_namespace: false,
                     is_bytecode: false,
                     is_extension: false,
+                    is_virtual_source: false,
+                    virtual_module_name: None,
                 },
             ));
         }
@@ -10303,6 +10389,8 @@ impl Vm {
                     is_namespace: false,
                     is_bytecode: true,
                     is_extension: false,
+                    is_virtual_source: false,
+                    virtual_module_name: None,
                 },
             ));
         }
@@ -10316,6 +10404,8 @@ impl Vm {
                     is_namespace: false,
                     is_bytecode: true,
                     is_extension: false,
+                    is_virtual_source: false,
+                    virtual_module_name: None,
                 },
             ));
         }
@@ -10331,6 +10421,8 @@ impl Vm {
                     is_namespace: false,
                     is_bytecode: false,
                     is_extension: true,
+                    is_virtual_source: false,
+                    virtual_module_name: None,
                 },
             ));
         }
@@ -10345,6 +10437,8 @@ impl Vm {
                     is_namespace: false,
                     is_bytecode: false,
                     is_extension: true,
+                    is_virtual_source: false,
+                    virtual_module_name: None,
                 },
             ));
         }
@@ -10368,6 +10462,8 @@ impl Vm {
                         is_namespace: false,
                         is_bytecode: true,
                         is_extension: false,
+                        is_virtual_source: false,
+                        virtual_module_name: None,
                     },
                 ));
             }
@@ -10384,6 +10480,8 @@ impl Vm {
                         is_namespace: false,
                         is_bytecode: true,
                         is_extension: false,
+                        is_virtual_source: false,
+                        virtual_module_name: None,
                     },
                 ));
             }
@@ -10396,6 +10494,8 @@ impl Vm {
                     is_namespace: false,
                     is_bytecode: false,
                     is_extension: false,
+                    is_virtual_source: false,
+                    virtual_module_name: None,
                 },
             ));
         }
@@ -10409,6 +10509,8 @@ impl Vm {
                     is_namespace: false,
                     is_bytecode: true,
                     is_extension: false,
+                    is_virtual_source: false,
+                    virtual_module_name: None,
                 },
             ));
         }
@@ -10422,6 +10524,8 @@ impl Vm {
                     is_namespace: false,
                     is_bytecode: true,
                     is_extension: false,
+                    is_virtual_source: false,
+                    virtual_module_name: None,
                 },
             ));
         }
@@ -10437,6 +10541,8 @@ impl Vm {
                     is_namespace: false,
                     is_bytecode: false,
                     is_extension: true,
+                    is_virtual_source: false,
+                    virtual_module_name: None,
                 },
             ));
         }
@@ -10452,6 +10558,8 @@ impl Vm {
                     is_namespace: false,
                     is_bytecode: false,
                     is_extension: true,
+                    is_virtual_source: false,
+                    virtual_module_name: None,
                 },
             ));
         }
@@ -10463,6 +10571,8 @@ impl Vm {
                 is_namespace: true,
                 is_bytecode: false,
                 is_extension: false,
+                is_virtual_source: false,
+                virtual_module_name: None,
             });
         }
         None

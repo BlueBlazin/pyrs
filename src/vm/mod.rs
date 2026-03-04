@@ -118,6 +118,15 @@ struct ModuleSourceInfo {
     is_namespace: bool,
     is_bytecode: bool,
     is_extension: bool,
+    is_virtual_source: bool,
+    virtual_module_name: Option<String>,
+}
+
+#[derive(Clone)]
+struct VirtualModuleSource {
+    source: String,
+    filename: String,
+    is_package: bool,
 }
 
 #[derive(Clone)]
@@ -1136,6 +1145,7 @@ pub struct Vm {
     main_module: ObjRef,
     module_paths: Vec<PathBuf>,
     module_source_positive_cache: HashMap<(PathBuf, String), ModuleSourceInfo>,
+    virtual_module_sources: HashMap<String, VirtualModuleSource>,
     source_text_cache: HashMap<String, Vec<String>>,
     compiled_code_metadata: HashMap<usize, CompiledCodeMetadata>,
     import_dir_cache: HashMap<PathBuf, ImportDirCacheEntry>,
@@ -1437,6 +1447,7 @@ impl Vm {
             main_module,
             module_paths,
             module_source_positive_cache: HashMap::new(),
+            virtual_module_sources: HashMap::new(),
             source_text_cache: HashMap::new(),
             compiled_code_metadata: HashMap::new(),
             import_dir_cache: HashMap::new(),
@@ -2651,6 +2662,50 @@ impl Vm {
         self.import_sys_path_signature = 0;
         self.sync_sys_path_from_module_paths();
         self.maybe_prefer_cpython_pure_stdlib_modules();
+    }
+
+    fn virtual_module_filename(module_name: &str, is_package: bool) -> String {
+        let rel = module_name.replace('.', "/");
+        if is_package {
+            format!("<wasm-stdlib>/{rel}/__init__.py")
+        } else {
+            format!("<wasm-stdlib>/{rel}.py")
+        }
+    }
+
+    pub fn register_virtual_module_source(
+        &mut self,
+        module_name: impl Into<String>,
+        source: impl Into<String>,
+        is_package: bool,
+    ) {
+        let module_name = module_name.into();
+        let filename = Self::virtual_module_filename(&module_name, is_package);
+        let module_key = module_name.clone();
+        self.virtual_module_sources.insert(
+            module_key,
+            VirtualModuleSource {
+                source: source.into(),
+                filename,
+                is_package,
+            },
+        );
+        if self.modules.contains_key(&module_name) {
+            self.unregister_module(&module_name);
+        }
+        self.module_source_positive_cache.clear();
+        self.import_dir_cache.clear();
+        self.preferred_filesystem_module_cache.clear();
+    }
+
+    pub fn clear_virtual_module_sources(&mut self) {
+        if self.virtual_module_sources.is_empty() {
+            return;
+        }
+        self.virtual_module_sources.clear();
+        self.module_source_positive_cache.clear();
+        self.import_dir_cache.clear();
+        self.preferred_filesystem_module_cache.clear();
     }
 
     pub fn enable_pure_json_preference(&mut self) {

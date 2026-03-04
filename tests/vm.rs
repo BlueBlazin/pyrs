@@ -10085,6 +10085,51 @@ fn imports_using_importlib_module_helpers() {
 }
 
 #[test]
+fn imports_virtual_source_modules_without_filesystem_paths() {
+    let source = "\
+import virtual_mod\n\
+import virtual_pkg\n\
+import virtual_pkg.submod as sub\n\
+module_value = virtual_mod.VALUE\n\
+package_value = virtual_pkg.BASE\n\
+submodule_value = sub.NEXT\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.register_virtual_module_source("virtual_mod", "VALUE = 41\n", false);
+    vm.register_virtual_module_source("virtual_pkg", "BASE = 11\n", true);
+    vm.register_virtual_module_source(
+        "virtual_pkg.submod",
+        "from virtual_pkg import BASE\nNEXT = BASE + 1\n",
+        false,
+    );
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("module_value"), Some(Value::Int(41)));
+    assert_eq!(vm.get_global("package_value"), Some(Value::Int(11)));
+    assert_eq!(vm.get_global("submodule_value"), Some(Value::Int(12)));
+}
+
+#[test]
+fn virtual_source_traceback_uses_wasm_stdlib_filename_shape() {
+    let source = "import virtual_fail\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.register_virtual_module_source(
+        "virtual_fail",
+        "def boom():\n    raise RuntimeError('kaboom')\nboom()\n",
+        false,
+    );
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(
+        err.message.contains("<wasm-stdlib>/virtual_fail.py"),
+        "expected virtual traceback filename, got: {}",
+        err.message
+    );
+}
+
+#[test]
 fn exposes_importlib_cache_path_helpers() {
     let source = "import importlib.util\nsrc = importlib.util.source_from_cache('/tmp/__pycache__/demo.cpython-314.pyc')\ncache = importlib.util.cache_from_source('/tmp/demo.py')\nok = src == '/tmp/demo.py' and ('__pycache__' in cache) and (cache[-4:] == '.pyc')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
