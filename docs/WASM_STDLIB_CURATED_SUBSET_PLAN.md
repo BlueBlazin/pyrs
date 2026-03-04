@@ -26,49 +26,57 @@ Ship a curated subset of CPython `Lib/*.py` modules for WASM and load them from 
 
 ## Candidate Top-30 Seed Modules
 
-This seed list targets common REPL/programming workflows and avoids extension-required modules:
+This seed list is REPL-first and intentionally excludes filesystem-centric modules
+(`pathlib`, `glob`) and debugging/introspection-heavy modules (`inspect`, `ast`,
+`dis`, `tokenize`, `traceback`) for the initial browser payload.
 
 1. `functools`
-2. `collections`
-3. `abc`
-4. `types`
-5. `operator`
-6. `dataclasses`
-7. `typing`
-8. `statistics`
-9. `enum`
-10. `copy`
-11. `contextlib`
-12. `inspect`
+2. `random`
+3. `collections`
+4. `abc`
+5. `types`
+6. `operator`
+7. `dataclasses`
+8. `typing`
+9. `statistics`
+10. `enum`
+11. `copy`
+12. `contextlib`
 13. `re`
-14. `textwrap`
-15. `string`
+14. `string`
+15. `textwrap`
 16. `pprint`
-17. `traceback`
-18. `ast`
-19. `dis`
-20. `tokenize`
-21. `argparse`
-22. `json`
-23. `pathlib`
-24. `fractions`
-25. `decimal`
-26. `heapq`
-27. `bisect`
-28. `fnmatch`
-29. `glob`
-30. `urllib.parse`
+17. `json`
+18. `fractions`
+19. `decimal`
+20. `heapq`
+21. `bisect`
+22. `urllib.parse`
+23. `weakref`
+24. `numbers`
+25. `copyreg`
+26. `keyword`
+27. `reprlib`
+28. `difflib`
+29. `datetime`
+30. `argparse`
+
+Related note:
+
+- `itertools` is not in this `.py` pack list because CPython provides it as a C module
+  (not `Lib/itertools.py`). PYRS already provides native `itertools` substrate in Rust,
+  so it should remain available without adding `.py` payload bytes.
 
 ## Size Budget (Measured on local CPython 3.14.3 `Lib`)
 
-Measured closure-based estimates (`.py` files only, non-test):
+Measured closure-based estimates for the REPL-first seed list (`.py` files only, non-test):
 
-- Seed-20 closure:
-  - raw: `1,069,184` bytes
-  - zip(deflate): `266,485` bytes
+- Seed-20 closure (first 20 modules in this list):
+  - raw: `1,005,443` bytes
+  - zip(deflate): `251,637` bytes
 - Seed-30 closure:
-  - raw: `1,348,930` bytes
-  - zip(deflate): `332,121` bytes
+  - raw: `1,346,056` bytes
+  - zip(deflate): `333,280` bytes
 - Reference full non-test `.py` zip:
   - ~`3,197,528` bytes
 
