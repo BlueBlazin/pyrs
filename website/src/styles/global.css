@@ -11,6 +11,10 @@
 }
 
 @layer base {
+	html {
+		overflow-y: scroll;
+	}
+
 	*,
 	*::before,
 	*::after {
