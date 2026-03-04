@@ -615,6 +615,7 @@ impl Vm {
         // Mirror CPython behavior: getenv() must observe os.environ mutations
         // performed in-process by Python code.
         let lookup = Value::Str(key.clone());
+        let lookup_bytes = self.heap.alloc_bytes(key.as_bytes().to_vec());
         for module_name in ["os", "posix"] {
             let Some(module_obj) = self.modules.get(module_name) else {
                 continue;
@@ -627,6 +628,20 @@ impl Vm {
                 continue;
             };
             if let Some(value) = dict_get_value(environ_obj, &lookup) {
+                return Ok(value);
+            }
+            // On POSIX, stdlib `os.py` wraps `posix.environ` as a bytes-keyed backing
+            // mapping. Accept str input by probing bytes keys and decoding bytes values.
+            if module_name == "posix"
+                && let Some(value) = dict_get_value(environ_obj, &lookup_bytes)
+            {
+                if let Value::Bytes(bytes_obj) = value {
+                    if let Object::Bytes(bytes) = &*bytes_obj.kind() {
+                        let decoded = decode_text_bytes(bytes, "utf-8", "surrogateescape")?;
+                        return Ok(Value::Str(decoded));
+                    }
+                    return Ok(Value::Bytes(bytes_obj));
+                }
                 return Ok(value);
             }
         }

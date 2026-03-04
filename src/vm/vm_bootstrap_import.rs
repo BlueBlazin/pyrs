@@ -1211,6 +1211,19 @@ impl Vm {
             }
         }
         let posix_stat_result_class = self.alloc_tuple_backed_builtin_class("stat_result");
+        // CPython `posix.environ` exposes a bytes->bytes mapping used as the
+        // backing store for stdlib `os.environ` on POSIX hosts.
+        let posix_environ_entries = self
+            .host
+            .env_vars()
+            .into_iter()
+            .map(|(name, value)| {
+                (
+                    self.heap.alloc_bytes(name.into_bytes()),
+                    self.heap.alloc_bytes(value.into_bytes()),
+                )
+            })
+            .collect::<Vec<_>>();
         self.install_builtin_module(
             "posix",
             &[
@@ -1263,7 +1276,7 @@ impl Vm {
                 ("sep", Value::Str("/".to_string())),
                 ("pathsep", Value::Str(":".to_string())),
                 ("altsep", Value::None),
-                ("environ", self.heap.alloc_dict(Vec::new())),
+                ("environ", self.heap.alloc_dict(posix_environ_entries)),
                 ("_have_functions", self.heap.alloc_set(Vec::new())),
                 ("O_RDONLY", Value::Int(0)),
                 ("O_WRONLY", Value::Int(1)),
