@@ -249,7 +249,7 @@ Exit criteria:
 
 - CI demonstrates stable load+import behavior for subset modules.
 
-Status: in progress
+Status: in progress (CI blocker closure complete for current lane)
 - `scripts/check_playground_worker_contract.mjs` now gates stdlib pack wiring:
   - verifies `stdlibPackPath` propagation from page to worker load request,
   - verifies worker stdlib load sequence appears before REPL session creation/execute flow.
@@ -261,6 +261,16 @@ Status: in progress
     `website/public/wasm/stdlib_subset_manifest_v1.json`.
   - `scripts/check_wasm_branch.sh` now generates this summary and includes it in
     evidence-pack hash/manifest requirements.
+- Latest verified workflow-dispatch checkpoint:
+  - run: [22673172834](https://github.com/BlueBlazin/pyrs/actions/runs/22673172834)
+  - commit: `1cddc9951faa537271d29d9400702fc35dbca6b7`
+  - jobs: `wasm-contract-gate=success`, `wasm-browser-smoke=success`
+- Closed CI blockers for curated-subset/browser lane:
+  - browser-only smoke (`PYRS_WASM_SKIP_CORE_SMOKE=1`) now prebuilds curated
+    stdlib pack before wasm test compile, so
+    `website/public/wasm/stdlib_subset_v1.json` is always available,
+  - `scripts/run_wasm_contract_smoke.sh` now uses `rg` or `grep` fallback for
+    output-collision detection (no hard failure when `rg` is absent in runner).
 
 ## Test Plan
 

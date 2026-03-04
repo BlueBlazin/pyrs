@@ -900,9 +900,15 @@ Completed on this branch:
   default unwired blocking + vm-probe ready/configured expectations), closing
   CI drift introduced by expanded fixture coverage.
 - latest: workflow-dispatch browser smoke checkpoint
-  (`22596189227`, commit `1bb0c110`) is green for both jobs
+  (`22673172834`, commit `1cddc995`) is green for both jobs
   (`wasm-contract-gate`, `wasm-browser-smoke`); promotion docs now track this
   as the latest verified dispatch snapshot.
+- latest: browser-lane CI blockers from the previous checkpoint were closed:
+  - browser-only smoke mode now prebuilds
+    `website/public/wasm/stdlib_subset_v1.json` before wasm test compile,
+    preventing `include_str!` missing-file failures in `tests/wasm_contract.rs`,
+  - `scripts/run_wasm_contract_smoke.sh` no longer hard-depends on `rg`
+    in CI (now uses `rg` with `grep` fallback for collision detection).
 - latest: wasm promotion-note extraction now has a dedicated helper script
   (`scripts/extract_wasm_ci_artifact_hashes.py`) and runbook wiring so
   artifact hash capture is reproducible and less manual.
