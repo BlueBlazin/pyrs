@@ -3111,6 +3111,24 @@ user = User('ada', 7)\n",
 
 #[cfg(feature = "wasm-vm-probe")]
 #[wasm_bindgen_test]
+fn wasm_vm_probe_typing_import_uses_collections_abc_surface() {
+    reset_top_level_worker_state_for_contract_tests();
+    load_curated_stdlib_pack_into_runtime();
+
+    let mut session = WasmReplSession::new();
+    let result = session.execute_input(
+        "import typing\n\
+import collections.abc\n\
+assert hasattr(collections.abc, 'MappingView')\n",
+    );
+    assert_eq!(result.phase(), "ok".to_string());
+    assert!(result.success());
+    assert!(result.error().is_none());
+    assert!(result.stderr().is_empty());
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+#[wasm_bindgen_test]
 fn wasm_vm_probe_statistics_repl_parity_smoke() {
     reset_top_level_worker_state_for_contract_tests();
     load_curated_stdlib_pack_into_runtime();

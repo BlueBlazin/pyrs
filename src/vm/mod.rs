@@ -2697,6 +2697,9 @@ impl Vm {
         self.module_source_positive_cache.clear();
         self.import_dir_cache.clear();
         self.preferred_filesystem_module_cache.clear();
+        // Re-evaluate bootstrap-vs-pure preference now that a new virtual stdlib
+        // source is available (e.g. collections.abc aliasing via _collections_abc).
+        self.maybe_prefer_cpython_pure_stdlib_modules();
     }
 
     pub fn clear_virtual_module_sources(&mut self) {

@@ -8887,7 +8887,14 @@ impl Vm {
         if let Some(cached) = self.preferred_filesystem_module_cache.get(module_name) {
             return *cached;
         }
-        let present = self.has_cpython_pure_module_on_module_path(module_name)
+        let mut candidates = vec![module_name.to_string()];
+        if let Some(alias_name) = Self::module_source_alias(module_name) {
+            candidates.push(alias_name.to_string());
+        }
+        let present = candidates
+            .iter()
+            .any(|candidate| self.virtual_module_sources.contains_key(candidate))
+            || self.has_cpython_pure_module_on_module_path(module_name)
             || self.has_local_shim_module(module_name);
         self.preferred_filesystem_module_cache
             .insert(module_name.to_string(), present);
