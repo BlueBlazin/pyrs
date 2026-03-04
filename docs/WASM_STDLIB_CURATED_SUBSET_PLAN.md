@@ -1,6 +1,6 @@
 # WASM Curated Stdlib Subset Plan (Top 26, `.py`-only)
 
-Status: proposed (not started)  
+Status: in progress (M1-M3 implemented)  
 Date: 2026-03-04  
 Owner: runtime/wasm track
 
@@ -161,6 +161,11 @@ Exit criteria:
 - pack generated reproducibly,
 - size budget reported and tracked.
 
+Status: complete (2026-03-04)
+- `scripts/build_wasm_stdlib_subset.py` now emits deterministic zip + manifest.
+- CI/build hook added in `scripts/build_wasm_website_bundle.sh`.
+- Pack budget enforced via `--max-zip-bytes`.
+
 ## M2: Virtual Stdlib Provider API
 
 Deliverables:
@@ -172,6 +177,11 @@ Exit criteria:
 
 - unit tests: virtual module + package import works without filesystem.
 
+Status: complete (2026-03-04)
+- VM resolver now supports opt-in virtual source specs before filesystem probing.
+- Source execution supports in-memory virtual module text.
+- Regression coverage added in `tests/vm.rs` for module/package import and traceback filename shape.
+
 ## M3: WASM Loader Wiring
 
 Deliverables:
@@ -182,6 +192,14 @@ Deliverables:
 Exit criteria:
 
 - `import functools` on WASM resolves from packed source.
+
+Status: in progress (2026-03-04)
+- wasm runtime exports virtual-stdlib registration API:
+  - `wasm_virtual_stdlib_clear`
+  - `wasm_virtual_stdlib_register`
+  - `wasm_virtual_stdlib_count`
+- playground worker now auto-loads `wasm/stdlib_subset_v1.json` during runtime load and registers all module sources before creating `WasmReplSession`.
+- Builder now also emits JSON source pack (`stdlib_subset_v1.json`) alongside zip + manifest.
 
 ## M4: Parity Targets (Initial)
 
