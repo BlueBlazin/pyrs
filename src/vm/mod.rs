@@ -213,6 +213,7 @@ const PURE_STDLIB_PLATFORM_MODULES: &[&str] = &["platform"];
 const PURE_STDLIB_OS_MODULES: &[&str] = &["os"];
 const PURE_STDLIB_OSX_SUPPORT_MODULES: &[&str] = &["_osx_support"];
 const PURE_STDLIB_SSL_MODULES: &[&str] = &["ssl"];
+const PURE_STDLIB_SUBPROCESS_MODULES: &[&str] = &["subprocess"];
 const PURE_STDLIB_SYSCONFIG_MODULES: &[&str] = &["sysconfig", "_sysconfig"];
 const PURE_STDLIB_DECIMAL_MODULES: &[&str] = &["decimal"];
 const PURE_STDLIB_PATHLIB_MODULES: &[&str] = &["pathlib"];

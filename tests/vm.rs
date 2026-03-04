@@ -4307,6 +4307,41 @@ ok = (
 }
 
 #[test]
+fn subprocess_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-subprocess import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("subprocess-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import subprocess
+origin = getattr(subprocess, '__file__', '')
+norm = origin.replace("\\", "/")
+flags = subprocess._args_from_interpreter_flags()
+cp = subprocess.CompletedProcess(["echo", "ok"], 0)
+ok = (
+    norm.endswith('/subprocess.py')
+    and ('/shims/' not in norm)
+    and isinstance(flags, list)
+    and cp.returncode == 0
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn subprocess import preference thread");
+    handle
+        .join()
+        .expect("subprocess import preference thread should complete");
+}
+
+#[test]
 fn sysconfig_import_prefers_cpython_pure_module_when_lib_path_is_added() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!(
