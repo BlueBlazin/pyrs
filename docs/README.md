@@ -32,6 +32,7 @@ Use this file to find canonical ownership quickly.
 - `scripts/update_wasm_dispatch_snapshot.py`: update runbook/promotion/execution snapshot references to a specific workflow-dispatch run.
 - `scripts/check_wasm_dispatch_snapshot_contract.py`: validate snapshot-updater assumptions against current docs formatting.
 - `scripts/generate_wasm_artifact_input_hashes.py`: generate deterministic local SHA256 summary for evidence-pack source artifacts.
+- `scripts/generate_wasm_stdlib_subset_summary.py`: validate curated stdlib subset pack manifest/sha and emit version+size evidence summary.
 
 ## Gap Tracking
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.

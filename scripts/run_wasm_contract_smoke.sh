@@ -7,6 +7,12 @@ if [[ "${PYRS_WASM_SKIP_CORE_SMOKE:-0}" != "1" ]]; then
   echo "[wasm-contract] cargo check (native)"
   cargo check
 
+  echo "[wasm-contract] build curated wasm stdlib source pack"
+  python3 scripts/build_wasm_stdlib_subset.py \
+    --out-zip website/public/wasm/stdlib_subset_v1.zip \
+    --out-pack website/public/wasm/stdlib_subset_v1.json \
+    --out-manifest website/public/wasm/stdlib_subset_manifest_v1.json
+
   echo "[wasm-contract] cargo check wasm contract target"
   cargo check --target wasm32-unknown-unknown --test wasm_contract --no-default-features
 
@@ -65,6 +71,11 @@ if [[ "${PYRS_WASM_SKIP_CORE_SMOKE:-0}" != "1" ]]; then
   echo "[wasm-contract] wasm host seam audit snapshot"
   python3 scripts/audit_wasm_host_seam.py \
     --out perf/wasm_host_seam_audit_latest.json
+
+  echo "[wasm-contract] wasm stdlib subset summary snapshot"
+  python3 scripts/generate_wasm_stdlib_subset_summary.py \
+    --manifest website/public/wasm/stdlib_subset_manifest_v1.json \
+    --out perf/wasm_stdlib_subset_summary_latest.json
 
   echo "[wasm-contract] wasm artifact input hash summary snapshot"
   python3 scripts/generate_wasm_artifact_input_hashes.py \

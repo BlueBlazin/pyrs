@@ -255,6 +255,12 @@ Status: in progress
   - verifies worker stdlib load sequence appears before REPL session creation/execute flow.
 - Curated pack builder now enforces exclusion guardrails so `os` cannot silently re-enter the subset (`scripts/build_wasm_stdlib_subset.py`).
 - `scripts/run_wasm_contract_smoke.sh` now refreshes `perf/wasm_artifact_input_hashes_latest.json` before evidence-pack validation, keeping local/CI gate flow deterministic after contract-summary changes.
+- Added explicit stdlib subset evidence artifact:
+  - `scripts/generate_wasm_stdlib_subset_summary.py` emits `perf/wasm_stdlib_subset_summary_latest.json`
+    with pack version, module count, and zip/source-pack size+sha checks against
+    `website/public/wasm/stdlib_subset_manifest_v1.json`.
+  - `scripts/check_wasm_branch.sh` now generates this summary and includes it in
+    evidence-pack hash/manifest requirements.
 
 ## Test Plan
 

@@ -75,6 +75,11 @@ echo "[wasm-branch] wasm host seam audit snapshot"
 python3 scripts/audit_wasm_host_seam.py \
   --out perf/wasm_host_seam_audit_latest.json
 
+echo "[wasm-branch] wasm stdlib subset summary snapshot"
+python3 scripts/generate_wasm_stdlib_subset_summary.py \
+  --manifest website/public/wasm/stdlib_subset_manifest_v1.json \
+  --out perf/wasm_stdlib_subset_summary_latest.json
+
 echo "[wasm-branch] wasm artifact input hash summary snapshot"
 python3 scripts/generate_wasm_artifact_input_hashes.py \
   --out perf/wasm_artifact_input_hashes_latest.json
