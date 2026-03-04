@@ -23,24 +23,31 @@ use crate::wasm_worker_contract::{
     WASM_WORKER_TIMEOUT_FIXTURES, WASM_WORKER_TIMEOUT_PHASE_KEYS,
     WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA, WasmWorkerExecuteFixture,
 };
-use js_sys::{Array, Reflect, JSON};
+#[cfg(feature = "wasm-vm-probe")]
+use js_sys::{Array, JSON};
+use js_sys::Reflect;
 #[cfg(feature = "wasm-vm-probe")]
 use pyrs::wasm::wasm_worker_force_failed_state_for_tests;
 use pyrs::wasm::{
-    WasmCapabilityReport, WasmReplSession, WasmSession, WasmWorkerSession, check_compile_result,
+    WasmCapabilityReport, WasmSession, WasmWorkerSession, check_compile_result,
     check_syntax_result, execute, wasm_api_version, wasm_capabilities, wasm_capability_error,
     wasm_capability_keys, wasm_execution_blocker_error, wasm_execution_blocker_keys,
     wasm_execution_blockers, wasm_execution_phase_keys, wasm_module_policy_entries,
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_import_roots,
-    wasm_snippet_support, wasm_virtual_stdlib_clear, wasm_virtual_stdlib_count,
-    wasm_virtual_stdlib_register, wasm_worker_blocker_error, wasm_worker_blocker_keys,
+    wasm_snippet_support, wasm_worker_blocker_error, wasm_worker_blocker_keys,
     wasm_worker_blockers, wasm_worker_current_timeout_ms, wasm_worker_execute,
     wasm_worker_execute_phase_keys, wasm_worker_execute_with_operation, wasm_worker_info,
     wasm_worker_lifecycle_phase_keys, wasm_worker_recycle, wasm_worker_set_timeout,
     wasm_worker_start, wasm_worker_state_keys, wasm_worker_terminate,
     wasm_worker_timeout_phase_keys, wasm_worker_timeout_policy,
 };
+#[cfg(feature = "wasm-vm-probe")]
+use pyrs::wasm::{
+    WasmReplSession, wasm_virtual_stdlib_clear, wasm_virtual_stdlib_count,
+    wasm_virtual_stdlib_register,
+};
 use std::collections::HashSet;
+#[cfg(feature = "wasm-vm-probe")]
 use wasm_bindgen::JsValue;
 use wasm_bindgen_test::*;
 
