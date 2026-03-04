@@ -4196,6 +4196,14 @@ pub enum BuiltinFunction {
     CodecsLookup,
     CodecsRegister,
     CodecsUnregister,
+    CodecsRegisterError,
+    CodecsLookupError,
+    CodecsStrictErrors,
+    CodecsIgnoreErrors,
+    CodecsReplaceErrors,
+    CodecsXmlCharRefReplaceErrors,
+    CodecsBackslashReplaceErrors,
+    CodecsNameReplaceErrors,
     CodecsCodecInfoInit,
     CodecsGetIncrementalEncoder,
     CodecsGetIncrementalDecoder,
@@ -7637,6 +7645,14 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::CodecsLookup
             | BuiltinFunction::CodecsRegister
             | BuiltinFunction::CodecsUnregister
+            | BuiltinFunction::CodecsRegisterError
+            | BuiltinFunction::CodecsLookupError
+            | BuiltinFunction::CodecsStrictErrors
+            | BuiltinFunction::CodecsIgnoreErrors
+            | BuiltinFunction::CodecsReplaceErrors
+            | BuiltinFunction::CodecsXmlCharRefReplaceErrors
+            | BuiltinFunction::CodecsBackslashReplaceErrors
+            | BuiltinFunction::CodecsNameReplaceErrors
             | BuiltinFunction::CodecsCodecInfoInit
             | BuiltinFunction::CodecsGetIncrementalEncoder
             | BuiltinFunction::CodecsGetIncrementalDecoder

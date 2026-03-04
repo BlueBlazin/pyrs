@@ -4,17 +4,18 @@ use super::{
     INSTANCE_DICT_STORAGE_ATTR, ImportDirCacheEntry, InstanceObject, InternalCallOutcome,
     LOCAL_SHIM_MODULES, LOCAL_SHIM_PRECEDENCE_MODULES, ModuleObject, ModuleSourceInfo,
     NAMESPACE_LOADER, NativeMethodKind, NativeMethodObject, ObjRef, Object,
-    PURE_STDLIB_ABC_MODULES, PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_DECIMAL_MODULES,
-    PURE_STDLIB_FUNCTOOLS_MODULES, PURE_STDLIB_FUTURE_MODULES, PURE_STDLIB_INSPECT_MODULES,
-    PURE_STDLIB_IO_MODULES, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_OPERATOR_MODULES,
-    PURE_STDLIB_OS_MODULES, PURE_STDLIB_OSX_SUPPORT_MODULES, PURE_STDLIB_PATHLIB_MODULES,
-    PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_PLATFORM_MODULES, PURE_STDLIB_SYSCONFIG_MODULES,
+    PURE_STDLIB_ABC_MODULES, PURE_STDLIB_CODECS_MODULES, PURE_STDLIB_COLLECTIONS_MODULES,
+    PURE_STDLIB_DECIMAL_MODULES, PURE_STDLIB_FUNCTOOLS_MODULES, PURE_STDLIB_FUTURE_MODULES,
+    PURE_STDLIB_INSPECT_MODULES, PURE_STDLIB_IO_MODULES, PURE_STDLIB_JSON_MODULES,
+    PURE_STDLIB_OPERATOR_MODULES, PURE_STDLIB_OS_MODULES, PURE_STDLIB_OSX_SUPPORT_MODULES,
+    PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_PLATFORM_MODULES,
     PURE_STDLIB_RE_MODULES, PURE_STDLIB_SIGNAL_MODULES, PURE_STDLIB_SOCKET_MODULES,
-    PURE_STDLIB_TYPES_MODULES, PURE_STDLIB_UUID_MODULES, PURE_STDLIB_WEAKREF_MODULES, Path,
-    PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM,
-    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm,
-    cached_module_path, compiler, cpython, dict_get_value, dict_remove_value, dict_set_value,
-    matches_finder_kind, parse_uuid_like_string, parser, source_path_from_cache_path,
+    PURE_STDLIB_SYSCONFIG_MODULES, PURE_STDLIB_TYPES_MODULES, PURE_STDLIB_UUID_MODULES,
+    PURE_STDLIB_WEAKREF_MODULES, Path, PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
+    SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
+    SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler, cpython, dict_get_value,
+    dict_remove_value, dict_set_value, matches_finder_kind, parse_uuid_like_string, parser,
+    source_path_from_cache_path,
 };
 use crate::extensions::{
     PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
@@ -2629,6 +2630,32 @@ impl Vm {
         let stream_writer_class = self
             .heap
             .alloc_class(ClassObject::new("StreamWriter".to_string(), Vec::new()));
+        let codec_error_registry = self.heap.alloc_dict(vec![
+            (
+                Value::Str("strict".to_string()),
+                Value::Builtin(BuiltinFunction::CodecsStrictErrors),
+            ),
+            (
+                Value::Str("ignore".to_string()),
+                Value::Builtin(BuiltinFunction::CodecsIgnoreErrors),
+            ),
+            (
+                Value::Str("replace".to_string()),
+                Value::Builtin(BuiltinFunction::CodecsReplaceErrors),
+            ),
+            (
+                Value::Str("xmlcharrefreplace".to_string()),
+                Value::Builtin(BuiltinFunction::CodecsXmlCharRefReplaceErrors),
+            ),
+            (
+                Value::Str("backslashreplace".to_string()),
+                Value::Builtin(BuiltinFunction::CodecsBackslashReplaceErrors),
+            ),
+            (
+                Value::Str("namereplace".to_string()),
+                Value::Builtin(BuiltinFunction::CodecsNameReplaceErrors),
+            ),
+        ]);
         self.install_builtin_module(
             "codecs",
             &[
@@ -2642,6 +2669,8 @@ impl Vm {
                 ("lookup", BuiltinFunction::CodecsLookup),
                 ("register", BuiltinFunction::CodecsRegister),
                 ("unregister", BuiltinFunction::CodecsUnregister),
+                ("register_error", BuiltinFunction::CodecsRegisterError),
+                ("lookup_error", BuiltinFunction::CodecsLookupError),
                 (
                     "getincrementalencoder",
                     BuiltinFunction::CodecsGetIncrementalEncoder,
@@ -2659,6 +2688,7 @@ impl Vm {
                 ("IncrementalEncoder", incremental_encoder_class),
                 ("StreamReader", stream_reader_class),
                 ("StreamWriter", stream_writer_class),
+                ("__pyrs_codec_error_registry__", codec_error_registry),
             ],
         );
         self.install_module_alias_from_existing("_codecs", "codecs");
@@ -8821,6 +8851,13 @@ impl Vm {
             }
         }
         for module_name in PURE_STDLIB_IO_MODULES {
+            if self.has_preferred_filesystem_module(module_name)
+                && self.module_preference_requires_unload(module_name)
+            {
+                self.unregister_module(module_name);
+            }
+        }
+        for module_name in PURE_STDLIB_CODECS_MODULES {
             if self.has_preferred_filesystem_module(module_name)
                 && self.module_preference_requires_unload(module_name)
             {

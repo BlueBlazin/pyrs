@@ -12658,6 +12658,24 @@ impl Vm {
             BuiltinFunction::CodecsLookup => self.builtin_codecs_lookup(args, kwargs),
             BuiltinFunction::CodecsRegister => self.builtin_codecs_register(args, kwargs),
             BuiltinFunction::CodecsUnregister => self.builtin_codecs_unregister(args, kwargs),
+            BuiltinFunction::CodecsRegisterError => {
+                self.builtin_codecs_register_error(args, kwargs)
+            }
+            BuiltinFunction::CodecsLookupError => self.builtin_codecs_lookup_error(args, kwargs),
+            BuiltinFunction::CodecsStrictErrors => self.builtin_codecs_strict_errors(args, kwargs),
+            BuiltinFunction::CodecsIgnoreErrors => self.builtin_codecs_ignore_errors(args, kwargs),
+            BuiltinFunction::CodecsReplaceErrors => {
+                self.builtin_codecs_replace_errors(args, kwargs)
+            }
+            BuiltinFunction::CodecsXmlCharRefReplaceErrors => {
+                self.builtin_codecs_xmlcharrefreplace_errors(args, kwargs)
+            }
+            BuiltinFunction::CodecsBackslashReplaceErrors => {
+                self.builtin_codecs_backslashreplace_errors(args, kwargs)
+            }
+            BuiltinFunction::CodecsNameReplaceErrors => {
+                self.builtin_codecs_namereplace_errors(args, kwargs)
+            }
             BuiltinFunction::CodecsCodecInfoInit => {
                 self.builtin_codecs_codecinfo_init(args, kwargs)
             }

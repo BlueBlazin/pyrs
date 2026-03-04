@@ -3,12 +3,12 @@ use super::{
     FormatterFieldKey, HashMap, InstanceObject, InternalCallOutcome, IsTerminal, ModuleObject,
     NativeMethodKind, ObjRef, Object, Path, PathBuf, Read, RuntimeError, Seek, SeekFrom, Stdio,
     SystemTime, TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH, Value, Vm, Write, bytes_like_from_value,
-    decode_escape_bytes, decode_text_bytes, dict_get_value, encode_text_bytes, format_value, fs,
-    is_pyrs_executable, is_truthy, mul_values, normalize_codec_encoding, normalize_codec_errors,
-    parse_decimal_bigint_literal, parse_modules_to_block_literal, parse_string_formatter,
-    pow_values, seconds_to_system_time, split_formatter_field_name, system_time_to_secs_f64,
-    value_from_bigint, value_to_bigint, value_to_f64, value_to_int, value_to_process_text,
-    value_to_sequence_items,
+    decode_escape_bytes, decode_text_bytes, dict_get_value, dict_set_value, encode_text_bytes,
+    format_value, fs, is_pyrs_executable, is_truthy, mul_values, normalize_codec_encoding,
+    normalize_codec_errors, parse_decimal_bigint_literal, parse_modules_to_block_literal,
+    parse_string_formatter, pow_values, seconds_to_system_time, split_formatter_field_name,
+    system_time_to_secs_f64, value_from_bigint, value_to_bigint, value_to_f64, value_to_int,
+    value_to_process_text, value_to_sequence_items,
 };
 #[cfg(unix)]
 use super::{collect_env_entries, collect_process_argv, is_missing_attribute_error};
@@ -23,6 +23,7 @@ const CODECS_ATTR_ENCODING: &str = "__pyrs_codec_encoding__";
 const CODECS_ATTR_ERRORS: &str = "__pyrs_codec_errors__";
 const CODECS_ATTR_PENDING: &str = "__pyrs_codec_pending__";
 const CODECS_ATTR_STATE_FLAG: &str = "__pyrs_codec_state_flag__";
+const CODECS_ERROR_REGISTRY_ATTR: &str = "__pyrs_codec_error_registry__";
 const SUBPROCESS_PIPE_PID_ATTR: &str = "__pyrs_pid";
 const SUBPROCESS_PIPE_KIND_ATTR: &str = "__pyrs_kind";
 const SUBPROCESS_PIPE_ENCODING_ATTR: &str = "__pyrs_encoding";
@@ -5587,6 +5588,70 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
+    fn codec_error_registry(&mut self) -> Result<ObjRef, RuntimeError> {
+        let codecs_module = self
+            .modules
+            .get("_codecs")
+            .or_else(|| self.modules.get("codecs"))
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("_codecs module unavailable"))?;
+        let existing = {
+            let module_kind = codecs_module.kind();
+            match &*module_kind {
+                Object::Module(module_data) => module_data
+                    .globals
+                    .get(CODECS_ERROR_REGISTRY_ATTR)
+                    .cloned(),
+                _ => return Err(RuntimeError::new("invalid codecs module")),
+            }
+        };
+        if let Some(Value::Dict(dict)) = existing {
+            return Ok(dict);
+        }
+        if existing.is_some() {
+            return Err(RuntimeError::new("invalid codecs error registry"));
+        }
+        let created = match self.heap.alloc_dict(Vec::new()) {
+            Value::Dict(dict) => dict,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *codecs_module.kind_mut() {
+            module_data.globals.insert(
+                CODECS_ERROR_REGISTRY_ATTR.to_string(),
+                Value::Dict(created.clone()),
+            );
+        }
+        Ok(created)
+    }
+
+    fn codec_error_handler_metadata(
+        &self,
+        exception: Value,
+    ) -> Result<(String, usize, i64), RuntimeError> {
+        let Value::Exception(exception) = exception else {
+            return Err(RuntimeError::type_error(
+                "codec must pass exception instance",
+            ));
+        };
+        let attrs = exception.attrs.borrow();
+        let start = attrs
+            .get("start")
+            .cloned()
+            .map(value_to_int)
+            .transpose()?
+            .unwrap_or(0);
+        let end = attrs
+            .get("end")
+            .cloned()
+            .map(value_to_int)
+            .transpose()?
+            .unwrap_or(start + 1);
+        let normalized_end = end.max(start);
+        let span = normalized_end.saturating_sub(start);
+        let span_len = usize::try_from(span).ok().filter(|len| *len > 0).unwrap_or(1);
+        Ok((exception.name, span_len, normalized_end))
+    }
+
     pub(super) fn builtin_codecs_register(
         &self,
         args: Vec<Value>,
@@ -5613,6 +5678,159 @@ impl Vm {
             return Err(RuntimeError::new("argument must be callable"));
         }
         Ok(Value::None)
+    }
+
+    pub(super) fn builtin_codecs_register_error(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("register_error() expects two arguments"));
+        }
+        let name = match args.remove(0) {
+            Value::Str(name) => name,
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "register_error() argument 1 must be str",
+                ));
+            }
+        };
+        let handler = args.remove(0);
+        if !self.is_callable_value(&handler) {
+            return Err(RuntimeError::type_error(
+                "register_error() argument 2 must be callable",
+            ));
+        }
+        let registry = self.codec_error_registry()?;
+        dict_set_value(&registry, Value::Str(name), handler);
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_codecs_lookup_error(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("lookup_error() expects one argument"));
+        }
+        let name = match args.remove(0) {
+            Value::Str(name) => name,
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "lookup_error() argument must be str",
+                ));
+            }
+        };
+        let registry = self.codec_error_registry()?;
+        if let Some(handler) = dict_get_value(&registry, &Value::Str(name.clone())) {
+            return Ok(handler);
+        }
+        Err(RuntimeError::lookup_error(format!(
+            "unknown error handler name '{name}'"
+        )))
+    }
+
+    pub(super) fn builtin_codecs_strict_errors(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("strict_errors() expects one argument"));
+        }
+        match args.remove(0) {
+            Value::Exception(exception) => Err(RuntimeError::from_exception(*exception)),
+            _ => Err(RuntimeError::type_error(
+                "codec must pass exception instance",
+            )),
+        }
+    }
+
+    pub(super) fn builtin_codecs_ignore_errors(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("ignore_errors() expects one argument"));
+        }
+        let (_, _, end) = self.codec_error_handler_metadata(args.remove(0))?;
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::Str(String::new()), Value::Int(end)]))
+    }
+
+    pub(super) fn builtin_codecs_replace_errors(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("replace_errors() expects one argument"));
+        }
+        let (exc_name, span_len, end) = self.codec_error_handler_metadata(args.remove(0))?;
+        let unit = if exc_name == "UnicodeEncodeError" {
+            "?"
+        } else {
+            "\u{fffd}"
+        };
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Str(unit.repeat(span_len)),
+            Value::Int(end),
+        ]))
+    }
+
+    pub(super) fn builtin_codecs_xmlcharrefreplace_errors(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "xmlcharrefreplace_errors() expects one argument",
+            ));
+        }
+        let (_, span_len, end) = self.codec_error_handler_metadata(args.remove(0))?;
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Str("&#xfffd;".repeat(span_len)),
+            Value::Int(end),
+        ]))
+    }
+
+    pub(super) fn builtin_codecs_backslashreplace_errors(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "backslashreplace_errors() expects one argument",
+            ));
+        }
+        let (_, span_len, end) = self.codec_error_handler_metadata(args.remove(0))?;
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Str("\\x3f".repeat(span_len)),
+            Value::Int(end),
+        ]))
+    }
+
+    pub(super) fn builtin_codecs_namereplace_errors(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "namereplace_errors() expects one argument",
+            ));
+        }
+        let (_, span_len, end) = self.codec_error_handler_metadata(args.remove(0))?;
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Str("\\N{REPLACEMENT CHARACTER}".repeat(span_len)),
+            Value::Int(end),
+        ]))
     }
 
     pub(super) fn builtin_codecs_getincrementalencoder(

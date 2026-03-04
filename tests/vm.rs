@@ -4027,6 +4027,41 @@ ok = (
 }
 
 #[test]
+fn codecs_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-codecs import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("codecs-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import codecs
+origin = getattr(codecs, '__file__', '')
+norm = origin.replace("\\", "/")
+strict = codecs.lookup_error('strict')
+ok = (
+    norm.endswith('/codecs.py')
+    and ('/shims/' not in norm)
+    and callable(codecs.register_error)
+    and callable(codecs.lookup_error)
+    and callable(strict)
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn codecs import preference thread");
+    handle
+        .join()
+        .expect("codecs import preference thread should complete");
+}
+
+#[test]
 fn uuid_import_prefers_cpython_pure_module_when_lib_path_is_added() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pure-uuid import preference test (CPython Lib path not available)");
@@ -10679,6 +10714,25 @@ except Exception as exc:
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("decode_ok"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("encode_ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn codecs_error_handler_registry_supports_builtin_and_custom_lookup() {
+    let source = r#"import _codecs
+import codecs
+strict = _codecs.lookup_error('strict')
+ignore = codecs.lookup_error('ignore')
+def custom_handler(exc):
+    return ('?', getattr(exc, 'end', 0))
+codecs.register_error('custom_handler', custom_handler)
+roundtrip = _codecs.lookup_error('custom_handler')
+ok = callable(strict) and callable(ignore) and (roundtrip is custom_handler)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
