@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Default behavior runs full local gate checks; browser-focused CI lanes can
-# set PYRS_WASM_SKIP_CORE_SMOKE=1 after core checks have already passed.
-if [[ "${PYRS_WASM_SKIP_CORE_SMOKE:-0}" != "1" ]]; then
-  echo "[wasm-contract] cargo check (native)"
-  cargo check
-
+build_wasm_stdlib_subset_pack() {
   echo "[wasm-contract] build curated wasm stdlib source pack"
   python3 scripts/build_wasm_stdlib_subset.py \
     --out-zip website/public/wasm/stdlib_subset_v1.zip \
     --out-pack website/public/wasm/stdlib_subset_v1.json \
     --out-manifest website/public/wasm/stdlib_subset_manifest_v1.json
+}
+
+build_wasm_stdlib_subset_pack
+
+# Default behavior runs full local gate checks; browser-focused CI lanes can
+# set PYRS_WASM_SKIP_CORE_SMOKE=1 after core checks have already passed.
+if [[ "${PYRS_WASM_SKIP_CORE_SMOKE:-0}" != "1" ]]; then
+  echo "[wasm-contract] cargo check (native)"
+  cargo check
 
   echo "[wasm-contract] cargo check wasm contract target"
   cargo check --target wasm32-unknown-unknown --test wasm_contract --no-default-features
@@ -137,7 +141,12 @@ run_wasm_pack_checked() {
   if ! "$@" 2>&1 | tee "${log_file}"; then
     command_status=1
   fi
-  if rg -q "output filename collision" "${log_file}"; then
+  if command -v rg >/dev/null 2>&1; then
+    if rg -q "output filename collision" "${log_file}"; then
+      echo "[wasm-contract] ${label}: cargo output filename collision detected; wasm lane must avoid bin/lib wasm artifact name conflicts"
+      command_status=1
+    fi
+  elif grep -q "output filename collision" "${log_file}"; then
     echo "[wasm-contract] ${label}: cargo output filename collision detected; wasm lane must avoid bin/lib wasm artifact name conflicts"
     command_status=1
   fi
