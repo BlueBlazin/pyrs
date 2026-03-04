@@ -2,6 +2,7 @@
 import ButtonLink from "../ButtonLink.astro";
 
 const withBase = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, "")}`;
+const playgroundHref = withBase("playground/");
 ---
 
 <section class="hero">
@@ -15,6 +16,7 @@ const withBase = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^
 		<div class="cta-row">
 			<ButtonLink href="https://github.com/BlueBlazin/pyrs" variant="primary">Explore Repo</ButtonLink>
 			<ButtonLink href="#install" variant="secondary">Install</ButtonLink>
+			<ButtonLink href={playgroundHref} variant="secondary">Try Online</ButtonLink>
 		</div>
 		<div class="metrics">
 			<div class="metric">
