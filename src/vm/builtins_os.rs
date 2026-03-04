@@ -1,5 +1,5 @@
 use super::{
-    AtexitHandler, BuiltinFunction, ClassObject, Command, Duration, ExceptionObject,
+    AtexitHandler, BuiltinFunction, ClassObject, Command, ExceptionObject,
     FormatterFieldKey, HashMap, InstanceObject, InternalCallOutcome, IsTerminal, ModuleObject,
     NativeMethodKind, ObjRef, Object, Path, PathBuf, Read, RuntimeError, Seek, SeekFrom, Stdio,
     SystemTime, TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH, Value, Vm, Write, bytes_like_from_value,
@@ -1222,22 +1222,18 @@ impl Vm {
         }
         let fd = value_to_int(args.remove(0))?;
         let payload = self.value_to_bytes_payload(args.remove(0))?;
-        if let Some(file) = self.find_open_file_mut(fd) {
-            use std::io::Write;
-            file.write_all(&payload)
-                .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+        use std::io::Write;
+        let written = if let Some(file) = self.find_open_file_mut(fd) {
+            file.write(&payload)
         } else if fd == 1 {
-            std::io::stdout()
-                .write_all(&payload)
-                .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+            std::io::stdout().write(&payload)
         } else if fd == 2 {
-            std::io::stderr()
-                .write_all(&payload)
-                .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+            std::io::stderr().write(&payload)
         } else {
             return Err(RuntimeError::bad_file_descriptor());
         }
-        Ok(Value::Int(payload.len() as i64))
+        .map_err(|err| Self::os_error_from_io("write failed", err))?;
+        Ok(Value::Int(written as i64))
     }
 
     pub(super) fn builtin_os_isatty(
@@ -5592,14 +5588,23 @@ impl Vm {
         let encoding = normalized_encoding
             .clone()
             .unwrap_or_else(|| fallback_name.clone());
-        let codecs_module_is_pure_python = self
+        let (codecs_module_is_pure_python, codecs_module_is_initializing) = self
             .modules
             .get("codecs")
-            .is_some_and(|module| match &*module.kind() {
-                Object::Module(module_data) => module_data.globals.contains_key("__file__"),
-                _ => false,
-            });
-        if normalized_encoding.is_none() || codecs_module_is_pure_python {
+            .map(|module| match &*module.kind() {
+                Object::Module(module_data) => (
+                    module_data.globals.contains_key("__file__"),
+                    module_data
+                        .globals
+                        .get("__pyrs_module_initializing__")
+                        .is_some_and(|value| matches!(value, Value::Bool(true))),
+                ),
+                _ => (false, false),
+            })
+            .unwrap_or((false, false));
+        if normalized_encoding.is_none()
+            || (codecs_module_is_pure_python && !codecs_module_is_initializing)
+        {
             self.import_module("encodings")?;
             let encodings_module = self
                 .modules
@@ -7056,6 +7061,61 @@ impl Vm {
         Ok(Value::None)
     }
 
+    fn select_fd_from_value(&mut self, value: &Value) -> Result<i32, RuntimeError> {
+        let fd = if let Value::Int(fd) = value {
+            *fd
+        } else {
+            let fileno = match self.builtin_getattr(
+                vec![value.clone(), Value::Str("fileno".to_string())],
+                HashMap::new(),
+            ) {
+                Ok(value) => value,
+                Err(err) if err.exception_name() == Some("AttributeError") => {
+                    return Err(RuntimeError::type_error(
+                        "argument must be an int, or have a fileno() method.",
+                    ));
+                }
+                Err(err) => return Err(err),
+            };
+            match self.call_internal(fileno, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(result) => value_to_int(result)
+                    .map_err(|_| RuntimeError::type_error("fileno() returned a non-integer"))?,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception("fileno() failed"));
+                }
+            }
+        };
+        if fd < 0 {
+            return Err(RuntimeError::value_error(format!(
+                "file descriptor cannot be a negative integer ({fd})",
+            )));
+        }
+        i32::try_from(fd).map_err(|_| {
+            RuntimeError::overflow_error(format!("file descriptor out of range: {fd}"))
+        })
+    }
+
+    fn select_timeout_to_poll_ms(timeout: Option<Value>) -> Result<i32, RuntimeError> {
+        let Some(timeout_value) = timeout else {
+            return Ok(-1);
+        };
+        if matches!(timeout_value, Value::None) {
+            return Ok(-1);
+        }
+        let timeout_secs = value_to_f64(timeout_value)?;
+        if timeout_secs < 0.0 {
+            return Err(RuntimeError::value_error("timeout must be non-negative"));
+        }
+        if timeout_secs == 0.0 {
+            return Ok(0);
+        }
+        let timeout_ms = (timeout_secs * 1000.0).ceil();
+        if !timeout_ms.is_finite() || timeout_ms > i32::MAX as f64 {
+            return Ok(i32::MAX);
+        }
+        Ok(timeout_ms as i32)
+    }
+
     pub(super) fn builtin_select_select(
         &mut self,
         mut args: Vec<Value>,
@@ -7064,37 +7124,130 @@ impl Vm {
         let timeout = kwargs
             .remove("timeout")
             .or_else(|| if args.len() > 3 { args.pop() } else { None });
-        if let Some(timeout) = timeout
-            && !matches!(timeout, Value::None)
-        {
-            let timeout_secs = value_to_f64(timeout)?;
-            if timeout_secs > 0.0 {
-                std::thread::sleep(Duration::from_secs_f64(timeout_secs.min(0.01)));
-            }
+        if !kwargs.is_empty() || args.len() != 3 {
+            return Err(RuntimeError::type_error(
+                "select.select() expects read, write, and exception iterables",
+            ));
         }
-        let read_values = match args.first() {
-            Some(value) => self
-                .collect_iterable_values(value.clone())
-                .unwrap_or_default(),
-            None => Vec::new(),
-        };
-        let write_values = match args.get(1) {
-            Some(value) => self
-                .collect_iterable_values(value.clone())
-                .unwrap_or_default(),
-            None => Vec::new(),
-        };
-        let exc_values = match args.get(2) {
-            Some(value) => self
-                .collect_iterable_values(value.clone())
-                .unwrap_or_default(),
-            None => Vec::new(),
-        };
-        let read_ready = self.heap.alloc_list(read_values);
-        let write_ready = self.heap.alloc_list(write_values);
-        let exc_ready = self.heap.alloc_list(exc_values);
-        Ok(self
-            .heap
-            .alloc_tuple(vec![read_ready, write_ready, exc_ready]))
+        let read_values = self.collect_iterable_values(args.remove(0))?;
+        let write_values = self.collect_iterable_values(args.remove(0))?;
+        let exc_values = self.collect_iterable_values(args.remove(0))?;
+        #[cfg(unix)]
+        {
+            let read_items = read_values
+                .into_iter()
+                .map(|value| self.select_fd_from_value(&value).map(|fd| (value, fd)))
+                .collect::<Result<Vec<_>, _>>()?;
+            let write_items = write_values
+                .into_iter()
+                .map(|value| self.select_fd_from_value(&value).map(|fd| (value, fd)))
+                .collect::<Result<Vec<_>, _>>()?;
+            let exc_items = exc_values
+                .into_iter()
+                .map(|value| self.select_fd_from_value(&value).map(|fd| (value, fd)))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut pollfds: Vec<libc::pollfd> = Vec::new();
+            let mut register_fd = |fd: i32, event: i16| {
+                if let Some(slot) = pollfds.iter_mut().find(|slot| slot.fd == fd) {
+                    slot.events |= event;
+                } else {
+                    pollfds.push(libc::pollfd {
+                        fd,
+                        events: event,
+                        revents: 0,
+                    });
+                }
+            };
+            for (_, fd) in &read_items {
+                register_fd(*fd, libc::POLLIN);
+            }
+            for (_, fd) in &write_items {
+                register_fd(*fd, libc::POLLOUT);
+            }
+            for (_, fd) in &exc_items {
+                register_fd(*fd, libc::POLLPRI);
+            }
+
+            let timeout_ms = Self::select_timeout_to_poll_ms(timeout)?;
+            let poll_result = unsafe {
+                libc::poll(
+                    pollfds.as_mut_ptr(),
+                    pollfds.len() as libc::nfds_t,
+                    timeout_ms,
+                )
+            };
+            if poll_result < 0 {
+                return Err(Self::os_error_from_io(
+                    "select() failed",
+                    std::io::Error::last_os_error(),
+                ));
+            }
+
+            let mut revents_by_fd: HashMap<i32, i16> = HashMap::new();
+            for slot in pollfds {
+                revents_by_fd.insert(slot.fd, slot.revents);
+            }
+            let read_ready = self.heap.alloc_list(
+                read_items
+                    .into_iter()
+                    .filter_map(|(value, fd)| {
+                        let events = *revents_by_fd.get(&fd).unwrap_or(&0);
+                        if events & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+                            Some(value)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+            );
+            let write_ready = self.heap.alloc_list(
+                write_items
+                    .into_iter()
+                    .filter_map(|(value, fd)| {
+                        let events = *revents_by_fd.get(&fd).unwrap_or(&0);
+                        if events & (libc::POLLOUT | libc::POLLERR) != 0 {
+                            Some(value)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+            );
+            let exc_ready = self.heap.alloc_list(
+                exc_items
+                    .into_iter()
+                    .filter_map(|(value, fd)| {
+                        let events = *revents_by_fd.get(&fd).unwrap_or(&0);
+                        if events & libc::POLLPRI != 0 {
+                            Some(value)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+            );
+            return Ok(self
+                .heap
+                .alloc_tuple(vec![read_ready, write_ready, exc_ready]));
+        }
+        #[cfg(not(unix))]
+        {
+            let timeout_secs = match timeout {
+                Some(Value::None) | None => None,
+                Some(value) => Some(value_to_f64(value)?),
+            };
+            if let Some(timeout_secs) = timeout_secs
+                && timeout_secs > 0.0
+            {
+                std::thread::sleep(std::time::Duration::from_secs_f64(timeout_secs.min(0.01)));
+            }
+            let read_ready = self.heap.alloc_list(read_values);
+            let write_ready = self.heap.alloc_list(write_values);
+            let exc_ready = self.heap.alloc_list(exc_values);
+            Ok(self
+                .heap
+                .alloc_tuple(vec![read_ready, write_ready, exc_ready]))
+        }
     }
 }

@@ -3844,8 +3844,26 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
             return Ok(Value::Bool(false));
         }
         let exc_type = args.remove(0);
-        if matches!(exc_type, Value::None) {
-            self.builtin_sqlite_connection_commit(vec![receiver], HashMap::new())?;
+        let exc_value = args.remove(0);
+        let exc_tb = args.remove(0);
+        let should_commit = matches!(&exc_type, Value::None)
+            && matches!(&exc_value, Value::None)
+            && matches!(&exc_tb, Value::None);
+        if should_commit {
+            if let Err(commit_err) =
+                self.builtin_sqlite_connection_commit(vec![receiver.clone()], HashMap::new())
+            {
+                let commit_exception = self.runtime_error_to_exception_object(commit_err);
+                match self.builtin_sqlite_connection_rollback(vec![receiver], HashMap::new()) {
+                    Ok(_) => return Err(RuntimeError::from_exception(commit_exception)),
+                    Err(rollback_err) => {
+                        let mut rollback_exception =
+                            self.runtime_error_to_exception_object(rollback_err);
+                        rollback_exception.context = Some(Box::new(commit_exception));
+                        return Err(RuntimeError::from_exception(rollback_exception));
+                    }
+                }
+            }
         } else {
             self.builtin_sqlite_connection_rollback(vec![receiver], HashMap::new())?;
         }
