@@ -5234,6 +5234,20 @@ impl Vm {
         let loader_basics_class = self
             .heap
             .alloc_class(ClassObject::new("_LoaderBasics".to_string(), Vec::new()));
+        let build_frozen_importlib_external_class = |name: &str| -> Value {
+            let class = self
+                .heap
+                .alloc_class(ClassObject::new(name.to_string(), Vec::new()));
+            if let Value::Class(class_obj) = &class
+                && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+            {
+                class_data.attrs.insert(
+                    "__module__".to_string(),
+                    Value::Str("_frozen_importlib_external".to_string()),
+                );
+            }
+            class
+        };
         self.install_builtin_module(
             "_frozen_importlib_external",
             &[
@@ -5267,6 +5281,52 @@ impl Vm {
                 ),
             ],
             vec![
+                ("SOURCE_SUFFIXES", self.heap.alloc_list(vec![Value::Str(".py".to_string())])),
+                (
+                    "BYTECODE_SUFFIXES",
+                    self.heap.alloc_list(vec![Value::Str(".pyc".to_string())]),
+                ),
+                (
+                    "DEBUG_BYTECODE_SUFFIXES",
+                    self.heap.alloc_list(vec![Value::Str(".pyc".to_string())]),
+                ),
+                (
+                    "OPTIMIZED_BYTECODE_SUFFIXES",
+                    self.heap.alloc_list(vec![Value::Str(".pyc".to_string())]),
+                ),
+                ("EXTENSION_SUFFIXES", self.heap.alloc_list(Vec::new())),
+                (
+                    "WindowsRegistryFinder",
+                    build_frozen_importlib_external_class("WindowsRegistryFinder"),
+                ),
+                (
+                    "PathFinder",
+                    build_frozen_importlib_external_class("PathFinder"),
+                ),
+                (
+                    "FileFinder",
+                    build_frozen_importlib_external_class("FileFinder"),
+                ),
+                (
+                    "SourceFileLoader",
+                    build_frozen_importlib_external_class("SourceFileLoader"),
+                ),
+                (
+                    "SourcelessFileLoader",
+                    build_frozen_importlib_external_class("SourcelessFileLoader"),
+                ),
+                (
+                    "ExtensionFileLoader",
+                    build_frozen_importlib_external_class("ExtensionFileLoader"),
+                ),
+                (
+                    "AppleFrameworkLoader",
+                    build_frozen_importlib_external_class("AppleFrameworkLoader"),
+                ),
+                (
+                    "NamespaceLoader",
+                    build_frozen_importlib_external_class("NamespaceLoader"),
+                ),
                 (
                     "path_sep",
                     Value::Str(std::path::MAIN_SEPARATOR.to_string()),
