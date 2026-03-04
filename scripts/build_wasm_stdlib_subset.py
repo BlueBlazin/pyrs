@@ -128,6 +128,17 @@ def module_name_from_rel_path(rel_path: Path) -> tuple[str, bool]:
     return ".".join(rel_path.with_suffix("").parts), False
 
 
+def module_source_path_for_name(lib_root: Path, module_name: str) -> tuple[Path | None, bool]:
+    rel_parts = module_name.split(".")
+    package_init = lib_root.joinpath(*rel_parts, "__init__.py")
+    if package_init.is_file():
+        return package_init.resolve(), True
+    module_file = lib_root.joinpath(*rel_parts).with_suffix(".py")
+    if module_file.is_file():
+        return module_file.resolve(), False
+    return None, False
+
+
 def collect_runtime_import_closure(
     lib_root: Path,
     seed_modules: list[str],
@@ -136,6 +147,7 @@ def collect_runtime_import_closure(
 import importlib
 import json
 import sys
+import builtins
 from pathlib import Path
 
 lib_root = Path(sys.argv[1]).resolve()
@@ -148,34 +160,53 @@ for preload in ("math", "_random", "_datetime"):
         pass
 
 sys.path[:] = [str(lib_root)]
+baseline_modules = set(sys.modules)
+tracked_import_names = set()
+orig_import = builtins.__import__
+
+def tracking_import(name, globals=None, locals=None, fromlist=(), level=0):
+    module = orig_import(name, globals, locals, fromlist, level)
+    if isinstance(name, str) and name:
+        tracked_import_names.add(name)
+    module_name = getattr(module, "__name__", None)
+    if isinstance(module_name, str) and module_name:
+        tracked_import_names.add(module_name)
+        if fromlist:
+            for item in fromlist:
+                if isinstance(item, str) and item and item != "*":
+                    tracked_import_names.add(f"{module_name}.{item}")
+    return module
+
+builtins.__import__ = tracking_import
 failed = {}
-for module_name in seed_modules:
-    try:
-        importlib.import_module(module_name)
-    except Exception as exc:
-        failed[module_name] = f"{type(exc).__name__}: {exc}"
+try:
+    for module_name in seed_modules:
+        try:
+            importlib.import_module(module_name)
+        except Exception as exc:
+            failed[module_name] = f"{type(exc).__name__}: {exc}"
+finally:
+    builtins.__import__ = orig_import
 
-files = set()
-for module in sys.modules.values():
-    if module is None:
-        continue
-    module_file = getattr(module, "__file__", None)
-    if not module_file:
-        continue
-    path = Path(module_file)
-    try:
-        resolved = path.resolve()
-    except Exception:
-        continue
-    if (
-        resolved.is_file()
-        and lib_root in resolved.parents
-        and resolved.suffix == ".py"
-        and "test" not in resolved.parts
-    ):
-        files.add(str(resolved))
+loaded_delta = set(sys.modules) - baseline_modules
+names = set(seed_modules)
+names.update(tracked_import_names)
+names.update(loaded_delta)
 
-print(json.dumps({"files": sorted(files), "failed": failed}, sort_keys=True))
+expanded = set()
+for module_name in names:
+    if not module_name:
+        continue
+    parts = module_name.split(".")
+    for i in range(1, len(parts) + 1):
+        expanded.add(".".join(parts[:i]))
+
+print(
+    json.dumps(
+        {"names": sorted(expanded), "failed": failed},
+        sort_keys=True,
+    )
+)
 """
 
     result = subprocess.run(
@@ -198,11 +229,17 @@ print(json.dumps({"files": sorted(files), "failed": failed}, sort_keys=True))
         raise SystemExit(f"seed module import failures:\n{lines}")
 
     closure: dict[str, ModuleSource] = {}
-    for path_str in payload.get("files", []):
-        source_path = Path(path_str).resolve()
-        rel_path = source_path.relative_to(lib_root)
-        module_name, is_package = module_name_from_rel_path(rel_path)
-        closure[module_name] = ModuleSource(module_name, source_path, is_package=is_package)
+    for module_name in sorted(payload.get("names", [])):
+        source_path, is_package = module_source_path_for_name(lib_root, module_name)
+        if source_path is None:
+            continue
+        if "test" in source_path.parts:
+            continue
+        closure[module_name] = ModuleSource(
+            module_name,
+            source_path,
+            is_package=is_package,
+        )
     return closure
 
 
@@ -325,6 +362,19 @@ def main() -> int:
     closure = collect_runtime_import_closure(lib_root, seed_modules)
     if not closure:
         print("stdlib subset closure is empty", file=sys.stderr)
+        return 1
+    missing_seed = [
+        module_name
+        for module_name in seed_modules
+        if module_name not in closure
+        and module_source_path_for_name(lib_root, module_name)[0] is not None
+    ]
+    if missing_seed:
+        print(
+            "stdlib subset closure missing seed modules with available .py source:\n"
+            + "\n".join(f"- {name}" for name in missing_seed),
+            file=sys.stderr,
+        )
         return 1
 
     zip_bytes = write_deterministic_zip(out_zip, lib_root, closure)
