@@ -234,6 +234,8 @@ Status: in progress (advanced)
   - `wasm_vm_probe_random_values_change_after_repl_reset_and_worker_recycle`
   - `wasm_vm_probe_dataclasses_repl_parity_smoke`
   - `wasm_vm_probe_statistics_repl_parity_smoke`
+  - `wasm_vm_probe_combined_curated_subset_repl_scenario`
+  - `wasm_vm_probe_combined_curated_subset_worker_scenario`
 - These tests explicitly load the curated stdlib source pack into runtime virtual-module registry before REPL/worker execution.
 
 ## M5: CI + Evidence
@@ -252,6 +254,7 @@ Status: in progress
   - verifies `stdlibPackPath` propagation from page to worker load request,
   - verifies worker stdlib load sequence appears before REPL session creation/execute flow.
 - Curated pack builder now enforces exclusion guardrails so `os` cannot silently re-enter the subset (`scripts/build_wasm_stdlib_subset.py`).
+- `scripts/run_wasm_contract_smoke.sh` now refreshes `perf/wasm_artifact_input_hashes_latest.json` before evidence-pack validation, keeping local/CI gate flow deterministic after contract-summary changes.
 
 ## Test Plan
 
