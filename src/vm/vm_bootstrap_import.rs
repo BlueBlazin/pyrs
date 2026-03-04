@@ -8276,6 +8276,10 @@ impl Vm {
                 ("signal", BuiltinFunction::SignalSignal),
                 ("getsignal", BuiltinFunction::SignalGetSignal),
                 ("raise_signal", BuiltinFunction::SignalRaiseSignal),
+                (
+                    "default_int_handler",
+                    BuiltinFunction::SignalDefaultIntHandler,
+                ),
             ],
             vec![
                 ("SIG_DFL", Value::Int(SIGNAL_DEFAULT)),
@@ -8486,6 +8490,16 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::SocketObjectInit),
             );
             class_data.attrs.insert(
+                "setblocking".to_string(),
+                Value::Builtin(BuiltinFunction::SocketObjectSetBlocking),
+            );
+            class_data
+                .attrs
+                .insert("recv".to_string(), Value::Builtin(BuiltinFunction::SocketObjectRecv));
+            class_data
+                .attrs
+                .insert("send".to_string(), Value::Builtin(BuiltinFunction::SocketObjectSend));
+            class_data.attrs.insert(
                 "close".to_string(),
                 Value::Builtin(BuiltinFunction::SocketObjectClose),
             );
@@ -8505,6 +8519,7 @@ impl Vm {
                 ("gethostbyname", BuiltinFunction::SocketGetHostByName),
                 ("getaddrinfo", BuiltinFunction::SocketGetAddrInfo),
                 ("fromfd", BuiltinFunction::SocketFromFd),
+                ("socketpair", BuiltinFunction::SocketSocketPair),
                 (
                     "getdefaulttimeout",
                     BuiltinFunction::SocketGetDefaultTimeout,

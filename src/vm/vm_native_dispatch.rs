@@ -11870,6 +11870,12 @@ impl Vm {
             BuiltinFunction::SysSetSwitchInterval => {
                 self.builtin_sys_setswitchinterval(args, kwargs)
             }
+            BuiltinFunction::SysGetAsyncGenHooks => {
+                self.builtin_sys_get_asyncgen_hooks(args, kwargs)
+            }
+            BuiltinFunction::SysSetAsyncGenHooks => {
+                self.builtin_sys_set_asyncgen_hooks(args, kwargs)
+            }
             BuiltinFunction::SysExcepthook => self.builtin_sys_excepthook(args, kwargs),
             BuiltinFunction::SysDisplayHook => self.builtin_sys_displayhook(args, kwargs),
             BuiltinFunction::SysAudit => self.builtin_sys_audit(args, kwargs),
@@ -13377,6 +13383,9 @@ impl Vm {
             BuiltinFunction::SignalSignal => self.builtin_signal_signal(args, kwargs),
             BuiltinFunction::SignalGetSignal => self.builtin_signal_getsignal(args, kwargs),
             BuiltinFunction::SignalRaiseSignal => self.builtin_signal_raise_signal(args, kwargs),
+            BuiltinFunction::SignalDefaultIntHandler => {
+                self.builtin_signal_default_int_handler(args, kwargs)
+            }
             BuiltinFunction::LocaleSetLocale => self.builtin_locale_setlocale(args, kwargs),
             BuiltinFunction::LocaleLocaleConv => self.builtin_locale_localeconv(args, kwargs),
             BuiltinFunction::LocaleStrXfrm => self.builtin_locale_strxfrm(args, kwargs),
@@ -13386,6 +13395,7 @@ impl Vm {
             BuiltinFunction::SocketGetHostByName => self.builtin_socket_gethostbyname(args, kwargs),
             BuiltinFunction::SocketGetAddrInfo => self.builtin_socket_getaddrinfo(args, kwargs),
             BuiltinFunction::SocketFromFd => self.builtin_socket_fromfd(args, kwargs),
+            BuiltinFunction::SocketSocketPair => self.builtin_socket_socketpair(args, kwargs),
             BuiltinFunction::SocketGetDefaultTimeout => {
                 self.builtin_socket_getdefaulttimeout(args, kwargs)
             }
@@ -13397,6 +13407,11 @@ impl Vm {
             BuiltinFunction::SocketHtoNs => self.builtin_socket_htons(args, kwargs),
             BuiltinFunction::SocketHtoNl => self.builtin_socket_htonl(args, kwargs),
             BuiltinFunction::SocketObjectInit => self.builtin_socket_object_init(args, kwargs),
+            BuiltinFunction::SocketObjectSetBlocking => {
+                self.builtin_socket_object_setblocking(args, kwargs)
+            }
+            BuiltinFunction::SocketObjectRecv => self.builtin_socket_object_recv(args, kwargs),
+            BuiltinFunction::SocketObjectSend => self.builtin_socket_object_send(args, kwargs),
             BuiltinFunction::SocketObjectClose => self.builtin_socket_object_close(args, kwargs),
             BuiltinFunction::SocketObjectDetach => self.builtin_socket_object_detach(args, kwargs),
             BuiltinFunction::SocketObjectFileno => self.builtin_socket_object_fileno(args, kwargs),

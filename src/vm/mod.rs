@@ -1231,6 +1231,8 @@ pub struct Vm {
     is_finalizing: bool,
     recursion_limit: i64,
     switch_interval: f64,
+    asyncgen_firstiter_hook: Value,
+    asyncgen_finalizer_hook: Value,
     gc_enabled: bool,
     gc_thresholds: [usize; 3],
     gc_counts: [usize; 3],
@@ -1535,6 +1537,8 @@ impl Vm {
             is_finalizing: false,
             recursion_limit: 1000,
             switch_interval: 0.005,
+            asyncgen_firstiter_hook: Value::None,
+            asyncgen_finalizer_hook: Value::None,
             gc_enabled: true,
             gc_thresholds: [
                 GC_DEFAULT_THRESHOLD0,
@@ -4523,6 +4527,14 @@ impl Vm {
             module_data.globals.insert(
                 "setswitchinterval".to_string(),
                 Value::Builtin(BuiltinFunction::SysSetSwitchInterval),
+            );
+            module_data.globals.insert(
+                "get_asyncgen_hooks".to_string(),
+                Value::Builtin(BuiltinFunction::SysGetAsyncGenHooks),
+            );
+            module_data.globals.insert(
+                "set_asyncgen_hooks".to_string(),
+                Value::Builtin(BuiltinFunction::SysSetAsyncGenHooks),
             );
             module_data.globals.insert(
                 "_clear_type_descriptors".to_string(),

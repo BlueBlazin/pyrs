@@ -3367,7 +3367,7 @@ impl Vm {
             .insert(signum, handler)
             .unwrap_or_else(|| {
                 if signum == SIGNAL_SIGINT {
-                    Value::Builtin(BuiltinFunction::NoOp)
+                    Value::Builtin(BuiltinFunction::SignalDefaultIntHandler)
                 } else {
                     Value::Int(SIGNAL_DEFAULT)
                 }
@@ -3390,7 +3390,7 @@ impl Vm {
             .cloned()
             .unwrap_or_else(|| {
                 if signum == SIGNAL_SIGINT {
-                    Value::Builtin(BuiltinFunction::NoOp)
+                    Value::Builtin(BuiltinFunction::SignalDefaultIntHandler)
                 } else {
                     Value::Int(SIGNAL_DEFAULT)
                 }
@@ -3435,6 +3435,19 @@ impl Vm {
                 }
             }
         }
+    }
+
+    pub(super) fn builtin_signal_default_int_handler(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "default_int_handler() expects optional signum and frame",
+            ));
+        }
+        Err(RuntimeError::new("KeyboardInterrupt"))
     }
 
     fn locale_module_ref(&self) -> Result<ObjRef, RuntimeError> {
@@ -3746,6 +3759,96 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
+    fn socket_instance_fd(instance: &ObjRef) -> Result<i32, RuntimeError> {
+        match Self::instance_attr_get(instance, "_fd") {
+            Some(Value::Int(fd)) if fd >= 0 => Ok(fd as i32),
+            _ => Err(RuntimeError::os_error("[Errno 9] Bad file descriptor")),
+        }
+    }
+
+    pub(super) fn builtin_socket_socketpair(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 3 {
+            return Err(RuntimeError::new(
+                "socketpair() expects optional family, type, and proto",
+            ));
+        }
+        let family = kwargs
+            .remove("family")
+            .or_else(|| {
+                if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(Value::Int(1));
+        let sock_type = kwargs
+            .remove("type")
+            .or_else(|| {
+                if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(Value::Int(1));
+        let proto = kwargs
+            .remove("proto")
+            .or_else(|| {
+                if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(Value::Int(0));
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("socketpair() got unexpected arguments"));
+        }
+        let family = value_to_int(family)?;
+        let sock_type = value_to_int(sock_type)?;
+        let proto = value_to_int(proto)?;
+
+        #[cfg(unix)]
+        {
+            let mut fds = [-1i32; 2];
+            // SAFETY: pointers are valid for exactly two file descriptors.
+            let status = unsafe {
+                libc::socketpair(
+                    family as libc::c_int,
+                    sock_type as libc::c_int,
+                    proto as libc::c_int,
+                    fds.as_mut_ptr(),
+                )
+            };
+            if status != 0 {
+                let err = std::io::Error::last_os_error();
+                return Err(RuntimeError::os_error(format!("socketpair() failed: {err}")));
+            }
+            let left = self.alloc_socket_instance_with_fd(fds[0] as i64)?;
+            let right = self.alloc_socket_instance_with_fd(fds[1] as i64)?;
+            for socket in [&left, &right] {
+                if let Value::Instance(instance) = socket {
+                    Self::instance_attr_set(instance, "_family", Value::Int(family))?;
+                    Self::instance_attr_set(instance, "_type", Value::Int(sock_type))?;
+                    Self::instance_attr_set(instance, "_proto", Value::Int(proto))?;
+                }
+            }
+            return Ok(self.heap.alloc_tuple(vec![left, right]));
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (family, sock_type, proto);
+            Err(RuntimeError::new(
+                "socketpair() is not supported on this platform",
+            ))
+        }
+    }
+
     pub(super) fn builtin_socket_gethostname(
         &mut self,
         args: Vec<Value>,
@@ -4046,20 +4149,184 @@ impl Vm {
                 "socket.__init__() got unexpected arguments",
             ));
         }
+        let family = value_to_int(family)?;
+        let sock_type = value_to_int(sock_type)?;
+        let proto = value_to_int(proto)?;
         let fd = match fileno {
             Value::None => {
-                let fd = self.next_fd;
-                self.next_fd = self.next_fd.saturating_add(1);
-                fd
+                #[cfg(unix)]
+                {
+                    // SAFETY: libc::socket follows OS contract for parameters.
+                    let created = unsafe {
+                        libc::socket(
+                            family as libc::c_int,
+                            sock_type as libc::c_int,
+                            proto as libc::c_int,
+                        )
+                    };
+                    if created < 0 {
+                        let err = std::io::Error::last_os_error();
+                        return Err(RuntimeError::os_error(format!(
+                            "socket() creation failed: {err}"
+                        )));
+                    }
+                    created as i64
+                }
+                #[cfg(not(unix))]
+                {
+                    let fd = self.next_fd;
+                    self.next_fd = self.next_fd.saturating_add(1);
+                    fd
+                }
             }
             value => value_to_int(value)?,
         };
-        Self::instance_attr_set(&instance, "_family", Value::Int(value_to_int(family)?))?;
-        Self::instance_attr_set(&instance, "_type", Value::Int(value_to_int(sock_type)?))?;
-        Self::instance_attr_set(&instance, "_proto", Value::Int(value_to_int(proto)?))?;
+        Self::instance_attr_set(&instance, "_family", Value::Int(family))?;
+        Self::instance_attr_set(&instance, "_type", Value::Int(sock_type))?;
+        Self::instance_attr_set(&instance, "_proto", Value::Int(proto))?;
         Self::instance_attr_set(&instance, "_fd", Value::Int(fd))?;
         Self::instance_attr_set(&instance, "_closed", Value::Bool(fd < 0))?;
         Ok(Value::None)
+    }
+
+    pub(super) fn builtin_socket_object_setblocking(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("socket.setblocking() expects one argument"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "socket.setblocking")?;
+        let blocking = is_truthy(&args.remove(0));
+        let fd = Self::socket_instance_fd(&instance)?;
+        #[cfg(unix)]
+        {
+            // SAFETY: fcntl is called with a valid file descriptor from socket object state.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            if flags < 0 {
+                let err = std::io::Error::last_os_error();
+                return Err(RuntimeError::os_error(format!(
+                    "setblocking() failed to read flags: {err}"
+                )));
+            }
+            let new_flags = if blocking {
+                flags & !libc::O_NONBLOCK
+            } else {
+                flags | libc::O_NONBLOCK
+            };
+            // SAFETY: fcntl updates file status flags on a valid descriptor.
+            if unsafe { libc::fcntl(fd, libc::F_SETFL, new_flags) } < 0 {
+                let err = std::io::Error::last_os_error();
+                return Err(RuntimeError::os_error(format!(
+                    "setblocking() failed to update flags: {err}"
+                )));
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (fd, blocking);
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_socket_object_recv(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "socket.recv() expects buffersize and optional flags",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "socket.recv")?;
+        let bufsize = value_to_int(args.remove(0))?;
+        if bufsize < 0 {
+            return Err(RuntimeError::value_error(
+                "negative buffersize in recv()",
+            ));
+        }
+        let flags = if let Some(value) = args.pop() {
+            value_to_int(value)? as i32
+        } else {
+            0
+        };
+        let fd = Self::socket_instance_fd(&instance)?;
+        #[cfg(unix)]
+        {
+            let mut buffer = vec![0u8; bufsize as usize];
+            // SAFETY: buffer pointer/length are valid for writes; fd comes from socket state.
+            let received = unsafe {
+                libc::recv(
+                    fd,
+                    buffer.as_mut_ptr() as *mut libc::c_void,
+                    buffer.len(),
+                    flags,
+                )
+            };
+            if received < 0 {
+                let err = std::io::Error::last_os_error();
+                return Err(match err.kind() {
+                    std::io::ErrorKind::WouldBlock => RuntimeError::new("BlockingIOError"),
+                    std::io::ErrorKind::Interrupted => RuntimeError::new("InterruptedError"),
+                    _ => RuntimeError::os_error(format!("recv() failed: {err}")),
+                });
+            }
+            buffer.truncate(received as usize);
+            return Ok(self.heap.alloc_bytes(buffer));
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (fd, flags);
+            Err(RuntimeError::new("recv() is not supported on this platform"))
+        }
+    }
+
+    pub(super) fn builtin_socket_object_send(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "socket.send() expects data and optional flags",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "socket.send")?;
+        let payload = bytes_like_from_value(args.remove(0))?;
+        let flags = if let Some(value) = args.pop() {
+            value_to_int(value)? as i32
+        } else {
+            0
+        };
+        let fd = Self::socket_instance_fd(&instance)?;
+        #[cfg(unix)]
+        {
+            // SAFETY: payload buffer pointer/length are valid for reads; fd comes from socket state.
+            let sent = unsafe {
+                libc::send(
+                    fd,
+                    payload.as_ptr() as *const libc::c_void,
+                    payload.len(),
+                    flags,
+                )
+            };
+            if sent < 0 {
+                let err = std::io::Error::last_os_error();
+                return Err(match err.kind() {
+                    std::io::ErrorKind::WouldBlock => RuntimeError::new("BlockingIOError"),
+                    std::io::ErrorKind::Interrupted => RuntimeError::new("InterruptedError"),
+                    _ => RuntimeError::os_error(format!("send() failed: {err}")),
+                });
+            }
+            return Ok(Value::Int(sent as i64));
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (fd, payload, flags);
+            Err(RuntimeError::new("send() is not supported on this platform"))
+        }
     }
 
     pub(super) fn builtin_socket_object_close(
@@ -4071,6 +4338,13 @@ impl Vm {
             return Err(RuntimeError::new("socket.close() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "socket.close")?;
+        #[cfg(unix)]
+        if let Some(Value::Int(fd)) = Self::instance_attr_get(&instance, "_fd")
+            && fd >= 0
+        {
+            // SAFETY: closing an owned file descriptor from socket state.
+            let _ = unsafe { libc::close(fd as i32) };
+        }
         Self::instance_attr_set(&instance, "_closed", Value::Bool(true))?;
         Self::instance_attr_set(&instance, "_fd", Value::Int(-1))?;
         Ok(Value::None)

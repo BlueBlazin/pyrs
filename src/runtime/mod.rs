@@ -3752,6 +3752,8 @@ pub enum BuiltinFunction {
     SysSetRecursionLimit,
     SysGetSwitchInterval,
     SysSetSwitchInterval,
+    SysGetAsyncGenHooks,
+    SysSetAsyncGenHooks,
     SysAudit,
     SysAddAuditHook,
     SysClearTypeDescriptors,
@@ -4670,6 +4672,7 @@ pub enum BuiltinFunction {
     SignalSignal,
     SignalGetSignal,
     SignalRaiseSignal,
+    SignalDefaultIntHandler,
     LocaleSetLocale,
     LocaleLocaleConv,
     LocaleStrXfrm,
@@ -4684,6 +4687,7 @@ pub enum BuiltinFunction {
     SocketGetHostByName,
     SocketGetAddrInfo,
     SocketFromFd,
+    SocketSocketPair,
     SocketGetDefaultTimeout,
     SocketSetDefaultTimeout,
     SocketNtoHs,
@@ -4691,6 +4695,9 @@ pub enum BuiltinFunction {
     SocketHtoNs,
     SocketHtoNl,
     SocketObjectInit,
+    SocketObjectSetBlocking,
+    SocketObjectRecv,
+    SocketObjectSend,
     SocketObjectClose,
     SocketObjectDetach,
     SocketObjectFileno,
@@ -7393,6 +7400,8 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::SysSetRecursionLimit
             | BuiltinFunction::SysGetSwitchInterval
             | BuiltinFunction::SysSetSwitchInterval
+            | BuiltinFunction::SysGetAsyncGenHooks
+            | BuiltinFunction::SysSetAsyncGenHooks
             | BuiltinFunction::SysAudit
             | BuiltinFunction::SysAddAuditHook
             | BuiltinFunction::SysClearTypeDescriptors
@@ -7951,6 +7960,7 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::SignalSignal
             | BuiltinFunction::SignalGetSignal
             | BuiltinFunction::SignalRaiseSignal
+            | BuiltinFunction::SignalDefaultIntHandler
             | BuiltinFunction::LocaleSetLocale
             | BuiltinFunction::LocaleLocaleConv
             | BuiltinFunction::LocaleStrXfrm
@@ -7960,6 +7970,7 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::SocketGetHostByName
             | BuiltinFunction::SocketGetAddrInfo
             | BuiltinFunction::SocketFromFd
+            | BuiltinFunction::SocketSocketPair
             | BuiltinFunction::SocketGetDefaultTimeout
             | BuiltinFunction::SocketSetDefaultTimeout
             | BuiltinFunction::SocketNtoHs
@@ -7967,6 +7978,9 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::SocketHtoNs
             | BuiltinFunction::SocketHtoNl
             | BuiltinFunction::SocketObjectInit
+            | BuiltinFunction::SocketObjectSetBlocking
+            | BuiltinFunction::SocketObjectRecv
+            | BuiltinFunction::SocketObjectSend
             | BuiltinFunction::SocketObjectClose
             | BuiltinFunction::SocketObjectDetach
             | BuiltinFunction::SocketObjectFileno

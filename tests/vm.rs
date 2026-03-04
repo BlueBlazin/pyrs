@@ -12431,6 +12431,33 @@ fn executes_asyncio_run_with_await() {
 }
 
 #[test]
+fn executes_asyncio_run_with_pure_cpython_lib_path() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-asyncio run probe (CPython Lib path not available)");
+        return;
+    };
+    run_with_large_stack("executes_asyncio_run_with_pure_cpython_lib_path", move || {
+        let source = "import sys\nsys.modules.pop('asyncio', None)\nsys.modules.pop('socket', None)\nimport asyncio\norigin = getattr(asyncio, '__file__', '').replace('\\\\', '/')\nasync def f():\n    return 21\nresult = asyncio.run(f())\nok = (origin.endswith('/asyncio/__init__.py') and result == 21)\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path.clone());
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn sys_asyncgen_hooks_roundtrip_supports_asyncio_contract() {
+    let source = "import sys\norig = sys.get_asyncgen_hooks()\ndef firstiter(agen):\n    return None\ndef finalizer(agen):\n    return None\nsys.set_asyncgen_hooks(firstiter=firstiter, finalizer=finalizer)\ncurrent = sys.get_asyncgen_hooks()\nsys.set_asyncgen_hooks(*orig)\nrestored = sys.get_asyncgen_hooks()\nok = (isinstance(orig, tuple) and len(orig) == 2 and current[0] is firstiter and current[1] is finalizer and restored == orig)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_async_for_and_async_with() {
     let source = "import asyncio\nclass AsyncIter:\n    def __init__(self, n):\n        self.n = n\n        self.i = 0\n    def __aiter__(self):\n        return self\n    async def __anext__(self):\n        if self.i >= self.n:\n            raise StopAsyncIteration\n        self.i += 1\n        return self.i\nclass AsyncCtx:\n    async def __aenter__(self):\n        return 5\n    async def __aexit__(self, a, b, c):\n        return False\nasync def run_all():\n    total = 0\n    async for item in AsyncIter(3):\n        total += item\n    async with AsyncCtx() as value:\n        total += value\n    return total\nresult = asyncio.run(run_all())\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -12442,12 +12469,17 @@ fn executes_async_for_and_async_with() {
 
 #[test]
 fn executes_async_comprehensions_and_await_in_comprehension_elements() {
-    let source = "import asyncio\nclass AsyncIter:\n    def __init__(self, n):\n        self.n = n\n        self.i = 0\n    def __aiter__(self):\n        return self\n    async def __anext__(self):\n        if self.i >= self.n:\n            raise StopAsyncIteration\n        out = self.i\n        self.i += 1\n        return out\nasync def plus_ten(x):\n    return x + 10\nasync def run_all():\n    lst = [x async for x in AsyncIter(4) if x % 2 == 0]\n    st = {x async for x in AsyncIter(5) if x % 2 == 1}\n    dct = {x: x * x async for x in AsyncIter(4)}\n    awaited = [await plus_ten(x) for x in range(3)]\n    agen = (x async for x in AsyncIter(3))\n    out = []\n    async for value in agen:\n        out.append(value)\n    return lst, st, dct, awaited, out\nresult = asyncio.run(run_all())\nok = (result[0] == [0, 2] and result[1] == {1, 3} and result[2] == {0: 0, 1: 1, 2: 4, 3: 9} and result[3] == [10, 11, 12] and result[4] == [0, 1, 2])\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    run_with_large_stack(
+        "executes_async_comprehensions_and_await_in_comprehension_elements",
+        move || {
+            let source = "import asyncio\nclass AsyncIter:\n    def __init__(self, n):\n        self.n = n\n        self.i = 0\n    def __aiter__(self):\n        return self\n    async def __anext__(self):\n        if self.i >= self.n:\n            raise StopAsyncIteration\n        out = self.i\n        self.i += 1\n        return out\nasync def plus_ten(x):\n    return x + 10\nasync def run_all():\n    lst = [x async for x in AsyncIter(4) if x % 2 == 0]\n    st = {x async for x in AsyncIter(5) if x % 2 == 1}\n    dct = {x: x * x async for x in AsyncIter(4)}\n    awaited = [await plus_ten(x) for x in range(3)]\n    agen = (x async for x in AsyncIter(3))\n    out = []\n    async for value in agen:\n        out.append(value)\n    return lst, st, dct, awaited, out\nresult = asyncio.run(run_all())\nok = (result[0] == [0, 2] and result[1] == {1, 3} and result[2] == {0: 0, 1: 1, 2: 4, 3: 9} and result[3] == [10, 11, 12] and result[4] == [0, 1, 2])\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        },
+    );
 }
 
 #[test]
@@ -12479,6 +12511,16 @@ fn executes_inspect_async_predicates() {
 #[test]
 fn executes_threading_and_signal_foundations() {
     let source = "import signal\nimport threading\nseen = 0\ndef handler(signum, frame):\n    global seen\n    seen = signum\nold = signal.signal(signal.SIGINT, handler)\nsignal.raise_signal(signal.SIGINT)\nident = threading.get_ident()\ncount = threading.active_count()\nok = (seen == signal.SIGINT and callable(old) and isinstance(ident, int) and count >= 1)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn signal_default_int_handler_matches_sigint_default() {
+    let source = "import signal\ncurrent = signal.getsignal(signal.SIGINT)\nraised = False\ntry:\n    signal.default_int_handler()\nexcept KeyboardInterrupt:\n    raised = True\nok = (current is signal.default_int_handler and raised)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -15857,7 +15899,17 @@ fn unittest_mock_magic_methods_participate_in_operator_dispatch() {
 
 #[test]
 fn executes_socket_object_methods_baseline() {
-    let source = "import _socket\ns = _socket.socket()\nfd0 = s.fileno()\nfd1 = s.detach()\nfd2 = s.fileno()\ns.close()\nok = isinstance(fd0, int) and fd1 == fd0 and fd2 == -1\n";
+    let source = "import _socket\ns = _socket.socket()\nfd0 = s.fileno()\nfd1 = s.detach()\nfd2 = s.fileno()\nshadow = _socket.fromfd(fd1, _socket.AF_INET, _socket.SOCK_STREAM)\nshadow.close()\ns.close()\nok = isinstance(fd0, int) and fd1 == fd0 and fd2 == -1\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_socketpair_send_recv_roundtrip() {
+    let source = "import _socket\na, b = _socket.socketpair()\na.setblocking(False)\na.setblocking(True)\nsent = b.send(b'ping')\nrecv = a.recv(4)\na.close()\nb.close()\nok = (sent == 4 and recv == b'ping')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

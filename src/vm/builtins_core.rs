@@ -4234,6 +4234,70 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_sys_get_asyncgen_hooks(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.get_asyncgen_hooks() expects no arguments",
+            ));
+        }
+        Ok(self.heap.alloc_tuple(vec![
+            self.asyncgen_firstiter_hook.clone(),
+            self.asyncgen_finalizer_hook.clone(),
+        ]))
+    }
+
+    pub(super) fn builtin_sys_set_asyncgen_hooks(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 2 {
+            return Err(RuntimeError::type_error(
+                "sys.set_asyncgen_hooks() takes at most 2 positional arguments",
+            ));
+        }
+        let firstiter = kwargs.remove("firstiter").or_else(|| {
+            if !args.is_empty() {
+                Some(args.remove(0))
+            } else {
+                None
+            }
+        });
+        let finalizer = kwargs.remove("finalizer").or_else(|| {
+            if !args.is_empty() {
+                Some(args.remove(0))
+            } else {
+                None
+            }
+        });
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.set_asyncgen_hooks() got unexpected arguments",
+            ));
+        }
+        if let Some(firstiter) = firstiter {
+            if !matches!(firstiter, Value::None) && !self.is_callable_value(&firstiter) {
+                return Err(RuntimeError::type_error(
+                    "sys.set_asyncgen_hooks() firstiter must be callable or None",
+                ));
+            }
+            self.asyncgen_firstiter_hook = firstiter;
+        }
+        if let Some(finalizer) = finalizer {
+            if !matches!(finalizer, Value::None) && !self.is_callable_value(&finalizer) {
+                return Err(RuntimeError::type_error(
+                    "sys.set_asyncgen_hooks() finalizer must be callable or None",
+                ));
+            }
+            self.asyncgen_finalizer_hook = finalizer;
+        }
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_memoryview(
         &mut self,
         mut args: Vec<Value>,

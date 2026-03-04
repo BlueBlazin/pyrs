@@ -146,6 +146,12 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
   - pure `Lib/asyncio` import under CPython Lib-path now has a dedicated regression
     (`tests/vm.rs::asyncio_pure_module_can_import_with_cpython_lib_path`) to prevent
     fallback regressions through missing `time` metadata substrate.
+  - runtime `asyncio.run(...)` baseline now executes under forced pure CPython Lib path
+    (no bootstrap `asyncio` module), with required substrate deltas landed for
+    `signal.default_int_handler`, `sys.get_asyncgen_hooks`/`set_asyncgen_hooks`, and
+    `_socket` self-pipe surfaces (`socketpair`, `socket.setblocking`, `socket.recv`,
+    `socket.send`), covered by
+    `tests/vm.rs::executes_asyncio_run_with_pure_cpython_lib_path`.
 - [ ] `P1` `threading` (line 7846)
   - `_thread` substrate now exports CPython 3.14-required joinable-thread API symbols needed by pure `Lib/threading.py` import (`start_joinable_thread`, `daemon_threads_allowed`, `_shutdown`, `_make_thread_handle`, `_ThreadHandle`, `_get_main_thread_ident`, `_is_main_interpreter`, `LockType`, `error`);
   - `_thread.stack_size` and `_contextvars.Context.run` / `_contextvars.copy_context()` now follow CPython call shape closely enough for pure `threading.Thread.start()` to execute target callables under current synthetic-thread model;
@@ -164,7 +170,12 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
   - covered by `tests/vm.rs::sysconfig_import_prefers_cpython_pure_module_when_lib_path_is_added`.
 - [x] `P1` `socket` (line 8768):
   - added to pure-stdlib unload preference group (`PURE_STDLIB_SOCKET_MODULES`) so CPython `Lib/socket.py` is preferred when available;
-  - covered by `tests/vm.rs::socket_import_prefers_cpython_pure_module_when_lib_path_is_added`.
+  - `_socket` substrate now includes native `socketpair` plus socket-object
+    `setblocking`/`recv`/`send` support and real Unix fd creation for `socket()`,
+    unblocking CPython `Lib/asyncio` self-pipe paths that rely on `socket.socketpair()`;
+  - covered by `tests/vm.rs::socket_import_prefers_cpython_pure_module_when_lib_path_is_added`,
+    `tests/vm.rs::executes_socketpair_send_recv_roundtrip`, and
+    `tests/vm.rs::executes_asyncio_run_with_pure_cpython_lib_path`.
 
 ### 3.2 Already in unload preference groups, but still bootstrap-first
 
