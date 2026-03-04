@@ -45,7 +45,6 @@ const copyScriptSrc = `${import.meta.env.BASE_URL}scripts/copy-buttons.js`;
 
 	html {
 		scroll-behavior: smooth;
-		scrollbar-gutter: stable;
 	}
 
 	body {
@@ -60,7 +59,7 @@ const copyScriptSrc = `${import.meta.env.BASE_URL}scripts/copy-buttons.js`;
 	}
 
 	.site-shell {
-		width: min(1280px, calc(100% - 2.8rem));
+		width: min(1280px, calc(100vw - 2.8rem));
 		margin: 0 auto;
 		padding-bottom: 4rem;
 	}
@@ -73,7 +72,7 @@ const copyScriptSrc = `${import.meta.env.BASE_URL}scripts/copy-buttons.js`;
 
 	@media (max-width: 760px) {
 		.site-shell {
-			width: min(1160px, calc(100% - 1.2rem));
+			width: min(1160px, calc(100vw - 1.2rem));
 		}
 	}
 </style>
