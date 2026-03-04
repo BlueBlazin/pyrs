@@ -10130,6 +10130,22 @@ fn virtual_source_traceback_uses_wasm_stdlib_filename_shape() {
 }
 
 #[test]
+fn virtual_source_registration_overrides_existing_bootstrap_module_instance() {
+    let source = "\
+import sys\n\
+sys.modules.pop('functools', None)\n\
+import functools\n\
+value = functools.VIRTUAL_FUNCTOOLS_VALUE\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.register_virtual_module_source("functools", "VIRTUAL_FUNCTOOLS_VALUE = 314\n", false);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("value"), Some(Value::Int(314)));
+}
+
+#[test]
 fn exposes_importlib_cache_path_helpers() {
     let source = "import importlib.util\nsrc = importlib.util.source_from_cache('/tmp/__pycache__/demo.cpython-314.pyc')\ncache = importlib.util.cache_from_source('/tmp/demo.py')\nok = src == '/tmp/demo.py' and ('__pycache__' in cache) and (cache[-4:] == '.pyc')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
