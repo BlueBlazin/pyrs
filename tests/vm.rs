@@ -14992,6 +14992,44 @@ fn exposes_os_getuid_on_unix_hosts() {
 }
 
 #[test]
+fn exposes_os_readlink_and_preserves_path_type_on_unix_hosts() {
+    if !cfg!(unix) {
+        eprintln!("skipping os.readlink path-type test (unix-only)");
+        return;
+    }
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_os_readlink_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let target = temp_dir.join("target.txt");
+    let link = temp_dir.join("link.txt");
+    std::fs::write(&target, b"ok").expect("write target file");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("target.txt", &link).expect("create symlink");
+
+    let source = format!(
+        "import os\nimport posix\n\
+link = '{link}'\n\
+as_str = os.readlink(link)\n\
+as_bytes = os.readlink(link.encode())\n\
+as_posix = posix.readlink(link)\n\
+ok = (isinstance(as_str, str) and isinstance(as_bytes, bytes) and as_str == 'target.txt' and as_bytes == b'target.txt' and as_posix == 'target.txt')\n",
+        link = link.to_string_lossy().replace('\\', "\\\\"),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(link);
+    let _ = std::fs::remove_file(target);
+    let _ = std::fs::remove_dir(temp_dir);
+}
+
+#[test]
 fn executes_os_fd_stat_and_wait_status_helpers() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

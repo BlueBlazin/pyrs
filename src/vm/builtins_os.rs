@@ -410,6 +410,44 @@ impl Vm {
         }
     }
 
+    pub(super) fn builtin_os_readlink(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::new("readlink() expects one argument"));
+        }
+        let (path, return_bytes) = self.path_arg_to_pathbuf_and_type(args.remove(0))?;
+        if let Some(dir_fd) = kwargs.remove("dir_fd")
+            && !matches!(dir_fd, Value::None)
+        {
+            return Err(RuntimeError::new("readlink() dir_fd is unsupported"));
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "readlink() got an unexpected keyword argument",
+            ));
+        }
+        #[cfg(unix)]
+        {
+            let resolved = std::fs::read_link(path)
+                .map_err(|err| Self::os_error_from_io("readlink failed", err))?;
+            if return_bytes {
+                use std::os::unix::ffi::OsStringExt;
+                return Ok(self.heap.alloc_bytes(resolved.into_os_string().into_vec()));
+            }
+            return Ok(Value::Str(resolved.to_string_lossy().to_string()));
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (path, return_bytes);
+            Err(RuntimeError::new(
+                "readlink() is not supported on this platform",
+            ))
+        }
+    }
+
     pub(super) fn builtin_os_cpu_count(
         &mut self,
         args: Vec<Value>,

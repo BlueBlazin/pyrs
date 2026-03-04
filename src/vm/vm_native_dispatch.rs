@@ -12209,6 +12209,7 @@ impl Vm {
             BuiltinFunction::OsIsATty => self.builtin_os_isatty(args, kwargs),
             BuiltinFunction::OsSetInheritable => self.builtin_os_set_inheritable(args, kwargs),
             BuiltinFunction::OsGetInheritable => self.builtin_os_get_inheritable(args, kwargs),
+            BuiltinFunction::OsReadLink => self.builtin_os_readlink(args, kwargs),
             BuiltinFunction::OsURandom => self.builtin_os_urandom(args, kwargs),
             BuiltinFunction::OsStat => self.builtin_os_stat(args, kwargs),
             BuiltinFunction::OsLStat => self.builtin_os_lstat(args, kwargs),

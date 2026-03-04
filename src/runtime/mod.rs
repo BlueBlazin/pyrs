@@ -3947,6 +3947,7 @@ pub enum BuiltinFunction {
     OsIsATty,
     OsSetInheritable,
     OsGetInheritable,
+    OsReadLink,
     OsURandom,
     OsStat,
     OsLStat,
@@ -7509,6 +7510,7 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::OsIsATty
             | BuiltinFunction::OsSetInheritable
             | BuiltinFunction::OsGetInheritable
+            | BuiltinFunction::OsReadLink
             | BuiltinFunction::OsURandom
             | BuiltinFunction::OsStat
             | BuiltinFunction::OsLStat
