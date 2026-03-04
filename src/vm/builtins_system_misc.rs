@@ -1,10 +1,11 @@
 use super::{
     BuiltinFunction, HashMap, InstanceObject, InternalCallOutcome, IpAddr, IteratorKind,
     IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
-    SIGNAL_SIGINT, SocketAddr, SystemTime, TimeParts, ToSocketAddrs, UNIX_EPOCH, Value, Vm,
+    SIGNAL_SIGINT, SocketAddr, TimeParts, ToSocketAddrs, Value, Vm,
     apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil,
     decode_text_bytes, dict_get_value, format_strftime, format_uuid_hex, format_uuid_hyphenated,
     is_truthy, parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp,
+    unix_time_now_duration,
     uuid_hash_mix_bytes, uuid_random_bytes, uuid_timestamp_100ns_since_gregorian, value_to_f64,
     value_to_int,
 };
@@ -458,9 +459,7 @@ impl Vm {
         } else {
             self.datetime_default_class()?
         };
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| RuntimeError::new("system time before epoch"))?;
+        let now = unix_time_now_duration()?;
         let parts = split_unix_timestamp(now.as_secs() as i64);
         self.datetime_instance_from_parts(
             class,
@@ -488,9 +487,7 @@ impl Vm {
         } else {
             self.date_default_class()?
         };
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| RuntimeError::new("system time before epoch"))?;
+        let now = unix_time_now_duration()?;
         let parts = split_unix_timestamp(now.as_secs() as i64);
         let is_datetime_class = matches!(
             &*class.kind(),
@@ -4941,9 +4938,7 @@ impl Vm {
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new("uuid7() expects no arguments"));
         }
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| RuntimeError::new("system time before epoch"))?;
+        let now = unix_time_now_duration()?;
         let millis = now.as_millis() as u64;
         let mut bytes = [0u8; 16];
         bytes[0] = (millis >> 40) as u8;

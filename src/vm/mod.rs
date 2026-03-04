@@ -6282,8 +6282,7 @@ fn fresh_random_seed_u64() -> u64 {
             return u64::from_le_bytes(bytes);
         }
     }
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let nanos = unix_time_now_duration()
         .map(|duration| duration.as_nanos() as u64)
         .unwrap_or(0);
     let counter = RANDOM_SEED_FALLBACK_COUNTER
@@ -6890,9 +6889,7 @@ fn uuid_hash_mix_bytes(tag: u8, namespace: [u8; 16], name: &[u8]) -> [u8; 16] {
 }
 
 fn uuid_timestamp_100ns_since_gregorian() -> Result<u64, RuntimeError> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| RuntimeError::new("system time before epoch"))?;
+    let now = unix_time_now_duration()?;
     let ticks = now
         .as_secs()
         .saturating_mul(10_000_000)
@@ -10176,10 +10173,32 @@ struct TimeParts {
 }
 
 fn unix_seconds_now() -> i64 {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_else(|_| Duration::from_secs(0));
+    let now = unix_time_now_duration().unwrap_or_else(|_| Duration::from_secs(0));
     now.as_secs().min(i64::MAX as u64) as i64
+}
+
+fn unix_time_now_duration() -> Result<Duration, RuntimeError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let millis = Date::now();
+        if !millis.is_finite() {
+            return Err(RuntimeError::new("host clock is unavailable"));
+        }
+        if millis < 0.0 {
+            return Err(RuntimeError::new("system time before epoch"));
+        }
+        let micros = (millis * 1_000.0).floor();
+        let micros_u128 = micros as u128;
+        let secs = (micros_u128 / 1_000_000).min(u64::MAX as u128) as u64;
+        let sub_micros = (micros_u128 % 1_000_000) as u64;
+        return Ok(Duration::from_secs(secs) + Duration::from_micros(sub_micros));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| RuntimeError::new("system time before epoch"))
+    }
 }
 
 fn split_unix_timestamp(total_secs: i64) -> TimeParts {

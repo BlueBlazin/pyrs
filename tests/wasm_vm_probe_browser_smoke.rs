@@ -97,6 +97,22 @@ fn vm_probe_repl_session_parse_error_clears_pending_multiline_state() {
 }
 
 #[wasm_bindgen_test]
+fn vm_probe_repl_datetime_now_executes() {
+    let mut repl = WasmReplSession::new();
+
+    let imported = repl.execute_input("from datetime import datetime");
+    assert_eq!(imported.phase(), "ok".to_string());
+    assert!(imported.success());
+    assert!(imported.stderr().is_empty());
+
+    let now = repl.execute_input("datetime.now()");
+    assert_eq!(now.phase(), "ok".to_string());
+    assert!(now.success());
+    assert!(now.error().is_none());
+    assert!(now.stderr().is_empty());
+}
+
+#[wasm_bindgen_test]
 fn vm_probe_worker_state_gate_roundtrip() {
     let baseline = wasm_worker_info();
     assert_eq!(baseline.backend(), "vm_probe".to_string());

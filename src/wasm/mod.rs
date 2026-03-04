@@ -3188,6 +3188,24 @@ mod tests {
 
     #[cfg(feature = "wasm-vm-probe")]
     #[test]
+    fn wasm_repl_session_vm_probe_datetime_now_executes() {
+        let mut session = WasmReplSession::new();
+
+        let imported = session.execute_input("from datetime import datetime\n");
+        assert_eq!(imported.phase(), "ok".to_string());
+        assert!(imported.success());
+        assert!(imported.error().is_none());
+        assert!(imported.stderr().is_empty());
+
+        let now = session.execute_input("datetime.now()\n");
+        assert_eq!(now.phase(), "ok".to_string());
+        assert!(now.success());
+        assert!(now.error().is_none());
+        assert!(now.stderr().is_empty());
+    }
+
+    #[cfg(feature = "wasm-vm-probe")]
+    #[test]
     fn wasm_repl_session_vm_probe_executes_multiline_class_block_on_blank_line() {
         let mut session = WasmReplSession::new();
 
