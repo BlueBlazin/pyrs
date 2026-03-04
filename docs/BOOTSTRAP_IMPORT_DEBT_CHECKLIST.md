@@ -90,11 +90,12 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
   - regex fallback parser now supports class escapes inside character classes (`\w/\W/\d/\D/\s/\S`), including CPython `platform._sys_version` pattern fragments like `[\w.+]`;
   - `sys.version` now follows CPython parser shape (`version (buildno, builddate, buildtime) [compiler]`) so pure `platform.py` can parse interpreter metadata without bootstrap fallbacks;
   - covered by `tests/vm.rs::platform_import_prefers_cpython_pure_module_when_lib_path_is_added` and `tests/vm.rs::re_platform_sys_version_parser_pattern_matches_cpython_shape`.
-- [ ] `P1` `os` (line 1014)
-  - incremental substrate parity landed:
-    - native `os.getuid` / `posix.getuid` now exported on unix hosts;
-    - native `os.readlink` / `posix.readlink` now exported, with CPython-shaped return-type behavior (`str` for str-path input, `bytes` for bytes-path input);
-  - remaining work is full pure-stdlib `Lib/os.py` preference closure with no bootstrap-first fallback dependency.
+- [x] `P1` `os` (line 1014):
+  - added to pure-stdlib unload preference group (`PURE_STDLIB_OS_MODULES`) so CPython `Lib/os.py` is preferred when available;
+  - incremental substrate parity landed to support this closure:
+    - native `os.getuid` / `posix.getuid` on unix hosts;
+    - native `os.readlink` / `posix.readlink` with CPython-shaped return-type behavior (`str` for str-path input, `bytes` for bytes-path input);
+  - covered by `tests/vm.rs::os_import_prefers_cpython_pure_module_when_lib_path_is_added`.
 - [x] `P1` `_osx_support` (line 1536):
   - added to pure-stdlib unload preference group (`PURE_STDLIB_OSX_SUPPORT_MODULES`) so CPython `Lib/_osx_support.py` is preferred when available;
   - covered by `tests/vm.rs::osx_support_import_prefers_cpython_pure_module_when_lib_path_is_added`.

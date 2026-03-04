@@ -208,6 +208,7 @@ const PURE_STDLIB_IO_MODULES: &[&str] = &["io"];
 const PURE_STDLIB_UUID_MODULES: &[&str] = &["uuid"];
 const PURE_STDLIB_SOCKET_MODULES: &[&str] = &["socket"];
 const PURE_STDLIB_PLATFORM_MODULES: &[&str] = &["platform"];
+const PURE_STDLIB_OS_MODULES: &[&str] = &["os"];
 const PURE_STDLIB_OSX_SUPPORT_MODULES: &[&str] = &["_osx_support"];
 const PURE_STDLIB_SYSCONFIG_MODULES: &[&str] = &["sysconfig", "_sysconfig"];
 const PURE_STDLIB_DECIMAL_MODULES: &[&str] = &["decimal"];

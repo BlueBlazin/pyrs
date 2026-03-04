@@ -4132,6 +4132,41 @@ ok = (
 }
 
 #[test]
+fn os_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-os import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("os-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import os
+origin = getattr(os, '__file__', '')
+norm = origin.replace("\\", "/")
+path_mod = getattr(os, 'path', None)
+ok = (
+    norm.endswith('/os.py')
+    and ('/shims/' not in norm)
+    and callable(getattr(os, 'walk', None))
+    and path_mod is not None
+    and callable(getattr(path_mod, 'join', None))
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn os import preference thread");
+    handle
+        .join()
+        .expect("os import preference thread should complete");
+}
+
+#[test]
 fn osx_support_import_prefers_cpython_pure_module_when_lib_path_is_added() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!(
