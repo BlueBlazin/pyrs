@@ -14982,6 +14982,16 @@ fn executes_os_fsencode_fsdecode_and_unicodeerror() {
 }
 
 #[test]
+fn exposes_os_getuid_on_unix_hosts() {
+    let source = "import os\nimport posix\nok = (hasattr(os, 'getuid') and hasattr(posix, 'getuid') and isinstance(os.getuid(), int) and isinstance(posix.getuid(), int) and os.getuid() == posix.getuid())\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_os_fd_stat_and_wait_status_helpers() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

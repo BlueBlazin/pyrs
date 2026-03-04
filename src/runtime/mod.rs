@@ -3923,6 +3923,7 @@ pub enum BuiltinFunction {
     TimeMonotonic,
     TimeSleep,
     OsGetPid,
+    OsGetUid,
     OsChDir,
     OsGetCwd,
     OsCpuCount,
@@ -7484,6 +7485,7 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::TimeMonotonic
             | BuiltinFunction::TimeSleep
             | BuiltinFunction::OsGetPid
+            | BuiltinFunction::OsGetUid
             | BuiltinFunction::OsChDir
             | BuiltinFunction::OsGetCwd
             | BuiltinFunction::OsCpuCount

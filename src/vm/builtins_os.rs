@@ -391,6 +391,25 @@ impl Vm {
         Ok(Value::Int(std::process::id() as i64))
     }
 
+    pub(super) fn builtin_os_getuid(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("getuid() expects no arguments"));
+        }
+        #[cfg(unix)]
+        {
+            let uid = unsafe { libc::getuid() };
+            return Ok(Value::Int(uid as i64));
+        }
+        #[cfg(not(unix))]
+        {
+            Err(RuntimeError::new("getuid() is not supported on this platform"))
+        }
+    }
+
     pub(super) fn builtin_os_cpu_count(
         &mut self,
         args: Vec<Value>,

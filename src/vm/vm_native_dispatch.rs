@@ -12185,6 +12185,7 @@ impl Vm {
             BuiltinFunction::TimeSleep => self.builtin_time_sleep(args, kwargs),
             BuiltinFunction::ResourceGetRLimit => self.builtin_resource_getrlimit(args, kwargs),
             BuiltinFunction::OsGetPid => self.builtin_os_getpid(args, kwargs),
+            BuiltinFunction::OsGetUid => self.builtin_os_getuid(args, kwargs),
             BuiltinFunction::OsChDir => self.builtin_os_chdir(args, kwargs),
             BuiltinFunction::OsGetCwd => self.builtin_os_getcwd(args, kwargs),
             BuiltinFunction::OsCpuCount => self.builtin_os_cpu_count(args, kwargs),
