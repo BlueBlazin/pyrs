@@ -1,4 +1,4 @@
-# WASM Curated Stdlib Subset Plan (Top 30, `.py`-only)
+# WASM Curated Stdlib Subset Plan (Top 26, `.py`-only)
 
 Status: proposed (not started)  
 Date: 2026-03-04  
@@ -24,7 +24,7 @@ WASM currently uses bootstrap modules for many imports. For `functools`, bootstr
 
 Ship a curated subset of CPython `Lib/*.py` modules for WASM and load them from an in-memory stdlib pack (not host filesystem). Missing modules continue to follow current WASM policy (unsupported capability errors or existing bootstrap behavior).
 
-## Candidate Top-30 Seed Modules
+## Candidate Top-26 Seed Modules
 
 This seed list is REPL-first and intentionally excludes filesystem-centric modules
 (`pathlib`, `glob`) and debugging/introspection-heavy modules (`inspect`, `ast`,
@@ -52,14 +52,10 @@ This seed list is REPL-first and intentionally excludes filesystem-centric modul
 20. `heapq`
 21. `bisect`
 22. `urllib.parse`
-23. `weakref`
-24. `numbers`
-25. `copyreg`
-26. `keyword`
-27. `reprlib`
-28. `difflib`
-29. `datetime`
-30. `argparse`
+23. `numbers`
+24. `difflib`
+25. `datetime`
+26. `argparse`
 
 Related note:
 
@@ -71,12 +67,9 @@ Related note:
 
 Measured closure-based estimates for the REPL-first seed list (`.py` files only, non-test):
 
-- Seed-20 closure (first 20 modules in this list):
-  - raw: `1,005,443` bytes
-  - zip(deflate): `251,637` bytes
-- Seed-30 closure:
-  - raw: `1,346,056` bytes
-  - zip(deflate): `333,280` bytes
+- Seed-26 closure:
+  - raw: `1,392,419` bytes
+  - zip(deflate): `345,832` bytes
 - Reference full non-test `.py` zip:
   - ~`3,197,528` bytes
 
