@@ -112,12 +112,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev
 
-      - name: Install cargo-nextest
-        run: |
-          if ! command -v cargo-nextest >/dev/null 2>&1; then
-            cargo install cargo-nextest --locked
-          fi
-
       - name: Install wasm-pack
         run: |
           if ! command -v wasm-pack >/dev/null 2>&1; then
