@@ -6,6 +6,7 @@ import DocsSidebar from "../components/docs/DocsSidebar.astro";
 import DocsPageHeader from "../components/docs/DocsPageHeader.astro";
 import DocsPager from "../components/docs/DocsPager.astro";
 import DocsToc from "../components/docs/DocsToc.astro";
+import { stripBasePath } from "../lib/paths";
 import "../styles/global.css";
 
 interface TocConfig {
@@ -45,7 +46,7 @@ const noindex = Astro.props.noindex ?? frontmatter.noindex ?? false;
 const headings = Astro.props.headings ?? [];
 const rawTocConfig = Astro.props.toc ?? frontmatter.toc ?? {};
 const tocConfig: TocConfig = typeof rawTocConfig === "boolean" ? { enabled: rawTocConfig } : rawTocConfig;
-const rawPath = Astro.url.pathname;
+const rawPath = stripBasePath(Astro.url.pathname);
 const path = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 const sourceFile = path === "/docs/" ? "docs/index.mdx" : `docs${path.slice("/docs".length, -1)}.mdx`;
 const editUrl = `https://github.com/BlueBlazin/pyrs/edit/master/website/src/pages/${sourceFile}`;

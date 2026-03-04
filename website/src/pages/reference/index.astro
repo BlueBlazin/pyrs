@@ -1,19 +1,23 @@
 ---
+import { withBasePath } from "../../lib/paths";
+
+const referenceHref = withBasePath("/docs/reference/");
 ---
 
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<meta http-equiv="refresh" content="0; url=/docs/reference/" />
+		<meta http-equiv="refresh" content={`0; url=${referenceHref}`} />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>Redirecting to PYRS Docs Reference</title>
 		<meta name="description" content="Redirecting to the PYRS CLI and environment reference page." />
-		<link rel="canonical" href="/docs/reference/" />
+		<link rel="canonical" href={referenceHref} />
 	</head>
-	<body>
-		<p>Redirecting to <a href="/docs/reference/">/docs/reference/</a>...</p>
+	<body data-redirect-target={referenceHref}>
+		<p>Redirecting to <a href={referenceHref}>{referenceHref}</a>...</p>
 		<script>
-			window.location.replace("/docs/reference/");
+			const target = document.body?.dataset.redirectTarget || "/";
+			window.location.replace(target);
 		</script>
 	</body>
 </html>

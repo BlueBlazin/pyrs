@@ -1,4 +1,6 @@
 ---
+import { withBasePath } from "../lib/paths";
+
 interface Props {
 	variant?: "home" | "docs";
 }
@@ -6,12 +8,14 @@ interface Props {
 const { variant = "home" } = Astro.props;
 const isDocs = variant === "docs";
 const year = new Date().getFullYear();
+const homeHref = withBasePath("/");
+const docsHref = withBasePath("/docs/");
 ---
 
 <footer class:list={["site-footer", isDocs ? "docs" : "home"]}>
 	<p>© {year} PYRS</p>
 	<nav aria-label="Footer links">
-		{isDocs ? <a href="/">Home</a> : <a href="/docs/">Docs</a>}
+		{isDocs ? <a href={homeHref}>Home</a> : <a href={docsHref}>Docs</a>}
 		<a href="https://github.com/BlueBlazin/pyrs">GitHub</a>
 	</nav>
 </footer>

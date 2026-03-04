@@ -9,6 +9,7 @@ import DocSection from "../../components/docs/DocSection.astro";
 import CommandBlock from "../../components/docs/CommandBlock.astro";
 import DataTable from "../../components/docs/DataTable.astro";
 import Callout from "../../components/docs/Callout.astro";
+import { withBasePath } from "../../lib/paths";
 
 <DocSection>
 	PYRS includes built-in inspection modes for parser and compiler debugging.
@@ -58,6 +59,6 @@ import Callout from "../../components/docs/Callout.astro";
 	</DataTable>
 	<Callout title="Scope Note">
 		These tools inspect source-compile paths. For runtime traceback behavior, use
-		<a href="/docs/diagnostics/"> Diagnostics and Tracebacks</a>.
+		<a href={withBasePath("/docs/diagnostics/")}> Diagnostics and Tracebacks</a>.
 	</Callout>
 </DocSection>

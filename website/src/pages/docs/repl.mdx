@@ -9,6 +9,7 @@ import DocSection from "../../components/docs/DocSection.astro";
 import CommandBlock from "../../components/docs/CommandBlock.astro";
 import Callout from "../../components/docs/Callout.astro";
 import ReplTranscript from "../../components/docs/ReplTranscript.astro";
+import { withBasePath } from "../../lib/paths";
 
 <DocSection>
 	PYRS gives you three execution paths: interactive REPL, inline command mode, and script-file mode.
@@ -181,7 +182,7 @@ import ReplTranscript from "../../components/docs/ReplTranscript.astro";
 		<li>When reporting REPL bugs, include prompt transcript and exact terminal platform details.</li>
 	</ul>
 	<Callout title="Related Docs">
-		See <a href="/docs/import-paths/">Import and Stdlib Paths</a> for import-resolution details and{" "}
-		<a href="/docs/diagnostics/">Diagnostics and Tracebacks</a> for traceback formatting expectations.
+		See <a href={withBasePath("/docs/import-paths/")}>Import and Stdlib Paths</a> for import-resolution details and{" "}
+		<a href={withBasePath("/docs/diagnostics/")}>Diagnostics and Tracebacks</a> for traceback formatting expectations.
 	</Callout>
 </DocSection>

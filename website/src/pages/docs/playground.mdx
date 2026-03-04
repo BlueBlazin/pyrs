@@ -9,9 +9,10 @@ import DocSection from "../../components/docs/DocSection.astro";
 import DataTable from "../../components/docs/DataTable.astro";
 import CodeBlock from "../../components/docs/CodeBlock.astro";
 import Callout from "../../components/docs/Callout.astro";
+import { withBasePath } from "../../lib/paths";
 
 <DocSection>
-	The browser playground lives at <a href="/playground/"><code>/playground</code></a>.
+	The browser playground lives at <a href={withBasePath("/playground/")}><code>/playground</code></a>.
 	It auto-loads the wasm runtime and provides a minimal REPL-focused interface.
 	Runtime execution is handled in a dedicated Web Worker so command execution
 	does not run on the page UI thread.
@@ -79,5 +80,5 @@ pnpm --dir website dev
 
 <DocSection title="Debug Route">
 	For low-level diagnostics and worker/state contract probing, use the unlisted
-	<a href="/debug/"><code>/debug</code></a> route.
+	<a href={withBasePath("/debug/")}><code>/debug</code></a> route.
 </DocSection>

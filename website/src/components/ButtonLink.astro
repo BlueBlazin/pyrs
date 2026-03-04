@@ -1,5 +1,6 @@
 ---
 import { cn } from "../lib/cn";
+import { withBasePath } from "../lib/paths";
 
 interface Props {
 	href: string;
@@ -8,9 +9,10 @@ interface Props {
 }
 
 const { href, variant = "secondary", class: className } = Astro.props;
+const resolvedHref = withBasePath(href);
 ---
 
-<a href={href} class={cn("btn-link", variant, className)}>
+<a href={resolvedHref} class={cn("btn-link", variant, className)}>
 	<slot />
 </a>
 

@@ -9,6 +9,7 @@ import DocSection from "../../components/docs/DocSection.astro";
 import CommandBlock from "../../components/docs/CommandBlock.astro";
 import DataTable from "../../components/docs/DataTable.astro";
 import Callout from "../../components/docs/Callout.astro";
+import { withBasePath } from "../../lib/paths";
 import {
 	cargoInstallGitHubCommands,
 	cargoInstallRepoPathCommands,
@@ -89,7 +90,7 @@ import {
 		]}
 	/>
 	<Callout title="Next">
-		After install succeeds, continue with <a href="/docs/repl/">REPL and Execution</a> or open
-		<a href="/docs/reference/"> CLI and Environment Reference</a>.
+		After install succeeds, continue with <a href={withBasePath("/docs/repl/")}>REPL and Execution</a> or open
+		<a href={withBasePath("/docs/reference/")}> CLI and Environment Reference</a>.
 	</Callout>
 </DocSection>

@@ -9,6 +9,7 @@ import DocSection from "../../components/docs/DocSection.astro";
 import CommandBlock from "../../components/docs/CommandBlock.astro";
 import DataTable from "../../components/docs/DataTable.astro";
 import Callout from "../../components/docs/Callout.astro";
+import { withBasePath } from "../../lib/paths";
 
 <DocSection>
 	Use this page to quickly isolate common runtime, import, and diagnostics issues.
@@ -69,8 +70,8 @@ import Callout from "../../components/docs/Callout.astro";
 		<li>Include platform and architecture details (for example macOS arm64, Linux x86_64).</li>
 	</ul>
 	<Callout title="Related Pages">
-		See <a href="/docs/import-paths/">Import and Stdlib Paths</a>,
-		<a href="/docs/diagnostics/"> Diagnostics and Tracebacks</a>, and
-		<a href="/docs/reference/"> CLI and Environment Reference</a>.
+		See <a href={withBasePath("/docs/import-paths/")}>Import and Stdlib Paths</a>,
+		<a href={withBasePath("/docs/diagnostics/")}> Diagnostics and Tracebacks</a>, and
+		<a href={withBasePath("/docs/reference/")}> CLI and Environment Reference</a>.
 	</Callout>
 </DocSection>
