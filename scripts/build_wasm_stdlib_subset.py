@@ -43,6 +43,11 @@ DEFAULT_SEED_MODULES = [
     "argparse",
 ]
 
+PACK_EXCLUDED_MODULES = {
+    # Keep native bootstrap substrate for os in wasm runtime.
+    "os",
+}
+
 
 @dataclass(frozen=True)
 class ModuleSource:
@@ -210,7 +215,16 @@ print(
 """
 
     result = subprocess.run(
-        [sys.executable, "-S", "-c", probe, str(lib_root), json.dumps(seed_modules)],
+        [
+            sys.executable,
+            "-X",
+            "frozen_modules=off",
+            "-S",
+            "-c",
+            probe,
+            str(lib_root),
+            json.dumps(seed_modules),
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -234,6 +248,8 @@ print(
         if source_path is None:
             continue
         if "test" in source_path.parts:
+            continue
+        if module_name in PACK_EXCLUDED_MODULES:
             continue
         closure[module_name] = ModuleSource(
             module_name,
