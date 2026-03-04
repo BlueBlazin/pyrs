@@ -3136,3 +3136,40 @@ assert median_value == (5.1 + 7.8) / 2\n",
     assert!(show.stderr().is_empty());
     assert_eq!(show.stdout().trim(), "(6.275, 6.449999999999999)");
 }
+
+#[cfg(feature = "wasm-vm-probe")]
+#[wasm_bindgen_test]
+fn wasm_vm_probe_combined_curated_subset_repl_scenario() {
+    reset_top_level_worker_state_for_contract_tests();
+    load_curated_stdlib_pack_into_runtime();
+
+    let mut session = WasmReplSession::new();
+    let scenario = session.execute_input(
+        "from dataclasses import dataclass\n\
+from functools import cache\n\
+import statistics as st\n\
+@cache\n\
+def fib(n):\n\
+    return n if n < 2 else fib(n - 1) + fib(n - 2)\n\
+@dataclass\n\
+class Sample:\n\
+    tag: str\n\
+    total: int\n\
+values = [3.2, 5.1, 7.8, 9.0]\n\
+sample = Sample('fib+stats', fib(20))\n\
+assert sample.total == 6765\n\
+assert abs(st.mean(values) - 6.275) < 1e-12\n\
+assert st.median(values) == (5.1 + 7.8) / 2\n",
+    );
+    assert_eq!(scenario.phase(), "ok".to_string());
+    assert!(scenario.success());
+    assert!(scenario.error().is_none());
+    assert!(scenario.stderr().is_empty());
+
+    let output = session.execute_input("(sample, fib.cache_info().currsize)\n");
+    assert_eq!(output.phase(), "ok".to_string());
+    assert!(output.success());
+    assert!(output.error().is_none());
+    assert!(output.stderr().is_empty());
+    assert_eq!(output.stdout().trim(), "(Sample(tag='fib+stats', total=6765), 21)");
+}
