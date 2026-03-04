@@ -4,7 +4,6 @@ interface Props {
 }
 
 const { context = "home" } = Astro.props;
-const isHome = context === "home";
 const intrinsicLogoSize = 68;
 const withBase = (path = "") => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, "")}`;
 const navLinks =
@@ -41,38 +40,14 @@ const navLinks =
 	</nav>
 </header>
 
-{
-	isHome && (
-		<script>
-			const header = document.querySelector(".global-topbar[data-context='home']");
-			if (header && header instanceof HTMLElement && header.dataset.scrollBound !== "1") {
-				header.dataset.scrollBound = "1";
-				const maxScroll = 180;
-				const update = () => {
-					const progress = Math.max(0, Math.min(1, window.scrollY / maxScroll));
-					header.style.setProperty("--home-progress", progress.toFixed(3));
-				};
-				update();
-				window.addEventListener("scroll", update, { passive: true });
-				window.addEventListener("resize", update);
-			}
-		</script>
-	)
-}
-
 <style>
 	.global-topbar {
-		--home-progress: 0;
-		--logo-size: calc(44px + (1 - var(--home-progress)) * 24px);
-		--brand-gap: calc(0.68rem + (1 - var(--home-progress)) * 0.18rem);
+		--logo-size: 68px;
+		--brand-gap: 0.86rem;
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
 		padding: 1.4rem 0;
-	}
-
-	.global-topbar[data-context="home"] {
-		--home-progress: 0;
 	}
 
 	.global-brand {
@@ -97,7 +72,7 @@ const navLinks =
 	}
 
 	.global-topbar[data-context="home"] .global-brand img {
-		box-shadow: 0 0 calc((1 - var(--home-progress)) * 18px) rgba(233, 125, 70, 0.26);
+		box-shadow: 0 0 18px rgba(233, 125, 70, 0.26);
 	}
 
 	.global-brand:focus-visible {
@@ -130,7 +105,7 @@ const navLinks =
 
 	@media (max-width: 760px) {
 		.global-topbar {
-			--logo-size: calc(44px + (1 - var(--home-progress)) * 14px);
+			--logo-size: 58px;
 		}
 	}
 </style>
