@@ -1288,7 +1288,7 @@ const stdlibPackPath = `${baseUrl.replace(/\/?$/, "/")}wasm/stdlib_subset_v1.jso
 			display: none;
 		}
 
-		.transcript-line-input,
+		:global(.transcript-line-input),
 		.playground-inline-entry {
 			grid-template-columns: 2rem minmax(0, 1fr);
 			column-gap: 0.4rem;
