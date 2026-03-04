@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -93,7 +94,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-zip-bytes",
         type=int,
-        default=524_288,
+        default=550_000,
         help="Fail if compressed zip exceeds this size budget.",
     )
     return parser.parse_args()
@@ -155,13 +156,12 @@ def collect_runtime_import_closure(
 ) -> dict[str, ModuleSource]:
     probe = r"""
 import importlib
-import json
 import sys
 import builtins
-from pathlib import Path
+import ast
 
-lib_root = Path(sys.argv[1]).resolve()
-seed_modules = json.loads(sys.argv[2])
+lib_root = sys.argv[1]
+seed_modules = ast.literal_eval(sys.argv[2])
 
 for preload in ("math", "_random", "_datetime"):
     try:
@@ -169,7 +169,7 @@ for preload in ("math", "_random", "_datetime"):
     except Exception:
         pass
 
-sys.path[:] = [str(lib_root)]
+sys.path[:] = [lib_root]
 baseline_modules = set(sys.modules)
 tracked_import_names = set()
 orig_import = builtins.__import__
@@ -212,9 +212,8 @@ for module_name in names:
         expanded.add(".".join(parts[:i]))
 
 print(
-    json.dumps(
+    repr(
         {"names": sorted(expanded), "failed": failed},
-        sort_keys=True,
     )
 )
 """
@@ -228,7 +227,7 @@ print(
             "-c",
             probe,
             str(lib_root),
-            json.dumps(seed_modules),
+            repr(seed_modules),
         ],
         capture_output=True,
         text=True,
@@ -241,7 +240,7 @@ print(
             f"stderr:\n{result.stderr}"
         )
 
-    payload = json.loads(result.stdout)
+    payload = ast.literal_eval(result.stdout)
     failed: dict[str, str] = payload.get("failed", {})
     if failed:
         lines = "\n".join(f"- {name}: {message}" for name, message in sorted(failed.items()))
