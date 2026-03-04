@@ -23,16 +23,17 @@ use crate::wasm_worker_contract::{
     WASM_WORKER_TIMEOUT_FIXTURES, WASM_WORKER_TIMEOUT_PHASE_KEYS,
     WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA, WasmWorkerExecuteFixture,
 };
-use js_sys::Reflect;
+use js_sys::{Array, Reflect, JSON};
 #[cfg(feature = "wasm-vm-probe")]
 use pyrs::wasm::wasm_worker_force_failed_state_for_tests;
 use pyrs::wasm::{
-    WasmCapabilityReport, WasmSession, WasmWorkerSession, check_compile_result,
+    WasmCapabilityReport, WasmReplSession, WasmSession, WasmWorkerSession, check_compile_result,
     check_syntax_result, execute, wasm_api_version, wasm_capabilities, wasm_capability_error,
     wasm_capability_keys, wasm_execution_blocker_error, wasm_execution_blocker_keys,
     wasm_execution_blockers, wasm_execution_phase_keys, wasm_module_policy_entries,
     wasm_module_support, wasm_runtime_info, wasm_snippet_blockers, wasm_snippet_import_roots,
-    wasm_snippet_support, wasm_worker_blocker_error, wasm_worker_blocker_keys,
+    wasm_snippet_support, wasm_virtual_stdlib_clear, wasm_virtual_stdlib_count,
+    wasm_virtual_stdlib_register, wasm_worker_blocker_error, wasm_worker_blocker_keys,
     wasm_worker_blockers, wasm_worker_current_timeout_ms, wasm_worker_execute,
     wasm_worker_execute_phase_keys, wasm_worker_execute_with_operation, wasm_worker_info,
     wasm_worker_lifecycle_phase_keys, wasm_worker_recycle, wasm_worker_set_timeout,
@@ -40,9 +41,13 @@ use pyrs::wasm::{
     wasm_worker_timeout_phase_keys, wasm_worker_timeout_policy,
 };
 use std::collections::HashSet;
+use wasm_bindgen::JsValue;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
+
+#[cfg(feature = "wasm-vm-probe")]
+const WASM_STDLIB_PACK_JSON: &str = include_str!("../website/public/wasm/stdlib_subset_v1.json");
 
 fn capability_supported(report: &WasmCapabilityReport, key: &str) -> bool {
     match key {
@@ -300,6 +305,73 @@ fn reset_top_level_worker_state_for_contract_tests() {
         recycle.state(),
         expected_worker_lifecycle_state_for_fixture(&WASM_WORKER_LIFECYCLE_FIXTURES[2])
     );
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn load_curated_stdlib_pack_into_runtime() -> usize {
+    let payload = JSON::parse(WASM_STDLIB_PACK_JSON).expect("stdlib subset JSON should parse");
+    let modules = Reflect::get(&payload, &JsValue::from_str("modules"))
+        .expect("stdlib subset should define modules");
+    let module_entries = Array::from(&modules);
+
+    wasm_virtual_stdlib_clear();
+
+    let mut accepted = 0usize;
+    let mut saw_functools = false;
+    let mut saw_random = false;
+    for index in 0..module_entries.length() {
+        let entry = module_entries.get(index);
+        let module_name = Reflect::get(&entry, &JsValue::from_str("module"))
+            .ok()
+            .and_then(|value| value.as_string())
+            .unwrap_or_default();
+        let source = Reflect::get(&entry, &JsValue::from_str("source"))
+            .ok()
+            .and_then(|value| value.as_string())
+            .unwrap_or_default();
+        if module_name.is_empty() || source.is_empty() {
+            continue;
+        }
+        if module_name == "os" {
+            panic!("curated stdlib pack must not include os");
+        }
+        if module_name == "functools" {
+            saw_functools = true;
+        }
+        if module_name == "random" {
+            saw_random = true;
+        }
+        let is_package = Reflect::get(&entry, &JsValue::from_str("is_package"))
+            .ok()
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let registered = wasm_virtual_stdlib_register(&module_name, &source, is_package);
+        assert!(
+            registered,
+            "stdlib module registration should succeed for {}",
+            module_name
+        );
+        accepted += 1;
+    }
+
+    assert!(accepted > 0, "curated stdlib pack should register at least one module");
+    assert!(
+        saw_functools && saw_random,
+        "curated stdlib pack should include functools and random"
+    );
+    let runtime_count = wasm_virtual_stdlib_count() as usize;
+    assert_eq!(
+        runtime_count, accepted,
+        "runtime virtual stdlib count should match registered modules"
+    );
+    accepted
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+fn parse_stdout_f64(stdout: &str, context: &str) -> f64 {
+    stdout.trim().parse::<f64>().unwrap_or_else(|err| {
+        panic!("expected float stdout for {context}; got {:?}: {err}", stdout)
+    })
 }
 
 fn expected_worker_info_execution_probe_enabled_for_fixture(
@@ -2899,4 +2971,105 @@ fn wasm_vm_probe_runtime_error_phase_is_reported() {
     assert!(worker_runtime_error.blocker_key().is_none());
     assert!(worker_runtime_error.line() > 0);
     assert!(worker_runtime_error.column() > 0);
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+#[wasm_bindgen_test]
+fn wasm_vm_probe_functools_cache_semantics_match_contract() {
+    reset_top_level_worker_state_for_contract_tests();
+    let registered = load_curated_stdlib_pack_into_runtime();
+    assert!(
+        registered >= 2,
+        "curated stdlib pack should include enough modules for functools dependency chain"
+    );
+
+    let mut session = WasmReplSession::new();
+    let result = session.execute_input(
+        "import functools\n\
+calls = 0\n\
+@functools.cache\n\
+def fib(n):\n\
+    global calls\n\
+    calls += 1\n\
+    return n if n < 2 else fib(n - 1) + fib(n - 2)\n\
+assert fib(20) == 6765\n\
+assert calls == 21\n\
+stats = fib.cache_info()\n\
+assert stats.hits > 0\n\
+assert stats.currsize > 0\n\
+fib.cache_clear()\n\
+assert fib.cache_info().currsize == 0\n",
+    );
+    assert_eq!(result.phase(), "ok".to_string());
+    assert!(result.success());
+    assert!(result.error().is_none());
+    assert!(result.stderr().is_empty());
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+#[wasm_bindgen_test]
+fn wasm_vm_probe_random_values_change_after_repl_reset_and_worker_recycle() {
+    reset_top_level_worker_state_for_contract_tests();
+    let registered = load_curated_stdlib_pack_into_runtime();
+    assert!(
+        registered >= 2,
+        "curated stdlib pack should include enough modules for random dependency chain"
+    );
+
+    let mut session = WasmReplSession::new();
+    let initial = session.execute_input("import random\nvalue = random.random()\n");
+    assert_eq!(initial.phase(), "ok".to_string());
+    assert!(initial.success());
+    assert!(initial.stderr().is_empty());
+
+    let first = session.execute_input("value\n");
+    assert_eq!(first.phase(), "ok".to_string());
+    assert!(first.success());
+    let first_value = parse_stdout_f64(&first.stdout(), "repl random before reset");
+
+    session.reset();
+    let after_reset = session.execute_input("import random\nvalue = random.random()\n");
+    assert_eq!(after_reset.phase(), "ok".to_string());
+    assert!(after_reset.success());
+    assert!(after_reset.stderr().is_empty());
+
+    let second = session.execute_input("value\n");
+    assert_eq!(second.phase(), "ok".to_string());
+    assert!(second.success());
+    let second_value = parse_stdout_f64(&second.stdout(), "repl random after reset");
+
+    assert_ne!(
+        first_value, second_value,
+        "random.random() should not deterministically repeat after REPL reset"
+    );
+
+    let worker_first = wasm_worker_execute_with_operation("import random\nvalue = random.random()\n");
+    assert_eq!(worker_first.phase(), "ok".to_string());
+    assert!(worker_first.success());
+    assert!(worker_first.stderr().is_empty());
+    let worker_read_first = wasm_worker_execute_with_operation("value\n");
+    assert_eq!(worker_read_first.phase(), "ok".to_string());
+    assert!(worker_read_first.success());
+    let worker_value_before_recycle =
+        parse_stdout_f64(&worker_read_first.stdout(), "worker random before recycle");
+
+    let recycled = wasm_worker_recycle();
+    assert_eq!(recycled.phase(), "worker_recycled".to_string());
+    assert_eq!(recycled.state(), "ready".to_string());
+    assert!(recycled.success());
+
+    let worker_second = wasm_worker_execute_with_operation("import random\nvalue = random.random()\n");
+    assert_eq!(worker_second.phase(), "ok".to_string());
+    assert!(worker_second.success());
+    assert!(worker_second.stderr().is_empty());
+    let worker_read_second = wasm_worker_execute_with_operation("value\n");
+    assert_eq!(worker_read_second.phase(), "ok".to_string());
+    assert!(worker_read_second.success());
+    let worker_value_after_recycle =
+        parse_stdout_f64(&worker_read_second.stdout(), "worker random after recycle");
+
+    assert_ne!(
+        worker_value_before_recycle, worker_value_after_recycle,
+        "random.random() should not deterministically repeat after worker recycle"
+    );
 }
