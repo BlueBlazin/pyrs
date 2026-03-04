@@ -3783,6 +3783,7 @@ impl Compiler {
             ExprKind::Constant(Constant::None) => "None".to_string(),
             ExprKind::Constant(Constant::Bool(value)) => value.to_string(),
             ExprKind::Constant(Constant::Int(value)) => value.to_string(),
+            ExprKind::Constant(Constant::BigInt(value)) => value.to_string(),
             ExprKind::Constant(Constant::Float(value)) => value.value().to_string(),
             ExprKind::Constant(Constant::Str(value)) => annotation_string_literal_repr(value),
             ExprKind::Attribute { value, name } => {
@@ -6675,6 +6676,7 @@ fn constant_to_value(constant: &Constant) -> Value {
         Constant::None => Value::None,
         Constant::Bool(value) => Value::Bool(*value),
         Constant::Int(value) => Value::Int(*value),
+        Constant::BigInt(value) => Value::BigInt(Box::new(value.clone())),
         Constant::Float(value) => Value::Float(value.value()),
         Constant::Str(value) => Value::Str(value.clone()),
     }

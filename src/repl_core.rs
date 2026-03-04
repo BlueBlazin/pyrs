@@ -545,14 +545,16 @@ mod tests {
     #[test]
     fn keeps_unterminated_triple_quoted_string_incomplete() {
         let source = "\"\"\"hello";
-        let err = crate::parser::parse_module(source).expect_err("parse should fail while incomplete");
+        let err =
+            crate::parser::parse_module(source).expect_err("parse should fail while incomplete");
         assert!(input_is_incomplete(source, &err));
     }
 
     #[test]
     fn keeps_unterminated_prefixed_triple_quoted_string_incomplete() {
         let source = "r\"\"\"hello";
-        let err = crate::parser::parse_module(source).expect_err("parse should fail while incomplete");
+        let err =
+            crate::parser::parse_module(source).expect_err("parse should fail while incomplete");
         assert!(input_is_incomplete(source, &err));
     }
 
@@ -707,6 +709,17 @@ mod tests {
         let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>", None)
             .expect("expression execution should succeed");
         assert_eq!(rendered.as_deref(), Some("2"));
+    }
+
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
+    #[test]
+    fn execute_module_or_expression_preserves_large_integer_literals() {
+        let mut vm = crate::vm::Vm::new();
+        let literal = "111111111111111111111111111111111111111111111111111111111111111111";
+        let module = crate::parser::parse_module(literal).expect("module should parse");
+        let rendered = execute_module_or_expression(&mut vm, &module, "<stdin>", None)
+            .expect("expression execution should succeed");
+        assert_eq!(rendered.as_deref(), Some(literal));
     }
 
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]

@@ -433,6 +433,7 @@ pub enum Constant {
     None,
     Bool(bool),
     Int(i64),
+    BigInt(crate::runtime::BigInt),
     Float(FloatLiteral),
     Str(String),
 }

@@ -7,6 +7,7 @@ use crate::ast::{
 };
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
+use crate::runtime::BigInt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
@@ -621,6 +622,7 @@ impl Parser {
                     {
                         let real = match value {
                             Constant::Int(value) => value as f64,
+                            Constant::BigInt(value) => value.to_f64(),
                             Constant::Float(value) => value.value(),
                             _ => return Err(self.error_at(pos, "expected numeric pattern")),
                         };
@@ -701,6 +703,7 @@ impl Parser {
                     {
                         let real = match value {
                             Constant::Int(value) => -(value as f64),
+                            Constant::BigInt(value) => -value.to_f64(),
                             Constant::Float(value) => -value.value(),
                             _ => return Err(self.error_at(pos, "expected numeric pattern")),
                         };
@@ -733,6 +736,7 @@ impl Parser {
                     }
                     let negated = match value {
                         Constant::Int(value) => Constant::Int(-value),
+                        Constant::BigInt(value) => Constant::BigInt(value.negated()),
                         Constant::Float(value) => Constant::Float(FloatLiteral(-value.value())),
                         _ => return Err(self.error_at(pos, "expected numeric pattern")),
                     };
@@ -2774,50 +2778,37 @@ impl Parser {
         Ok((args, pos))
     }
 
-    fn parse_int_literal(&self, lexeme: &str, _pos: usize) -> Result<i64, ParseError> {
+    fn parse_int_literal(&self, lexeme: &str, pos: usize) -> Result<Constant, ParseError> {
         let normalized = lexeme.replace('_', "");
-        if let Some(rest) = normalized
+        let (digits, base) = if let Some(rest) = normalized
             .strip_prefix("0x")
             .or_else(|| normalized.strip_prefix("0X"))
         {
-            return if let Ok(value) = i64::from_str_radix(rest, 16) {
-                Ok(value)
-            } else if let Ok(value) = i128::from_str_radix(rest, 16) {
-                Ok(value.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
-            } else {
-                Ok(i64::MAX)
-            };
-        }
-        if let Some(rest) = normalized
+            (rest, 16u32)
+        } else if let Some(rest) = normalized
             .strip_prefix("0o")
             .or_else(|| normalized.strip_prefix("0O"))
         {
-            return if let Ok(value) = i64::from_str_radix(rest, 8) {
-                Ok(value)
-            } else if let Ok(value) = i128::from_str_radix(rest, 8) {
-                Ok(value.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
-            } else {
-                Ok(i64::MAX)
-            };
-        }
-        if let Some(rest) = normalized
+            (rest, 8u32)
+        } else if let Some(rest) = normalized
             .strip_prefix("0b")
             .or_else(|| normalized.strip_prefix("0B"))
         {
-            return if let Ok(value) = i64::from_str_radix(rest, 2) {
-                Ok(value)
-            } else if let Ok(value) = i128::from_str_radix(rest, 2) {
-                Ok(value.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
-            } else {
-                Ok(i64::MAX)
-            };
-        }
-        if let Ok(value) = normalized.parse::<i64>() {
-            Ok(value)
-        } else if let Ok(value) = normalized.parse::<i128>() {
-            Ok(value.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
+            (rest, 2u32)
         } else {
-            Ok(i64::MAX)
+            (normalized.as_str(), 10u32)
+        };
+
+        if let Ok(value) = i64::from_str_radix(digits, base) {
+            return Ok(Constant::Int(value));
+        }
+
+        let value = BigInt::from_str_radix(digits, base)
+            .ok_or_else(|| self.error_at(pos, "invalid integer literal"))?;
+        if let Some(value) = value.to_i64() {
+            Ok(Constant::Int(value))
+        } else {
+            Ok(Constant::BigInt(value))
         }
     }
 
@@ -2840,7 +2831,7 @@ impl Parser {
                 .map_err(|_| self.error_at(pos, "invalid float literal"))?;
             return Ok(Constant::Float(FloatLiteral(value)));
         }
-        self.parse_int_literal(lexeme, pos).map(Constant::Int)
+        self.parse_int_literal(lexeme, pos)
     }
 
     fn parse_imag_literal(&self, lexeme: &str, pos: usize) -> Result<Option<f64>, ParseError> {
@@ -2861,7 +2852,11 @@ impl Parser {
             || body.starts_with("0b")
             || body.starts_with("0B")
         {
-            self.parse_int_literal(body, pos)? as f64
+            match self.parse_int_literal(body, pos)? {
+                Constant::Int(value) => value as f64,
+                Constant::BigInt(value) => value.to_f64(),
+                _ => return Err(self.error_at(pos, "invalid imaginary literal")),
+            }
         } else {
             body.parse::<f64>()
                 .map_err(|_| self.error_at(pos, "invalid imaginary literal"))?

@@ -5513,6 +5513,7 @@ impl Vm {
                     AstConstant::Bool(true) => 4,
                     AstConstant::Bool(false) => 5,
                     AstConstant::Int(value) => value.to_string().chars().count(),
+                    AstConstant::BigInt(value) => value.to_string().chars().count(),
                     AstConstant::Float(value) => value.value().to_string().chars().count(),
                     AstConstant::Str(text) => text.chars().count().saturating_add(2),
                 };
@@ -5550,6 +5551,7 @@ impl Vm {
             AstConstant::None => Value::None,
             AstConstant::Bool(flag) => Value::Bool(*flag),
             AstConstant::Int(value) => Value::Int(*value),
+            AstConstant::BigInt(value) => Value::BigInt(Box::new(value.clone())),
             AstConstant::Float(value) => Value::Float(value.value()),
             AstConstant::Str(text) => Value::Str(text.clone()),
         }
