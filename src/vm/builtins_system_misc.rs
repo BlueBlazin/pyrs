@@ -3,8 +3,8 @@ use super::{
     IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
     SIGNAL_SIGINT, SocketAddr, SystemTime, TimeParts, ToSocketAddrs, UNIX_EPOCH, Value, Vm,
     apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil,
-    dict_get_value, format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
-    parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp,
+    decode_text_bytes, dict_get_value, format_strftime, format_uuid_hex, format_uuid_hyphenated,
+    is_truthy, parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp,
     uuid_hash_mix_bytes, uuid_random_bytes, uuid_timestamp_100ns_since_gregorian, value_to_f64,
     value_to_int,
 };
@@ -3448,6 +3448,197 @@ impl Vm {
             ));
         }
         Err(RuntimeError::new("KeyboardInterrupt"))
+    }
+
+    pub(super) fn builtin_tokenize_tokenizer_iter(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "TokenizerIter() expects one source callable",
+            ));
+        }
+        let source = args.remove(0);
+        if !self.is_callable_value(&source) {
+            return Err(RuntimeError::type_error(
+                "TokenizerIter() source must be callable",
+            ));
+        }
+        let encoding = match kwargs.remove("encoding") {
+            Some(Value::Str(name)) => Some(name),
+            Some(Value::None) => None,
+            Some(_) => {
+                return Err(RuntimeError::type_error(
+                    "TokenizerIter() encoding must be str or None",
+                ));
+            }
+            None => None,
+        };
+        let _extra_tokens = match kwargs.remove("extra_tokens") {
+            Some(value) => self.truthy_from_value(&value)?,
+            None => false,
+        };
+        if let Some(unexpected) = kwargs.keys().next().cloned() {
+            return Err(RuntimeError::type_error(format!(
+                "TokenizerIter() got an unexpected keyword argument '{unexpected}'"
+            )));
+        }
+
+        let mut source_lines = Vec::new();
+        loop {
+            let next_line = match self.call_internal(source.clone(), Vec::new(), HashMap::new()) {
+                Ok(InternalCallOutcome::Value(value)) => value,
+                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    let err = self.runtime_error_from_active_exception("TokenizerIter source failed");
+                    if runtime_error_matches_exception(&err, "StopIteration") {
+                        self.clear_active_exception();
+                        break;
+                    }
+                    return Err(err);
+                }
+                Err(err) => {
+                    if runtime_error_matches_exception(&err, "StopIteration") {
+                        self.clear_active_exception();
+                        break;
+                    }
+                    return Err(err);
+                }
+            };
+
+            let line = match next_line {
+                Value::Str(text) => text,
+                Value::Bytes(_) | Value::ByteArray(_) => {
+                    let bytes = bytes_like_from_value(next_line)?;
+                    if bytes.is_empty() {
+                        break;
+                    }
+                    let encoding_name = encoding.as_deref().unwrap_or("utf-8");
+                    decode_text_bytes(&bytes, encoding_name, "strict")?
+                }
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "readline() should return str or bytes",
+                    ));
+                }
+            };
+            if line.is_empty() {
+                break;
+            }
+            source_lines.push(line);
+        }
+
+        let source_text = source_lines.concat();
+        let mut lexer = crate::parser::lexer::Lexer::new(&source_text);
+        let tokens = lexer.tokenize().map_err(|err| {
+            RuntimeError::with_exception(
+                "SyntaxError",
+                Some(format!(
+                    "{} (line {}, column {})",
+                    err.message, err.line, err.column
+                )),
+            )
+        })?;
+
+        let physical_lines = if source_text.is_empty() {
+            vec![String::new()]
+        } else {
+            source_text
+                .split_inclusive('\n')
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+        };
+        let mut token_rows = Vec::with_capacity(tokens.len());
+        for token in tokens {
+            let token_type = match &token.kind {
+                crate::parser::token::TokenKind::EndMarker => 0,
+                crate::parser::token::TokenKind::Name
+                | crate::parser::token::TokenKind::Keyword(_) => 1,
+                crate::parser::token::TokenKind::Number => 2,
+                crate::parser::token::TokenKind::String
+                | crate::parser::token::TokenKind::Bytes
+                | crate::parser::token::TokenKind::FString
+                | crate::parser::token::TokenKind::TemplateString => 3,
+                crate::parser::token::TokenKind::Newline => 4,
+                crate::parser::token::TokenKind::Indent => 5,
+                crate::parser::token::TokenKind::Dedent => 6,
+                crate::parser::token::TokenKind::LParen => 7,
+                crate::parser::token::TokenKind::RParen => 8,
+                crate::parser::token::TokenKind::LBracket => 9,
+                crate::parser::token::TokenKind::RBracket => 10,
+                crate::parser::token::TokenKind::Colon => 11,
+                crate::parser::token::TokenKind::Comma => 12,
+                crate::parser::token::TokenKind::Semicolon => 13,
+                crate::parser::token::TokenKind::Plus => 14,
+                crate::parser::token::TokenKind::Minus => 15,
+                crate::parser::token::TokenKind::Star => 16,
+                crate::parser::token::TokenKind::Slash => 17,
+                crate::parser::token::TokenKind::Pipe => 18,
+                crate::parser::token::TokenKind::Ampersand => 19,
+                crate::parser::token::TokenKind::Less => 20,
+                crate::parser::token::TokenKind::Greater => 21,
+                crate::parser::token::TokenKind::Equal => 22,
+                crate::parser::token::TokenKind::Dot => 23,
+                crate::parser::token::TokenKind::Percent => 24,
+                crate::parser::token::TokenKind::LBrace => 25,
+                crate::parser::token::TokenKind::RBrace => 26,
+                crate::parser::token::TokenKind::DoubleEqual => 27,
+                crate::parser::token::TokenKind::NotEqual => 28,
+                crate::parser::token::TokenKind::LessEqual => 29,
+                crate::parser::token::TokenKind::GreaterEqual => 30,
+                crate::parser::token::TokenKind::Tilde => 31,
+                crate::parser::token::TokenKind::Caret => 32,
+                crate::parser::token::TokenKind::LeftShift => 33,
+                crate::parser::token::TokenKind::RightShift => 34,
+                crate::parser::token::TokenKind::DoubleStar => 35,
+                crate::parser::token::TokenKind::PlusEqual => 36,
+                crate::parser::token::TokenKind::MinusEqual => 37,
+                crate::parser::token::TokenKind::StarEqual => 38,
+                crate::parser::token::TokenKind::SlashEqual => 39,
+                crate::parser::token::TokenKind::PercentEqual => 40,
+                crate::parser::token::TokenKind::AmpersandEqual => 41,
+                crate::parser::token::TokenKind::PipeEqual => 42,
+                crate::parser::token::TokenKind::CaretEqual => 43,
+                crate::parser::token::TokenKind::LeftShiftEqual => 44,
+                crate::parser::token::TokenKind::RightShiftEqual => 45,
+                crate::parser::token::TokenKind::DoubleStarEqual => 46,
+                crate::parser::token::TokenKind::DoubleSlash => 47,
+                crate::parser::token::TokenKind::DoubleSlashEqual => 48,
+                crate::parser::token::TokenKind::At => 49,
+                crate::parser::token::TokenKind::AtEqual => 50,
+                crate::parser::token::TokenKind::Arrow => 51,
+                crate::parser::token::TokenKind::Ellipsis => 52,
+                crate::parser::token::TokenKind::ColonEqual => 53,
+            };
+
+            let line_text = physical_lines
+                .get(token.line.saturating_sub(1))
+                .cloned()
+                .unwrap_or_default();
+            let start_col = token.column.saturating_sub(1);
+            let end_col = start_col.saturating_add(token.lexeme.chars().count());
+            token_rows.push(self.heap.alloc_tuple(vec![
+                Value::Int(token_type),
+                Value::Str(token.lexeme),
+                self.heap
+                    .alloc_tuple(vec![Value::Int(token.line as i64), Value::Int(start_col as i64)]),
+                self.heap
+                    .alloc_tuple(vec![Value::Int(token.line as i64), Value::Int(end_col as i64)]),
+                Value::Str(line_text),
+            ]));
+        }
+
+        let list = match self.heap.alloc_list(token_rows) {
+            Value::List(obj) => obj,
+            _ => unreachable!(),
+        };
+        Ok(Value::Iterator(self.heap.alloc(Object::Iterator(
+            IteratorObject {
+                kind: IteratorKind::List(list),
+                index: 0,
+            },
+        ))))
     }
 
     fn locale_module_ref(&self) -> Result<ObjRef, RuntimeError> {

@@ -2467,6 +2467,8 @@ impl Vm {
             "count" => NativeMethodKind::BytesCount,
             "find" => NativeMethodKind::BytesFind,
             "index" => NativeMethodKind::BytesIndex,
+            "rfind" => NativeMethodKind::BytesRFind,
+            "rindex" => NativeMethodKind::BytesRIndex,
             "split" => NativeMethodKind::BytesSplit,
             "splitlines" => NativeMethodKind::BytesSplitLines,
             "translate" => NativeMethodKind::BytesTranslate,

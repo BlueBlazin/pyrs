@@ -3,7 +3,8 @@ use super::{
     InstanceObject, InternalCallOutcome, ObjRef, Object, Read, RuntimeError, Seek, SeekFrom,
     StructEndian, StructFieldKind, StructFieldSpec, StructFormatSpec, Value, Vm, Write,
     bytes_like_from_value, class_attr_walk, decode_text_bytes, encode_text_bytes, format_value, fs,
-    is_truthy, memoryview_bounds, runtime_error_matches_exception, value_to_f64, value_to_int,
+    is_truthy, memoryview_bounds, normalize_codec_encoding, runtime_error_matches_exception,
+    value_to_f64, value_to_int,
 };
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
@@ -522,13 +523,16 @@ impl Vm {
         &mut self,
         encoding: &str,
     ) -> Result<(), RuntimeError> {
+        if normalize_codec_encoding(Value::Str(encoding.to_string())).is_ok() {
+            return Ok(());
+        }
         let codec_info = match self.call_builtin(
             BuiltinFunction::CodecsLookup,
             vec![Value::Str(encoding.to_string())],
             HashMap::new(),
         ) {
             Ok(value) => value,
-            Err(err) if err.message.contains("unsupported encoding") => {
+            Err(_) => {
                 self.import_module("codecs").map_err(|_| {
                     RuntimeError::new(format!("LookupError: unknown encoding: {}", encoding))
                 })?;
@@ -557,12 +561,6 @@ impl Vm {
                         );
                     }
                 }
-            }
-            Err(_) => {
-                return Err(RuntimeError::new(format!(
-                    "LookupError: unknown encoding: {}",
-                    encoding
-                )));
             }
         };
         if let Ok(is_text_encoding) = self.builtin_getattr(

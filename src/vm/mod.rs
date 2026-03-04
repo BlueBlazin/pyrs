@@ -227,6 +227,7 @@ const MT_LOWER_MASK: u32 = 0x7fff_ffff;
 const SIGNAL_DEFAULT: i64 = 0;
 const SIGNAL_IGNORE: i64 = 1;
 const SIGNAL_SIGINT: i64 = 2;
+const SIGNAL_SIGKILL: i64 = 9;
 const SIGNAL_SIGTERM: i64 = 15;
 const SYNTHETIC_THREAD_IDENT_START: i64 = 1_i64 << 60;
 const PY_TPFLAGS_DISALLOW_INSTANTIATION: i64 = 1 << 7;
@@ -5696,9 +5697,10 @@ impl Vm {
         let object_class = object_class.clone();
         let module_refs = self.modules.values().cloned().collect::<Vec<_>>();
         let mut visited = HashSet::new();
+        let mut class_entries: Vec<(String, ObjRef)> = Vec::new();
         for module in module_refs {
-            let (module_name, classes) = match &*module.kind() {
-                Object::Module(module_data) => (
+            let Some((module_name, classes)) = (match &*module.kind() {
+                Object::Module(module_data) => Some((
                     module_data.name.clone(),
                     module_data
                         .globals
@@ -5708,58 +5710,75 @@ impl Vm {
                             _ => None,
                         })
                         .collect::<Vec<_>>(),
-                ),
-                _ => continue,
+                )),
+                _ => None,
+            }) else {
+                continue;
             };
             for class in classes {
                 if !visited.insert(class.id()) {
                     continue;
                 }
-                let (class_name, mut bases) = match &*class.kind() {
-                    Object::Class(class_data) => {
-                        (class_data.name.clone(), class_data.bases.clone())
-                    }
-                    _ => continue,
-                };
-                if class_name != "object" && class_name != "type" && bases.is_empty() {
-                    bases.push(object_class.clone());
-                }
-                let mro = self.build_class_mro(&class, &bases).unwrap_or_else(|_| {
-                    let mut fallback = vec![class.clone()];
-                    for base in &bases {
-                        if !fallback.iter().any(|entry| entry.id() == base.id()) {
-                            fallback.push(base.clone());
-                        }
-                    }
-                    fallback
-                });
-                let Object::Class(class_data) = &mut *class.kind_mut() else {
-                    continue;
-                };
-                class_data.bases = bases.clone();
-                class_data
-                    .attrs
-                    .insert("__name__".to_string(), Value::Str(class_data.name.clone()));
-                class_data
-                    .attrs
-                    .entry("__qualname__".to_string())
-                    .or_insert_with(|| Value::Str(class_data.name.clone()));
-                class_data
-                    .attrs
-                    .entry("__module__".to_string())
-                    .or_insert(Value::Str(module_name.clone()));
-                class_data.attrs.insert(
-                    "__bases__".to_string(),
-                    self.heap
-                        .alloc_tuple(bases.iter().cloned().map(Value::Class).collect::<Vec<_>>()),
-                );
-                class_data.mro = mro.clone();
-                class_data.attrs.insert(
-                    "__mro__".to_string(),
-                    self.heap
-                        .alloc_tuple(mro.into_iter().map(Value::Class).collect::<Vec<_>>()),
-                );
+                class_entries.push((module_name.clone(), class));
             }
+        }
+
+        // Pass 1: normalize bases and class identity attrs.
+        for (module_name, class) in &class_entries {
+            let (class_name, mut bases) = match &*class.kind() {
+                Object::Class(class_data) => (class_data.name.clone(), class_data.bases.clone()),
+                _ => continue,
+            };
+            if class_name != "object" && class_name != "type" && bases.is_empty() {
+                bases.push(object_class.clone());
+            }
+            let Object::Class(class_data) = &mut *class.kind_mut() else {
+                continue;
+            };
+            class_data.bases = bases.clone();
+            class_data.mro.clear();
+            class_data
+                .attrs
+                .insert("__name__".to_string(), Value::Str(class_data.name.clone()));
+            class_data
+                .attrs
+                .entry("__qualname__".to_string())
+                .or_insert_with(|| Value::Str(class_data.name.clone()));
+            class_data
+                .attrs
+                .entry("__module__".to_string())
+                .or_insert(Value::Str(module_name.clone()));
+            class_data.attrs.insert(
+                "__bases__".to_string(),
+                self.heap
+                    .alloc_tuple(bases.iter().cloned().map(Value::Class).collect::<Vec<_>>()),
+            );
+        }
+
+        // Pass 2: compute MRO after all bases are stabilized.
+        for (_, class) in &class_entries {
+            let bases = match &*class.kind() {
+                Object::Class(class_data) => class_data.bases.clone(),
+                _ => continue,
+            };
+            let mro = self.build_class_mro(class, &bases).unwrap_or_else(|_| {
+                let mut fallback = vec![class.clone()];
+                for base in &bases {
+                    if !fallback.iter().any(|entry| entry.id() == base.id()) {
+                        fallback.push(base.clone());
+                    }
+                }
+                fallback
+            });
+            let Object::Class(class_data) = &mut *class.kind_mut() else {
+                continue;
+            };
+            class_data.mro = mro.clone();
+            class_data.attrs.insert(
+                "__mro__".to_string(),
+                self.heap
+                    .alloc_tuple(mro.into_iter().map(Value::Class).collect::<Vec<_>>()),
+            );
         }
     }
 

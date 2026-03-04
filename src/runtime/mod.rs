@@ -8,7 +8,7 @@ mod dict_backend;
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -355,6 +355,8 @@ pub enum NativeMethodKind {
     BytesCount,
     BytesFind,
     BytesIndex,
+    BytesRFind,
+    BytesRIndex,
     BytesSplit,
     BytesSplitLines,
     BytesTranslate,
@@ -2491,6 +2493,7 @@ impl Heap {
     fn reachable_object_ids(&self, roots: &[Value]) -> HashMap<u64, bool> {
         let mut marked = HashMap::new();
         let mut stack: Vec<ObjRef> = Vec::new();
+        GC_TRACE_CODE_PTRS.with(|set| set.borrow_mut().clear());
 
         for value in roots {
             trace_value(value, &mut stack, &mut marked);
@@ -2505,6 +2508,10 @@ impl Heap {
         }
         marked
     }
+}
+
+thread_local! {
+    static GC_TRACE_CODE_PTRS: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
 }
 
 fn trace_value(value: &Value, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64, bool>) {
@@ -2532,6 +2539,19 @@ fn trace_value(value: &Value, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                 return;
             }
             stack.push(obj.clone());
+        }
+        Value::Code(code) => {
+            let code_ptr = Rc::as_ptr(code) as usize;
+            let already_traced = GC_TRACE_CODE_PTRS.with(|set| {
+                let mut visited = set.borrow_mut();
+                !visited.insert(code_ptr)
+            });
+            if already_traced {
+                return;
+            }
+            for constant in &code.constants {
+                trace_value(constant, stack, marked);
+            }
         }
         _ => {}
     }
@@ -9844,6 +9864,8 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::BytesCount => "<bound method bytes.count>".to_string(),
                     NativeMethodKind::BytesFind => "<bound method bytes.find>".to_string(),
                     NativeMethodKind::BytesIndex => "<bound method bytes.index>".to_string(),
+                    NativeMethodKind::BytesRFind => "<bound method bytes.rfind>".to_string(),
+                    NativeMethodKind::BytesRIndex => "<bound method bytes.rindex>".to_string(),
                     NativeMethodKind::BytesSplit => "<bound method bytes.split>".to_string(),
                     NativeMethodKind::BytesSplitLines => {
                         "<bound method bytes.splitlines>".to_string()

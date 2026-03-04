@@ -3433,8 +3433,8 @@ op_pow = operator.pow(2, 8)\n\
 contains = operator.contains([1, 2, 3], 2)\n\
 item = operator.getitem([9, 8], 1)\n\
 \n\
-chain_vals = itertools.chain([1, 2], [3])\n\
-repeat_vals = itertools.repeat('x', 3)\n\
+chain_vals = list(itertools.chain([1, 2], [3]))\n\
+repeat_vals = list(itertools.repeat('x', 3))\n\
 reduced = functools.reduce(operator.add, [1, 2, 3], 0)\n\
 \n\
 counter = collections.Counter('abca')\n\
@@ -4104,6 +4104,29 @@ ok = (
     handle
         .join()
         .expect("codecs pure-registry lookup thread should complete");
+}
+
+#[test]
+fn io_open_with_utf8_encoding_works_with_pure_codecs() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping io utf-8 open test (CPython Lib path not available)");
+        return;
+    };
+    let probe_file = lib_path.join("test/pickletester.py");
+    if !probe_file.is_file() {
+        eprintln!("skipping io utf-8 open test (probe file missing)");
+        return;
+    }
+    let source = format!(
+        "import io\nf = io.open({:?}, 'r', encoding='utf-8')\nline = f.readline()\nf.close()\nok = isinstance(line, str) and len(line) > 0\n",
+        probe_file
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -16384,6 +16407,79 @@ part1 = dec.decode(bytes([0xE2, 0x82]), final=False)\n\
 dec_state = dec.getstate()\n\
 part2 = dec.decode(bytes([0xAC]), final=True)\n\
 ok = encoded == b'A' and enc_state == 0 and part1 == '' and dec_state[0] == bytes([0xE2, 0x82]) and part2 == '\\u20ac'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bound_method_self_supports_iterator_receivers() {
+    let source = "it = iter([1])\nm = it.__next__\nok = (m.__self__ is it)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn iter_callable_sentinel_stops_on_empty_bytes() {
+    let source = "import io\nreadline = io.BytesIO(b'a\\n').readline\nvalues = list(iter(readline, b''))\nok = (values == [b'a\\n'])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytes_rfind_and_rindex_align_with_cpython() {
+    let source = "path = b'/tmp/demo.py'\n\
+ok = (\n\
+    path.rfind(b'/') == 4 and\n\
+    path.rindex(b'/') == 4 and\n\
+    b'abc'.rfind(b'') == 3 and\n\
+    b'abc'.rindex(b'') == 3 and\n\
+    bytearray(b'abc').rfind(b'') == 3 and\n\
+    bytearray(b'abc').rindex(b'') == 3\n\
+)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn posixpath_dirname_bytes_works_when_cpython_lib_is_present() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping posixpath bytes dirname test (CPython Lib path not available)");
+        return;
+    };
+    let source = "import posixpath\npath = b'/tmp/demo.py'\nok = (posixpath.dirname(path) == b'/tmp')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn tokenize_iter_accepts_kwargs_and_emits_signature_tokens() {
+    let source = "import _tokenize\nreadline = iter([b'(sql, /)', b'']).__next__\nrows = list(_tokenize.TokenizerIter(readline, encoding='utf-8', extra_tokens=True))\nok = (len(rows) >= 4 and rows[0][1] == '(' and rows[1][1] == 'sql' and rows[2][1] == ',')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn signal_module_exposes_sigkill_constant() {
+    let source = "import signal\nok = (isinstance(signal.SIGKILL, int) and signal.SIGKILL == 9)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

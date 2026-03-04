@@ -661,8 +661,28 @@ impl Vm {
                 Value::Str(text) => text,
                 _ => return Err(RuntimeError::new("str() returned non-string")),
             };
-            print!("{text}");
-            let _ = std::io::stdout().flush();
+            if self
+                .write_text_to_sys_stream_with_flush("stdout", &text, false)
+                .is_err()
+            {
+                self.clear_active_exception();
+                print!("{text}");
+                let _ = std::io::stdout().flush();
+            }
+        }
+
+        // CPython flushes stderr/stdout before blocking on stdin.
+        if self
+            .write_text_to_sys_stream_with_flush("stderr", "", true)
+            .is_err()
+        {
+            self.clear_active_exception();
+        }
+        if self
+            .write_text_to_sys_stream_with_flush("stdout", "", true)
+            .is_err()
+        {
+            self.clear_active_exception();
         }
         let mut line = String::new();
         std::io::stdin()
@@ -12699,6 +12719,12 @@ impl Vm {
                 {
                     return Ok(result);
                 }
+                if let Some(class_ref) = self.class_of_value(&value)
+                    && self.class_has_builtin_int_base(&class_ref)
+                {
+                    let int_value = self.builtin_int(vec![value.clone()], HashMap::new())?;
+                    return neg_value(int_value);
+                }
                 Err(err)
             }
             Err(err) => Err(err),
@@ -12717,6 +12743,12 @@ impl Vm {
                 {
                     return Ok(result);
                 }
+                if let Some(class_ref) = self.class_of_value(&value)
+                    && self.class_has_builtin_int_base(&class_ref)
+                {
+                    let int_value = self.builtin_int(vec![value.clone()], HashMap::new())?;
+                    return pos_value(int_value);
+                }
                 Err(err)
             }
             Err(err) => Err(err),
@@ -12734,6 +12766,12 @@ impl Vm {
                     && !self.is_not_implemented_singleton(&result)
                 {
                     return Ok(result);
+                }
+                if let Some(class_ref) = self.class_of_value(&value)
+                    && self.class_has_builtin_int_base(&class_ref)
+                {
+                    let int_value = self.builtin_int(vec![value.clone()], HashMap::new())?;
+                    return invert_value(int_value);
                 }
                 Err(err)
             }
@@ -15570,8 +15608,32 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("iter() expects one argument"));
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "iter() takes no keyword arguments",
+            ));
+        }
+        if args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "iter expected at least 1 argument, got 0",
+            ));
+        }
+        if args.len() > 2 {
+            return Err(RuntimeError::type_error(format!(
+                "iter expected at most 2 arguments, got {}",
+                args.len()
+            )));
+        }
+        if args.len() == 2 {
+            let sentinel = args.pop().expect("checked len");
+            let callable = args.pop().expect("checked len");
+            if !self.is_callable_value(&callable) {
+                return Err(RuntimeError::type_error("iter(v, w): v must be callable"));
+            }
+            return Ok(self.heap.alloc_iterator(IteratorObject {
+                kind: IteratorKind::CallIter { callable, sentinel },
+                index: 0,
+            }));
         }
         let source = args.remove(0);
         self.ensure_sync_iterator_target(&source)?;

@@ -13848,6 +13848,8 @@ impl Vm {
             Object::Bytes(_) => Ok(Value::Bytes(receiver.clone())),
             Object::ByteArray(_) => Ok(Value::ByteArray(receiver.clone())),
             Object::MemoryView(_) => Ok(Value::MemoryView(receiver.clone())),
+            Object::Iterator(_) => Ok(Value::Iterator(receiver.clone())),
+            Object::DictKeysView(_) => Ok(Value::DictKeys(receiver.clone())),
             _ => Err(RuntimeError::new("unsupported bound method receiver")),
         }
     }
@@ -13900,7 +13902,9 @@ impl Vm {
             | Value::FrozenSet(obj)
             | Value::Bytes(obj)
             | Value::ByteArray(obj)
-            | Value::MemoryView(obj) => Ok(obj.clone()),
+            | Value::MemoryView(obj)
+            | Value::Iterator(obj)
+            | Value::DictKeys(obj) => Ok(obj.clone()),
             _ => Err(RuntimeError::new("unsupported bound-method receiver value")),
         }
     }

@@ -3126,13 +3126,18 @@ impl Vm {
                 }
                 Ok(NativeCallResult::Value(Value::Int(count)))
             }
-            NativeMethodKind::BytesFind | NativeMethodKind::BytesIndex => {
+            NativeMethodKind::BytesFind
+            | NativeMethodKind::BytesIndex
+            | NativeMethodKind::BytesRFind
+            | NativeMethodKind::BytesRIndex => {
+                let (method_name, reverse, raise_on_missing) = match kind {
+                    NativeMethodKind::BytesFind => ("find", false, false),
+                    NativeMethodKind::BytesIndex => ("index", false, true),
+                    NativeMethodKind::BytesRFind => ("rfind", true, false),
+                    NativeMethodKind::BytesRIndex => ("rindex", true, true),
+                    _ => unreachable!(),
+                };
                 if args.is_empty() || args.len() > 3 {
-                    let method_name = if matches!(kind, NativeMethodKind::BytesIndex) {
-                        "index"
-                    } else {
-                        "find"
-                    };
                     return Err(RuntimeError::new(format!(
                         "{method_name}() expects sub, optional start, optional end",
                     )));
@@ -3187,14 +3192,16 @@ impl Vm {
                 }
                 let haystack = &bytes[start as usize..end as usize];
                 let found = if needle.is_empty() {
-                    Some(0usize)
+                    Some(if reverse { haystack.len() } else { 0 })
+                } else if reverse {
+                    haystack.windows(needle.len()).rposition(|window| window == needle)
                 } else {
                     find_bytes_subslice(haystack, &needle)
                 };
                 if let Some(found) = found {
                     let index = found as i64 + start;
                     Ok(NativeCallResult::Value(Value::Int(index)))
-                } else if matches!(kind, NativeMethodKind::BytesIndex) {
+                } else if raise_on_missing {
                     Err(RuntimeError::value_error("subsection not found"))
                 } else {
                     Ok(NativeCallResult::Value(Value::Int(-1)))
@@ -11272,10 +11279,25 @@ impl Vm {
                 }
             }
             PendingIteratorStep::CallIter { callable, sentinel } => {
-                let produced = match self.call_internal(callable, Vec::new(), HashMap::new())? {
-                    InternalCallOutcome::Value(value) => value,
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(RuntimeError::new("callable iterator target failed"));
+                let produced = match self.call_internal(callable, Vec::new(), HashMap::new()) {
+                    Ok(InternalCallOutcome::Value(value)) => value,
+                    Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                        let err =
+                            self.runtime_error_from_active_exception("callable iterator failed");
+                        if runtime_error_matches_exception(&err, "StopIteration") {
+                            self.clear_active_exception();
+                            unsafe { PyErr_Clear() };
+                            return Ok(None);
+                        }
+                        return Err(err);
+                    }
+                    Err(err) => {
+                        if runtime_error_matches_exception(&err, "StopIteration") {
+                            self.clear_active_exception();
+                            unsafe { PyErr_Clear() };
+                            return Ok(None);
+                        }
+                        return Err(err);
                     }
                 };
                 let should_stop = match self.compare_eq_runtime(produced.clone(), sentinel)? {
@@ -13242,6 +13264,9 @@ impl Vm {
             }
             BuiltinFunction::StringFormatterFieldNameSplit => {
                 self.builtin_string_formatter_field_name_split(args, kwargs)
+            }
+            BuiltinFunction::TokenizeTokenizerIter => {
+                self.builtin_tokenize_tokenizer_iter(args, kwargs)
             }
             BuiltinFunction::StructClassInit => self.builtin_struct_class_init(args, kwargs),
             BuiltinFunction::StructClassPack => self.builtin_struct_class_pack(args, kwargs),

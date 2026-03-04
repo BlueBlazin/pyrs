@@ -5588,21 +5588,23 @@ impl Vm {
         let encoding = normalized_encoding
             .clone()
             .unwrap_or_else(|| fallback_name.clone());
-        let (codecs_module_is_pure_python, codecs_module_is_initializing) = self
-            .modules
-            .get("codecs")
-            .map(|module| match &*module.kind() {
-                Object::Module(module_data) => (
-                    module_data.globals.contains_key("__file__"),
-                    module_data
-                        .globals
-                        .get("__pyrs_module_initializing__")
-                        .is_some_and(|value| matches!(value, Value::Bool(true))),
-                ),
-                _ => (false, false),
-            })
-            .unwrap_or((false, false));
-        if normalized_encoding.is_none()
+        let (codecs_module_available, codecs_module_is_pure_python, codecs_module_is_initializing) =
+            self.modules
+                .get("codecs")
+                .map(|module| match &*module.kind() {
+                    Object::Module(module_data) => (
+                        true,
+                        module_data.globals.contains_key("__file__"),
+                        module_data
+                            .globals
+                            .get("__pyrs_module_initializing__")
+                            .is_some_and(|value| matches!(value, Value::Bool(true))),
+                    ),
+                    _ => (true, false, false),
+                })
+                .unwrap_or((false, false, false));
+        if !codecs_module_available
+            || normalized_encoding.is_none()
             || (codecs_module_is_pure_python && !codecs_module_is_initializing)
         {
             self.import_module("encodings")?;

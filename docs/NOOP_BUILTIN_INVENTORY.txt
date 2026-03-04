@@ -1,9 +1,6 @@
 _frozen_importlib._install
 _frozen_importlib._install_external_importers
 _frozen_importlib._setup
-_locale.nl_langinfo
-_locale.strcoll
-_symtable.symtable
 _testcapi.MethClass.meth_fastcall
 _testcapi.MethClass.meth_fastcall_keywords
 _testcapi.MethClass.meth_noargs
@@ -32,15 +29,3 @@ _testcapi.meth_varargs
 _testcapi.meth_varargs_keywords
 _testinternalcapi.has_inline_values
 _testinternalcapi.set_eval_frame_default
-faulthandler._fatal_error_c_thread
-faulthandler._read_null
-faulthandler._sigabrt
-faulthandler._sigfpe
-faulthandler._sigsegv
-faulthandler._stack_overflow
-faulthandler.cancel_dump_traceback_later
-faulthandler.dump_c_stack
-faulthandler.dump_traceback
-faulthandler.dump_traceback_later
-faulthandler.enable
-faulthandler.register
