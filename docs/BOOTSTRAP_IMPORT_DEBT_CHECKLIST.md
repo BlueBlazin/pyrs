@@ -91,7 +91,9 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
   - `sys.version` now follows CPython parser shape (`version (buildno, builddate, buildtime) [compiler]`) so pure `platform.py` can parse interpreter metadata without bootstrap fallbacks;
   - covered by `tests/vm.rs::platform_import_prefers_cpython_pure_module_when_lib_path_is_added` and `tests/vm.rs::re_platform_sys_version_parser_pattern_matches_cpython_shape`.
 - [ ] `P1` `os` (line 1014)
-- [ ] `P1` `_osx_support` (line 1536)
+- [x] `P1` `_osx_support` (line 1536):
+  - added to pure-stdlib unload preference group (`PURE_STDLIB_OSX_SUPPORT_MODULES`) so CPython `Lib/_osx_support.py` is preferred when available;
+  - covered by `tests/vm.rs::osx_support_import_prefers_cpython_pure_module_when_lib_path_is_added`.
 - [ ] `P1` `ssl` (line 1904)
 - [ ] `P1` `codecs` (line 2605)
 - [x] `P1` `operator` (line 3439):

@@ -4132,6 +4132,41 @@ ok = (
 }
 
 #[test]
+fn osx_support_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping pure-_osx_support import preference test (CPython Lib path not available)"
+        );
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("osx-support-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import _osx_support
+origin = getattr(_osx_support, '__file__', '')
+norm = origin.replace("\\", "/")
+ok = (
+    norm.endswith('/_osx_support.py')
+    and ('/shims/' not in norm)
+    and hasattr(_osx_support, 'customize_config_vars')
+    and hasattr(_osx_support, 'get_platform_osx')
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn _osx_support import preference thread");
+    handle
+        .join()
+        .expect("_osx_support import preference thread should complete");
+}
+
+#[test]
 fn typing_bootstrap_helpers_have_runtime_baseline_without_cpython_lib() {
     let Some(pyrs_bin) = pyrs_binary_path() else {
         eprintln!("skipping typing bootstrap helper test (pyrs binary not found)");
