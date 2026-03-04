@@ -110,6 +110,8 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
   - added to pure-stdlib unload preference group (`PURE_STDLIB_OPERATOR_MODULES`) so CPython `Lib/operator.py` is preferred when available;
   - covered by `tests/vm.rs::operator_import_prefers_cpython_pure_module_when_lib_path_is_added`.
 - [ ] `P1` `_colorize` (line 3675)
+  - root-cause prerequisite fixed: CPython `type.__new__` empty-bases parity now injects `object` (matching `Objects/typeobject.c:type_new_get_bases`), restoring `collections.abc.*` MRO tails and unblocking `_colorize.py` paths that rely on `super().__setattr__` from mapping ABC mixins;
+  - covered by `tests/vm.rs::metaclass_type_new_empty_bases_include_object_in_mro` and `tests/vm.rs::super_setattr_resolves_through_collections_abc_object_tail`.
 - [x] `P1` `functools` (line 3722):
   - added to `PURE_STDLIB_FUNCTOOLS_MODULES` unload preference group so `Lib/functools.py` is preferred when available;
   - covered by `tests/vm.rs::functools_import_prefers_cpython_pure_module_when_lib_path_is_added`;

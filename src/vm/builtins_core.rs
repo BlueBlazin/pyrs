@@ -7982,6 +7982,13 @@ impl Vm {
             for base in base_values {
                 base_classes.push(self.class_from_base_value(base)?);
             }
+            // CPython parity (Objects/typeobject.c:type_new_get_bases):
+            // type.__new__(..., (), ...) rewrites empty bases to (object,).
+            if base_classes.is_empty()
+                && let Some(Value::Class(object_class)) = self.builtins.get("object").cloned()
+            {
+                base_classes.push(object_class);
+            }
             let namespace = self.class_namespace_attrs_map(&args[name_index + 2])?;
 
             let class_value = self.build_default_class_value(

@@ -17262,6 +17262,34 @@ fn colorize_theme_sections_expose_items_mapping_api() {
 }
 
 #[test]
+fn metaclass_type_new_empty_bases_include_object_in_mro() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = "import abc\nclass Base(metaclass=abc.ABCMeta):\n    pass\nmro = tuple(cls.__name__ for cls in Base.__mro__)\nok = (mro == ('Base', 'object'))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn super_setattr_resolves_through_collections_abc_object_tail() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = "from collections.abc import Mapping\nclass C(Mapping):\n    def __iter__(self):\n        return iter(())\n    def __len__(self):\n        return 0\n    def __getitem__(self, key):\n        raise KeyError\n    def f(self):\n        super().__setattr__('x', 1)\nc = C()\nc.f()\nok = (c.x == 1 and C.__mro__[-1] is object)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn threading_local_baseline_type_is_available() {
     let source = "import threading\nx = threading.local()\nx.value = 7\nok = (x.value == 7)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
