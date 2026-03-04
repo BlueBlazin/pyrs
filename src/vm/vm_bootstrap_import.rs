@@ -1251,6 +1251,8 @@ impl Vm {
                 ("mkdir", BuiltinFunction::OsMkdir),
                 ("chmod", BuiltinFunction::OsChmod),
                 ("rmdir", BuiltinFunction::OsRmdir),
+                ("unlink", BuiltinFunction::OsRemove),
+                ("remove", BuiltinFunction::OsRemove),
                 ("utime", BuiltinFunction::OsUTime),
                 ("scandir", BuiltinFunction::OsScandir),
                 ("_path_normpath", BuiltinFunction::OsPathNormPath),
@@ -2664,6 +2666,8 @@ impl Vm {
             &[
                 ("encode", BuiltinFunction::CodecsEncode),
                 ("decode", BuiltinFunction::CodecsDecode),
+                ("utf_8_encode", BuiltinFunction::CodecsUtf8Encode),
+                ("utf_8_decode", BuiltinFunction::CodecsUtf8Decode),
                 ("escape_decode", BuiltinFunction::CodecsEscapeDecode),
                 (
                     "make_identity_dict",

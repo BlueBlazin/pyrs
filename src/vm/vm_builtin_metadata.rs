@@ -289,6 +289,8 @@ impl Vm {
             BuiltinFunction::FunctoolsCachedProperty => "cached_property",
             BuiltinFunction::CodecsEncode => "encode",
             BuiltinFunction::CodecsDecode => "decode",
+            BuiltinFunction::CodecsUtf8Encode => "utf_8_encode",
+            BuiltinFunction::CodecsUtf8Decode => "utf_8_decode",
             BuiltinFunction::CodecsEscapeDecode => "escape_decode",
             BuiltinFunction::CodecsMakeIdentityDict => "make_identity_dict",
             BuiltinFunction::CodecsLookup => "lookup",
@@ -939,6 +941,8 @@ impl Vm {
             BuiltinFunction::CollectionsDefaultDict => "collections",
             BuiltinFunction::CodecsEncode
             | BuiltinFunction::CodecsDecode
+            | BuiltinFunction::CodecsUtf8Encode
+            | BuiltinFunction::CodecsUtf8Decode
             | BuiltinFunction::CodecsEscapeDecode
             | BuiltinFunction::CodecsMakeIdentityDict
             | BuiltinFunction::CodecsLookup

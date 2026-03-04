@@ -4206,6 +4206,8 @@ pub enum BuiltinFunction {
     PyLongDecStrToIntInner,
     CodecsEncode,
     CodecsDecode,
+    CodecsUtf8Encode,
+    CodecsUtf8Decode,
     CodecsEscapeDecode,
     CodecsMakeIdentityDict,
     CodecsLookup,
@@ -7663,6 +7665,8 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::PyLongDecStrToIntInner
             | BuiltinFunction::CodecsEncode
             | BuiltinFunction::CodecsDecode
+            | BuiltinFunction::CodecsUtf8Encode
+            | BuiltinFunction::CodecsUtf8Decode
             | BuiltinFunction::CodecsEscapeDecode
             | BuiltinFunction::CodecsMakeIdentityDict
             | BuiltinFunction::CodecsLookup

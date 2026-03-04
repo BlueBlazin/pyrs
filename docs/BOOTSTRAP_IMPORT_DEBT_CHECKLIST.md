@@ -95,8 +95,9 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
   - incremental substrate parity landed to support this closure:
     - native `os.getuid` / `posix.getuid` on unix hosts;
     - native `os.readlink` / `posix.readlink` with CPython-shaped return-type behavior (`str` for str-path input, `bytes` for bytes-path input);
-    - `posix` now exports open/access/seek constants (`O_RDONLY`, `O_DIRECTORY`, `F_OK`, `SEEK_*`, etc.) required by pure `Lib/os.py` consumers such as `glob`/`pathlib`.
-  - covered by `tests/vm.rs::os_import_prefers_cpython_pure_module_when_lib_path_is_added`.
+    - `posix` now exports open/access/seek constants (`O_RDONLY`, `O_DIRECTORY`, `F_OK`, `SEEK_*`, etc.) required by pure `Lib/os.py` consumers such as `glob`/`pathlib`;
+    - `posix` now exports `unlink`/`remove` (wired to `OsRemove`) so pure `Lib/os.py` provides `os.unlink`/`os.remove`, unblocking strict `shutil` import paths.
+  - covered by `tests/vm.rs::os_import_prefers_cpython_pure_module_when_lib_path_is_added` and `tests/vm.rs::os_pure_module_exports_unlink_and_remove_for_shutil_paths`.
 - [x] `P1` `_osx_support` (line 1536):
   - added to pure-stdlib unload preference group (`PURE_STDLIB_OSX_SUPPORT_MODULES`) so CPython `Lib/_osx_support.py` is preferred when available;
   - covered by `tests/vm.rs::osx_support_import_prefers_cpython_pure_module_when_lib_path_is_added`.
@@ -107,7 +108,8 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
   - added to pure-stdlib unload preference group (`PURE_STDLIB_CODECS_MODULES`) so CPython `Lib/codecs.py` is preferred when available;
   - `_codecs` substrate now exports `register_error` and `lookup_error`, with built-in handler registry entries for `strict`, `ignore`, `replace`, `xmlcharrefreplace`, `backslashreplace`, and `namereplace`;
   - registry lookups now remain anchored on `_codecs` so pure `codecs.py` (`from _codecs import *`) resolves built-in handlers even after `sys.modules['codecs']` is replaced by filesystem module import;
-  - covered by `tests/vm.rs::codecs_import_prefers_cpython_pure_module_when_lib_path_is_added` and `tests/vm.rs::codecs_error_handler_registry_supports_builtin_and_custom_lookup`.
+  - `_codecs.lookup` now routes through `encodings.search_function` when pure `codecs.py` is active (instead of forcing synthetic codec info for normalized names), preserving CPython incremental-encoder behavior used by `_pyio.StringIO`;
+  - covered by `tests/vm.rs::codecs_import_prefers_cpython_pure_module_when_lib_path_is_added`, `tests/vm.rs::codecs_error_handler_registry_supports_builtin_and_custom_lookup`, and `tests/vm.rs::codecs_lookup_uses_pure_registry_entries_for_incremental_encoding`.
 - [x] `P1` `operator` (line 3439):
   - added to pure-stdlib unload preference group (`PURE_STDLIB_OPERATOR_MODULES`) so CPython `Lib/operator.py` is preferred when available;
   - covered by `tests/vm.rs::operator_import_prefers_cpython_pure_module_when_lib_path_is_added`.

@@ -4073,6 +4073,40 @@ ok = (
 }
 
 #[test]
+fn codecs_lookup_uses_pure_registry_entries_for_incremental_encoding() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-codecs registry test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("codecs-pure-registry-lookup".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import codecs, _pyio
+origin = getattr(codecs, '__file__', '')
+norm = origin.replace("\\", "/")
+enc = codecs.getincrementalencoder('utf-8')('strict')
+text = _pyio.StringIO("a\r\nb\r\n", newline=None).getvalue()
+ok = (
+    norm.endswith('/codecs.py')
+    and enc.encode('A') == b'A'
+    and text == "a\nb\n"
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn codecs pure-registry lookup thread");
+    handle
+        .join()
+        .expect("codecs pure-registry lookup thread should complete");
+}
+
+#[test]
 fn colorize_import_prefers_cpython_pure_module_when_lib_path_is_added() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pure-_colorize import preference test (CPython Lib path not available)");
@@ -4246,6 +4280,39 @@ ok = (
     handle
         .join()
         .expect("os import preference thread should complete");
+}
+
+#[test]
+fn os_pure_module_exports_unlink_and_remove_for_shutil_paths() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-os unlink/remove test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("os-pure-unlink-remove".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import os, shutil
+origin = getattr(os, '__file__', '')
+norm = origin.replace("\\", "/")
+ok = (
+    norm.endswith('/os.py')
+    and callable(getattr(os, 'unlink', None))
+    and callable(getattr(os, 'remove', None))
+    and callable(shutil.copyfile)
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn os pure unlink/remove thread");
+    handle
+        .join()
+        .expect("os pure unlink/remove thread should complete");
 }
 
 #[test]

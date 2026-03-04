@@ -5332,6 +5332,100 @@ impl Vm {
         Ok(Value::Str(decoded))
     }
 
+    pub(super) fn builtin_codecs_utf_8_encode(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "utf_8_encode() expects object and optional errors argument",
+            ));
+        }
+        let mut errors = if args.len() == 2 {
+            Some(args.remove(1))
+        } else {
+            None
+        };
+        if let Some(value) = kwargs.remove("errors") {
+            if errors.is_some() {
+                return Err(RuntimeError::new(
+                    "utf_8_encode() got multiple values for errors",
+                ));
+            }
+            errors = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "utf_8_encode() got an unexpected keyword argument",
+            ));
+        }
+        let text = match args.remove(0) {
+            Value::Str(text) => text,
+            _ => return Err(RuntimeError::new("utf_8_encode() argument must be str")),
+        };
+        let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
+        let encoded = encode_text_bytes(&text, "utf-8", &errors)?;
+        Ok(self.heap.alloc_tuple(vec![
+            self.heap.alloc_bytes(encoded),
+            Value::Int(text.chars().count() as i64),
+        ]))
+    }
+
+    pub(super) fn builtin_codecs_utf_8_decode(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "utf_8_decode() expects object, optional errors, optional final",
+            ));
+        }
+        let mut errors = if args.len() >= 2 {
+            Some(args.remove(1))
+        } else {
+            None
+        };
+        let mut final_arg = if args.len() >= 2 {
+            Some(args.remove(1))
+        } else {
+            None
+        };
+        if let Some(value) = kwargs.remove("errors") {
+            if errors.is_some() {
+                return Err(RuntimeError::new(
+                    "utf_8_decode() got multiple values for errors",
+                ));
+            }
+            errors = Some(value);
+        }
+        if let Some(value) = kwargs.remove("final") {
+            if final_arg.is_some() {
+                return Err(RuntimeError::new(
+                    "utf_8_decode() got multiple values for final",
+                ));
+            }
+            final_arg = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "utf_8_decode() got an unexpected keyword argument",
+            ));
+        }
+        // CPython accepts the final flag but utf-8 stateless decode does not use it.
+        if let Some(value) = final_arg {
+            let _ = is_truthy(&value);
+        }
+        let source = args.remove(0);
+        let bytes = bytes_like_from_value(source)?;
+        let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
+        let decoded = decode_text_bytes(&bytes, "utf-8", &errors)?;
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::Str(decoded), Value::Int(bytes.len() as i64)]))
+    }
+
     pub(super) fn builtin_codecs_escape_decode(
         &mut self,
         mut args: Vec<Value>,
@@ -5498,7 +5592,14 @@ impl Vm {
         let encoding = normalized_encoding
             .clone()
             .unwrap_or_else(|| fallback_name.clone());
-        if normalized_encoding.is_none() {
+        let codecs_module_is_pure_python = self
+            .modules
+            .get("codecs")
+            .is_some_and(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.contains_key("__file__"),
+                _ => false,
+            });
+        if normalized_encoding.is_none() || codecs_module_is_pure_python {
             self.import_module("encodings")?;
             let encodings_module = self
                 .modules

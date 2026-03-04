@@ -12658,6 +12658,8 @@ impl Vm {
             }
             BuiltinFunction::CodecsEncode => self.builtin_codecs_encode(args, kwargs),
             BuiltinFunction::CodecsDecode => self.builtin_codecs_decode(args, kwargs),
+            BuiltinFunction::CodecsUtf8Encode => self.builtin_codecs_utf_8_encode(args, kwargs),
+            BuiltinFunction::CodecsUtf8Decode => self.builtin_codecs_utf_8_decode(args, kwargs),
             BuiltinFunction::CodecsEscapeDecode => self.builtin_codecs_escape_decode(args, kwargs),
             BuiltinFunction::CodecsMakeIdentityDict => {
                 self.builtin_codecs_make_identity_dict(args, kwargs)
