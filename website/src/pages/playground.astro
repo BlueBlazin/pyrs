@@ -104,6 +104,7 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 		let continuationPrompt = false;
 		const commandHistory = [];
 		let historyIndex = -1;
+		const runtimeLoadRetryDelaysMs = [1000, 2000];
 
 		const PY_KEYWORDS = new Set([
 			"False",
@@ -523,6 +524,8 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 			}
 		};
 
+		const waitMs = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
 		const ensureRuntimeLoaded = async () => {
 			if (runtimeWorkerReady) return true;
 			if (runtimeLoadPromise) return runtimeLoadPromise;
@@ -530,39 +533,48 @@ const workerEntrypoint = `${baseUrl.replace(/\/?$/, "/")}workers/playground-runt
 			runtimeLoadPromise = (async () => {
 				setStatus("loading", "Loading runtime\u2026");
 				setShellLoading(true);
-				try {
-					const response = await sendWorkerRequest("load", { wasmEntrypoint });
-					if (!response.ok) {
-						const message =
+				let lastLoadError = "runtime failed to load";
+				for (let attempt = 0; attempt <= runtimeLoadRetryDelaysMs.length; attempt += 1) {
+					try {
+						const response = await sendWorkerRequest("load", { wasmEntrypoint });
+						if (response.ok) {
+							runtimeWorkerReady = true;
+							lastRuntimeInfo = response.runtimeInfo || null;
+							const executionEnabled = Boolean(readField(lastRuntimeInfo, "supports_execution"));
+							setStatus(
+								"ready",
+								executionEnabled ? "Runtime ready" : "Runtime compile-only",
+							);
+							renderStartupBanner();
+							applyContinuationPrompt(response.prompt_continuation);
+							return true;
+						}
+						lastLoadError =
 							typeof response.error === "string" && response.error.length > 0
 								? response.error
 								: "runtime failed to load";
-						setStatus("error", "Runtime failed to load");
-						appendTranscriptLine(`Runtime load error: ${message}`, "stderr");
-						return false;
+					} catch (error) {
+						lastLoadError = error instanceof Error ? error.message : String(error);
+						runtimeWorkerReady = false;
 					}
 
-					runtimeWorkerReady = true;
-					lastRuntimeInfo = response.runtimeInfo || null;
-					const executionEnabled = Boolean(readField(lastRuntimeInfo, "supports_execution"));
-					setStatus(
-						"ready",
-						executionEnabled ? "Runtime ready" : "Runtime compile-only",
-					);
-					renderStartupBanner();
-					applyContinuationPrompt(response.prompt_continuation);
-					return true;
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					runtimeWorkerReady = false;
-					setStatus("error", "Runtime failed to load");
-					appendTranscriptLine(`Runtime load error: ${message}`, "stderr");
-					return false;
-				} finally {
+					const hasRetry = attempt < runtimeLoadRetryDelaysMs.length;
+					if (!hasRetry) {
+						break;
+					}
+					const wait = runtimeLoadRetryDelaysMs[attempt];
+					setStatus("loading", `Loading runtime\u2026 retrying in ${wait / 1000}s`);
+					await waitMs(wait);
+				}
+
+				setStatus("error", "Runtime failed to load");
+				appendTranscriptLine(`Runtime load error: ${lastLoadError}`, "stderr");
+				return false;
+			})()
+				.finally(() => {
 					runtimeLoadPromise = null;
 					setShellLoading(false);
-				}
-			})();
+				});
 
 			return runtimeLoadPromise;
 		};
