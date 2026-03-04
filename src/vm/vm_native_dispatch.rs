@@ -13280,6 +13280,29 @@ impl Vm {
             BuiltinFunction::ThreadStartNewThread => {
                 self.builtin_thread_start_new_thread(args, kwargs)
             }
+            BuiltinFunction::ThreadStartJoinableThread => {
+                self.builtin_thread_start_joinable_thread(args, kwargs)
+            }
+            BuiltinFunction::ThreadDaemonThreadsAllowed => {
+                self.builtin_thread_daemon_threads_allowed(args, kwargs)
+            }
+            BuiltinFunction::ThreadStackSize => self.builtin_thread_stack_size(args, kwargs),
+            BuiltinFunction::ThreadShutdown => self.builtin_thread_shutdown(args, kwargs),
+            BuiltinFunction::ThreadMakeThreadHandle => {
+                self.builtin_thread_make_thread_handle(args, kwargs)
+            }
+            BuiltinFunction::ThreadGetMainThreadIdent => {
+                self.builtin_thread_get_main_thread_ident(args, kwargs)
+            }
+            BuiltinFunction::ThreadIsMainInterpreter => {
+                self.builtin_thread_is_main_interpreter(args, kwargs)
+            }
+            BuiltinFunction::ThreadHandleInit => self.builtin_thread_handle_init(args, kwargs),
+            BuiltinFunction::ThreadHandleJoin => self.builtin_thread_handle_join(args, kwargs),
+            BuiltinFunction::ThreadHandleIsDone => self.builtin_thread_handle_is_done(args, kwargs),
+            BuiltinFunction::ThreadHandleSetDone => {
+                self.builtin_thread_handle_set_done(args, kwargs)
+            }
             BuiltinFunction::ThreadLockEnter => self.builtin_thread_lock_enter(args, kwargs),
             BuiltinFunction::ThreadLockExit => self.builtin_thread_lock_exit(args, kwargs),
             BuiltinFunction::ThreadLockAcquire => self.builtin_thread_lock_acquire(args, kwargs),

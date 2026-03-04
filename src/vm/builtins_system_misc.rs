@@ -2157,6 +2157,50 @@ impl Vm {
         }
     }
 
+    fn thread_handle_class(&self) -> Option<ObjRef> {
+        let module = self.modules.get("_thread")?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return None;
+        };
+        let Value::Class(class) = module_data.globals.get("_ThreadHandle")? else {
+            return None;
+        };
+        Some(class.clone())
+    }
+
+    fn thread_handle_instance_from_value(&self, value: &Value) -> Option<ObjRef> {
+        let Value::Instance(instance) = value else {
+            return None;
+        };
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        let handle_class = self.thread_handle_class()?;
+        if instance_data.class.id() == handle_class.id() {
+            Some(instance.clone())
+        } else {
+            None
+        }
+    }
+
+    fn alloc_thread_handle_instance(
+        &mut self,
+        ident: Option<i64>,
+        done: bool,
+    ) -> Result<ObjRef, RuntimeError> {
+        let handle_class = self
+            .thread_handle_class()
+            .ok_or_else(|| RuntimeError::new("_thread._ThreadHandle is unavailable"))?;
+        let instance = match self.heap.alloc_instance(InstanceObject::new(handle_class)) {
+            Value::Instance(obj) => obj,
+            _ => unreachable!(),
+        };
+        let ident_value = ident.map(Value::Int).unwrap_or(Value::None);
+        Self::instance_attr_set(&instance, "ident", ident_value)?;
+        Self::instance_attr_set(&instance, "_done", Value::Bool(done))?;
+        Ok(instance)
+    }
+
     pub(super) fn builtin_threading_get_ident(
         &mut self,
         args: Vec<Value>,
@@ -2225,6 +2269,207 @@ impl Vm {
         let (thread_ident, _outcome) =
             self.call_internal_in_synthetic_thread(callable, call_args, call_kwargs)?;
         Ok(Value::Int(thread_ident))
+    }
+
+    pub(super) fn builtin_thread_start_joinable_thread(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 3
+            || kwargs
+                .keys()
+                .any(|key| key != "function" && key != "handle" && key != "daemon")
+        {
+            return Err(RuntimeError::type_error(
+                "start_joinable_thread() got unexpected arguments",
+            ));
+        }
+        let callable = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("function").ok_or_else(|| {
+                RuntimeError::type_error("start_joinable_thread() missing required argument")
+            })?
+        };
+        if !self.is_callable_value(&callable) {
+            return Err(RuntimeError::type_error(
+                "start_joinable_thread() first argument must be callable",
+            ));
+        }
+        let handle_value = kwargs
+            .remove("handle")
+            .or_else(|| (!args.is_empty()).then(|| args.remove(0)))
+            .unwrap_or(Value::None);
+        let daemon_value = kwargs
+            .remove("daemon")
+            .or_else(|| (!args.is_empty()).then(|| args.remove(0)))
+            .unwrap_or(Value::Bool(true));
+        if !args.is_empty() || !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "start_joinable_thread() got unexpected arguments",
+            ));
+        }
+        let _daemon = is_truthy(&daemon_value);
+        let mut created_handle = false;
+        let handle = if matches!(handle_value, Value::None) {
+            created_handle = true;
+            self.alloc_thread_handle_instance(None, false)?
+        } else if let Some(instance) = self.thread_handle_instance_from_value(&handle_value) {
+            instance
+        } else {
+            return Err(RuntimeError::type_error("'handle' must be a _ThreadHandle"));
+        };
+        let (thread_ident, _outcome) =
+            self.call_internal_in_synthetic_thread(callable, Vec::new(), HashMap::new())?;
+        Self::instance_attr_set(&handle, "ident", Value::Int(thread_ident))?;
+        // Synthetic-thread execution is synchronous today, so the handle is done
+        // when start_joinable_thread() returns.
+        Self::instance_attr_set(&handle, "_done", Value::Bool(true))?;
+        if created_handle {
+            Ok(Value::Instance(handle))
+        } else {
+            Ok(Value::None)
+        }
+    }
+
+    pub(super) fn builtin_thread_daemon_threads_allowed(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("daemon_threads_allowed() expects no arguments"));
+        }
+        Ok(Value::Bool(true))
+    }
+
+    pub(super) fn builtin_thread_stack_size(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new(
+                "stack_size() expects zero or one positional argument",
+            ));
+        }
+        if let Some(requested) = args.pop() {
+            let size = value_to_int(requested)?;
+            if size < 0 {
+                return Err(RuntimeError::value_error("size must be non-negative"));
+            }
+            // Current synthetic threading model does not configure per-thread host
+            // stack size. Keep CPython-compatible call shape and report previous
+            // baseline value.
+            return Ok(Value::Int(0));
+        }
+        Ok(Value::Int(0))
+    }
+
+    pub(super) fn builtin_thread_shutdown(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("_shutdown() expects no arguments"));
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_thread_make_thread_handle(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("_make_thread_handle() expects one argument"));
+        }
+        let ident = value_to_int(args.remove(0))?;
+        Ok(Value::Instance(
+            self.alloc_thread_handle_instance(Some(ident), false)?,
+        ))
+    }
+
+    pub(super) fn builtin_thread_get_main_thread_ident(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("_get_main_thread_ident() expects no arguments"));
+        }
+        Ok(Value::Int(self.current_thread_ident_value()))
+    }
+
+    pub(super) fn builtin_thread_is_main_interpreter(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("_is_main_interpreter() expects no arguments"));
+        }
+        Ok(Value::Bool(true))
+    }
+
+    pub(super) fn builtin_thread_handle_init(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("_ThreadHandle.__init__() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "_ThreadHandle.__init__")?;
+        Self::instance_attr_set(&instance, "ident", Value::None)?;
+        Self::instance_attr_set(&instance, "_done", Value::Bool(false))?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_thread_handle_join(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 || kwargs.keys().any(|key| key != "timeout") {
+            return Err(RuntimeError::new(
+                "_ThreadHandle.join() expects optional timeout",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "_ThreadHandle.join")?;
+        let _timeout = kwargs.remove("timeout").or_else(|| args.pop());
+        let _ = instance;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_thread_handle_is_done(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("_ThreadHandle.is_done() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "_ThreadHandle.is_done")?;
+        Ok(Value::Bool(matches!(
+            Self::instance_attr_get(&instance, "_done"),
+            Some(Value::Bool(true))
+        )))
+    }
+
+    pub(super) fn builtin_thread_handle_set_done(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("_ThreadHandle._set_done() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "_ThreadHandle._set_done")?;
+        Self::instance_attr_set(&instance, "_done", Value::Bool(true))?;
+        Ok(Value::None)
     }
 
     pub(super) fn builtin_thread_lock_enter(

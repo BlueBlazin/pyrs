@@ -4761,6 +4761,31 @@ impl Vm {
             }
             self.register_module("_types", types_alias);
         }
+        let thread_handle_class = match self
+            .heap
+            .alloc_class(ClassObject::new("_ThreadHandle".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *thread_handle_class.kind_mut() {
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadHandleInit),
+            );
+            class_data.attrs.insert(
+                "join".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadHandleJoin),
+            );
+            class_data.attrs.insert(
+                "is_done".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadHandleIsDone),
+            );
+            class_data.attrs.insert(
+                "_set_done".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadHandleSetDone),
+            );
+        }
         self.install_builtin_module(
             "_thread",
             &[
@@ -4769,8 +4794,32 @@ impl Vm {
                 ("get_ident", BuiltinFunction::ThreadingGetIdent),
                 ("_count", BuiltinFunction::ThreadingActiveCount),
                 ("start_new_thread", BuiltinFunction::ThreadStartNewThread),
+                (
+                    "start_joinable_thread",
+                    BuiltinFunction::ThreadStartJoinableThread,
+                ),
+                (
+                    "daemon_threads_allowed",
+                    BuiltinFunction::ThreadDaemonThreadsAllowed,
+                ),
+                ("stack_size", BuiltinFunction::ThreadStackSize),
+                ("_shutdown", BuiltinFunction::ThreadShutdown),
+                ("_make_thread_handle", BuiltinFunction::ThreadMakeThreadHandle),
+                (
+                    "_get_main_thread_ident",
+                    BuiltinFunction::ThreadGetMainThreadIdent,
+                ),
+                (
+                    "_is_main_interpreter",
+                    BuiltinFunction::ThreadIsMainInterpreter,
+                ),
             ],
-            vec![("TIMEOUT_MAX", Value::Float(f64::MAX))],
+            vec![
+                ("TIMEOUT_MAX", Value::Float(f64::MAX)),
+                ("LockType", Value::Class(self.heap.thread_lock_type())),
+                ("error", Value::ExceptionType("RuntimeError".to_string())),
+                ("_ThreadHandle", Value::Class(thread_handle_class)),
+            ],
         );
         self.install_builtin_module(
             "__future__",

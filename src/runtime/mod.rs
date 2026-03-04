@@ -3697,6 +3697,17 @@ pub enum BuiltinFunction {
     ContextCopyContext,
     ThreadRLock,
     ThreadStartNewThread,
+    ThreadStartJoinableThread,
+    ThreadDaemonThreadsAllowed,
+    ThreadStackSize,
+    ThreadShutdown,
+    ThreadMakeThreadHandle,
+    ThreadGetMainThreadIdent,
+    ThreadIsMainInterpreter,
+    ThreadHandleInit,
+    ThreadHandleJoin,
+    ThreadHandleIsDone,
+    ThreadHandleSetDone,
     ThreadLockEnter,
     ThreadLockExit,
     ThreadLockAcquire,
@@ -7893,6 +7904,17 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::ThreadingExcepthook
             | BuiltinFunction::ThreadingGetIdent
             | BuiltinFunction::ThreadStartNewThread
+            | BuiltinFunction::ThreadStartJoinableThread
+            | BuiltinFunction::ThreadDaemonThreadsAllowed
+            | BuiltinFunction::ThreadStackSize
+            | BuiltinFunction::ThreadShutdown
+            | BuiltinFunction::ThreadMakeThreadHandle
+            | BuiltinFunction::ThreadGetMainThreadIdent
+            | BuiltinFunction::ThreadIsMainInterpreter
+            | BuiltinFunction::ThreadHandleInit
+            | BuiltinFunction::ThreadHandleJoin
+            | BuiltinFunction::ThreadHandleIsDone
+            | BuiltinFunction::ThreadHandleSetDone
             | BuiltinFunction::ThreadingCurrentThread
             | BuiltinFunction::ThreadingMainThread
             | BuiltinFunction::ThreadingActiveCount
