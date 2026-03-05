@@ -162,9 +162,6 @@ jobs:
     env:
       HOMEBREW_TAP_REPO: BlueBlazin/homebrew-tap
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-      CPYTHON_STDLIB_VERSION: ${{ env.CPYTHON_STDLIB_VERSION }}
-      CPYTHON_STDLIB_SOURCE_URL: ${{ env.CPYTHON_STDLIB_SOURCE_URL }}
-      CPYTHON_STDLIB_SOURCE_SHA256: ${{ env.CPYTHON_STDLIB_SOURCE_SHA256 }}
 
     steps:
       - name: Skip when Homebrew tap token is not configured
