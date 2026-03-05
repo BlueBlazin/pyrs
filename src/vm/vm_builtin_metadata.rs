@@ -4263,6 +4263,31 @@ impl Vm {
         Ok(())
     }
 
+    fn rebind_unbound_wrapper_bound_method(
+        &self,
+        method: &ObjRef,
+        receiver: &Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let method_ref = method.kind();
+        let Object::BoundMethod(method_data) = &*method_ref else {
+            return Err(RuntimeError::attribute_error(
+                "attribute access unsupported type",
+            ));
+        };
+        let is_unbound_wrapper = matches!(
+            &*method_data.receiver.kind(),
+            Object::Module(module_data) if module_data.name.ends_with("_unbound_method__")
+        );
+        if !is_unbound_wrapper {
+            return Ok(None);
+        }
+        let receiver_ref = self.receiver_from_value(receiver)?;
+        Ok(Some(
+            self.heap
+                .alloc_bound_method(BoundMethod::new(method_data.function.clone(), receiver_ref)),
+        ))
+    }
+
     pub(super) fn bind_descriptor_method(
         &mut self,
         method: Value,
@@ -4291,6 +4316,9 @@ impl Vm {
             Value::Builtin(builtin) => {
                 let receiver_ref = self.receiver_from_value(receiver)?;
                 Ok(Some(self.alloc_builtin_bound_method(builtin, receiver_ref)))
+            }
+            Value::BoundMethod(method_obj) => {
+                self.rebind_unbound_wrapper_bound_method(&method_obj, receiver)
             }
             _ => Ok(None),
         }
@@ -7569,33 +7597,11 @@ impl Vm {
         }
 
         if let Some(attr) = class_attr {
-            if let Value::BoundMethod(method_obj) = &attr {
-                let rebound_native = {
-                    let method_ref = method_obj.kind();
-                    let Object::BoundMethod(method_data) = &*method_ref else {
-                        return Err(RuntimeError::attribute_error(
-                            "attribute access unsupported type",
-                        ));
-                    };
-                    let is_unbound_wrapper = matches!(
-                        &*method_data.receiver.kind(),
-                        Object::Module(module_data)
-                            if module_data.name.ends_with("_unbound_method__")
-                    );
-                    if !is_unbound_wrapper {
-                        None
-                    } else {
-                        match &*method_data.function.kind() {
-                            Object::NativeMethod(native) => {
-                                Some(self.alloc_native_bound_method(native.kind, instance.clone()))
-                            }
-                            _ => None,
-                        }
-                    }
-                };
-                if let Some(bound_native) = rebound_native {
-                    return Ok(AttrAccessOutcome::Value(bound_native));
-                }
+            if let Value::BoundMethod(method_obj) = &attr
+                && let Some(bound_method) =
+                    self.rebind_unbound_wrapper_bound_method(method_obj, &Value::Instance(instance.clone()))?
+            {
+                return Ok(AttrAccessOutcome::Value(bound_method));
             }
             if let Some(bound) = self.bind_classmethod_attr(&class_ref, &attr) {
                 return Ok(AttrAccessOutcome::Value(bound));

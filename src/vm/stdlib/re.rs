@@ -1901,8 +1901,8 @@ mod tests {
             )
             .expect("match should succeed");
         let match_obj = match matched {
-            Value::Module(obj) => obj,
-            other => panic!("expected match object module, got {other:?}"),
+            Value::Instance(obj) => obj,
+            other => panic!("expected match object instance, got {other:?}"),
         };
 
         let whole = vm
@@ -1942,8 +1942,8 @@ mod tests {
             )
             .expect("match should succeed");
         let match_obj = match matched {
-            Value::Module(obj) => obj,
-            other => panic!("expected match object module, got {other:?}"),
+            Value::Instance(obj) => obj,
+            other => panic!("expected match object instance, got {other:?}"),
         };
 
         let groups = vm
@@ -1976,8 +1976,8 @@ mod tests {
             )
             .expect("match should succeed");
         let match_obj = match matched {
-            Value::Module(obj) => obj,
-            other => panic!("expected match object module, got {other:?}"),
+            Value::Instance(obj) => obj,
+            other => panic!("expected match object instance, got {other:?}"),
         };
         let groupdict = vm
             .native_re_match_groupdict(&match_obj, vec![])
@@ -2011,8 +2011,8 @@ mod tests {
             )
             .expect("match should succeed");
         let match_obj = match matched {
-            Value::Module(obj) => obj,
-            other => panic!("expected match object module, got {other:?}"),
+            Value::Instance(obj) => obj,
+            other => panic!("expected match object instance, got {other:?}"),
         };
         let groupdict = vm
             .native_re_match_groupdict(&match_obj, vec![])

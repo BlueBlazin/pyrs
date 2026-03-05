@@ -9220,9 +9220,12 @@ const SRE_OP_INFO: i64 = 14;
 const SRE_OP_JUMP: i64 = 15;
 const SRE_OP_LITERAL: i64 = 16;
 const SRE_OP_MARK: i64 = 17;
+const SRE_OP_MAX_UNTIL: i64 = 18;
+const SRE_OP_MIN_UNTIL: i64 = 19;
 const SRE_OP_NOT_LITERAL: i64 = 20;
 const SRE_OP_NEGATE: i64 = 21;
 const SRE_OP_RANGE: i64 = 22;
+const SRE_OP_REPEAT: i64 = 23;
 const SRE_OP_REPEAT_ONE: i64 = 24;
 const SRE_OP_MIN_REPEAT_ONE: i64 = 26;
 const SRE_OP_GROUPREF_IGNORE: i64 = 30;
@@ -9540,6 +9543,9 @@ fn sre_run_program(
         match opcode {
             SRE_OP_SUCCESS => return Some((cursor, marks)),
             SRE_OP_FAILURE => return None,
+            // These opcodes terminate the repeated unit in REPEAT/MAX_UNTIL and
+            // REPEAT/MIN_UNTIL programs.
+            SRE_OP_MAX_UNTIL | SRE_OP_MIN_UNTIL => return Some((cursor, marks)),
             SRE_OP_INFO => {
                 let skip = sre_read_usize(code, pc + 1)?;
                 pc = pc + 1 + skip;
@@ -9697,6 +9703,76 @@ fn sre_run_program(
                     _ => unreachable!(),
                 }
                 pc = sub_limit;
+            }
+            SRE_OP_REPEAT => {
+                let skip = sre_read_usize(code, pc + 1)?;
+                let min_count = sre_read_usize(code, pc + 2)?;
+                let max_count_raw = sre_read_usize(code, pc + 3)?;
+                let unit_start = pc + 4;
+                let until_pc = pc + 1 + skip;
+                let until_opcode = *code.get(until_pc)?;
+                if !matches!(until_opcode, SRE_OP_MAX_UNTIL | SRE_OP_MIN_UNTIL) {
+                    return None;
+                }
+                let next_pc = until_pc + 1;
+                let hard_max = max_count_raw.min(chars.len().saturating_sub(cursor).saturating_add(1));
+                let mut states = Vec::new();
+                states.push((cursor, marks.clone()));
+                let mut rep_pos = cursor;
+                let mut rep_marks = marks.clone();
+                for _ in 0..hard_max {
+                    let Some((next_pos, next_marks)) = sre_run_program(
+                        code,
+                        unit_start,
+                        until_pc + 1,
+                        chars,
+                        rep_pos,
+                        &rep_marks,
+                        depth + 1,
+                    ) else {
+                        break;
+                    };
+                    states.push((next_pos, next_marks.clone()));
+                    if next_pos == rep_pos {
+                        break;
+                    }
+                    rep_pos = next_pos;
+                    rep_marks = next_marks;
+                }
+                if min_count > states.len().saturating_sub(1) {
+                    return None;
+                }
+                if until_opcode == SRE_OP_MAX_UNTIL {
+                    for reps in (min_count..states.len()).rev() {
+                        let (candidate_pos, candidate_marks) = states[reps].clone();
+                        if let Some(result) = sre_run_program(
+                            code,
+                            next_pc,
+                            pc_limit,
+                            chars,
+                            candidate_pos,
+                            &candidate_marks,
+                            depth + 1,
+                        ) {
+                            return Some(result);
+                        }
+                    }
+                } else {
+                    for (candidate_pos, candidate_marks) in states.iter().skip(min_count) {
+                        if let Some(result) = sre_run_program(
+                            code,
+                            next_pc,
+                            pc_limit,
+                            chars,
+                            *candidate_pos,
+                            candidate_marks,
+                            depth + 1,
+                        ) {
+                            return Some(result);
+                        }
+                    }
+                }
+                return None;
             }
             SRE_OP_REPEAT_ONE | SRE_OP_MIN_REPEAT_ONE => {
                 let skip = sre_read_usize(code, pc + 1)?;

@@ -12721,6 +12721,26 @@ fn re_match_supports_char_classes_ranges_and_plus() {
 }
 
 #[test]
+fn re_match_supports_optional_groups_and_alternation() {
+    let source = "import re\nm1 = re.match(r'(a)?', '')\nm2 = re.match(r'(a)?', 'a')\nm3 = re.match(r'a(\\*|\\d+)?b', 'ab')\nm4 = re.match(r'a(\\*|\\d+)?b', 'a*b')\nm5 = re.match(r'a(\\*|\\d+)?b', 'a12b')\nok = (\n    m1 is not None and m1.group(0) == '' and m1.group(1) is None\n    and m2 is not None and m2.group(1) == 'a'\n    and m3 is not None and m3.group(1) is None\n    and m4 is not None and m4.group(1) == '*'\n    and m5 is not None and m5.group(1) == '12'\n)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn re_logging_percent_style_validation_pattern_matches_default_formatter() {
+    let source = "import re\npat = re.compile(r'%\\(\\w+\\)[#0+ -]*(\\*|\\d+)?(\\.(\\*|\\d+))?[diouxefgcrsa%]', re.I)\nm = pat.search('%(message)s')\nok = (m is not None and m.group(0) == '%(message)s')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn re_match_charclass_mixed_range_and_literals_matches_cpython() {
     let source = "import re\npat = re.compile(r'^[a2-9tjqk]+$')\nletters = re.compile(r'^[tjqk]+$')\nok = (\n    pat.match('akt5q') is not None\n    and pat.match('1') is None\n    and pat.match('xyz') is None\n    and letters.match('tjkq') is not None\n    and letters.match('aq') is None\n)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
