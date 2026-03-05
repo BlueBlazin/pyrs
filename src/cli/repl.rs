@@ -148,6 +148,11 @@ pub(super) fn run_repl(
     startup_tracemalloc_limit: Option<usize>,
 ) -> Result<i32, String> {
     let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
+    if interactive
+        && let Some(message) = super::missing_cpython_stdlib_warning(import_site)
+    {
+        eprintln!("{message}");
+    }
     let mut vm = build_vm_with_warnoptions(
         import_site,
         interactive,

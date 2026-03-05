@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::env;
 use std::path::{Path, PathBuf};
 
-use crate::VERSION;
+use crate::{CPYTHON_COMPAT_VERSION, VERSION};
 use crate::compiler;
 use crate::parser;
 use crate::parser::ParseError;
@@ -15,6 +15,8 @@ use crate::runtime::Value;
 use crate::vm::Vm;
 
 const HELP: &str = "pyrs (CPython 3.14 compatible)\n\nUsage:\n  pyrs                    Start interactive REPL (or read from stdin when piped)\n  pyrs <file.py>          Run a Python file\n  pyrs <file.pyc>         Run a CPython .pyc file\n  pyrs -S <file.py>       Run without importing site on startup\n  pyrs --ast <file.py>    Print parsed AST\n  pyrs --bytecode <file.py>  Print bytecode disassembly\n  pyrs --version          Print version\n  pyrs --help             Show help\n";
+const CPYTHON_STDLIB_VERSION: &str = "3.14.3";
+const CPYTHON_STDLIB_RELEASE_PAGE_URL: &str = "https://www.python.org/downloads/release/python-3143/";
 
 pub fn run() -> i32 {
     run_with_args_vec(env::args().skip(1).collect())
@@ -1089,6 +1091,21 @@ fn configure_vm_for_command(
     Ok(())
 }
 
+pub(super) fn missing_cpython_stdlib_warning(import_site: bool) -> Option<String> {
+    if !import_site {
+        return None;
+    }
+    let (stdlib_paths, _) = detect_cpython_stdlib_paths();
+    if !stdlib_paths.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "warning: no CPython {CPYTHON_COMPAT_VERSION} stdlib was detected. `cargo install` only installs the pyrs binary.\n\
+set PYRS_CPYTHON_LIB=/path/to/python3.14/Lib or install CPython 3.14.\n\
+official CPython 3.14.3 downloads: {CPYTHON_STDLIB_RELEASE_PAGE_URL}"
+    ))
+}
+
 fn parse_warning_options(raw: Option<String>) -> Vec<String> {
     let Some(raw) = raw else {
         return Vec::new();
@@ -1175,6 +1192,49 @@ fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
         false
     }
 
+    fn host_stdlib_roots() -> [PathBuf; 4] {
+        [
+            PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14"),
+            PathBuf::from("/opt/homebrew/Frameworks/Python.framework/Versions/3.14/lib/python3.14"),
+            PathBuf::from("/usr/local/lib/python3.14"),
+            PathBuf::from("/usr/lib/python3.14"),
+        ]
+    }
+
+    fn register_host_dynload_fallback(out: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>) {
+        for candidate in host_stdlib_roots() {
+            let normalized = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+            if register_dynload_for_root(out, seen, &normalized) {
+                break;
+            }
+        }
+    }
+
+    fn install_managed_stdlib_roots() -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        let stdlib_suffix = PathBuf::from(format!("stdlib/{CPYTHON_STDLIB_VERSION}/Lib"));
+        if let Ok(executable_path) = env::current_exe()
+            && let Some(bin_dir) = executable_path.parent()
+        {
+            roots.push(bin_dir.join("../share/pyrs").join(&stdlib_suffix));
+            roots.push(bin_dir.join("../libexec").join(&stdlib_suffix));
+            roots.push(bin_dir.join("../stdlib").join(&stdlib_suffix));
+        }
+        if let Some(xdg_data_home) = env::var_os("XDG_DATA_HOME") {
+            roots.push(PathBuf::from(xdg_data_home).join("pyrs").join(&stdlib_suffix));
+        } else if let Some(home) = env::var_os("HOME") {
+            roots.push(
+                PathBuf::from(home)
+                    .join(".local")
+                    .join("share")
+                    .join("pyrs")
+                    .join(&stdlib_suffix),
+            );
+        }
+        roots.push(PathBuf::from(format!(".local/Python-{CPYTHON_STDLIB_VERSION}/Lib")));
+        roots
+    }
+
     if let Ok(path) = env::var("PYRS_CPYTHON_LIB") {
         strict_site_import = true;
         let mut has_local_dynload = false;
@@ -1185,24 +1245,24 @@ fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
         // root has no adjacent lib-dynload, fall back to a host 3.14
         // lib-dynload directory for native extension loading.
         if !has_local_dynload {
-            for candidate in [
-                "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14",
-                "/opt/homebrew/Frameworks/Python.framework/Versions/3.14/lib/python3.14",
-                "/usr/local/lib/python3.14",
-                "/usr/lib/python3.14",
-            ] {
-                let candidate_path = PathBuf::from(candidate);
-                let normalized = std::fs::canonicalize(&candidate_path).unwrap_or(candidate_path);
-                if register_dynload_for_root(&mut out, &mut seen, &normalized) {
-                    break;
-                }
-            }
+            register_host_dynload_fallback(&mut out, &mut seen);
         }
         // When PYRS_CPYTHON_LIB is set, keep sys.path isolated to that stdlib root
         // (plus its adjacent lib-dynload if present) instead of mixing in host
         // framework stdlib paths. This avoids cross-root semantic drift in tests.
         return (out, strict_site_import);
     }
+
+    for root_candidate in install_managed_stdlib_roots() {
+        if let Some(root) = register_stdlib_root(&mut out, &mut seen, root_candidate) {
+            strict_site_import = true;
+            if !register_dynload_for_root(&mut out, &mut seen, &root) {
+                register_host_dynload_fallback(&mut out, &mut seen);
+            }
+            return (out, strict_site_import);
+        }
+    }
+
     if let Ok(home) = env::var("PYTHONHOME") {
         if let Some(root) = register_stdlib_root(
             &mut out,
@@ -1213,14 +1273,8 @@ fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
         }
     }
 
-    for candidate in [
-        "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14",
-        "/opt/homebrew/Frameworks/Python.framework/Versions/3.14/lib/python3.14",
-        "/usr/local/lib/python3.14",
-        "/usr/lib/python3.14",
-    ] {
-        let candidate_path = PathBuf::from(candidate);
-        let normalized = std::fs::canonicalize(&candidate_path).unwrap_or(candidate_path);
+    for candidate in host_stdlib_roots() {
+        let normalized = std::fs::canonicalize(&candidate).unwrap_or(candidate);
         if normalized.join("site.py").is_file() {
             if seen.insert(normalized.clone()) {
                 out.push(normalized.clone());
