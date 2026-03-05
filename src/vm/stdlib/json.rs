@@ -8,6 +8,7 @@ use super::super::{
     ModuleObject, Object, RuntimeError, Value, Vm, format_repr, is_truthy,
     runtime_get_int_max_str_digits, value_to_int,
 };
+use crate::unicode::{internal_char_from_codepoint, surrogate_code_unit_from_internal_char};
 
 #[derive(Clone)]
 /// Normalized option set for `json.dumps`-style serialization.
@@ -48,20 +49,21 @@ impl Vm {
         let mut options = JsonDumpsOptions::default();
 
         if let Some(skipkeys) = kwargs.remove("skipkeys") {
-            options.skipkeys = is_truthy(&skipkeys);
+            options.skipkeys = self.truthy_from_value(&skipkeys)?;
         }
         if let Some(ensure_ascii) = kwargs.remove("ensure_ascii") {
-            options.ensure_ascii = is_truthy(&ensure_ascii);
+            options.ensure_ascii = self.truthy_from_value(&ensure_ascii)?;
         }
-        if let Some(check_circular) = kwargs.remove("check_circular")
-            && !is_truthy(&check_circular)
-        {
-            return Err(RuntimeError::new(
-                "dumps() check_circular=False is not supported yet",
-            ));
+        if let Some(check_circular) = kwargs.remove("check_circular") {
+            let check_circular = self.truthy_from_value(&check_circular)?;
+            if !check_circular {
+                return Err(RuntimeError::new(
+                    "dumps() check_circular=False is not supported yet",
+                ));
+            }
         }
         if let Some(allow_nan) = kwargs.remove("allow_nan") {
-            options.allow_nan = is_truthy(&allow_nan);
+            options.allow_nan = self.truthy_from_value(&allow_nan)?;
         }
         if let Some(indent) = kwargs.remove("indent") {
             options.indent = parse_json_indent(indent)?;
@@ -70,7 +72,7 @@ impl Vm {
             }
         }
         if let Some(sort_keys) = kwargs.remove("sort_keys") {
-            options.sort_keys = is_truthy(&sort_keys);
+            options.sort_keys = self.truthy_from_value(&sort_keys)?;
         }
         if let Some(separators) = kwargs.remove("separators") {
             let (item_sep, key_sep) = parse_json_separators(separators)?;
@@ -118,12 +120,13 @@ impl Vm {
             return Err(RuntimeError::new("loads() expects one argument"));
         }
 
-        if let Some(strict) = kwargs.remove("strict")
-            && !is_truthy(&strict)
-        {
-            return Err(RuntimeError::new(
-                "loads() strict=False is not supported yet",
-            ));
+        if let Some(strict) = kwargs.remove("strict") {
+            let strict = self.truthy_from_value(&strict)?;
+            if !strict {
+                return Err(RuntimeError::new(
+                    "loads() strict=False is not supported yet",
+                ));
+            }
         }
         for key in [
             "cls",
@@ -194,40 +197,96 @@ impl Vm {
 
     pub(in crate::vm) fn builtin_json_make_encoder(
         &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "make_encoder() got unexpected keyword arguments",
-            ));
-        }
-        if args.len() != 9 {
-            return Err(RuntimeError::new(
+        let arg_names = [
+            "markers",
+            "default",
+            "encoder",
+            "indent",
+            "key_separator",
+            "item_separator",
+            "sort_keys",
+            "skipkeys",
+            "allow_nan",
+        ];
+        if args.len() > arg_names.len() {
+            return Err(RuntimeError::type_error(
                 "make_encoder() expects 9 positional arguments",
             ));
         }
+        let mut values: Vec<Option<Value>> = vec![None; arg_names.len()];
+        for (idx, value) in args.drain(..).enumerate() {
+            values[idx] = Some(value);
+        }
+        for (idx, name) in arg_names.iter().enumerate() {
+            if let Some(value) = kwargs.remove(*name) {
+                if values[idx].is_some() {
+                    return Err(RuntimeError::type_error(format!(
+                        "make_encoder() got multiple values for argument '{}'",
+                        name
+                    )));
+                }
+                values[idx] = Some(value);
+            }
+        }
+        if let Some(unexpected) = kwargs.keys().next().cloned() {
+            return Err(RuntimeError::type_error(format!(
+                "make_encoder() got an unexpected keyword argument '{}'",
+                unexpected
+            )));
+        }
+        if values.iter().any(|value| value.is_none()) {
+            return Err(RuntimeError::type_error(
+                "make_encoder() expects 9 arguments",
+            ));
+        }
+        let markers = values[0].take().expect("validated marker argument");
+        if !matches!(markers, Value::None | Value::Dict(_)) {
+            return Err(RuntimeError::type_error(format!(
+                "make_encoder() argument 1 must be dict or None, not {}",
+                self.value_type_name_for_error(&markers)
+            )));
+        }
+        let default_callable = values[1].take().expect("validated default argument");
+        let encoder_callable = values[2].take().expect("validated encoder argument");
+        let indent_value = values[3].take().expect("validated indent argument");
+        let key_separator_value = values[4]
+            .take()
+            .expect("validated key separator argument");
+        let item_separator_value = values[5]
+            .take()
+            .expect("validated item separator argument");
+        let sort_keys_value = values[6].take().expect("validated sort_keys argument");
+        let skipkeys_value = values[7].take().expect("validated skipkeys argument");
+        let allow_nan_value = values[8].take().expect("validated allow_nan argument");
 
-        let key_separator = match &args[4] {
+        let key_separator = match &key_separator_value {
             Value::Str(value) => value.clone(),
             _ => {
-                return Err(RuntimeError::new(
-                    "make_encoder() key_separator must be str",
-                ));
+                return Err(RuntimeError::type_error(format!(
+                    "make_encoder() argument 5 must be str, not {}",
+                    self.value_type_name_for_error(&key_separator_value)
+                )));
             }
         };
-        let item_separator = match &args[5] {
+        let item_separator = match &item_separator_value {
             Value::Str(value) => value.clone(),
             _ => {
-                return Err(RuntimeError::new(
-                    "make_encoder() item_separator must be str",
-                ));
+                return Err(RuntimeError::type_error(format!(
+                    "make_encoder() argument 6 must be str, not {}",
+                    self.value_type_name_for_error(&item_separator_value)
+                )));
             }
         };
         let ensure_ascii = matches!(
-            args[2],
+            encoder_callable,
             Value::Builtin(BuiltinFunction::JsonEncodeBaseStringAscii)
         );
+        let skipkeys = self.truthy_from_value(&skipkeys_value)?;
+        let allow_nan = self.truthy_from_value(&allow_nan_value)?;
+        let sort_keys = self.truthy_from_value(&sort_keys_value)?;
 
         let wrapper = match self
             .heap
@@ -239,16 +298,16 @@ impl Vm {
         if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
             module_data
                 .globals
-                .insert("skipkeys".to_string(), Value::Bool(is_truthy(&args[7])));
+                .insert("skipkeys".to_string(), Value::Bool(skipkeys));
             module_data
                 .globals
                 .insert("ensure_ascii".to_string(), Value::Bool(ensure_ascii));
             module_data
                 .globals
-                .insert("allow_nan".to_string(), Value::Bool(is_truthy(&args[8])));
+                .insert("allow_nan".to_string(), Value::Bool(allow_nan));
             module_data
                 .globals
-                .insert("sort_keys".to_string(), Value::Bool(is_truthy(&args[6])));
+                .insert("sort_keys".to_string(), Value::Bool(sort_keys));
             module_data
                 .globals
                 .insert("item_separator".to_string(), Value::Str(item_separator));
@@ -257,10 +316,16 @@ impl Vm {
                 .insert("key_separator".to_string(), Value::Str(key_separator));
             module_data
                 .globals
-                .insert("default".to_string(), args[1].clone());
+                .insert("default".to_string(), default_callable);
             module_data
                 .globals
-                .insert("indent".to_string(), args[3].clone());
+                .insert("encoder".to_string(), encoder_callable);
+            module_data
+                .globals
+                .insert("markers".to_string(), markers);
+            module_data
+                .globals
+                .insert("indent".to_string(), indent_value);
         }
         Ok(self.alloc_builtin_bound_method(BuiltinFunction::JsonMakeEncoderCall, wrapper))
     }
@@ -268,21 +333,35 @@ impl Vm {
     pub(in crate::vm) fn builtin_json_make_encoder_call(
         &mut self,
         mut args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "_iterencode() got unexpected keyword arguments",
+        if args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::type_error(
+                "_iterencode() expects receiver, object, and _current_indent_level",
             ));
         }
-        if args.len() != 3 {
-            return Err(RuntimeError::new(
-                "_iterencode() expects receiver, object, and current indent level",
+        let current_indent_level = if args.len() == 3 {
+            if kwargs.contains_key("_current_indent_level") {
+                return Err(RuntimeError::type_error(
+                    "_iterencode() got multiple values for argument '_current_indent_level'",
+                ));
+            }
+            value_to_int(args.remove(2))?
+        } else if let Some(value) = kwargs.remove("_current_indent_level") {
+            value_to_int(value)?
+        } else {
+            return Err(RuntimeError::type_error(
+                "_iterencode() missing required argument '_current_indent_level'",
             ));
+        };
+        if let Some(unexpected) = kwargs.keys().next().cloned() {
+            return Err(RuntimeError::type_error(format!(
+                "_iterencode() got an unexpected keyword argument '{}'",
+                unexpected
+            )));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         let value = args.remove(0);
-        let _current_indent_level = args.remove(0);
 
         let (
             skipkeys,
@@ -292,6 +371,7 @@ impl Vm {
             item_separator,
             key_separator,
             default_callable,
+            encoder_callable,
             indent,
         ) = match &*receiver.kind() {
             Object::Module(module_data) => {
@@ -320,6 +400,7 @@ impl Vm {
                     string_setting("item_separator", ", "),
                     string_setting("key_separator", ": "),
                     module_data.globals.get("default").cloned(),
+                    module_data.globals.get("encoder").cloned().unwrap_or(Value::None),
                     module_data
                         .globals
                         .get("indent")
@@ -327,8 +408,10 @@ impl Vm {
                         .unwrap_or(Value::None),
                 )
             }
-            _ => return Err(RuntimeError::new("_iterencode() receiver is invalid")),
+            _ => return Err(RuntimeError::type_error("_iterencode() receiver is invalid")),
         };
+
+        self.json_validate_encoder_for_value(&encoder_callable, &value)?;
 
         let mut dumps_kwargs = HashMap::new();
         dumps_kwargs.insert("skipkeys".to_string(), Value::Bool(skipkeys));
@@ -340,12 +423,84 @@ impl Vm {
             self.heap
                 .alloc_tuple(vec![Value::Str(item_separator), Value::Str(key_separator)]),
         );
-        dumps_kwargs.insert("indent".to_string(), indent);
+        dumps_kwargs.insert("indent".to_string(), indent.clone());
         if let Some(default) = default_callable {
             dumps_kwargs.insert("default".to_string(), default);
         }
-        let rendered = self.builtin_json_dumps(vec![value], dumps_kwargs)?;
-        Ok(self.heap.alloc_list(vec![rendered]))
+        let mut rendered = match self.builtin_json_dumps(vec![value], dumps_kwargs)? {
+            Value::Str(text) => text,
+            other => {
+                return Err(RuntimeError::type_error(format!(
+                    "_iterencode() expected string output, got {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        if current_indent_level > 0
+            && let Value::Str(indent_unit) = &indent
+            && !indent_unit.is_empty()
+        {
+            rendered = json_with_extra_indent(&rendered, indent_unit, current_indent_level as usize);
+        }
+        Ok(self.heap.alloc_list(vec![Value::Str(rendered)]))
+    }
+
+    fn json_validate_encoder_for_value(
+        &mut self,
+        encoder: &Value,
+        value: &Value,
+    ) -> Result<(), RuntimeError> {
+        let mut probe_strings = Vec::new();
+        match value {
+            Value::Str(text) => probe_strings.push(text.clone()),
+            Value::List(obj) => {
+                if let Object::List(items) = &*obj.kind() {
+                    for item in items {
+                        if let Value::Str(text) = item {
+                            probe_strings.push(text.clone());
+                        }
+                    }
+                }
+            }
+            Value::Tuple(obj) => {
+                if let Object::Tuple(items) = &*obj.kind() {
+                    for item in items {
+                        if let Value::Str(text) = item {
+                            probe_strings.push(text.clone());
+                        }
+                    }
+                }
+            }
+            Value::Dict(obj) => {
+                if let Object::Dict(items) = &*obj.kind() {
+                    for (key, nested) in items.iter() {
+                        if let Value::Str(text) = key {
+                            probe_strings.push(text.clone());
+                        }
+                        if let Value::Str(text) = nested {
+                            probe_strings.push(text.clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        for text in probe_strings {
+            let encoded =
+                match self.call_internal(encoder.clone(), vec![Value::Str(text)], HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self.runtime_error_from_active_exception("encoder() failed"));
+                    }
+                };
+            if !matches!(encoded, Value::Str(_)) {
+                return Err(RuntimeError::type_error(format!(
+                    "encoder() must return a string, not {}",
+                    self.value_type_name_for_error(&encoded)
+                )));
+            }
+        }
+        Ok(())
     }
 
     fn json_scanner_requires_python_make_scanner(
@@ -361,6 +516,9 @@ impl Vm {
         let parse_constant = self
             .optional_getattr_value(context.clone(), "parse_constant")?
             .unwrap_or(Value::None);
+        let strict = self
+            .optional_getattr_value(context.clone(), "strict")?
+            .unwrap_or(Value::Bool(true));
         let object_hook = self
             .optional_getattr_value(context.clone(), "object_hook")?
             .unwrap_or(Value::None);
@@ -372,6 +530,7 @@ impl Vm {
             !json_is_default_parse_float(&parse_float)
                 || !json_is_default_parse_int(&parse_int)
                 || !json_is_default_parse_constant(&parse_constant)
+                || !matches!(strict, Value::Bool(true))
                 || object_hook != Value::None
                 || object_pairs_hook != Value::None,
         )
@@ -387,6 +546,12 @@ impl Vm {
         }
         let context = args[0].clone();
         if self.json_scanner_requires_python_make_scanner(&context)? {
+            if let Ok(strict_value) = self.builtin_getattr(
+                vec![context.clone(), Value::Str("strict".to_string())],
+                HashMap::new(),
+            ) {
+                let _ = self.builtin_bool(vec![strict_value], HashMap::new())?;
+            }
             let caller_depth = self.frames.len();
             if let Ok(scanner_module) = self.import_module_object("json.scanner")
                 && let Ok(scanner_module) = self.return_imported_module(scanner_module, caller_depth)
@@ -448,9 +613,17 @@ impl Vm {
 
     pub(in crate::vm) fn builtin_json_decoder_scanstring(
         &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        if args.len() >= 3 {
+            let strict = self.truthy_from_value(&args[2])?;
+            args[2] = Value::Bool(strict);
+        }
+        if let Some(strict_kw) = kwargs.get("strict").cloned() {
+            let strict = self.truthy_from_value(&strict_kw)?;
+            kwargs.insert("strict".to_string(), Value::Bool(strict));
+        }
         let caller_depth = self.frames.len();
         if let Ok(decoder_module) = self.import_module_object("json.decoder")
             && let Ok(decoder_module) = self.return_imported_module(decoder_module, caller_depth)
@@ -486,14 +659,18 @@ impl Vm {
             ));
         }
         let strict_from_kwargs = kwargs.remove("strict");
-        let mut strict = strict_from_kwargs.as_ref().map(is_truthy).unwrap_or(true);
+        let mut strict = strict_from_kwargs
+            .as_ref()
+            .map(|value| self.truthy_from_value(value))
+            .transpose()?
+            .unwrap_or(true);
         if args.len() == 3 {
             if strict_from_kwargs.is_some() {
                 return Err(RuntimeError::new(
                     "scanstring() got multiple values for argument 'strict'",
                 ));
             }
-            strict = is_truthy(&args[2]);
+            strict = self.truthy_from_value(&args[2])?;
         }
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
@@ -576,6 +753,22 @@ fn json_source_text(value: &Value) -> Result<String, RuntimeError> {
             "loads() expects str, bytes, or bytearray",
         )),
     }
+}
+
+fn json_with_extra_indent(rendered: &str, indent_unit: &str, extra_levels: usize) -> String {
+    if extra_levels == 0 || rendered.is_empty() {
+        return rendered.to_string();
+    }
+    let prefix = indent_unit.repeat(extra_levels);
+    let mut out = String::with_capacity(rendered.len() + prefix.len() * rendered.matches('\n').count());
+    for (idx, line) in rendered.split('\n').enumerate() {
+        if idx > 0 {
+            out.push('\n');
+            out.push_str(&prefix);
+        }
+        out.push_str(line);
+    }
+    out
 }
 
 fn parse_json_separators(value: Value) -> Result<(String, String), RuntimeError> {
@@ -781,6 +974,14 @@ fn json_escape_string(text: &str, ensure_ascii: bool) -> String {
     let mut out = String::new();
     out.push('"');
     for ch in text.chars() {
+        if let Some(code_unit) = surrogate_code_unit_from_internal_char(ch) {
+            if ensure_ascii {
+                out.push_str(&format!("\\u{code_unit:04x}"));
+            } else {
+                out.push(ch);
+            }
+            continue;
+        }
         match ch {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
@@ -789,13 +990,11 @@ fn json_escape_string(text: &str, ensure_ascii: bool) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if c.is_control() => {
-                out.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c if ensure_ascii && !c.is_ascii() => {
+            c if (c as u32) <= 0x1F => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if ensure_ascii && (!c.is_ascii() || c == '\u{007F}') => {
                 let mut units = [0u16; 2];
                 for unit in c.encode_utf16(&mut units).iter() {
-                    out.push_str(&format!("\\u{:04x}", unit));
+                    out.push_str(&format!("\\u{unit:04x}"));
                 }
             }
             c => out.push(c),
@@ -1453,23 +1652,34 @@ impl<'a> JsonParser<'a> {
                         b'u' => {
                             let code = self.parse_hex_u16()?;
                             if (0xD800..=0xDBFF).contains(&code) {
-                                self.expect(b'\\', "invalid unicode escape")?;
-                                self.expect(b'u', "invalid unicode escape")?;
-                                let low = self.parse_hex_u16()?;
-                                if !(0xDC00..=0xDFFF).contains(&low) {
-                                    return Err(JsonParseError::new(
-                                        "invalid unicode escape",
-                                        self.pos,
-                                    ));
+                                let pair_start = self.pos;
+                                if self.source.get(self.pos) == Some(&b'\\')
+                                    && self.source.get(self.pos + 1) == Some(&b'u')
+                                {
+                                    self.pos += 2;
+                                    let low = self.parse_hex_u16()?;
+                                    if (0xDC00..=0xDFFF).contains(&low) {
+                                        let scalar = 0x10000
+                                            + (((code as u32 - 0xD800) << 10)
+                                                | (low as u32 - 0xDC00));
+                                        let ch = char::from_u32(scalar).ok_or_else(|| {
+                                            JsonParseError::new("invalid unicode escape", self.pos)
+                                        })?;
+                                        out.push(ch);
+                                        continue;
+                                    }
+                                    // Keep the trailing \uXXXX escape for the next loop pass.
+                                    self.pos = pair_start;
                                 }
-                                let scalar = 0x10000
-                                    + (((code as u32 - 0xD800) << 10) | (low as u32 - 0xDC00));
-                                let ch = char::from_u32(scalar).ok_or_else(|| {
-                                    JsonParseError::new("invalid unicode escape", self.pos)
-                                })?;
+                                let ch = internal_char_from_codepoint(code as u32).ok_or_else(
+                                    || JsonParseError::new("invalid unicode escape", self.pos),
+                                )?;
                                 out.push(ch);
                             } else if (0xDC00..=0xDFFF).contains(&code) {
-                                return Err(JsonParseError::new("invalid unicode escape", self.pos));
+                                let ch = internal_char_from_codepoint(code as u32).ok_or_else(
+                                    || JsonParseError::new("invalid unicode escape", self.pos),
+                                )?;
+                                out.push(ch);
                             } else {
                                 let ch = char::from_u32(code as u32).ok_or_else(|| {
                                     JsonParseError::new("invalid unicode escape", self.pos)
@@ -1856,6 +2066,7 @@ mod tests {
         parse_json_node_from_index, parse_json_separators,
     };
     use crate::runtime::{Heap, Object, Value};
+    use crate::unicode::internal_char_from_codepoint;
     use crate::vm::Vm;
     use std::collections::HashMap;
 
@@ -1869,6 +2080,13 @@ mod tests {
     fn json_escape_string_uses_short_control_escapes_for_backspace_and_formfeed() {
         let escaped = json_escape_string("\u{0008}\u{000C}", true);
         assert_eq!(escaped, "\"\\b\\f\"");
+    }
+
+    #[test]
+    fn json_escape_string_del_escape_depends_on_ensure_ascii() {
+        let text = "\u{007F}";
+        assert_eq!(json_escape_string(text, true), "\"\\u007f\"");
+        assert_eq!(json_escape_string(text, false), "\"\u{007F}\"");
     }
 
     #[test]
@@ -1964,7 +2182,7 @@ mod tests {
 
         let trailing_err =
             parse_json_node("{\"a\": 1} tail").expect_err("trailing data should fail");
-        assert!(trailing_err.message.contains("trailing data"));
+        assert!(trailing_err.message.contains("Extra data"));
     }
 
     #[test]
@@ -1975,12 +2193,25 @@ mod tests {
     }
 
     #[test]
-    fn parse_json_node_rejects_invalid_surrogate_sequences() {
-        let low_only = parse_json_node("\"\\udc00\"").expect_err("unpaired low surrogate");
-        assert!(low_only.message.contains("invalid unicode escape"));
+    fn parse_json_node_decodes_unpaired_surrogate_escapes_consistently() {
+        let high_surrogate = internal_char_from_codepoint(0xD800).expect("high surrogate");
+        let low_surrogate = internal_char_from_codepoint(0xDC00).expect("low surrogate");
+        let high_only = parse_json_node("\"\\ud800\"").expect("lone high surrogate");
+        assert!(matches!(high_only, JsonNode::String(value) if value == high_surrogate.to_string()));
 
-        let bad_pair = parse_json_node("\"\\ud800\\u0041\"").expect_err("invalid surrogate pair");
-        assert!(bad_pair.message.contains("invalid unicode escape"));
+        let low_only = parse_json_node("\"\\udc00\"").expect("lone low surrogate");
+        assert!(matches!(low_only, JsonNode::String(value) if value == low_surrogate.to_string()));
+
+        let high_then_non_low =
+            parse_json_node("\"\\ud800\\u0041\"").expect("high surrogate followed by non-low");
+        let expected_high_then_non_low = format!("{high_surrogate}A");
+        assert!(matches!(high_then_non_low, JsonNode::String(value) if value == expected_high_then_non_low));
+
+        let invalid_following_escape =
+            parse_json_node("\"\\ud800\\u00x1\"").expect_err("invalid trailing escape");
+        assert!(invalid_following_escape
+            .message
+            .contains("invalid unicode escape"));
     }
 
     #[test]

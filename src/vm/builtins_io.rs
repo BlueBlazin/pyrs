@@ -6,6 +6,7 @@ use super::{
     is_truthy, memoryview_bounds, normalize_codec_encoding, runtime_error_matches_exception,
     value_to_f64, value_to_int,
 };
+use crate::unicode::contains_internal_surrogate;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 
@@ -1249,8 +1250,6 @@ impl Vm {
             "_closefd",
             Value::Bool(closefd && buffer_fd.is_some()),
         )?;
-        let has_surrogate =
-            |value: &str| value.chars().any(|ch| matches!(ch as u32, 0xD800..=0xDFFF));
         let encoding_value = match encoding.unwrap_or(Value::None) {
             Value::None => Value::Str("utf-8".to_string()),
             Value::Str(value) => {
@@ -1259,7 +1258,7 @@ impl Vm {
                         "ValueError: embedded null character in encoding",
                     ));
                 }
-                if !value.is_ascii() || has_surrogate(&value) {
+                if !value.is_ascii() || contains_internal_surrogate(&value) {
                     return Err(RuntimeError::new(
                         "UnicodeEncodeError: surrogates not allowed in encoding",
                     ));
@@ -1283,7 +1282,7 @@ impl Vm {
                         "ValueError: embedded null character in errors",
                     ));
                 }
-                if !value.is_ascii() || has_surrogate(&value) {
+                if !value.is_ascii() || contains_internal_surrogate(&value) {
                     return Err(RuntimeError::new(
                         "UnicodeEncodeError: surrogates not allowed in errors",
                     ));

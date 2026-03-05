@@ -79,6 +79,7 @@ use crate::runtime::{
     ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError,
     SuperObject, Value, format_repr, format_value, runtime_get_int_max_str_digits,
 };
+use crate::unicode::{internal_char_from_codepoint, surrogate_codepoint_from_internal_char};
 
 #[derive(Debug, Clone)]
 struct Block {
@@ -1225,6 +1226,7 @@ pub struct Vm {
     finalized_del_objects: HashSet<u64>,
     cleared_weakref_objects: HashSet<u64>,
     pending_del_instances: HashMap<u64, ObjRef>,
+    running_pending_del_finalizers: bool,
     weakref_finalizers: HashMap<u64, (Weak<Obj>, Vec<ObjRef>)>,
     typing_overload_registry: HashMap<(String, String), Vec<Value>>,
     thread_info_objects: HashMap<i64, ObjRef>,
@@ -1528,6 +1530,7 @@ impl Vm {
             finalized_del_objects: HashSet::new(),
             cleared_weakref_objects: HashSet::new(),
             pending_del_instances: HashMap::new(),
+            running_pending_del_finalizers: false,
             weakref_finalizers: HashMap::new(),
             typing_overload_registry: HashMap::new(),
             thread_info_objects: HashMap::new(),
@@ -3040,6 +3043,10 @@ impl Vm {
     }
 
     fn run_pending_del_finalizers(&mut self, force_all: bool) {
+        if self.running_pending_del_finalizers {
+            return;
+        }
+        self.running_pending_del_finalizers = true;
         let mut ready = Vec::new();
         for (id, instance) in &self.pending_del_instances {
             if force_all || instance.strong_count() == 1 {
@@ -3047,7 +3054,7 @@ impl Vm {
             }
         }
 
-        for (obj_id, instance) in ready {
+        for (obj_id, instance) in ready.into_iter().take(1) {
             self.pending_del_instances.remove(&obj_id);
             if self.finalized_del_objects.contains(&obj_id) {
                 continue;
@@ -3093,6 +3100,7 @@ impl Vm {
                 frame.except_star_match_lasti = None;
             }
         }
+        self.running_pending_del_finalizers = false;
         self.run_pending_weakref_finalizers();
     }
 
@@ -4740,6 +4748,30 @@ impl Vm {
                     stream_data
                         .globals
                         .insert("flush".to_string(), Value::Builtin(flush_builtin));
+                    let enter_native = heap.alloc_native_method(NativeMethodObject::new(
+                        NativeMethodKind::Builtin(BuiltinFunction::SysStreamEnter),
+                    ));
+                    stream_data.globals.insert(
+                        "__enter__".to_string(),
+                        heap.alloc_bound_method(BoundMethod::new(enter_native, stream.clone())),
+                    );
+                    let exit_native = heap.alloc_native_method(NativeMethodObject::new(
+                        NativeMethodKind::Builtin(BuiltinFunction::SysStreamExit),
+                    ));
+                    stream_data.globals.insert(
+                        "__exit__".to_string(),
+                        heap.alloc_bound_method(BoundMethod::new(exit_native, stream.clone())),
+                    );
+                    if name.ends_with("stdin") {
+                        stream_data.globals.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::SysStdinRead),
+                        );
+                        stream_data.globals.insert(
+                            "readline".to_string(),
+                            Value::Builtin(BuiltinFunction::SysStdinReadline),
+                        );
+                    }
                     stream_data.globals.insert(
                         "isatty".to_string(),
                         Value::Builtin(BuiltinFunction::SysStreamIsATty),
@@ -4820,7 +4852,7 @@ impl Vm {
                 .insert("hexversion".to_string(), Value::Int(0x030e00f0));
             module_data
                 .globals
-                .insert("maxsize".to_string(), Value::Int((1_i64 << 62) - 1));
+                .insert("maxsize".to_string(), Value::Int(isize::MAX as i64));
             module_data
                 .globals
                 .insert("maxunicode".to_string(), Value::Int(0x10ffff));
@@ -10274,8 +10306,7 @@ fn normalize_codec_errors(value: Value) -> Result<String, RuntimeError> {
         _ => return Err(RuntimeError::new("errors must be string")),
     };
     match mode.as_str() {
-        "strict" | "ignore" | "replace" | "surrogateescape" => Ok(mode),
-        "surrogatepass" => Ok("strict".to_string()),
+        "strict" | "ignore" | "replace" | "surrogateescape" | "surrogatepass" => Ok(mode),
         "backslashreplace" | "namereplace" | "xmlcharrefreplace" => Ok("replace".to_string()),
         _ => Err(unknown_codec_error_handler(&mode)),
     }
@@ -10291,7 +10322,7 @@ fn push_escape_decode_error(
     message: &str,
 ) -> Result<(), RuntimeError> {
     match errors {
-        "strict" => Err(RuntimeError::new(message)),
+        "strict" | "surrogatepass" => Err(RuntimeError::new(message)),
         "ignore" => Ok(()),
         "replace" | "surrogateescape" => {
             out.push(b'?');
@@ -10388,10 +10419,11 @@ fn decode_escape_bytes(input: &[u8], errors: &str) -> Result<Vec<u8>, RuntimeErr
 
 fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>, RuntimeError> {
     match encoding {
-        "utf-8" => Ok(text.as_bytes().to_vec()),
+        "utf-8" => encode_utf8_text(text, errors),
         "utf-8-sig" => {
+            let payload = encode_utf8_text(text, errors)?;
             let mut out = vec![0xEF, 0xBB, 0xBF];
-            out.extend_from_slice(text.as_bytes());
+            out.extend_from_slice(&payload);
             Ok(out)
         }
         "utf-16" => {
@@ -10447,7 +10479,7 @@ fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>
                     continue;
                 }
                 match errors {
-                    "strict" => {
+                    "strict" | "surrogatepass" => {
                         return Err(RuntimeError::new("ascii codec can't encode character"));
                     }
                     "ignore" => {}
@@ -10466,7 +10498,7 @@ fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>
                     continue;
                 }
                 match errors {
-                    "strict" => {
+                    "strict" | "surrogatepass" => {
                         return Err(RuntimeError::new("latin-1 codec can't encode character"));
                     }
                     "ignore" => {}
@@ -10480,6 +10512,51 @@ fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>
         "raw-unicode-escape" => Ok(encode_raw_unicode_escape(text)),
         "unicode-escape" => Ok(encode_unicode_escape(text)),
         _ => Err(RuntimeError::lookup_error("unsupported encoding")),
+    }
+}
+
+fn encode_utf8_text(text: &str, errors: &str) -> Result<Vec<u8>, RuntimeError> {
+    let mut out = Vec::with_capacity(text.len());
+    for ch in text.chars() {
+        if let Some(surrogate) = surrogate_codepoint_from_internal_char(ch) {
+            match errors {
+                "strict" => return Err(RuntimeError::new("utf-8 codec can't encode character")),
+                "ignore" => {}
+                "replace" => out.push(b'?'),
+                "surrogateescape" => {
+                    if (0xDC80..=0xDCFF).contains(&surrogate) {
+                        out.push((surrogate - 0xDC00) as u8);
+                    } else {
+                        return Err(RuntimeError::new("utf-8 codec can't encode character"));
+                    }
+                }
+                "surrogatepass" => push_utf8_codepoint_allow_surrogate(&mut out, surrogate),
+                _ => return Err(unknown_codec_error_handler(errors)),
+            }
+            continue;
+        }
+        let mut buf = [0u8; 4];
+        let encoded = ch.encode_utf8(&mut buf);
+        out.extend_from_slice(encoded.as_bytes());
+    }
+    Ok(out)
+}
+
+fn push_utf8_codepoint_allow_surrogate(out: &mut Vec<u8>, codepoint: u32) {
+    if codepoint <= 0x7F {
+        out.push(codepoint as u8);
+    } else if codepoint <= 0x7FF {
+        out.push((0xC0 | ((codepoint >> 6) & 0x1F)) as u8);
+        out.push((0x80 | (codepoint & 0x3F)) as u8);
+    } else if codepoint <= 0xFFFF {
+        out.push((0xE0 | ((codepoint >> 12) & 0x0F)) as u8);
+        out.push((0x80 | ((codepoint >> 6) & 0x3F)) as u8);
+        out.push((0x80 | (codepoint & 0x3F)) as u8);
+    } else {
+        out.push((0xF0 | ((codepoint >> 18) & 0x07)) as u8);
+        out.push((0x80 | ((codepoint >> 12) & 0x3F)) as u8);
+        out.push((0x80 | ((codepoint >> 6) & 0x3F)) as u8);
+        out.push((0x80 | (codepoint & 0x3F)) as u8);
     }
 }
 
@@ -10524,7 +10601,9 @@ fn decode_text_bytes(bytes: &[u8], encoding: &str, errors: &str) -> Result<Strin
                     continue;
                 }
                 match errors {
-                    "strict" => return Err(RuntimeError::new("ascii codec can't decode byte")),
+                    "strict" | "surrogatepass" => {
+                        return Err(RuntimeError::new("ascii codec can't decode byte"));
+                    }
                     "ignore" => {}
                     "replace" | "surrogateescape" => out.push('\u{FFFD}'),
                     _ => return Err(unknown_codec_error_handler(errors)),
@@ -10557,7 +10636,9 @@ fn encode_gbk_bytes(text: &str, errors: &str) -> Result<Vec<u8>, RuntimeError> {
             '\u{4E02}' => out.extend_from_slice(&[0x81, 0x40]),
             '\u{5100}' => out.extend_from_slice(&[0x83, 0x78]),
             _ => match errors {
-                "strict" => return Err(RuntimeError::new("gbk codec can't encode character")),
+                "strict" | "surrogatepass" => {
+                    return Err(RuntimeError::new("gbk codec can't encode character"));
+                }
                 "ignore" => {}
                 "replace" | "surrogateescape" => out.push(b'?'),
                 _ => return Err(unknown_codec_error_handler(errors)),
@@ -10579,7 +10660,9 @@ fn decode_gbk_bytes(bytes: &[u8], errors: &str) -> Result<String, RuntimeError> 
         }
         let push_decode_error = |out: &mut String| -> Result<(), RuntimeError> {
             match errors {
-                "strict" => Err(RuntimeError::new("gbk codec can't decode bytes")),
+                "strict" | "surrogatepass" => {
+                    Err(RuntimeError::new("gbk codec can't decode bytes"))
+                }
                 "ignore" => Ok(()),
                 "replace" | "surrogateescape" => {
                     out.push('\u{FFFD}');
@@ -10623,7 +10706,7 @@ fn decode_raw_unicode_escape(bytes: &[u8], errors: &str) -> Result<String, Runti
                     index += 6;
                     continue;
                 }
-                if errors == "strict" {
+                if matches!(errors, "strict" | "surrogatepass") {
                     return Err(RuntimeError::new("unicode escape decode failed"));
                 }
             } else if kind == b'U' && index + 9 < bytes.len() {
@@ -10637,7 +10720,7 @@ fn decode_raw_unicode_escape(bytes: &[u8], errors: &str) -> Result<String, Runti
                     index += 10;
                     continue;
                 }
-                if errors == "strict" {
+                if matches!(errors, "strict" | "surrogatepass") {
                     return Err(RuntimeError::new("unicode escape decode failed"));
                 }
             }
@@ -10662,7 +10745,9 @@ fn decode_unicode_escape(bytes: &[u8], errors: &str) -> Result<String, RuntimeEr
         let esc = bytes[index + 1];
         let mut push_error = |errors: &str| -> Result<(), RuntimeError> {
             match errors {
-                "strict" => Err(RuntimeError::new("unicode escape decode failed")),
+                "strict" | "surrogatepass" => {
+                    Err(RuntimeError::new("unicode escape decode failed"))
+                }
                 "ignore" => Ok(()),
                 "replace" | "surrogateescape" => {
                     out.push('\u{FFFD}');
@@ -10841,7 +10926,9 @@ fn decode_utf16_bytes(
     }
     if pos < bytes.len() {
         match errors {
-            "strict" => return Err(RuntimeError::new("utf-16 codec can't decode bytes")),
+            "strict" | "surrogatepass" => {
+                return Err(RuntimeError::new("utf-16 codec can't decode bytes"));
+            }
             "ignore" => {}
             "replace" | "surrogateescape" => units.push(0xFFFD),
             _ => return Err(unknown_codec_error_handler(errors)),
@@ -10853,7 +10940,9 @@ fn decode_utf16_bytes(
         match decoded {
             Ok(ch) => out.push(ch),
             Err(_) => match errors {
-                "strict" => return Err(RuntimeError::new("utf-16 codec can't decode bytes")),
+                "strict" | "surrogatepass" => {
+                    return Err(RuntimeError::new("utf-16 codec can't decode bytes"));
+                }
                 "ignore" => {}
                 "replace" | "surrogateescape" => out.push('\u{FFFD}'),
                 _ => return Err(unknown_codec_error_handler(errors)),
@@ -10880,7 +10969,9 @@ fn decode_utf32_bytes(
         match char::from_u32(code) {
             Some(ch) => out.push(ch),
             None => match errors {
-                "strict" => return Err(RuntimeError::new("utf-32 codec can't decode bytes")),
+                "strict" | "surrogatepass" => {
+                    return Err(RuntimeError::new("utf-32 codec can't decode bytes"));
+                }
                 "ignore" => {}
                 "replace" | "surrogateescape" => out.push('\u{FFFD}'),
                 _ => return Err(unknown_codec_error_handler(errors)),
@@ -10890,7 +10981,9 @@ fn decode_utf32_bytes(
     }
     if pos < bytes.len() {
         match errors {
-            "strict" => return Err(RuntimeError::new("utf-32 codec can't decode bytes")),
+            "strict" | "surrogatepass" => {
+                return Err(RuntimeError::new("utf-32 codec can't decode bytes"));
+            }
             "ignore" => {}
             "replace" | "surrogateescape" => out.push('\u{FFFD}'),
             _ => return Err(unknown_codec_error_handler(errors)),
@@ -10931,12 +11024,36 @@ fn decode_utf8_bytes(bytes: &[u8], errors: &str) -> Result<String, RuntimeError>
                             break;
                         }
                     }
-                    "replace" | "surrogateescape" => {
-                        out.push('\u{FFFD}');
-                        if let Some(len) = invalid_len {
-                            pos += len;
+                    "surrogatepass" => {
+                        if let Some((ch, consumed)) =
+                            decode_utf8_surrogatepass_unit(&bytes[pos..])
+                        {
+                            out.push(ch);
+                            pos += consumed;
                         } else {
-                            break;
+                            return Err(RuntimeError::new("utf-8 codec can't decode bytes"));
+                        }
+                    }
+                    "replace" | "surrogateescape" => {
+                        if errors == "replace" {
+                            out.push('\u{FFFD}');
+                            if let Some(len) = invalid_len {
+                                pos += len;
+                            } else {
+                                break;
+                            }
+                        } else {
+                            let consumed = invalid_len.unwrap_or(bytes.len() - pos);
+                            for byte in &bytes[pos..pos + consumed] {
+                                let codepoint = 0xDC00 + u32::from(*byte);
+                                let ch = internal_char_from_codepoint(codepoint)
+                                    .ok_or_else(|| RuntimeError::new("utf-8 codec can't decode bytes"))?;
+                                out.push(ch);
+                            }
+                            pos += consumed;
+                            if invalid_len.is_none() {
+                                break;
+                            }
                         }
                     }
                     _ => return Err(unknown_codec_error_handler(errors)),
@@ -10945,6 +11062,22 @@ fn decode_utf8_bytes(bytes: &[u8], errors: &str) -> Result<String, RuntimeError>
         }
     }
     Ok(out)
+}
+
+fn decode_utf8_surrogatepass_unit(bytes: &[u8]) -> Option<(char, usize)> {
+    if bytes.len() < 3 {
+        return None;
+    }
+    let b0 = bytes[0];
+    let b1 = bytes[1];
+    let b2 = bytes[2];
+    if b0 != 0xED || !(0xA0..=0xBF).contains(&b1) || !(0x80..=0xBF).contains(&b2) {
+        return None;
+    }
+    let codepoint =
+        ((u32::from(b0 & 0x0F)) << 12) | ((u32::from(b1 & 0x3F)) << 6) | u32::from(b2 & 0x3F);
+    let ch = internal_char_from_codepoint(codepoint)?;
+    Some((ch, 3))
 }
 
 fn is_ascii_word(byte: u8) -> bool {

@@ -17,6 +17,7 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering as AtomicOrdering};
 
 use crate::bytecode::CodeObject;
+use crate::unicode::{canonical_codepoint_for_internal_char, internal_char_from_codepoint};
 pub use bigint::BigInt;
 use dict_backend::DictBackend;
 
@@ -3838,6 +3839,10 @@ pub enum BuiltinFunction {
     SysStderrWrite,
     SysStderrBufferWrite,
     SysStderrFlush,
+    SysStreamEnter,
+    SysStreamExit,
+    SysStdinRead,
+    SysStdinReadline,
     SysStdinWrite,
     SysStdinFlush,
     SysStreamIsATty,
@@ -5525,7 +5530,7 @@ impl BuiltinFunction {
                         if chars.next().is_some() {
                             return Err(RuntimeError::type_error("ord() expected a character"));
                         }
-                        Ok(Value::Int(ch as i64))
+                        Ok(Value::Int(canonical_codepoint_for_internal_char(ch) as i64))
                     }
                     Value::Bytes(obj) => match &*obj.kind() {
                         Object::Bytes(values) if values.len() == 1 => {
@@ -5573,7 +5578,7 @@ impl BuiltinFunction {
                 if !(0..=0x10FFFF).contains(&codepoint) {
                     return Err(RuntimeError::value_error("chr() arg not in range(0x110000)"));
                 }
-                let ch = char::from_u32(codepoint as u32)
+                let ch = internal_char_from_codepoint(codepoint as u32)
                     .ok_or_else(|| RuntimeError::value_error("chr() arg not in range(0x110000)"))?;
                 Ok(Value::Str(ch.to_string()))
             }
@@ -7517,6 +7522,10 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::SysStderrWrite
             | BuiltinFunction::SysStderrBufferWrite
             | BuiltinFunction::SysStderrFlush
+            | BuiltinFunction::SysStreamEnter
+            | BuiltinFunction::SysStreamExit
+            | BuiltinFunction::SysStdinRead
+            | BuiltinFunction::SysStdinReadline
             | BuiltinFunction::SysStdinWrite
             | BuiltinFunction::SysStdinFlush
             | BuiltinFunction::SysStreamIsATty
@@ -9250,7 +9259,12 @@ fn format_float(value: f64) -> String {
         }
         return "inf".to_string();
     }
-    let mut text = value.to_string();
+    let mut text = format!("{value:?}");
+    if let Some((mantissa, exponent_raw)) = text.split_once('e') {
+        if let Ok(exponent) = exponent_raw.parse::<i32>() {
+            text = format!("{mantissa}e{exponent:+03}");
+        }
+    }
     if !text.contains('.') && !text.contains('e') && !text.contains('E') {
         text.push_str(".0");
     }

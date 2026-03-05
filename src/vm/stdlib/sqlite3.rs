@@ -9,6 +9,7 @@ use super::super::{
     format_repr, is_truthy, runtime_error_matches_exception, slice_indices, value_to_f64,
     value_to_int, vm_current_thread_ident,
 };
+use crate::unicode::contains_internal_surrogate;
 use std::cell::Cell;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uchar, c_uint, c_void};
@@ -2976,7 +2977,7 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
         if max_sql_length >= 0 && script.len() > max_sql_length as usize {
             return Err(sqlite_error("DataError", "query string is too large"));
         }
-        if script.chars().any(|ch| ch == '\u{fffd}') {
+        if contains_internal_surrogate(script) {
             return Err(sqlite_error("UnicodeEncodeError", "surrogates not allowed"));
         }
         // CPython executescript() commits an active transaction in legacy

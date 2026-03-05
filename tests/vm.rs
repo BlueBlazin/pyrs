@@ -9152,8 +9152,8 @@ fn executes_sorted_with_reverse() {
 
 #[test]
 fn executes_enumerate_builtin() {
-    let source = "a = enumerate([1, 2])\n\
-b = enumerate('ab', start=1)\n";
+    let source = "a = list(enumerate([1, 2]))\n\
+b = list(enumerate('ab', start=1))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -13307,6 +13307,16 @@ fn executes_async_for_and_async_with() {
 }
 
 #[test]
+fn async_for_completion_does_not_corrupt_next_await_or_async_with() {
+    let source = "import asyncio\nclass AsyncIter:\n    def __init__(self):\n        self.i = 0\n    def __aiter__(self):\n        return self\n    async def __anext__(self):\n        if self.i:\n            raise StopAsyncIteration\n        self.i = 1\n        return 1\nclass AsyncCtx:\n    async def __aenter__(self):\n        return 5\n    async def __aexit__(self, a, b, c):\n        return False\nasync def run_all():\n    async for _ in AsyncIter():\n        pass\n    ctx = AsyncCtx()\n    first = await ctx.__aenter__()\n    async with ctx as second:\n        return first, second\nresult = asyncio.run(run_all())\nok = (result == (5, 5))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_async_comprehensions_and_await_in_comprehension_elements() {
     run_with_large_stack(
         "executes_async_comprehensions_and_await_in_comprehension_elements",
@@ -13469,6 +13479,16 @@ fn executes_fstring_lowering() {
         vm.get_global("out"),
         Some(Value::Str("hello Ada 3".to_string()))
     );
+}
+
+#[test]
+fn executes_fstring_format_spec_lowering() {
+    let source = "value = 0\nhexed = f\"{value:04x}\"\nrepr_padded = f\"{value!r:>4}\"\nok = (hexed == '0000' and repr_padded == '   0')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -16567,6 +16587,36 @@ fn decimal_alias_replacement_keeps_sys_modules_and_from_import_coherent() {
     if !output.status.success() {
         panic!(
             "decimal alias coherence probe failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(last_line, "True");
+}
+
+#[test]
+fn nested_importlib_flow_binds_decimal_to_canonical_sys_modules_entry() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping nested decimal importlib coherence test (CPython Lib path not available)");
+        return;
+    };
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let lib_path = lib_path.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nimport importlib\nimport test.support\nsys.path = ['{lib_path}']\ntest.support.use_resources = {{}}\nmod = importlib.import_module('test.test_json.test_decode')\ncanonical = sys.modules['decimal']\nok = (mod.decimal is canonical and hasattr(mod.decimal, 'Decimal') and mod.decimal.__file__.endswith('_pydecimal.py'))\nprint(ok)\n"
+    );
+    let output = Command::new(pyrs_bin)
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn nested decimal importlib coherence probe");
+    if !output.status.success() {
+        panic!(
+            "nested decimal importlib coherence probe failed:\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );

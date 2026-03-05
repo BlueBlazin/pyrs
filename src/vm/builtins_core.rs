@@ -38,6 +38,7 @@ use crate::runtime::{
     MIN_INT_MAX_STR_DIGITS, runtime_get_int_max_str_digits, runtime_set_int_max_str_digits,
     value_lookup_hash,
 };
+use crate::unicode::internal_char_from_codepoint;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -364,6 +365,15 @@ impl Vm {
             }
             if let Some(backing_str) = self.instance_backing_str(instance) {
                 return Ok(!backing_str.is_empty());
+            }
+            if let Some(backing_int) = self.instance_backing_int(instance) {
+                return self.truthy_from_value(&backing_int);
+            }
+            if let Some(backing_float) = self.instance_backing_float(instance) {
+                return Ok(backing_float != 0.0);
+            }
+            if let Some((real, imag)) = self.instance_backing_complex(instance) {
+                return Ok(real != 0.0 || imag != 0.0);
             }
             if let Some(backing_dict) = self.instance_backing_dict(instance)
                 && let Object::Dict(values) = &*backing_dict.kind()
@@ -4617,15 +4627,22 @@ impl Vm {
         kwargs: HashMap<String, Value>,
         stderr: bool,
     ) -> Result<Value, RuntimeError> {
+        use std::io::Write;
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::type_error("write() expects one argument"));
         }
         let text = format_value(&args[0]);
         if !self.capture_sys_stream_text(stderr, &text) {
             if stderr {
-                eprint!("{text}");
+                let mut stream = std::io::stderr();
+                stream
+                    .write_all(text.as_bytes())
+                    .map_err(|err| Self::os_error_from_io("stderr write failed", err))?;
             } else {
-                print!("{text}");
+                let mut stream = std::io::stdout();
+                stream
+                    .write_all(text.as_bytes())
+                    .map_err(|err| Self::os_error_from_io("stdout write failed", err))?;
             }
         }
         Ok(Value::Int(text.chars().count() as i64))
@@ -4648,11 +4665,11 @@ impl Vm {
         } else if stderr {
             std::io::stderr()
                 .write_all(&payload)
-                .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+                .map_err(|err| Self::os_error_from_io("stderr buffer write failed", err))?;
         } else {
             std::io::stdout()
                 .write_all(&payload)
-                .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+                .map_err(|err| Self::os_error_from_io("stdout buffer write failed", err))?;
         }
         Ok(Value::Int(payload.len() as i64))
     }
@@ -4666,6 +4683,116 @@ impl Vm {
             return Err(RuntimeError::new("flush() expects no arguments"));
         }
         Ok(Value::None)
+    }
+
+    pub(super) fn builtin_sys_stream_enter(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "__enter__() expects no arguments",
+            ));
+        }
+        Ok(args.remove(0))
+    }
+
+    pub(super) fn builtin_sys_stream_exit(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 4 {
+            return Err(RuntimeError::type_error(
+                "__exit__() expects three arguments",
+            ));
+        }
+        Ok(Value::Bool(false))
+    }
+
+    pub(super) fn builtin_sys_stdin_read(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        use std::io::Read;
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::type_error(
+                "read() expects at most one argument",
+            ));
+        }
+        let size = if args.is_empty() {
+            -1
+        } else {
+            value_to_int(args.remove(0))?
+        };
+
+        let mut bytes = Vec::new();
+        if size < 0 {
+            std::io::stdin()
+                .read_to_end(&mut bytes)
+                .map_err(|err| RuntimeError::new(format!("stdin read failed: {err}")))?;
+        } else {
+            let mut limited = std::io::stdin().take(size as u64);
+            limited
+                .read_to_end(&mut bytes)
+                .map_err(|err| RuntimeError::new(format!("stdin read failed: {err}")))?;
+        }
+        let text = decode_text_bytes(&bytes, "utf-8", "surrogateescape")?;
+        Ok(Value::Str(text))
+    }
+
+    pub(super) fn builtin_sys_stdin_readline(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        use std::io::Read;
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::type_error(
+                "readline() expects at most one argument",
+            ));
+        }
+        let size = if args.is_empty() {
+            -1
+        } else {
+            value_to_int(args.remove(0))?
+        };
+        if size == 0 {
+            return Ok(Value::Str(String::new()));
+        }
+
+        let mut bytes = Vec::new();
+        let mut stdin = std::io::stdin();
+        let mut remaining = if size < 0 {
+            None
+        } else {
+            Some(size as usize)
+        };
+        let mut byte = [0u8; 1];
+        loop {
+            if let Some(limit) = remaining.as_mut() {
+                if *limit == 0 {
+                    break;
+                }
+            }
+            let read = stdin
+                .read(&mut byte)
+                .map_err(|err| RuntimeError::new(format!("stdin read failed: {err}")))?;
+            if read == 0 {
+                break;
+            }
+            bytes.push(byte[0]);
+            if byte[0] == b'\n' {
+                break;
+            }
+            if let Some(limit) = remaining.as_mut() {
+                *limit -= 1;
+            }
+        }
+        let text = decode_text_bytes(&bytes, "utf-8", "surrogateescape")?;
+        Ok(Value::Str(text))
     }
 
     pub(super) fn builtin_sys_stdin_write(
@@ -11910,7 +12037,7 @@ impl Vm {
                     "%c arg not in range(0x110000)",
                 ));
             }
-            let ch = char::from_u32(codepoint as u32)
+            let ch = internal_char_from_codepoint(codepoint as u32)
                 .ok_or_else(|| RuntimeError::overflow_error("%c arg not in range(0x110000)"))?;
             let (fill, align) = self.resolve_fill_align(&spec, false);
             return Ok(self.apply_alignment(ch.to_string(), spec.width, fill, align));

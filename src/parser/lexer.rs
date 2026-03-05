@@ -1,5 +1,6 @@
 use crate::parser::token::{Keyword, Token, TokenKind};
 use crate::parser::unicode_names::{UnicodeNameLookup, lookup_unicode_name};
+use crate::unicode::internal_char_from_codepoint;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LexError {
@@ -1080,18 +1081,14 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     value = (value << 4) | ch.to_digit(16).unwrap_or(0);
                 }
-                let ch = if (0xD800..=0xDFFF).contains(&value) {
-                    '\u{FFFD}'
-                } else {
-                    char::from_u32(value).ok_or_else(|| {
-                        LexError::new(
-                            "invalid unicode escape",
-                            start_offset,
-                            start_line,
-                            start_column,
-                        )
-                    })?
-                };
+                let ch = internal_char_from_codepoint(value).ok_or_else(|| {
+                    LexError::new(
+                        "invalid unicode escape",
+                        start_offset,
+                        start_line,
+                        start_column,
+                    )
+                })?;
                 Ok(Some(ch))
             }
             Some('N') => {
@@ -1267,6 +1264,7 @@ impl<'a> Lexer<'a> {
 #[cfg(test)]
 mod tests {
     use super::{Lexer, TokenKind};
+    use crate::unicode::surrogate_codepoint_from_internal_char;
 
     #[test]
     fn decodes_named_unicode_escape_in_string_literals() {
@@ -1328,5 +1326,17 @@ mod tests {
                 .iter()
                 .any(|token| token.kind == TokenKind::String && token.lexeme == "\\N")
         );
+    }
+
+    #[test]
+    fn preserves_unicode_surrogate_escape_in_string_literals() {
+        let mut lexer = Lexer::new("\"\\uD83D\"");
+        let tokens = lexer.tokenize().expect("tokenization should succeed");
+        let token = tokens
+            .iter()
+            .find(|token| token.kind == TokenKind::String)
+            .expect("string token");
+        let ch = token.lexeme.chars().next().expect("single char");
+        assert_eq!(surrogate_codepoint_from_internal_char(ch), Some(0xD83D));
     }
 }

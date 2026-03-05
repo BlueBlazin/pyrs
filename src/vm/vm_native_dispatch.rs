@@ -9192,17 +9192,34 @@ impl Vm {
                 index: 0,
             })),
             Value::Module(module) => {
-                let array_values = {
+                let (array_values, readline_callable) = {
                     let module_kind = module.kind();
                     match &*module_kind {
                         Object::Module(module_data) if module_data.name == "__array__" => {
-                            module_data.globals.get("values").cloned()
+                            (
+                                module_data.globals.get("values").cloned(),
+                                module_data.globals.get("readline").cloned(),
+                            )
                         }
-                        _ => None,
+                        Object::Module(module_data) => {
+                            (None, module_data.globals.get("readline").cloned())
+                        }
+                        _ => (None, None),
                     }
                 };
                 if let Some(values) = array_values {
                     return self.to_iterator_value(values);
+                }
+                if let Some(readline) = readline_callable
+                    && self.is_callable_value(&readline)
+                {
+                    return Ok(self.heap.alloc_iterator(IteratorObject {
+                        kind: IteratorKind::CallIter {
+                            callable: readline,
+                            sentinel: Value::Str(String::new()),
+                        },
+                        index: 0,
+                    }));
                 }
                 let other = Value::Module(module);
                 let Some(iter_method) = self.lookup_bound_special_method(&other, "__iter__")?
@@ -12233,6 +12250,10 @@ impl Vm {
                 self.builtin_sys_stream_buffer_write(args, kwargs, true)
             }
             BuiltinFunction::SysStderrFlush => self.builtin_sys_stream_flush(args, kwargs),
+            BuiltinFunction::SysStreamEnter => self.builtin_sys_stream_enter(args, kwargs),
+            BuiltinFunction::SysStreamExit => self.builtin_sys_stream_exit(args, kwargs),
+            BuiltinFunction::SysStdinRead => self.builtin_sys_stdin_read(args, kwargs),
+            BuiltinFunction::SysStdinReadline => self.builtin_sys_stdin_readline(args, kwargs),
             BuiltinFunction::SysStdinWrite => self.builtin_sys_stdin_write(args, kwargs),
             BuiltinFunction::SysStdinFlush => self.builtin_sys_stream_flush(args, kwargs),
             BuiltinFunction::SysStreamIsATty => self.builtin_sys_stream_isatty(args, kwargs),

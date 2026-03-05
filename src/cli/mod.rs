@@ -14,7 +14,7 @@ use crate::runtime::Value;
 use crate::vm::Vm;
 use crate::{CPYTHON_COMPAT_VERSION, CPYTHON_STDLIB_VERSION, VERSION};
 
-const HELP: &str = "pyrs (CPython 3.14 compatible)\n\nUsage:\n  pyrs                    Start interactive REPL (or read from stdin when piped)\n  pyrs <file.py>          Run a Python file\n  pyrs <file.pyc>         Run a CPython .pyc file\n  pyrs -S <file.py>       Run without importing site on startup\n  pyrs --ast <file.py>    Print parsed AST\n  pyrs --bytecode <file.py>  Print bytecode disassembly\n  pyrs --version          Print version\n  pyrs --help             Show help\n";
+const HELP: &str = "pyrs (CPython 3.14 compatible)\n\nUsage:\n  pyrs                    Start interactive REPL (or read from stdin when piped)\n  pyrs <file.py>          Run a Python file\n  pyrs <file.pyc>         Run a CPython .pyc file\n  pyrs -m <module> [arg]  Run a library module as a script\n  pyrs -c <code> [arg]    Run command string\n  pyrs -S <file.py>       Run without importing site on startup\n  pyrs --ast <file.py>    Print parsed AST\n  pyrs --bytecode <file.py>  Print bytecode disassembly\n  pyrs --version          Print version\n  pyrs --help             Show help\n";
 const CPYTHON_STDLIB_RELEASE_PAGE_URL: &str =
     "https://www.python.org/downloads/release/python-3143/";
 
@@ -155,6 +155,29 @@ pub fn run_with_args_vec(arguments: Vec<String>) -> i32 {
             }
             None => {
                 eprintln!("error: -c expects command string");
+                2
+            }
+        },
+        Some(flag) if flag == "-m" => match args.next() {
+            Some(module_name) => {
+                let module_args = args.collect::<Vec<_>>();
+                match run_module(
+                    &module_name,
+                    module_args,
+                    import_site,
+                    traceback_caret_enabled,
+                    warnoptions,
+                    startup_tracemalloc_limit,
+                ) {
+                    Ok(status) => status,
+                    Err(err) => {
+                        eprintln!("{}", error_style::format_error_for_stderr(&err));
+                        2
+                    }
+                }
+            }
+            None => {
+                eprintln!("error: -m expects module name");
                 2
             }
         },
@@ -353,6 +376,109 @@ fn run_command(
     vm.register_source_in_linecache(&code, source, "<string>");
 
     let exec_result = vm.execute(&code);
+    let shutdown_result = vm.run_shutdown_hooks();
+    let (status, stderr_message) = match exec_result {
+        Ok(_) => (0, None),
+        Err(err) => {
+            if let Some(outcome) = system_exit_outcome(&mut vm, &err) {
+                outcome
+            } else {
+                return Err(err.message);
+            }
+        }
+    };
+    shutdown_result.map_err(|err| format!("shutdown error: {}", err.message))?;
+    if let Some(message) = stderr_message {
+        eprintln!("{message}");
+    }
+
+    Ok(status)
+}
+
+fn run_module(
+    module_name: &str,
+    module_args: Vec<String>,
+    import_site: bool,
+    traceback_caret_enabled: bool,
+    warnoptions: Vec<String>,
+    startup_tracemalloc_limit: Option<usize>,
+) -> Result<i32, String> {
+    let mut vm = Vm::new();
+    configure_vm_for_command(&mut vm, import_site, traceback_caret_enabled, &warnoptions)?;
+    if let Some(limit) = startup_tracemalloc_limit {
+        vm.start_tracemalloc(limit);
+    }
+    let mut provisional_argv = Vec::with_capacity(1 + module_args.len());
+    provisional_argv.push("-m".to_string());
+    provisional_argv.extend(module_args.clone());
+    vm.set_sys_argv(provisional_argv);
+
+    // CPython includes the current working directory on module-mode imports.
+    let cwd =
+        env::current_dir().map_err(|err| format!("failed to resolve current directory: {err}"))?;
+    vm.add_module_path_front(cwd);
+
+    const RESOLVE_MODULE_FILENAME: &str = "<resolve_run_module>";
+    const RESOLVE_MODULE_SOURCE: &str = "import importlib.util as _pyrs_importlib_util\n_pyrs_spec = _pyrs_importlib_util.find_spec(__pyrs_run_module_name)\nif _pyrs_spec is None:\n    raise ModuleNotFoundError(f\"No module named {__pyrs_run_module_name}\")\nif _pyrs_spec.submodule_search_locations is not None:\n    _pyrs_package_main = f\"{__pyrs_run_module_name}.__main__\"\n    _pyrs_spec = _pyrs_importlib_util.find_spec(_pyrs_package_main)\n    if _pyrs_spec is None:\n        raise ImportError(f\"No module named {_pyrs_package_main}; {__pyrs_run_module_name!r} is a package and cannot be directly executed\")\nif _pyrs_spec is None or _pyrs_spec.origin is None:\n    raise ImportError(f\"No module named {__pyrs_run_module_name}\")\n__spec__ = _pyrs_spec\n__package__ = _pyrs_spec.parent\n__file__ = _pyrs_spec.origin\n__pyrs_run_module_origin = _pyrs_spec.origin\n";
+    vm.set_global(
+        "__pyrs_run_module_name",
+        Value::Str(module_name.to_string()),
+    );
+    vm.cache_source_text(RESOLVE_MODULE_FILENAME, RESOLVE_MODULE_SOURCE);
+    let resolve_module = parser::parse_module(RESOLVE_MODULE_SOURCE).map_err(|err| {
+        format_syntax_error(RESOLVE_MODULE_FILENAME, RESOLVE_MODULE_SOURCE, &err)
+    })?;
+    let resolve_code =
+        compiler::compile_module_with_filename(&resolve_module, RESOLVE_MODULE_FILENAME).map_err(
+            |err| format_compile_error(RESOLVE_MODULE_FILENAME, RESOLVE_MODULE_SOURCE, &err),
+        )?;
+    vm.register_source_in_linecache(&resolve_code, RESOLVE_MODULE_SOURCE, RESOLVE_MODULE_FILENAME);
+
+    let resolve_exec_result = vm.execute(&resolve_code);
+    if let Err(err) = resolve_exec_result {
+        let shutdown_result = vm.run_shutdown_hooks();
+        let (status, stderr_message) = if let Some(outcome) = system_exit_outcome(&mut vm, &err) {
+            outcome
+        } else {
+            return Err(err.message);
+        };
+        shutdown_result.map_err(|shutdown_err| format!("shutdown error: {}", shutdown_err.message))?;
+        if let Some(message) = stderr_message {
+            eprintln!("{message}");
+        }
+        return Ok(status);
+    }
+
+    let module_origin = match vm.get_global("__pyrs_run_module_origin") {
+        Some(Value::Str(path)) => path,
+        Some(other) => {
+            return Err(format!(
+                "module resolution returned non-string origin: {}",
+                vm.render_value_repr_for_display(other)
+                    .unwrap_or_else(|_| "<unknown>".to_string())
+            ));
+        }
+        None => return Err("module resolution did not produce an origin path".to_string()),
+    };
+
+    let mut argv = Vec::with_capacity(1 + module_args.len());
+    argv.push(module_origin.clone());
+    argv.extend(module_args);
+    vm.set_sys_argv(argv);
+
+    let exec_result = if module_origin.ends_with(".pyc") {
+        vm.execute_pyc_file(&module_origin)
+    } else {
+        let source = vm
+            .read_python_source_file(&module_origin)
+            .map_err(|err| err.message)?;
+        vm.cache_source_text(&module_origin, &source);
+        let module = parser::parse_module(&source)
+            .map_err(|err| format_syntax_error(&module_origin, &source, &err))?;
+        let code = compiler::compile_module_with_filename(&module, &module_origin)
+            .map_err(|err| format_compile_error(&module_origin, &source, &err))?;
+        vm.execute(&code)
+    };
     let shutdown_result = vm.run_shutdown_hooks();
     let (status, stderr_message) = match exec_result {
         Ok(_) => (0, None),

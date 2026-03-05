@@ -10,6 +10,7 @@ use super::{
     system_time_to_secs_f64, value_from_bigint, value_to_bigint, value_to_f64, value_to_int,
     value_to_process_text, value_to_sequence_items,
 };
+use crate::unicode::canonical_codepoint_for_internal_char;
 #[cfg(unix)]
 use super::{collect_env_entries, collect_process_argv, is_missing_attribute_error};
 #[cfg(unix)]
@@ -124,7 +125,7 @@ impl Vm {
         }
     }
 
-    fn os_error_from_io(context: &str, err: std::io::Error) -> RuntimeError {
+    pub(super) fn os_error_from_io(context: &str, err: std::io::Error) -> RuntimeError {
         let message = format!("{context}: {err}");
         let exception = ExceptionObject::new(Self::os_error_exception_name(&err), Some(message));
         {
@@ -658,11 +659,51 @@ impl Vm {
         }
         let key = match args.remove(0) {
             Value::Str(value) => value,
-            _ => return Err(RuntimeError::new("os.putenv() key must be str")),
+            Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                Object::Bytes(bytes) => decode_text_bytes(bytes, "utf-8", "surrogateescape")?,
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "os.putenv() key must be str or bytes",
+                    ));
+                }
+            },
+            Value::ByteArray(bytes_obj) => match &*bytes_obj.kind() {
+                Object::ByteArray(bytes) => decode_text_bytes(bytes, "utf-8", "surrogateescape")?,
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "os.putenv() key must be str or bytes",
+                    ));
+                }
+            },
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "os.putenv() key must be str or bytes",
+                ));
+            }
         };
         let value = match args.remove(0) {
             Value::Str(value) => value,
-            _ => return Err(RuntimeError::new("os.putenv() value must be str")),
+            Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                Object::Bytes(bytes) => decode_text_bytes(bytes, "utf-8", "surrogateescape")?,
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "os.putenv() value must be str or bytes",
+                    ));
+                }
+            },
+            Value::ByteArray(bytes_obj) => match &*bytes_obj.kind() {
+                Object::ByteArray(bytes) => decode_text_bytes(bytes, "utf-8", "surrogateescape")?,
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "os.putenv() value must be str or bytes",
+                    ));
+                }
+            },
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "os.putenv() value must be str or bytes",
+                ));
+            }
         };
         // SAFETY: Matches CPython behavior for process environment mutation.
         unsafe {
@@ -681,7 +722,27 @@ impl Vm {
         }
         let key = match args.remove(0) {
             Value::Str(value) => value,
-            _ => return Err(RuntimeError::new("os.unsetenv() key must be str")),
+            Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                Object::Bytes(bytes) => decode_text_bytes(bytes, "utf-8", "surrogateescape")?,
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "os.unsetenv() key must be str or bytes",
+                    ));
+                }
+            },
+            Value::ByteArray(bytes_obj) => match &*bytes_obj.kind() {
+                Object::ByteArray(bytes) => decode_text_bytes(bytes, "utf-8", "surrogateescape")?,
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "os.unsetenv() key must be str or bytes",
+                    ));
+                }
+            },
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "os.unsetenv() key must be str or bytes",
+                ));
+            }
         };
         // SAFETY: Matches CPython behavior for process environment mutation.
         unsafe {
@@ -6684,7 +6745,7 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         let ch = self.unicodedata_single_char_arg(args, kwargs, "category")?;
         Ok(Value::Str(
-            unicodedata_category_for(ch as u32, false).to_string(),
+            unicodedata_category_for(canonical_codepoint_for_internal_char(ch), false).to_string(),
         ))
     }
 
@@ -6695,7 +6756,8 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         let ch = self.unicodedata_single_char_arg(args, kwargs, "bidirectional")?;
         Ok(Value::Str(
-            unicodedata_bidirectional_for(ch as u32, false).to_string(),
+            unicodedata_bidirectional_for(canonical_codepoint_for_internal_char(ch), false)
+                .to_string(),
         ))
     }
 
@@ -6706,7 +6768,7 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         let ch = self.unicodedata_single_char_arg(args, kwargs, "category")?;
         Ok(Value::Str(
-            unicodedata_category_for(ch as u32, true).to_string(),
+            unicodedata_category_for(canonical_codepoint_for_internal_char(ch), true).to_string(),
         ))
     }
 
@@ -6717,7 +6779,8 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         let ch = self.unicodedata_single_char_arg(args, kwargs, "bidirectional")?;
         Ok(Value::Str(
-            unicodedata_bidirectional_for(ch as u32, true).to_string(),
+            unicodedata_bidirectional_for(canonical_codepoint_for_internal_char(ch), true)
+                .to_string(),
         ))
     }
 

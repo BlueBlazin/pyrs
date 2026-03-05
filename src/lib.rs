@@ -10,6 +10,7 @@ pub mod host;
 pub mod parser;
 pub(crate) mod repl_core;
 pub mod runtime;
+pub(crate) mod unicode;
 #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-vm-probe"))]
 pub mod vm;
 

@@ -181,6 +181,43 @@ fn cli_dash_c_sets_sys_argv_like_cpython() {
 }
 
 #[test]
+fn cli_dash_m_runs_module_and_sets_sys_argv_like_cpython() {
+    let root = temp_root("cli_sys_argv_dash_m");
+    let stdlib = root.join("Lib");
+    fs::create_dir_all(&stdlib).expect("create stdlib");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
+
+    fs::write(
+        stdlib.join("argmodule.py"),
+        "import os, sys\nprint(os.path.basename(sys.argv[0]))\nprint(repr(sys.argv[1:]))\n",
+    )
+    .expect("write module");
+
+    let (code, stdout, stderr) = run_pyrs(
+        &root,
+        &["-m", "argmodule", "extra", "args"],
+        &[("PYRS_CPYTHON_LIB", stdlib.as_path())],
+    );
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2, "stdout:\n{stdout}");
+    assert_eq!(lines[0], "argmodule.py", "stdout:\n{stdout}");
+    assert_eq!(lines[1], "['extra', 'args']", "stdout:\n{stdout}");
+}
+
+#[test]
+fn cli_dash_m_requires_module_name() {
+    let root = temp_root("cli_sys_argv_dash_m_missing_name");
+    fs::create_dir_all(&root).expect("create root");
+    let (code, _stdout, stderr) = run_pyrs(&root, &["-m"], &[]);
+    assert_eq!(code, 2, "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("error: -m expects module name"),
+        "stderr:\n{stderr}"
+    );
+}
+
+#[test]
 fn cli_no_args_executes_stdin_when_not_interactive() {
     let root = temp_root("cli_stdin_exec");
     let stdlib = root.join("Lib");

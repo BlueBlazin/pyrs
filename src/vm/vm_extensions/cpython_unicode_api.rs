@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
 use crate::runtime::{Object, Value};
+use crate::unicode::{canonical_codepoint_for_internal_char, internal_char_from_codepoint};
 use crate::vm::{BuiltinFunction, dict_set_value_checked, mod_values, value_to_int};
 
 use super::{
@@ -816,7 +817,9 @@ pub unsafe extern "C" fn PyUnicode_FromOrdinal(ordinal: c_int) -> *mut c_void {
         );
         return std::ptr::null_mut();
     }
-    let Some(ch) = char::from_u32(ordinal as u32) else {
+    let ch = if let Some(ch) = internal_char_from_codepoint(ordinal as u32) {
+        ch
+    } else {
         cpython_set_typed_error(
             unsafe { PyExc_ValueError },
             "chr() arg not in range(0x110000)",
@@ -976,7 +979,7 @@ pub unsafe extern "C" fn PyUnicode_ReadChar(unicode: *mut c_void, index: isize) 
     }
     text.chars()
         .nth(index as usize)
-        .map(|ch| ch as u32)
+        .map(canonical_codepoint_for_internal_char)
         .unwrap_or(u32::MAX)
 }
 

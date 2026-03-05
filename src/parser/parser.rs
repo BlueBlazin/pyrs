@@ -3166,17 +3166,19 @@ impl Parser {
         let trimmed = field.trim();
         let direct = self.parse_embedded_expr(trimmed);
         if let Ok(expr) = direct {
-            return Ok(self.wrap_fstring_value(span, expr, None));
+            let value = self.wrap_fstring_value(span, expr, None);
+            return Ok(self.wrap_fstring_format(span, value, String::new()));
         }
         let fallback = direct.expect_err("checked above");
         let Some(parts) = self.split_fstring_field_parts(trimmed) else {
             return Err(fallback);
         };
-        let _format_spec = parts.format_spec.as_deref();
         let parsed = self
             .parse_embedded_expr(&parts.expr)
             .map_err(|_| fallback.clone())?;
         let mut value_expr = self.wrap_fstring_value(span, parsed, parts.conversion);
+        value_expr =
+            self.wrap_fstring_format(span, value_expr, parts.format_spec.unwrap_or_default());
         if parts.debug {
             let prefix = Expr {
                 span,
@@ -3198,7 +3200,8 @@ impl Parser {
         let func_name = match conversion {
             Some('r') => "repr",
             Some('a') => "ascii",
-            Some('s') | None => "str",
+            Some('s') => "str",
+            None => return expr,
             Some(_) => "str",
         };
         Expr {
@@ -3209,6 +3212,25 @@ impl Parser {
                     node: ExprKind::Name(func_name.to_string()),
                 }),
                 args: vec![CallArg::Positional(expr)],
+            },
+        }
+    }
+
+    fn wrap_fstring_format(&self, span: Span, value: Expr, format_spec: String) -> Expr {
+        Expr {
+            span,
+            node: ExprKind::Call {
+                func: Box::new(Expr {
+                    span,
+                    node: ExprKind::Name("format".to_string()),
+                }),
+                args: vec![
+                    CallArg::Positional(value),
+                    CallArg::Positional(Expr {
+                        span,
+                        node: ExprKind::Constant(Constant::Str(format_spec)),
+                    }),
+                ],
             },
         }
     }

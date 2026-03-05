@@ -210,6 +210,79 @@ impl Vm {
     }
 
     #[inline]
+    fn rewrite_module_value_reference(value: &mut Value, replaced_id: u64, canonical: &ObjRef) {
+        if let Value::Module(module) = value
+            && module.id() == replaced_id
+        {
+            *value = Value::Module(canonical.clone());
+        }
+    }
+
+    #[inline]
+    fn rewrite_module_refs_in_values(values: &mut [Value], replaced_id: u64, canonical: &ObjRef) {
+        for value in values {
+            Self::rewrite_module_value_reference(value, replaced_id, canonical);
+        }
+    }
+
+    #[inline]
+    fn rewrite_module_refs_in_named_values(
+        values: &mut HashMap<String, Value>,
+        replaced_id: u64,
+        canonical: &ObjRef,
+    ) {
+        for value in values.values_mut() {
+            Self::rewrite_module_value_reference(value, replaced_id, canonical);
+        }
+    }
+
+    #[inline]
+    fn reconcile_live_module_references_after_replacement(
+        &mut self,
+        replaced: &ObjRef,
+        canonical: &ObjRef,
+    ) {
+        if replaced.id() == canonical.id() {
+            return;
+        }
+        let replaced_id = replaced.id();
+        for frame in self.frames.iter_mut() {
+            Self::rewrite_module_refs_in_values(&mut frame.stack, replaced_id, canonical);
+            Self::rewrite_module_refs_in_named_values(&mut frame.locals, replaced_id, canonical);
+            if let Some(locals_fallback) = frame.locals_fallback.as_mut() {
+                Self::rewrite_module_refs_in_named_values(locals_fallback, replaced_id, canonical);
+            }
+            for value in frame.fast_locals.iter_mut().flatten() {
+                Self::rewrite_module_value_reference(value, replaced_id, canonical);
+            }
+            if let Some(value) = frame.class_namespace.as_mut() {
+                Self::rewrite_module_value_reference(value, replaced_id, canonical);
+            }
+            if let Some(value) = frame.class_orig_bases.as_mut() {
+                Self::rewrite_module_value_reference(value, replaced_id, canonical);
+            }
+            if let Some(value) = frame.class_metaclass.as_mut() {
+                Self::rewrite_module_value_reference(value, replaced_id, canonical);
+            }
+            for value in frame.class_keywords.values_mut() {
+                Self::rewrite_module_value_reference(value, replaced_id, canonical);
+            }
+            if let Some(value) = frame.active_exception.as_mut() {
+                Self::rewrite_module_value_reference(value, replaced_id, canonical);
+            }
+            if let Some(value) = frame.generator_resume_value.as_mut() {
+                Self::rewrite_module_value_reference(value, replaced_id, canonical);
+            }
+            if let Some(value) = frame.generator_pending_throw.as_mut() {
+                Self::rewrite_module_value_reference(value, replaced_id, canonical);
+            }
+            if let Some(value) = frame.yield_from_iter.as_mut() {
+                Self::rewrite_module_value_reference(value, replaced_id, canonical);
+            }
+        }
+    }
+
+    #[inline]
     fn finalize_module_frame_success(&mut self, frame: &Frame) {
         if !frame.is_module {
             return;
@@ -225,6 +298,7 @@ impl Vm {
             let canonical =
                 self.canonical_imported_module_for_name(&module_name, frame.module.clone());
             if canonical.id() != frame.module.id() {
+                self.reconcile_live_module_references_after_replacement(&frame.module, &canonical);
                 self.link_module_chain(&module_name, canonical.clone());
             }
             canonical
@@ -985,7 +1059,19 @@ impl Vm {
                     Err(err) => return Err(err),
                 },
             }
-            if self.gc_auto_collect_enabled {
+            let safe_for_gc_auto = self
+                .frames
+                .last()
+                .map(|frame| {
+                    frame.code.name != "__del__"
+                        && frame.generator_owner.is_none()
+                        && self.active_generator_resume.is_none()
+                })
+                .unwrap_or(false);
+            if self.gc_auto_collect_enabled
+                && !self.running_pending_del_finalizers
+                && safe_for_gc_auto
+            {
                 self.maybe_gc_collect_automatic();
             }
             if !self.pending_del_instances.is_empty() || !self.weakref_finalizers.is_empty() {
@@ -998,7 +1084,12 @@ impl Vm {
                 let safe_for_pending_finalizers = self
                     .frames
                     .last()
-                    .map(|frame| frame.active_exception.is_none())
+                    .map(|frame| {
+                        frame.active_exception.is_none()
+                            && frame.code.name != "__del__"
+                            && frame.generator_owner.is_none()
+                            && self.active_generator_resume.is_none()
+                    })
                     .unwrap_or(false);
                 if safe_for_pending_finalizers {
                     self.run_pending_del_finalizers(false);
@@ -8713,6 +8804,7 @@ impl Vm {
                         exc
                     );
                 }
+                Self::clear_stale_yield_from_on_handler_entry(frame);
                 frame.stack.truncate(block.stack_len);
                 frame.stack.push(exc.clone());
                 frame.ip = block.handler;
@@ -8736,6 +8828,7 @@ impl Vm {
                         frame.stack.len()
                     );
                 }
+                Self::clear_stale_yield_from_on_handler_entry(frame);
                 if frame.stack.len() > depth {
                     frame.stack.truncate(depth);
                 }
@@ -8778,6 +8871,18 @@ impl Vm {
                         Some(GeneratorResumeOutcome::PropagatedException);
                 }
             }
+        }
+    }
+
+    #[inline]
+    fn clear_stale_yield_from_on_handler_entry(frame: &mut Frame) {
+        let current_opcode =
+            frame.code.instructions.get(frame.last_ip).map(|instr| instr.opcode);
+        // Only clear delegated-yield state when the exception was raised from
+        // `YIELD_FROM`/`SEND` handling itself. This fixes stale await delegates
+        // while avoiding unrelated handler-path regressions.
+        if matches!(current_opcode, Some(Opcode::YieldFrom | Opcode::Send)) {
+            frame.yield_from_iter = None;
         }
     }
 
@@ -11231,10 +11336,13 @@ impl Vm {
 
     #[inline(always)]
     pub(super) fn pop_value(&mut self) -> Result<Value, RuntimeError> {
-        let frame = self.frames.last_mut().expect("frame exists");
-        if let Some(value) = frame.stack.pop() {
-            return Ok(value);
+        {
+            let frame = self.frames.last_mut().expect("frame exists");
+            if let Some(value) = frame.stack.pop() {
+                return Ok(value);
+            }
         }
+        let frame = self.frames.last_mut().expect("frame exists");
         let ip = frame.ip.saturating_sub(1);
         let opcode_name = frame
             .code

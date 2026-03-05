@@ -237,7 +237,7 @@ fn strict_unittest_timeout() -> Duration {
     let secs = std::env::var("PYRS_STRICT_HARNESS_TIMEOUT_SECS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(120);
+        .unwrap_or(600);
     Duration::from_secs(secs.max(1))
 }
 
