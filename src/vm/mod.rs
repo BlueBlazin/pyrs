@@ -9212,6 +9212,8 @@ const SRE_OP_ASSERT_NOT: i64 = 5;
 const SRE_OP_AT: i64 = 6;
 const SRE_OP_BRANCH: i64 = 7;
 const SRE_OP_CATEGORY: i64 = 8;
+const SRE_OP_CHARSET: i64 = 9;
+const SRE_OP_BIGCHARSET: i64 = 10;
 const SRE_OP_GROUPREF: i64 = 11;
 const SRE_OP_IN: i64 = 13;
 const SRE_OP_INFO: i64 = 14;
@@ -9269,12 +9271,40 @@ const SRE_CATEGORY_UNI_NOT_WORD: i64 = 15;
 const SRE_CATEGORY_UNI_LINEBREAK: i64 = 16;
 const SRE_CATEGORY_UNI_NOT_LINEBREAK: i64 = 17;
 
+// CPython _sre.CODESIZE is 4 bytes for the 3.14 ABI we target.
+const SRE_CODE_SIZE_BYTES: usize = 4;
+const SRE_CODE_BITS: usize = SRE_CODE_SIZE_BYTES * 8;
+const SRE_CHARSET_WORDS: usize = 256 / SRE_CODE_BITS;
+const SRE_BIGCHARSET_MAPPING_WORDS: usize = 256 / SRE_CODE_SIZE_BYTES;
+
 fn sre_read_usize(code: &[i64], index: usize) -> Option<usize> {
     let raw = *code.get(index)?;
     if raw < 0 {
         return None;
     }
     Some(raw as usize)
+}
+
+fn sre_read_u32(code: &[i64], index: usize) -> Option<u32> {
+    u32::try_from(*code.get(index)?).ok()
+}
+
+fn sre_bitmap_contains(code: &[i64], words_start: usize, bit_index: usize) -> Option<bool> {
+    let word_offset = bit_index / SRE_CODE_BITS;
+    let bit_offset = bit_index % SRE_CODE_BITS;
+    let word = u64::from(sre_read_u32(code, words_start + word_offset)?);
+    Some((word & (1u64 << bit_offset)) != 0)
+}
+
+fn sre_bigcharset_mapping_byte(
+    code: &[i64],
+    mapping_start: usize,
+    byte_index: usize,
+) -> Option<u8> {
+    let word_index = mapping_start + (byte_index / SRE_CODE_SIZE_BYTES);
+    let byte_offset = byte_index % SRE_CODE_SIZE_BYTES;
+    let bytes = sre_read_u32(code, word_index)?.to_ne_bytes();
+    Some(bytes[byte_offset])
 }
 
 fn sre_char_equal_ignore_case(left: char, right: char) -> bool {
@@ -9376,19 +9406,18 @@ fn sre_class_matches(
         SRE_OP_IN_IGNORE | SRE_OP_IN_LOC_IGNORE | SRE_OP_IN_UNI_IGNORE
     );
     let mut idx = class_start;
-    let mut negate = false;
-    let mut matched = false;
+    let mut ok = true;
     while idx < class_end {
         let opcode = *code.get(idx)?;
         idx += 1;
         match opcode {
-            SRE_OP_FAILURE => break,
-            SRE_OP_NEGATE => negate = true,
+            SRE_OP_FAILURE => return Some(!ok),
+            SRE_OP_NEGATE => ok = !ok,
             SRE_OP_LITERAL
             | SRE_OP_LITERAL_IGNORE
             | SRE_OP_LITERAL_LOC_IGNORE
             | SRE_OP_LITERAL_UNI_IGNORE => {
-                let value = *code.get(idx)? as u32;
+                let value = sre_read_u32(code, idx)?;
                 idx += 1;
                 let expected = char::from_u32(value)?;
                 let is_match = if ignore_case {
@@ -9396,11 +9425,13 @@ fn sre_class_matches(
                 } else {
                     ch == expected
                 };
-                matched |= is_match;
+                if is_match {
+                    return Some(ok);
+                }
             }
             SRE_OP_RANGE | SRE_OP_RANGE_UNI_IGNORE => {
-                let lo = char::from_u32(*code.get(idx)? as u32)?;
-                let hi = char::from_u32(*code.get(idx + 1)? as u32)?;
+                let lo = char::from_u32(sre_read_u32(code, idx)?)?;
+                let hi = char::from_u32(sre_read_u32(code, idx + 1)?)?;
                 idx += 2;
                 let is_match = if ignore_case || opcode == SRE_OP_RANGE_UNI_IGNORE {
                     let lower = ch.to_lowercase().next().unwrap_or(ch);
@@ -9409,17 +9440,54 @@ fn sre_class_matches(
                 } else {
                     ch >= lo && ch <= hi
                 };
-                matched |= is_match;
+                if is_match {
+                    return Some(ok);
+                }
             }
             SRE_OP_CATEGORY => {
                 let category = *code.get(idx)?;
                 idx += 1;
-                matched |= sre_category_matches(category, ch);
+                if sre_category_matches(category, ch) {
+                    return Some(ok);
+                }
+            }
+            SRE_OP_CHARSET => {
+                let ch_u32 = ch as u32;
+                if ch_u32 < 256 && sre_bitmap_contains(code, idx, ch_u32 as usize)? {
+                    return Some(ok);
+                }
+                idx = idx.checked_add(SRE_CHARSET_WORDS)?;
+            }
+            SRE_OP_BIGCHARSET => {
+                let block_count = sre_read_usize(code, idx)?;
+                idx += 1;
+                let mapping_start = idx;
+                let ch_u32 = ch as u32;
+                let block = if ch_u32 < 0x10000 {
+                    Some(
+                        sre_bigcharset_mapping_byte(code, mapping_start, (ch_u32 >> 8) as usize)?
+                            as usize,
+                    )
+                } else {
+                    None
+                };
+                idx = idx.checked_add(SRE_BIGCHARSET_MAPPING_WORDS)?;
+                if let Some(block_index) = block {
+                    if block_index < block_count {
+                        let block_words_offset = block_index.checked_mul(SRE_CHARSET_WORDS)?;
+                        let block_start = idx.checked_add(block_words_offset)?;
+                        if sre_bitmap_contains(code, block_start, (ch_u32 & 0xff) as usize)? {
+                            return Some(ok);
+                        }
+                    }
+                }
+                let total_block_words = block_count.checked_mul(SRE_CHARSET_WORDS)?;
+                idx = idx.checked_add(total_block_words)?;
             }
             _ => return None,
         }
     }
-    Some(if negate { !matched } else { matched })
+    Some(!ok)
 }
 
 fn sre_groupref_matches(

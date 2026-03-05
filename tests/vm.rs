@@ -12721,6 +12721,26 @@ fn re_match_supports_char_classes_ranges_and_plus() {
 }
 
 #[test]
+fn re_match_charclass_mixed_range_and_literals_matches_cpython() {
+    let source = "import re\npat = re.compile(r'^[a2-9tjqk]+$')\nletters = re.compile(r'^[tjqk]+$')\nok = (\n    pat.match('akt5q') is not None\n    and pat.match('1') is None\n    and pat.match('xyz') is None\n    and letters.match('tjkq') is not None\n    and letters.match('aq') is None\n)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn re_docs_displaymatch_example_returns_expected_result() {
+    let source = "import re\ndef displaymatch(match):\n    if match is None:\n        return None\n    return '<Match: %r, groups=%r>' % (match.group(), match.groups())\nvalid = re.compile(r'^[a2-9tjqk]{5}$')\nresult = displaymatch(valid.match('akt5q'))\nok = (result == \"<Match: 'akt5q', groups=()>\")\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn re_match_supports_basic_capturing_parentheses() {
     let source = "import re\nok = re.match('(-*A-*)', 'A') is not None\n";
     let module = parser::parse_module(source).expect("parse should succeed");
