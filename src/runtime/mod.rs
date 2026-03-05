@@ -14,11 +14,24 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Index;
 use std::rc::{Rc, Weak};
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering as AtomicOrdering};
 
 use crate::bytecode::CodeObject;
 pub use bigint::BigInt;
 use dict_backend::DictBackend;
+
+pub const DEFAULT_INT_MAX_STR_DIGITS: i64 = 4300;
+pub const MIN_INT_MAX_STR_DIGITS: i64 = 640;
+
+static INT_MAX_STR_DIGITS_LIMIT: AtomicI64 = AtomicI64::new(DEFAULT_INT_MAX_STR_DIGITS);
+
+pub fn runtime_get_int_max_str_digits() -> i64 {
+    INT_MAX_STR_DIGITS_LIMIT.load(AtomicOrdering::Relaxed)
+}
+
+pub fn runtime_set_int_max_str_digits(limit: i64) {
+    INT_MAX_STR_DIGITS_LIMIT.store(limit, AtomicOrdering::Relaxed);
+}
 
 pub struct ModuleObject {
     pub name: String,
@@ -305,6 +318,7 @@ pub enum NativeMethodKind {
     DictDelItem,
     DictPop,
     DictPopItem,
+    DictMoveToEnd,
     DictCopy,
     DictInit,
     ContextVarGetMethod,
@@ -335,9 +349,11 @@ pub enum NativeMethodKind {
     IntToBytes,
     IntBitLengthMethod,
     IntIndexMethod,
+    IntReprMethod,
     FloatAsIntegerRatioMethod,
     FloatIsIntegerMethod,
     FloatConjugateMethod,
+    FloatReprMethod,
     StrStartsWith,
     StrEndsWith,
     StrReplace,
@@ -1497,6 +1513,10 @@ pub enum IteratorKind {
         stop: BigInt,
         step: BigInt,
     },
+    Enumerate {
+        iterator: Value,
+        next_index: i64,
+    },
     Map {
         values: Vec<Value>,
         func: Value,
@@ -1664,6 +1684,14 @@ impl fmt::Debug for IteratorKind {
                 .field("start", start)
                 .field("stop", stop)
                 .field("step", step)
+                .finish(),
+            IteratorKind::Enumerate {
+                iterator,
+                next_index,
+            } => f
+                .debug_struct("Enumerate")
+                .field("iterator", iterator)
+                .field("next_index", next_index)
                 .finish(),
             IteratorKind::Map {
                 values,
@@ -2600,6 +2628,9 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                     trace_value(value, stack, marked);
                 }
             }
+            IteratorKind::Enumerate { iterator, .. } => {
+                trace_value(iterator, stack, marked);
+            }
             IteratorKind::Map {
                 values,
                 func,
@@ -2880,6 +2911,11 @@ fn clear_object_refs(obj: &ObjRef) {
                     iterator.index = 0;
                 }
                 IteratorKind::Count { .. } => {
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Enumerate { iterator: source, .. } => {
+                    *source = Value::None;
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -3759,6 +3795,10 @@ pub enum BuiltinFunction {
     SysException,
     SysExcInfo,
     SysCallTracing,
+    SysGetTrace,
+    SysSetTrace,
+    SysGetIntMaxStrDigits,
+    SysSetIntMaxStrDigits,
     SysExcepthook,
     SysDisplayHook,
     SysIntern,
@@ -5312,6 +5352,16 @@ impl BuiltinFunction {
 
                     let normalized = normalize_int_digits_for_base(digits, base as u32, saw_prefix)
                         .ok_or_else(|| RuntimeError::value_error("invalid literal for int()"))?;
+                    if base == 10 {
+                        let limit = runtime_get_int_max_str_digits();
+                        if limit > 0 && normalized.len() > limit as usize {
+                            return Err(RuntimeError::value_error(format!(
+                                "Exceeds the limit ({} digits) for integer string conversion: value has {} digits; use sys.set_int_max_str_digits() to increase the limit",
+                                limit,
+                                normalized.len()
+                            )));
+                        }
+                    }
                     if explicit_base == Some(0)
                         && !saw_prefix
                         && normalized.len() > 1
@@ -5502,21 +5552,29 @@ impl BuiltinFunction {
             }
             BuiltinFunction::Chr => {
                 if args.len() != 1 {
-                    return Err(RuntimeError::new("chr() expects one argument"));
+                    return Err(RuntimeError::type_error(format!(
+                        "chr() takes exactly one argument ({} given)",
+                        args.len()
+                    )));
                 }
                 let codepoint = match &args[0] {
                     Value::Int(value) => *value,
                     Value::BigInt(value) => value
                         .to_i64()
-                        .ok_or_else(|| RuntimeError::new("chr() arg not in range(0x110000)"))?,
+                        .ok_or_else(|| RuntimeError::value_error("chr() arg not in range(0x110000)"))?,
                     Value::Bool(value) => i64::from(*value),
-                    _ => return Err(RuntimeError::new("chr() argument must be int")),
+                    other => {
+                        return Err(RuntimeError::type_error(format!(
+                            "'{}' object cannot be interpreted as an integer",
+                            value_type_name(other)
+                        )));
+                    }
                 };
                 if !(0..=0x10FFFF).contains(&codepoint) {
-                    return Err(RuntimeError::new("chr() arg not in range(0x110000)"));
+                    return Err(RuntimeError::value_error("chr() arg not in range(0x110000)"));
                 }
                 let ch = char::from_u32(codepoint as u32)
-                    .ok_or_else(|| RuntimeError::new("chr() arg not in range(0x110000)"))?;
+                    .ok_or_else(|| RuntimeError::value_error("chr() arg not in range(0x110000)"))?;
                 Ok(Value::Str(ch.to_string()))
             }
             BuiltinFunction::Bin => {
@@ -7416,6 +7474,10 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::SysException
             | BuiltinFunction::SysExcInfo
             | BuiltinFunction::SysCallTracing
+            | BuiltinFunction::SysGetTrace
+            | BuiltinFunction::SysSetTrace
+            | BuiltinFunction::SysGetIntMaxStrDigits
+            | BuiltinFunction::SysSetIntMaxStrDigits
             | BuiltinFunction::SysExcepthook
             | BuiltinFunction::SysDisplayHook
             | BuiltinFunction::SysIntern
@@ -8689,6 +8751,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                 }
                 IteratorKind::CallIter { .. }
                 | IteratorKind::Count { .. }
+                | IteratorKind::Enumerate { .. }
                 | IteratorKind::Cycle { .. }
                 | IteratorKind::Zip { .. }
                 | IteratorKind::Chain { .. }
@@ -9807,6 +9870,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::DictDelItem => "<bound method dict.__delitem__>".to_string(),
                     NativeMethodKind::DictPop => "<bound method dict.pop>".to_string(),
                     NativeMethodKind::DictPopItem => "<bound method dict.popitem>".to_string(),
+                    NativeMethodKind::DictMoveToEnd => {
+                        "<bound method OrderedDict.move_to_end>".to_string()
+                    }
                     NativeMethodKind::DictCopy => "<bound method dict.copy>".to_string(),
                     NativeMethodKind::DictInit => "<bound method dict.__init__>".to_string(),
                     NativeMethodKind::ContextVarGetMethod => {
@@ -9853,6 +9919,7 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method int.bit_length>".to_string()
                     }
                     NativeMethodKind::IntIndexMethod => "<bound method int.__index__>".to_string(),
+                    NativeMethodKind::IntReprMethod => "<bound method int.__repr__>".to_string(),
                     NativeMethodKind::FloatAsIntegerRatioMethod => {
                         "<bound method float.as_integer_ratio>".to_string()
                     }
@@ -9861,6 +9928,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::FloatConjugateMethod => {
                         "<bound method float.conjugate>".to_string()
+                    }
+                    NativeMethodKind::FloatReprMethod => {
+                        "<bound method float.__repr__>".to_string()
                     }
                     NativeMethodKind::StrStartsWith => "<bound method str.startswith>".to_string(),
                     NativeMethodKind::StrEndsWith => "<bound method str.endswith>".to_string(),
@@ -10624,6 +10694,12 @@ impl RuntimeError {
     pub fn with_exception(name: impl Into<String>, message: Option<String>) -> Self {
         let name = name.into();
         let exception = ExceptionObject::new(name.clone(), message.clone());
+        if matches!(name.as_str(), "StopIteration" | "StopAsyncIteration") {
+            exception.attrs.borrow_mut().insert(
+                "value".to_string(),
+                message.clone().map(Value::Str).unwrap_or(Value::None),
+            );
+        }
         if is_import_error_family(name.as_str()) {
             let parsed = message
                 .as_deref()
@@ -10732,7 +10808,13 @@ impl RuntimeError {
     }
 
     pub fn stop_iteration(message: impl Into<String>) -> Self {
-        Self::with_exception("StopIteration", Some(message.into()))
+        let message = message.into();
+        let message = if message.is_empty() || message == "StopIteration" {
+            None
+        } else {
+            Some(message)
+        };
+        Self::with_exception("StopIteration", message)
     }
 
     pub fn unsupported_operation(message: impl Into<String>) -> Self {
@@ -10795,6 +10877,18 @@ fn runtime_error_exception_from_message(message: &str) -> Option<ExceptionObject
         });
 
     let exception = ExceptionObject::new(exception_type.clone(), exception_message.clone());
+    if matches!(
+        exception_type.as_str(),
+        "StopIteration" | "StopAsyncIteration"
+    ) {
+        exception.attrs.borrow_mut().insert(
+            "value".to_string(),
+            exception_message
+                .clone()
+                .map(Value::Str)
+                .unwrap_or(Value::None),
+        );
+    }
     if is_import_error_family(exception_type.as_str()) {
         let parsed = extract_import_error_context(trimmed);
         let mut attrs = exception.attrs.borrow_mut();

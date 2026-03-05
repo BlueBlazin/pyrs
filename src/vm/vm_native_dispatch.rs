@@ -14,7 +14,7 @@ use super::{
     PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc, ReMode, RePatternValue, RuntimeError, Value, Vm,
     bigint_to_fixed_bytes, bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup,
     class_name_for_instance, decode_text_bytes, dict_get_value, dict_remove_value, dict_set_value,
-    dict_set_value_checked, encode_text_bytes, ensure_hashable, exception_is_named,
+    dict_set_value_checked, encode_text_bytes, ensure_hashable, exception_is_named, format_repr,
     find_bytes_subslice, format_value, is_truthy, memoryview_bounds, memoryview_decode_tolist,
     memoryview_format_for_view, memoryview_shape_and_strides_from_parts, normalize_codec_encoding,
     normalize_codec_errors, parse_memoryview_cast_format, parse_string_formatter,
@@ -141,7 +141,24 @@ impl Vm {
                     )));
                 }
                 let receiver_value = args.remove(0);
-                let Value::Float(value) = receiver_value else {
+                let value = match &receiver_value {
+                    Value::Float(value) => Some(*value),
+                    Value::Instance(instance) => {
+                        let has_float_base = match &*instance.kind() {
+                            Object::Instance(instance_data) => {
+                                self.class_has_builtin_float_base(&instance_data.class)
+                            }
+                            _ => false,
+                        };
+                        if has_float_base {
+                            self.instance_backing_float(instance)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                let Some(value) = value else {
                     return Err(RuntimeError::type_error(format!(
                         "descriptor '{}' for 'float' objects doesn't apply to a '{}' object",
                         method_name,
@@ -156,6 +173,70 @@ impl Vm {
                 Ok(value)
             }
             _ => Err(RuntimeError::type_error("float receiver is invalid")),
+        }
+    }
+
+    fn extract_int_receiver_value_for_repr_call(
+        &self,
+        receiver: &ObjRef,
+        args: &mut Vec<Value>,
+        method_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        match &*receiver.kind() {
+            Object::Module(module_data) if module_data.name == "__int_method__" => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new(format!(
+                        "{method_name}() expects no arguments"
+                    )));
+                }
+                match module_data.globals.get("value") {
+                    Some(Value::Int(value)) => Ok(Value::Int(*value)),
+                    Some(Value::BigInt(value)) => Ok(Value::BigInt(value.clone())),
+                    Some(Value::Bool(value)) => Ok(Value::Bool(*value)),
+                    _ => Err(RuntimeError::type_error("int receiver is invalid")),
+                }
+            }
+            Object::Module(module_data) if module_data.name == "__int_unbound_method__" => {
+                if args.is_empty() {
+                    return Err(RuntimeError::type_error(format!(
+                        "unbound method int.{method_name}() needs an argument"
+                    )));
+                }
+                let receiver_value = args.remove(0);
+                let int_like = match &receiver_value {
+                    Value::Int(value) => Some(Value::Int(*value)),
+                    Value::BigInt(value) => Some(Value::BigInt(value.clone())),
+                    Value::Bool(value) => Some(Value::Bool(*value)),
+                    Value::Instance(instance) => {
+                        let has_int_base = match &*instance.kind() {
+                            Object::Instance(instance_data) => {
+                                self.class_has_builtin_int_base(&instance_data.class)
+                            }
+                            _ => false,
+                        };
+                        if has_int_base {
+                            self.instance_backing_int(instance)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                let Some(int_like) = int_like else {
+                    return Err(RuntimeError::type_error(format!(
+                        "descriptor '{}' for 'int' objects doesn't apply to a '{}' object",
+                        method_name,
+                        self.value_type_name_for_error(&receiver_value)
+                    )));
+                };
+                if !args.is_empty() {
+                    return Err(RuntimeError::new(format!(
+                        "{method_name}() expects no arguments"
+                    )));
+                }
+                Ok(int_like)
+            }
+            _ => Err(RuntimeError::type_error("int receiver is invalid")),
         }
     }
 
@@ -286,7 +367,7 @@ impl Vm {
             }
         }
         let _depth_guard = CallNativeMethodDepthGuard;
-        let hard_limit = (self.recursion_limit.max(1) as usize).saturating_mul(4);
+        let hard_limit = (self.effective_recursion_limit() as usize).saturating_mul(4);
         if self.trace_flags.native_call_depth && depth >= hard_limit.saturating_sub(16) {
             let receiver_name = match &*receiver.kind() {
                 Object::Class(class_data) => format!("class:{}", class_data.name),
@@ -1420,6 +1501,79 @@ impl Vm {
                     self.heap.alloc_tuple(vec![key, value]),
                 ))
             }
+            NativeMethodKind::DictMoveToEnd => {
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => receiver.clone(),
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.is_empty() {
+                            return Err(RuntimeError::new(
+                                "OrderedDict.move_to_end() receiver must be dict",
+                            ));
+                        }
+                        match args.remove(0) {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new(
+                                        "OrderedDict.move_to_end() receiver must be dict",
+                                    )
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "OrderedDict.move_to_end() receiver must be dict",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "OrderedDict.move_to_end() receiver must be dict",
+                        ));
+                    }
+                };
+
+                let mut last = true;
+                if let Some(value) = kwargs.get("last") {
+                    last = is_truthy(value);
+                }
+                if kwargs.keys().any(|name| name != "last") {
+                    return Err(RuntimeError::new(
+                        "OrderedDict.move_to_end() got an unexpected keyword argument",
+                    ));
+                }
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new(
+                        "OrderedDict.move_to_end() expects key and optional last",
+                    ));
+                }
+                let key = args.remove(0);
+                if let Some(positional_last) = args.first() {
+                    if kwargs.contains_key("last") {
+                        return Err(RuntimeError::new(
+                            "OrderedDict.move_to_end() got multiple values for argument 'last'",
+                        ));
+                    }
+                    last = is_truthy(positional_last);
+                }
+
+                let Some(value) = self.dict_remove_value_runtime(&dict_receiver, &key)? else {
+                    return Err(RuntimeError::key_error("key not found"));
+                };
+                if last {
+                    dict_set_value_checked(&dict_receiver, key, value)?;
+                } else if let Object::Dict(entries) = &mut *dict_receiver.kind_mut() {
+                    let tail = entries.to_vec();
+                    entries.clear();
+                    entries.insert(key, value);
+                    for (tail_key, tail_value) in tail {
+                        entries.insert(tail_key, tail_value);
+                    }
+                }
+                Ok(NativeCallResult::Value(Value::None))
+            }
             NativeMethodKind::ListAppend => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("list.append() expects one argument"));
@@ -2391,6 +2545,23 @@ impl Vm {
                 };
                 Ok(NativeCallResult::Value(value))
             }
+            NativeMethodKind::IntReprMethod => {
+                let value =
+                    self.extract_int_receiver_value_for_repr_call(&receiver, &mut args, "__repr__")?;
+                let rendered = match value {
+                    Value::Int(number) => number.to_string(),
+                    Value::BigInt(number) => number.to_string(),
+                    Value::Bool(flag) => {
+                        if flag {
+                            "1".to_string()
+                        } else {
+                            "0".to_string()
+                        }
+                    }
+                    _ => return Err(RuntimeError::type_error("int receiver is invalid")),
+                };
+                Ok(NativeCallResult::Value(Value::Str(rendered)))
+            }
             NativeMethodKind::FloatAsIntegerRatioMethod => {
                 let value = self.extract_float_receiver_value_for_method_call(
                     &receiver,
@@ -2469,6 +2640,13 @@ impl Vm {
                     "conjugate",
                 )?;
                 Ok(NativeCallResult::Value(Value::Float(value)))
+            }
+            NativeMethodKind::FloatReprMethod => {
+                let value =
+                    self.extract_float_receiver_value_for_method_call(&receiver, &mut args, "__repr__")?;
+                Ok(NativeCallResult::Value(Value::Str(format_repr(&Value::Float(
+                    value,
+                )))))
             }
             NativeMethodKind::StrStartsWith | NativeMethodKind::StrEndsWith => {
                 let method_name = if matches!(kind, NativeMethodKind::StrStartsWith) {
@@ -5728,6 +5906,10 @@ impl Vm {
                                 value
                             }));
                         }
+                        let mut byte_offsets: Vec<usize> =
+                            text.char_indices().map(|(idx, _)| idx).collect();
+                        byte_offsets.push(text.len());
+                        let text_char_len = byte_offsets.len().saturating_sub(1);
                         let mut segment_start = 0usize;
                         let mut search_pos = 0usize;
                         let mut out = String::new();
@@ -5767,8 +5949,8 @@ impl Vm {
                                     Err(_) => break,
                                 };
                             if match_start < search_pos
-                                || match_start > text.len()
-                                || match_end > text.len()
+                                || match_start > text_char_len
+                                || match_end > text_char_len
                                 || match_end < match_start
                             {
                                 return Err(RuntimeError::new("invalid regex match bounds"));
@@ -5776,7 +5958,19 @@ impl Vm {
                             if match_end < match_start {
                                 break;
                             }
-                            out.push_str(&text[segment_start..match_start]);
+                            let segment_start_byte = byte_offsets
+                                .get(segment_start)
+                                .copied()
+                                .ok_or_else(|| RuntimeError::new("invalid regex match bounds"))?;
+                            let match_start_byte = byte_offsets
+                                .get(match_start)
+                                .copied()
+                                .ok_or_else(|| RuntimeError::new("invalid regex match bounds"))?;
+                            let match_end_byte = byte_offsets
+                                .get(match_end)
+                                .copied()
+                                .ok_or_else(|| RuntimeError::new("invalid regex match bounds"))?;
+                            out.push_str(&text[segment_start_byte..match_start_byte]);
                             let replacement_text = if replacement_is_callable {
                                 let replacement_value = match self.call_internal(
                                     replacement.clone(),
@@ -5802,7 +5996,7 @@ impl Vm {
                                 let template = replacement_template
                                     .as_ref()
                                     .expect("replacement template must exist");
-                                let whole_match = &text[match_start..match_end];
+                                let whole_match = &text[match_start_byte..match_end_byte];
                                 let mut expanded = String::new();
                                 let chars = template.chars().collect::<Vec<_>>();
                                 let mut idx = 0usize;
@@ -5858,20 +6052,19 @@ impl Vm {
                             replaced += 1;
                             segment_start = match_end;
                             if match_end == match_start {
-                                if search_pos >= text.len() {
+                                if search_pos >= text_char_len {
                                     break;
                                 }
-                                let step = text[search_pos..]
-                                    .chars()
-                                    .next()
-                                    .map(|ch| ch.len_utf8())
-                                    .unwrap_or(1);
-                                search_pos = (search_pos + step).min(text.len());
+                                search_pos = (search_pos + 1).min(text_char_len);
                             } else {
                                 search_pos = match_end;
                             }
                         }
-                        out.push_str(&text[segment_start..]);
+                        let segment_start_byte = byte_offsets
+                            .get(segment_start)
+                            .copied()
+                            .ok_or_else(|| RuntimeError::new("invalid regex match bounds"))?;
+                        out.push_str(&text[segment_start_byte..]);
                         let value = Value::Str(out);
                         Ok(NativeCallResult::Value(if return_count {
                             self.heap
@@ -9515,6 +9708,7 @@ impl Vm {
                     IteratorKind::MemoryView(_) => "memoryview_iterator",
                     IteratorKind::Cycle { .. } => "cycle",
                     IteratorKind::Count { .. } => "count",
+                    IteratorKind::Enumerate { .. } => "enumerate",
                     IteratorKind::Map { .. } => "map",
                     IteratorKind::Zip { .. } => "zip",
                     IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => "chain",
@@ -9576,6 +9770,10 @@ impl Vm {
             CallIter {
                 callable: Value,
                 sentinel: Value,
+            },
+            EnumerateAdvance {
+                iterator: Value,
+                next_index: i64,
             },
             CycleAdvance {
                 source: Value,
@@ -9822,6 +10020,15 @@ impl Vm {
                     let value = *current;
                     *current = current.saturating_add(*step);
                     return Ok(Some(Value::Int(value)));
+                }
+                IteratorKind::Enumerate {
+                    iterator,
+                    next_index,
+                } => {
+                    pending_step = PendingIteratorStep::EnumerateAdvance {
+                        iterator: iterator.clone(),
+                        next_index: *next_index,
+                    };
                 }
                 IteratorKind::Map {
                     values,
@@ -10337,6 +10544,27 @@ impl Vm {
         }
 
         match pending_step {
+            PendingIteratorStep::EnumerateAdvance {
+                iterator,
+                next_index,
+            } => match self.next_from_iterator_value(&iterator)? {
+                GeneratorResumeOutcome::Yield(value) => {
+                    let pair = self.heap.alloc_tuple(vec![Value::Int(next_index), value]);
+                    let mut iter = iterator_ref.kind_mut();
+                    if let Object::Iterator(state) = &mut *iter
+                        && let IteratorKind::Enumerate { next_index, .. } = &mut state.kind
+                    {
+                        *next_index = next_index.saturating_add(1);
+                        state.index = state.index.saturating_add(1);
+                        return Ok(Some(pair));
+                    }
+                    Ok(None)
+                }
+                GeneratorResumeOutcome::Complete(_) => Ok(None),
+                GeneratorResumeOutcome::PropagatedException => Err(
+                    self.iteration_error_from_state("enumerate() iteration failed")?,
+                ),
+            },
             PendingIteratorStep::MapEvaluate { func, iterators } => {
                 let mut call_args = Vec::with_capacity(iterators.len());
                 for iterator in &iterators {
@@ -11704,6 +11932,21 @@ impl Vm {
         let _ = self.set_generator_running(&owner, false);
         let _ = self.set_generator_started(&owner, true);
         let _ = self.set_generator_closed(&owner, true);
+        if let Some(caller) = self.frames.last_mut()
+            && let Some((delegated_owner_id, send_target)) = caller.send_delegate_state
+            && delegated_owner_id == owner.id()
+        {
+            caller.send_delegate_state = None;
+            let delegated_iter_on_stack = matches!(
+                caller.stack.last(),
+                Some(Value::Generator(iter_owner)) if iter_owner.id() == owner.id()
+            );
+            if delegated_iter_on_stack {
+                let _ = caller.stack.pop();
+            }
+            caller.stack.push(value.clone());
+            caller.ip = send_target;
+        }
         if self.active_generator_resume == Some(owner.id()) {
             self.generator_resume_outcome = Some(GeneratorResumeOutcome::Complete(value));
         }
@@ -11897,6 +12140,14 @@ impl Vm {
             BuiltinFunction::SysException => self.builtin_sys_exception(args, kwargs),
             BuiltinFunction::SysExcInfo => self.builtin_sys_exc_info(args, kwargs),
             BuiltinFunction::SysCallTracing => self.builtin_sys_call_tracing(args, kwargs),
+            BuiltinFunction::SysGetTrace => self.builtin_sys_gettrace(args, kwargs),
+            BuiltinFunction::SysSetTrace => self.builtin_sys_settrace(args, kwargs),
+            BuiltinFunction::SysGetIntMaxStrDigits => {
+                self.builtin_sys_get_int_max_str_digits(args, kwargs)
+            }
+            BuiltinFunction::SysSetIntMaxStrDigits => {
+                self.builtin_sys_set_int_max_str_digits(args, kwargs)
+            }
             BuiltinFunction::SysExit => self.builtin_sys_exit(args, kwargs),
             BuiltinFunction::SysIntern => self.builtin_sys_intern(args, kwargs),
             BuiltinFunction::SysIsFinalizing => self.builtin_sys_is_finalizing(args, kwargs),

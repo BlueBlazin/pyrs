@@ -1097,7 +1097,11 @@ impl<'a> Lexer<'a> {
             Some('N') => {
                 self.advance();
                 if self.peek_char() != Some('{') {
-                    return Ok(Some('N'));
+                    // Preserve unknown escapes (e.g. "\\N") as a literal
+                    // backslash plus following character.
+                    self.offset = self.offset.saturating_sub(1);
+                    self.column = self.column.saturating_sub(1);
+                    return Ok(Some('\\'));
                 }
                 self.advance();
                 let mut name = String::new();
@@ -1156,8 +1160,11 @@ impl<'a> Lexer<'a> {
                 Ok(None)
             }
             Some(other) => {
-                self.advance();
-                Ok(Some(other))
+                let _ = other;
+                // Preserve unknown escapes (e.g. "\\y") by emitting the
+                // backslash and leaving the following character for normal
+                // consumption on the next lexer iteration.
+                Ok(Some('\\'))
             }
             None => Err(LexError::new(
                 "unterminated escape sequence",
@@ -1299,5 +1306,27 @@ mod tests {
             .tokenize()
             .expect_err("named sequence should fail in unicode escapes");
         assert!(err.message.contains("invalid unicode escape"));
+    }
+
+    #[test]
+    fn preserves_unknown_escape_sequences_in_string_literals() {
+        let mut lexer = Lexer::new("\"\\\\y\"");
+        let tokens = lexer.tokenize().expect("tokenization should succeed");
+        assert!(
+            tokens
+                .iter()
+                .any(|token| token.kind == TokenKind::String && token.lexeme == "\\y")
+        );
+    }
+
+    #[test]
+    fn preserves_unknown_named_escape_without_brace() {
+        let mut lexer = Lexer::new("\"\\\\N\"");
+        let tokens = lexer.tokenize().expect("tokenization should succeed");
+        assert!(
+            tokens
+                .iter()
+                .any(|token| token.kind == TokenKind::String && token.lexeme == "\\N")
+        );
     }
 }

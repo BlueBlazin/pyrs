@@ -263,6 +263,7 @@ impl Vm {
 
     pub(super) fn builtin_type_name(&self, builtin: BuiltinFunction) -> &'static str {
         match builtin {
+            BuiltinFunction::ObjectNew => "object",
             BuiltinFunction::Type => "type",
             BuiltinFunction::Ascii => "ascii",
             BuiltinFunction::Bool => "bool",
@@ -272,6 +273,8 @@ impl Vm {
             BuiltinFunction::List => "list",
             BuiltinFunction::Tuple => "tuple",
             BuiltinFunction::Dict => "dict",
+            BuiltinFunction::TypesModuleType => "module",
+            BuiltinFunction::TypesMethodType => "method",
             BuiltinFunction::CollectionsOrderedDict => "OrderedDict",
             BuiltinFunction::Set => "set",
             BuiltinFunction::FrozenSet => "frozenset",
@@ -280,12 +283,18 @@ impl Vm {
             BuiltinFunction::MemoryView => "memoryview",
             BuiltinFunction::Complex => "complex",
             BuiltinFunction::Slice => "slice",
+            BuiltinFunction::Range => "range",
+            BuiltinFunction::Enumerate => "enumerate",
+            BuiltinFunction::Zip => "zip",
+            BuiltinFunction::Map => "map",
+            BuiltinFunction::Filter => "filter",
             BuiltinFunction::GeneratorType => "generator",
             BuiltinFunction::CoroutineType => "coroutine",
             BuiltinFunction::AsyncGeneratorType => "async_generator",
             BuiltinFunction::ClassMethod => "classmethod",
             BuiltinFunction::StaticMethod => "staticmethod",
             BuiltinFunction::Property => "property",
+            BuiltinFunction::Super => "super",
             BuiltinFunction::FunctoolsCachedProperty => "cached_property",
             BuiltinFunction::CodecsEncode => "encode",
             BuiltinFunction::CodecsDecode => "decode",
@@ -353,6 +362,10 @@ impl Vm {
             BuiltinFunction::SysAddAuditHook => "addaudithook".to_string(),
             BuiltinFunction::SysClearTypeDescriptors => "_clear_type_descriptors".to_string(),
             BuiltinFunction::SysCallTracing => "call_tracing".to_string(),
+            BuiltinFunction::SysGetTrace => "gettrace".to_string(),
+            BuiltinFunction::SysSetTrace => "settrace".to_string(),
+            BuiltinFunction::SysGetIntMaxStrDigits => "get_int_max_str_digits".to_string(),
+            BuiltinFunction::SysSetIntMaxStrDigits => "set_int_max_str_digits".to_string(),
             BuiltinFunction::SysDisplayHook => "displayhook".to_string(),
             BuiltinFunction::SysCurrentFrames => "_current_frames".to_string(),
             BuiltinFunction::SysGetFrameModuleName => "_getframemodulename".to_string(),
@@ -490,6 +503,7 @@ impl Vm {
             BuiltinFunction::DateTimeDeltaStr => "__str__".to_string(),
             BuiltinFunction::OperatorContains => "contains".to_string(),
             BuiltinFunction::FunctoolsReduce => "reduce".to_string(),
+            _ if self.builtin_is_type_object(builtin) => self.builtin_type_name(builtin).to_string(),
             _ => self.builtin_runtime_name(builtin),
         }
     }
@@ -1295,6 +1309,39 @@ impl Vm {
             }
             "__repr__" | "__str__" if builtin == BuiltinFunction::CollectionsDeque => {
                 Ok(Value::Builtin(BuiltinFunction::CollectionsDequeTypeRepr))
+            }
+            "__repr__" | "__str__" if builtin == BuiltinFunction::Int => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__int_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Int));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::IntReprMethod, receiver))
+            }
+            "__repr__" | "__str__" if builtin == BuiltinFunction::Float => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__float_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Float));
+                }
+                Ok(self.alloc_native_bound_method(
+                    NativeMethodKind::FloatReprMethod,
+                    receiver,
+                ))
             }
             "__format__" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::Format))
@@ -2565,6 +2612,7 @@ impl Vm {
                     }
                     IteratorKind::Cycle { .. } => ("cycle", None, None, None, false, true),
                     IteratorKind::Count { .. } => ("count", None, None, None, false, true),
+                    IteratorKind::Enumerate { .. } => ("enumerate", None, None, None, false, true),
                     IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => {
                         ("chain", None, None, None, false, true)
                     }
@@ -2916,6 +2964,9 @@ impl Vm {
             if let Some(kind) = contextvar_kind {
                 return Ok(self.alloc_native_bound_method(kind, dict));
             }
+        }
+        if attr_name == "move_to_end" && self.ordered_dict_instances.contains(&dict.id()) {
+            return Ok(self.alloc_native_bound_method(NativeMethodKind::DictMoveToEnd, dict));
         }
         let kind = match attr_name {
             "__init__" => NativeMethodKind::DictInit,
@@ -4282,10 +4333,10 @@ impl Vm {
             return Ok(None);
         }
         let receiver_ref = self.receiver_from_value(receiver)?;
-        Ok(Some(
-            self.heap
-                .alloc_bound_method(BoundMethod::new(method_data.function.clone(), receiver_ref)),
-        ))
+        Ok(Some(self.heap.alloc_bound_method(BoundMethod::new(
+            method_data.function.clone(),
+            receiver_ref,
+        ))))
     }
 
     pub(super) fn bind_descriptor_method(
@@ -4704,7 +4755,7 @@ impl Vm {
             .env_var("PYRS_DEBUG_CALL_DEPTH_HARD_LIMIT")
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|limit| *limit > 0)
-            .unwrap_or_else(|| self.recursion_limit.max(1) as usize * 4);
+            .unwrap_or_else(|| self.effective_recursion_limit() as usize * 4);
         if env_var_present_cached("PYRS_TRACE_CALL_DEPTH")
             && call_depth >= hard_limit.saturating_sub(16)
         {
@@ -7598,8 +7649,10 @@ impl Vm {
 
         if let Some(attr) = class_attr {
             if let Value::BoundMethod(method_obj) = &attr
-                && let Some(bound_method) =
-                    self.rebind_unbound_wrapper_bound_method(method_obj, &Value::Instance(instance.clone()))?
+                && let Some(bound_method) = self.rebind_unbound_wrapper_bound_method(
+                    method_obj,
+                    &Value::Instance(instance.clone()),
+                )?
             {
                 return Ok(AttrAccessOutcome::Value(bound_method));
             }

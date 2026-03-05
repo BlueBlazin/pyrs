@@ -11169,7 +11169,7 @@ impl Vm {
             }
         }
         if let Some(module) = self.import_module_via_meta_path(name, caller_depth)? {
-            return Ok(module);
+            return self.return_imported_module(module, caller_depth);
         }
         match self.load_module(name) {
             Ok(module) => match self.return_imported_module(module, caller_depth) {

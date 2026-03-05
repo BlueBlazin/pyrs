@@ -4,8 +4,9 @@
 //! while explicitly rejecting unsupported option families with typed errors.
 
 use super::super::{
-    BigInt, BuiltinFunction, HashMap, Heap, InternalCallOutcome, ModuleObject, Object,
-    RuntimeError, Value, Vm, is_truthy, value_to_int,
+    BigInt, BuiltinFunction, ExceptionObject, HashMap, HashSet, Heap, InternalCallOutcome,
+    ModuleObject, Object, RuntimeError, Value, Vm, format_repr, is_truthy,
+    runtime_get_int_max_str_digits, value_to_int,
 };
 
 #[derive(Clone)]
@@ -17,6 +18,7 @@ struct JsonDumpsOptions {
     sort_keys: bool,
     item_separator: String,
     key_separator: String,
+    indent: Option<String>,
 }
 
 impl Default for JsonDumpsOptions {
@@ -28,6 +30,7 @@ impl Default for JsonDumpsOptions {
             sort_keys: false,
             item_separator: ", ".to_string(),
             key_separator: ": ".to_string(),
+            indent: None,
         }
     }
 }
@@ -60,10 +63,11 @@ impl Vm {
         if let Some(allow_nan) = kwargs.remove("allow_nan") {
             options.allow_nan = is_truthy(&allow_nan);
         }
-        if let Some(indent) = kwargs.remove("indent")
-            && !matches!(indent, Value::None)
-        {
-            return Err(RuntimeError::new("dumps() indent is not supported yet"));
+        if let Some(indent) = kwargs.remove("indent") {
+            options.indent = parse_json_indent(indent)?;
+            if options.indent.is_some() {
+                options.item_separator = ",".to_string();
+            }
         }
         if let Some(sort_keys) = kwargs.remove("sort_keys") {
             options.sort_keys = is_truthy(&sort_keys);
@@ -145,7 +149,14 @@ impl Vm {
         }
 
         let text = json_source_text(&args[0])?;
-        let node = parse_json_node(&text)?;
+        let depth_limit = json_parse_depth_limit(self);
+        let node = parse_json_node_with_limit(&text, depth_limit).map_err(|err| {
+            if json_parse_error_is_recursion_limit(&err) {
+                self.recursion_limit_error()
+            } else {
+                err
+            }
+        })?;
         Ok(json_node_to_value(node, &self.heap))
     }
 
@@ -247,6 +258,9 @@ impl Vm {
             module_data
                 .globals
                 .insert("default".to_string(), args[1].clone());
+            module_data
+                .globals
+                .insert("indent".to_string(), args[3].clone());
         }
         Ok(self.alloc_builtin_bound_method(BuiltinFunction::JsonMakeEncoderCall, wrapper))
     }
@@ -278,6 +292,7 @@ impl Vm {
             item_separator,
             key_separator,
             default_callable,
+            indent,
         ) = match &*receiver.kind() {
             Object::Module(module_data) => {
                 let bool_setting = |name: &str| {
@@ -305,6 +320,11 @@ impl Vm {
                     string_setting("item_separator", ", "),
                     string_setting("key_separator", ": "),
                     module_data.globals.get("default").cloned(),
+                    module_data
+                        .globals
+                        .get("indent")
+                        .cloned()
+                        .unwrap_or(Value::None),
                 )
             }
             _ => return Err(RuntimeError::new("_iterencode() receiver is invalid")),
@@ -320,11 +340,41 @@ impl Vm {
             self.heap
                 .alloc_tuple(vec![Value::Str(item_separator), Value::Str(key_separator)]),
         );
+        dumps_kwargs.insert("indent".to_string(), indent);
         if let Some(default) = default_callable {
             dumps_kwargs.insert("default".to_string(), default);
         }
         let rendered = self.builtin_json_dumps(vec![value], dumps_kwargs)?;
         Ok(self.heap.alloc_list(vec![rendered]))
+    }
+
+    fn json_scanner_requires_python_make_scanner(
+        &mut self,
+        context: &Value,
+    ) -> Result<bool, RuntimeError> {
+        let parse_float = self
+            .optional_getattr_value(context.clone(), "parse_float")?
+            .unwrap_or(Value::None);
+        let parse_int = self
+            .optional_getattr_value(context.clone(), "parse_int")?
+            .unwrap_or(Value::None);
+        let parse_constant = self
+            .optional_getattr_value(context.clone(), "parse_constant")?
+            .unwrap_or(Value::None);
+        let object_hook = self
+            .optional_getattr_value(context.clone(), "object_hook")?
+            .unwrap_or(Value::None);
+        let object_pairs_hook = self
+            .optional_getattr_value(context.clone(), "object_pairs_hook")?
+            .unwrap_or(Value::None);
+
+        Ok(
+            !json_is_default_parse_float(&parse_float)
+                || !json_is_default_parse_int(&parse_int)
+                || !json_is_default_parse_constant(&parse_constant)
+                || object_hook != Value::None
+                || object_pairs_hook != Value::None,
+        )
     }
 
     pub(in crate::vm) fn builtin_json_scanner_make_scanner(
@@ -334,6 +384,31 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("make_scanner() expects context"));
+        }
+        let context = args[0].clone();
+        if self.json_scanner_requires_python_make_scanner(&context)? {
+            let caller_depth = self.frames.len();
+            if let Ok(scanner_module) = self.import_module_object("json.scanner")
+                && let Ok(scanner_module) = self.return_imported_module(scanner_module, caller_depth)
+                && let Object::Module(module_data) = &*scanner_module.kind()
+                && let Some(py_make_scanner) = module_data.globals.get("py_make_scanner").cloned()
+            {
+                let recursive_builtin = matches!(
+                    py_make_scanner,
+                    Value::Builtin(BuiltinFunction::JsonScannerMakeScanner)
+                        | Value::Builtin(BuiltinFunction::JsonScannerPyMakeScanner)
+                );
+                if !recursive_builtin {
+                    match self.call_internal(py_make_scanner, vec![context], HashMap::new())? {
+                        InternalCallOutcome::Value(value) => return Ok(value),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(RuntimeError::runtime_error(
+                                "make_scanner() callback did not return a value",
+                            ));
+                        }
+                    }
+                }
+            }
         }
         Ok(Value::Builtin(BuiltinFunction::JsonScannerScanOnce))
     }
@@ -352,46 +427,131 @@ impl Vm {
         };
         let idx = value_to_int(args[1].clone())?;
         if idx < 0 {
-            return Err(RuntimeError::stop_iteration("0"));
+            return Err(self.stop_iteration_runtime_error(Value::Int(0)));
         }
         let idx = idx as usize;
-        let (node, end) = parse_json_node_from_index(&source, idx)
-            .map_err(|_| RuntimeError::new(format!("StopIteration: {idx}")))?;
+        let depth_limit = json_parse_depth_limit(self);
+        let (node, end) = match parse_json_node_from_index_with_limit_detail(&source, idx, depth_limit)
+        {
+            Ok(result) => result,
+            Err(err) if err.message.contains("maximum recursion depth exceeded") => {
+                return Err(self.recursion_limit_error());
+            }
+            Err(err) if err.message == "Expecting value" => {
+                return Err(self.stop_iteration_runtime_error(Value::Int(err.pos as i64)));
+            }
+            Err(err) => return Err(json_decode_error_runtime_error(&err.message, &source, err.pos)),
+        };
         let value = json_node_to_value(node, &self.heap);
         Ok(self.heap.alloc_tuple(vec![value, Value::Int(end as i64)]))
     }
 
     pub(in crate::vm) fn builtin_json_decoder_scanstring(
         &mut self,
-        mut args: Vec<Value>,
+        args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+        let caller_depth = self.frames.len();
+        if let Ok(decoder_module) = self.import_module_object("json.decoder")
+            && let Ok(decoder_module) = self.return_imported_module(decoder_module, caller_depth)
+            && let Object::Module(module_data) = &*decoder_module.kind()
+            && let Some(py_scanstring) = module_data.globals.get("py_scanstring").cloned()
+        {
+            let recursive_builtin = matches!(
+                py_scanstring,
+                Value::Builtin(BuiltinFunction::JsonDecoderScanString)
+            );
+            if !recursive_builtin {
+                match self.call_internal(py_scanstring, args.clone(), kwargs.clone())? {
+                    InternalCallOutcome::Value(value) => return Ok(value),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(RuntimeError::runtime_error(
+                            "scanstring() callback did not return a value",
+                        ));
+                    }
+                }
+            }
+        }
+        self.builtin_json_decoder_scanstring_native(args, kwargs)
+    }
+
+    fn builtin_json_decoder_scanstring_native(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 2 || args.len() > 3 {
             return Err(RuntimeError::new(
-                "scanstring() expects string, end, optional strict",
+                "scanstring() expects string, index, and optional strict",
             ));
         }
-        let source = match args.remove(0) {
-            Value::Str(text) => text,
-            _ => return Err(RuntimeError::new("scanstring() expects string input")),
-        };
-        let end = value_to_int(args.remove(0))?;
-        let _strict = if !args.is_empty() {
-            is_truthy(&args.remove(0))
-        } else {
-            true
-        };
-        if end <= 0 || end as usize > source.len() {
-            return Err(RuntimeError::new("scanstring() end index out of range"));
+        let strict_from_kwargs = kwargs.remove("strict");
+        let mut strict = strict_from_kwargs.as_ref().map(is_truthy).unwrap_or(true);
+        if args.len() == 3 {
+            if strict_from_kwargs.is_some() {
+                return Err(RuntimeError::new(
+                    "scanstring() got multiple values for argument 'strict'",
+                ));
+            }
+            strict = is_truthy(&args[2]);
         }
-        let start = end as usize - 1;
-        let (node, parsed_end) = parse_json_node_from_index(&source, start)?;
-        let JsonNode::String(text) = node else {
-            return Err(RuntimeError::new("scanstring() expected string token"));
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "scanstring() got an unexpected keyword argument",
+            ));
+        }
+
+        let source = match &args[0] {
+            Value::Str(text) => text.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "scanstring() expects string source and integer index",
+                ));
+            }
         };
+        let end_char = value_to_int(args.remove(1))?;
+        if end_char < 1 {
+            return Err(RuntimeError::new(
+                "scanstring() expects index after opening quote",
+            ));
+        }
+        let end_char = end_char as usize;
+        let start_quote_char = end_char - 1;
+        let start_quote_byte = utf8_char_index_to_byte(&source, start_quote_char)
+            .ok_or_else(|| RuntimeError::new("scanstring() start index is out of range"))?;
+        let depth_limit = json_parse_depth_limit(self);
+        let (node, end_byte) = parse_json_node_from_index_with_limit(
+            &source,
+            start_quote_byte,
+            depth_limit,
+        )
+        .map_err(|err| {
+                if json_parse_error_is_recursion_limit(&err) {
+                    self.recursion_limit_error()
+                } else {
+                    err
+                }
+            })?;
+        let value = match node {
+            JsonNode::String(text) => text,
+            _ => {
+                return Err(RuntimeError::new(
+                    "scanstring() did not parse a JSON string",
+                ));
+            }
+        };
+        if strict
+            && json_string_has_unescaped_ascii_control_char(&source, start_quote_byte, end_byte)
+        {
+            return Err(RuntimeError::new(
+                "Invalid control character in JSON string",
+            ));
+        }
+        let end_char = utf8_byte_index_to_char(&source, end_byte)
+            .ok_or_else(|| RuntimeError::new("scanstring() end index is out of range"))?;
         Ok(self
             .heap
-            .alloc_tuple(vec![Value::Str(text), Value::Int(parsed_end as i64)]))
+            .alloc_tuple(vec![Value::Str(value), Value::Int(end_char as i64)]))
     }
 }
 
@@ -468,6 +628,21 @@ fn parse_json_separators(value: Value) -> Result<(String, String), RuntimeError>
     Ok((item_sep, key_sep))
 }
 
+fn parse_json_indent(value: Value) -> Result<Option<String>, RuntimeError> {
+    match value {
+        Value::None => Ok(None),
+        Value::Str(text) => Ok(Some(text)),
+        other => {
+            let width = value_to_int(other)?;
+            if width <= 0 {
+                Ok(Some(String::new()))
+            } else {
+                Ok(Some(" ".repeat(width as usize)))
+            }
+        }
+    }
+}
+
 fn json_type_name(value: &Value) -> &'static str {
     match value {
         Value::None => "NoneType",
@@ -500,6 +675,108 @@ fn json_type_name(value: &Value) -> &'static str {
     }
 }
 
+fn json_serialization_note_for_value(vm: &Vm, value: &Value) -> String {
+    let type_name = match value {
+        Value::Class(_) => "type".to_string(),
+        _ => vm.value_type_name_for_error(value).to_ascii_lowercase(),
+    };
+    format!("when serializing {type_name} object")
+}
+
+fn json_append_exception_note(vm: &mut Vm, err: &mut RuntimeError, note: String) {
+    let Some(exception) = err.exception.as_mut() else {
+        return;
+    };
+    let note_value = Value::Str(note.clone());
+    let default_notes_list = vm.heap.alloc_list(vec![note_value.clone()]);
+    let mut applied = false;
+    {
+        let mut attrs = exception.attrs.borrow_mut();
+        match attrs.get_mut("__notes__") {
+            Some(Value::List(notes_obj)) => {
+                if let Object::List(notes) = &mut *notes_obj.kind_mut() {
+                    notes.push(note_value);
+                    applied = true;
+                }
+            }
+            Some(_) => {}
+            None => {
+                attrs.insert("__notes__".to_string(), default_notes_list);
+                applied = true;
+            }
+        }
+    }
+    if applied {
+        exception.notes.push(note);
+    }
+}
+
+fn json_marker_id(value: &Value) -> Option<u64> {
+    match value {
+        Value::List(obj) | Value::Tuple(obj) | Value::Dict(obj) => Some(obj.id()),
+        Value::Instance(obj) => Some(obj.id()),
+        Value::Class(obj) => Some(obj.id()),
+        _ => None,
+    }
+}
+
+fn json_enter_marker(
+    markers: &mut HashSet<u64>,
+    value: &Value,
+) -> Result<Option<u64>, RuntimeError> {
+    let Some(marker_id) = json_marker_id(value) else {
+        return Ok(None);
+    };
+    if !markers.insert(marker_id) {
+        return Err(RuntimeError::value_error("Circular reference detected"));
+    }
+    Ok(Some(marker_id))
+}
+
+fn json_exit_marker(markers: &mut HashSet<u64>, marker_id: Option<u64>) {
+    if let Some(marker_id) = marker_id {
+        markers.remove(&marker_id);
+    }
+}
+
+fn json_is_builtin_class_named(value: &Value, expected: &str) -> bool {
+    match value {
+        Value::Class(class) => match &*class.kind() {
+            Object::Class(class_data) => {
+                class_data.name == expected
+                    && matches!(
+                        class_data.attrs.get("__module__"),
+                        Some(Value::Str(module_name)) if module_name == "builtins"
+                    )
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn json_is_default_parse_float(value: &Value) -> bool {
+    matches!(value, Value::Builtin(BuiltinFunction::Float))
+        || json_is_builtin_class_named(value, "float")
+}
+
+fn json_is_default_parse_int(value: &Value) -> bool {
+    matches!(value, Value::Builtin(BuiltinFunction::Int))
+        || json_is_builtin_class_named(value, "int")
+}
+
+fn json_is_default_parse_constant(value: &Value) -> bool {
+    match value {
+        Value::BoundMethod(method) => match &*method.kind() {
+            Object::BoundMethod(method_data) => {
+                matches!(&*method_data.receiver.kind(), Object::Dict(_))
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 fn json_escape_string(text: &str, ensure_ascii: bool) -> String {
     let mut out = String::new();
     out.push('"');
@@ -507,6 +784,8 @@ fn json_escape_string(text: &str, ensure_ascii: bool) -> String {
         match ch {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
+            '\u{0008}' => out.push_str("\\b"),
+            '\u{000C}' => out.push_str("\\f"),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
@@ -526,6 +805,166 @@ fn json_escape_string(text: &str, ensure_ascii: bool) -> String {
     out
 }
 
+fn json_nonfinite_float_json_literal(value: f64) -> Option<&'static str> {
+    if value.is_nan() {
+        Some("NaN")
+    } else if value.is_infinite() {
+        if value.is_sign_negative() {
+            Some("-Infinity")
+        } else {
+            Some("Infinity")
+        }
+    } else {
+        None
+    }
+}
+
+fn json_nonfinite_float_error_literal(value: f64) -> Option<&'static str> {
+    if value.is_nan() {
+        Some("nan")
+    } else if value.is_infinite() {
+        if value.is_sign_negative() {
+            Some("-inf")
+        } else {
+            Some("inf")
+        }
+    } else {
+        None
+    }
+}
+
+fn json_format_finite_float(value: f64) -> String {
+    format_repr(&Value::Float(value))
+}
+
+fn json_encode_object_key(
+    vm: &Vm,
+    key: &Value,
+    options: &JsonDumpsOptions,
+) -> Result<Option<String>, RuntimeError> {
+    match key {
+        Value::Str(text) => Ok(Some(text.clone())),
+        Value::Int(value) => Ok(Some(value.to_string())),
+        Value::BigInt(value) => Ok(Some(value.to_string())),
+        Value::Float(value) => {
+            if value.is_finite() {
+                Ok(Some(json_format_finite_float(*value)))
+            } else if options.allow_nan {
+                Ok(Some(
+                    json_nonfinite_float_json_literal(*value)
+                        .expect("non-finite float should map to a JSON literal")
+                        .to_string(),
+                ))
+            } else {
+                let suffix = json_nonfinite_float_error_literal(*value)
+                    .expect("non-finite float should map to an error literal");
+                Err(RuntimeError::value_error(format!(
+                    "Out of range float values are not JSON compliant: {suffix}"
+                )))
+            }
+        }
+        Value::Bool(value) => Ok(Some(if *value {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        })),
+        Value::None => Ok(Some("null".to_string())),
+        Value::Instance(instance) => {
+            if let Some(backing_str) = vm.instance_backing_str(instance) {
+                return Ok(Some(backing_str));
+            }
+            if let Some(backing_int) = vm.instance_backing_int(instance) {
+                return json_encode_object_key(vm, &backing_int, options);
+            }
+            if let Some(backing_float) = vm.instance_backing_float(instance) {
+                return json_encode_object_key(vm, &Value::Float(backing_float), options);
+            }
+            if options.skipkeys {
+                Ok(None)
+            } else {
+                Err(RuntimeError::type_error(format!(
+                    "keys must be str, int, float, bool or None, not {}",
+                    json_type_name(key)
+                )))
+            }
+        }
+        _ if options.skipkeys => Ok(None),
+        _ => Err(RuntimeError::type_error(format!(
+            "keys must be str, int, float, bool or None, not {}",
+            json_type_name(key)
+        ))),
+    }
+}
+
+fn json_serialize_via_default(
+    vm: &mut Vm,
+    value: &Value,
+    options: &JsonDumpsOptions,
+    default: Option<&Value>,
+    depth: usize,
+    markers: &mut HashSet<u64>,
+) -> Result<String, RuntimeError> {
+    if let Some(default_callable) = default {
+        let marker = json_enter_marker(markers, value)?;
+        let call_result =
+            vm.call_internal(default_callable.clone(), vec![value.clone()], HashMap::new());
+        let result = match call_result {
+            Ok(InternalCallOutcome::Value(converted)) => {
+                match json_serialize_value_at_depth(
+                    vm,
+                    &converted,
+                    options,
+                    default,
+                    depth.saturating_add(1),
+                    markers,
+                ) {
+                    Ok(encoded) => Ok(encoded),
+                    Err(mut err) => {
+                        let note = json_serialization_note_for_value(vm, value);
+                        json_append_exception_note(vm, &mut err, note);
+                        Err(err)
+                    }
+                }
+            }
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                let mut err = vm
+                    .runtime_error_from_active_exception("dumps() default callback failed");
+                let note = json_serialization_note_for_value(vm, value);
+                json_append_exception_note(vm, &mut err, note);
+                Err(err)
+            }
+            Err(err) => Err(err),
+        };
+        json_exit_marker(markers, marker);
+        result
+    } else {
+        Err(RuntimeError::new(format!(
+            "Object of type {} is not JSON serializable",
+            json_type_name(value)
+        )))
+    }
+}
+
+fn json_sort_object_items(
+    vm: &mut Vm,
+    items: &mut [(Value, String, Value)],
+) -> Result<(), RuntimeError> {
+    for index in 1..items.len() {
+        let mut cursor = index;
+        while cursor > 0 {
+            let right_key = items[cursor].0.clone();
+            let left_key = items[cursor - 1].0.clone();
+            let less_than = vm.compare_lt_runtime(right_key, left_key)?;
+            if !vm.truthy_from_value(&less_than)? {
+                break;
+            }
+            items.swap(cursor - 1, cursor);
+            cursor -= 1;
+        }
+    }
+    Ok(())
+}
+
 /// Serialize a runtime value into JSON text using current option semantics.
 fn json_serialize_value(
     vm: &mut Vm,
@@ -533,6 +972,25 @@ fn json_serialize_value(
     options: &JsonDumpsOptions,
     default: Option<&Value>,
 ) -> Result<String, RuntimeError> {
+    let mut markers = HashSet::new();
+    json_serialize_value_at_depth(vm, value, options, default, 0, &mut markers)
+}
+
+fn json_serialize_value_at_depth(
+    vm: &mut Vm,
+    value: &Value,
+    options: &JsonDumpsOptions,
+    default: Option<&Value>,
+    depth: usize,
+    markers: &mut HashSet<u64>,
+) -> Result<String, RuntimeError> {
+    const JSON_NATIVE_STACK_SAFE_DEPTH: usize = 1000;
+    let vm_recursion_limit = vm.recursion_limit.max(1) as usize;
+    let recursion_limit = vm_recursion_limit.min(JSON_NATIVE_STACK_SAFE_DEPTH);
+    if depth >= recursion_limit {
+        return Err(vm.recursion_limit_error());
+    }
+
     match value {
         Value::None => Ok("null".to_string()),
         Value::Bool(value) => Ok(if *value {
@@ -544,63 +1002,190 @@ fn json_serialize_value(
         Value::BigInt(value) => Ok(value.to_string()),
         Value::Float(value) => {
             if value.is_finite() {
-                Ok(value.to_string())
+                Ok(json_format_finite_float(*value))
             } else if options.allow_nan {
-                if value.is_nan() {
-                    Ok("NaN".to_string())
-                } else if value.is_sign_negative() {
-                    Ok("-Infinity".to_string())
-                } else {
-                    Ok("Infinity".to_string())
-                }
+                Ok(json_nonfinite_float_json_literal(*value)
+                    .expect("non-finite float should map to a JSON literal")
+                    .to_string())
             } else {
-                Err(RuntimeError::new(
-                    "Out of range float values are not JSON compliant",
-                ))
+                let suffix = json_nonfinite_float_error_literal(*value)
+                    .expect("non-finite float should map to an error literal");
+                Err(RuntimeError::value_error(format!(
+                    "Out of range float values are not JSON compliant: {suffix}"
+                )))
             }
         }
         Value::Str(value) => Ok(json_escape_string(value, options.ensure_ascii)),
-        Value::List(obj) => match &*obj.kind() {
-            Object::List(values) => {
-                let mut parts = Vec::with_capacity(values.len());
-                for value in values {
-                    parts.push(json_serialize_value(vm, value, options, default)?);
+        Value::List(obj) => {
+            let marker = json_enter_marker(markers, value)?;
+            let result = (|| {
+                if !matches!(&*obj.kind(), Object::List(_)) {
+                    return Err(RuntimeError::new("json unsupported type"));
                 }
-                Ok(format!("[{}]", parts.join(&options.item_separator)))
-            }
-            _ => Err(RuntimeError::new("json unsupported type")),
-        },
-        Value::Tuple(obj) => match &*obj.kind() {
-            Object::Tuple(values) => {
-                let mut parts = Vec::with_capacity(values.len());
-                for value in values {
-                    parts.push(json_serialize_value(vm, value, options, default)?);
+                let mut parts = Vec::new();
+                let mut index = 0usize;
+                loop {
+                    let current = {
+                        let list_kind = obj.kind();
+                        let Object::List(values) = &*list_kind else {
+                            return Err(RuntimeError::new("json unsupported type"));
+                        };
+                        values.get(index).cloned()
+                    };
+                    let Some(value) = current else {
+                        break;
+                    };
+                    match json_serialize_value_at_depth(
+                        vm,
+                        &value,
+                        options,
+                        default,
+                        depth + 1,
+                        markers,
+                    ) {
+                        Ok(encoded) => parts.push(encoded),
+                        Err(mut err) => {
+                            json_append_exception_note(
+                                vm,
+                                &mut err,
+                                format!("when serializing list item {index}"),
+                            );
+                            return Err(err);
+                        }
+                    }
+                    index += 1;
                 }
-                Ok(format!("[{}]", parts.join(&options.item_separator)))
-            }
-            _ => Err(RuntimeError::new("json unsupported type")),
-        },
-        Value::Dict(obj) => match &*obj.kind() {
-            Object::Dict(entries) => {
-                let mut mapped: Vec<(String, &Value)> = Vec::with_capacity(entries.len());
-                for (key, value) in entries {
-                    match key {
-                        Value::Str(text) => mapped.push((text.clone(), value)),
-                        _ if options.skipkeys => {}
-                        _ => {
-                            return Err(RuntimeError::new(
-                                "keys must be str, int, float, bool or None, not unsupported type",
-                            ));
+                if let Some(indent_unit) = options.indent.as_ref() {
+                    if parts.is_empty() {
+                        return Ok("[]".to_string());
+                    }
+                    let child_indent = indent_unit.repeat(depth + 1);
+                    let parent_indent = indent_unit.repeat(depth);
+                    let mut out = String::new();
+                    out.push('[');
+                    out.push('\n');
+                    out.push_str(&child_indent);
+                    out.push_str(&parts[0]);
+                    for part in parts.iter().skip(1) {
+                        out.push_str(&options.item_separator);
+                        out.push('\n');
+                        out.push_str(&child_indent);
+                        out.push_str(part);
+                    }
+                    out.push('\n');
+                    out.push_str(&parent_indent);
+                    out.push(']');
+                    Ok(out)
+                } else {
+                    Ok(format!("[{}]", parts.join(&options.item_separator)))
+                }
+            })();
+            json_exit_marker(markers, marker);
+            result
+        }
+        Value::Tuple(obj) => {
+            let marker = json_enter_marker(markers, value)?;
+            let result = (|| {
+                let values = {
+                    let tuple_kind = obj.kind();
+                    let Object::Tuple(values) = &*tuple_kind else {
+                        return Err(RuntimeError::new("json unsupported type"));
+                    };
+                    values.to_vec()
+                };
+                let mut parts = Vec::with_capacity(values.len());
+                for (index, value) in values.into_iter().enumerate() {
+                    match json_serialize_value_at_depth(
+                        vm,
+                        &value,
+                        options,
+                        default,
+                        depth + 1,
+                        markers,
+                    ) {
+                        Ok(encoded) => parts.push(encoded),
+                        Err(mut err) => {
+                            json_append_exception_note(
+                                vm,
+                                &mut err,
+                                format!("when serializing tuple item {index}"),
+                            );
+                            return Err(err);
                         }
                     }
                 }
+                if let Some(indent_unit) = options.indent.as_ref() {
+                    if parts.is_empty() {
+                        return Ok("[]".to_string());
+                    }
+                    let child_indent = indent_unit.repeat(depth + 1);
+                    let parent_indent = indent_unit.repeat(depth);
+                    let mut out = String::new();
+                    out.push('[');
+                    out.push('\n');
+                    out.push_str(&child_indent);
+                    out.push_str(&parts[0]);
+                    for part in parts.iter().skip(1) {
+                        out.push_str(&options.item_separator);
+                        out.push('\n');
+                        out.push_str(&child_indent);
+                        out.push_str(part);
+                    }
+                    out.push('\n');
+                    out.push_str(&parent_indent);
+                    out.push(']');
+                    Ok(out)
+                } else {
+                    Ok(format!("[{}]", parts.join(&options.item_separator)))
+                }
+            })();
+            json_exit_marker(markers, marker);
+            result
+        }
+        Value::Dict(obj) => {
+            let marker = json_enter_marker(markers, value)?;
+            let result = (|| {
+                let mut mapped: Vec<(Value, String, Value)> = {
+                    let dict_kind = obj.kind();
+                    let Object::Dict(entries) = &*dict_kind else {
+                        return Err(RuntimeError::new("json unsupported type"));
+                    };
+                    let mut mapped: Vec<(Value, String, Value)> = Vec::with_capacity(entries.len());
+                    for (key, value) in entries.iter() {
+                        if let Some(encoded_key) = json_encode_object_key(vm, key, options)? {
+                            mapped.push((key.clone(), encoded_key, value.clone()));
+                        }
+                    }
+                    mapped
+                };
                 if options.sort_keys {
-                    mapped.sort_by(|left, right| left.0.cmp(&right.0));
+                    json_sort_object_items(vm, &mut mapped)?;
                 }
                 let mut parts = Vec::with_capacity(mapped.len());
-                for (key, value) in mapped {
+                for (_raw_key, key, value) in mapped {
                     let encoded_key = json_escape_string(&key, options.ensure_ascii);
-                    let encoded_value = json_serialize_value(vm, value, options, default)?;
+                    let encoded_value =
+                        match json_serialize_value_at_depth(
+                            vm,
+                            &value,
+                            options,
+                            default,
+                            depth + 1,
+                            markers,
+                        ) {
+                            Ok(encoded) => encoded,
+                            Err(mut err) => {
+                                json_append_exception_note(
+                                    vm,
+                                    &mut err,
+                                    format!(
+                                        "when serializing dict item {}",
+                                        format_repr(&Value::Str(key.clone()))
+                                    ),
+                                );
+                                return Err(err);
+                            }
+                        };
                     parts.push(format!(
                         "{}{sep}{}",
                         encoded_key,
@@ -608,32 +1193,143 @@ fn json_serialize_value(
                         sep = options.key_separator
                     ));
                 }
-                Ok(format!("{{{}}}", parts.join(&options.item_separator)))
-            }
-            _ => Err(RuntimeError::new("json unsupported type")),
-        },
-        _ => {
-            if let Some(default_callable) = default {
-                match vm.call_internal(
-                    default_callable.clone(),
-                    vec![value.clone()],
-                    HashMap::new(),
-                )? {
-                    InternalCallOutcome::Value(converted) => {
-                        json_serialize_value(vm, &converted, options, default)
+                if let Some(indent_unit) = options.indent.as_ref() {
+                    if parts.is_empty() {
+                        return Ok("{}".to_string());
                     }
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        Err(RuntimeError::new("dumps() default callback failed"))
+                    let child_indent = indent_unit.repeat(depth + 1);
+                    let parent_indent = indent_unit.repeat(depth);
+                    let mut out = String::new();
+                    out.push('{');
+                    out.push('\n');
+                    out.push_str(&child_indent);
+                    out.push_str(&parts[0]);
+                    for part in parts.iter().skip(1) {
+                        out.push_str(&options.item_separator);
+                        out.push('\n');
+                        out.push_str(&child_indent);
+                        out.push_str(part);
                     }
+                    out.push('\n');
+                    out.push_str(&parent_indent);
+                    out.push('}');
+                    Ok(out)
+                } else {
+                    Ok(format!("{{{}}}", parts.join(&options.item_separator)))
                 }
-            } else {
-                Err(RuntimeError::new(format!(
-                    "Object of type {} is not JSON serializable",
-                    json_type_name(value)
-                )))
-            }
+            })();
+            json_exit_marker(markers, marker);
+            result
         }
+        Value::Instance(instance) => {
+            if let Some(backing_str) = vm.instance_backing_str(instance) {
+                return json_serialize_value_at_depth(
+                    vm,
+                    &Value::Str(backing_str),
+                    options,
+                    default,
+                    depth,
+                    markers,
+                );
+            }
+            if let Some(backing_int) = vm.instance_backing_int(instance) {
+                return json_serialize_value_at_depth(
+                    vm, &backing_int, options, default, depth, markers,
+                );
+            }
+            if let Some(backing_float) = vm.instance_backing_float(instance) {
+                return json_serialize_value_at_depth(
+                    vm,
+                    &Value::Float(backing_float),
+                    options,
+                    default,
+                    depth,
+                    markers,
+                );
+            }
+            if let Some(backing_list) = vm.instance_backing_list(instance) {
+                return json_serialize_value_at_depth(
+                    vm,
+                    &Value::List(backing_list),
+                    options,
+                    default,
+                    depth,
+                    markers,
+                );
+            }
+            if let Some(backing_tuple) = vm.instance_backing_tuple(instance) {
+                return json_serialize_value_at_depth(
+                    vm,
+                    &Value::Tuple(backing_tuple),
+                    options,
+                    default,
+                    depth,
+                    markers,
+                );
+            }
+            if let Some(backing_dict) = vm.instance_backing_dict(instance) {
+                return json_serialize_value_at_depth(
+                    vm,
+                    &Value::Dict(backing_dict),
+                    options,
+                    default,
+                    depth,
+                    markers,
+                );
+            }
+            json_serialize_via_default(vm, value, options, default, depth, markers)
+        }
+        _ => json_serialize_via_default(vm, value, options, default, depth, markers),
     }
+}
+
+fn json_parse_depth_limit(vm: &Vm) -> usize {
+    let vm_limit = vm.recursion_limit.max(1) as usize;
+    vm_limit.min(JSON_PARSE_NATIVE_STACK_SAFE_DEPTH)
+}
+
+fn json_parse_error_is_recursion_limit(err: &RuntimeError) -> bool {
+    err.message.contains("maximum recursion depth exceeded")
+}
+
+fn json_validate_int_digits_limit(digits: &str) -> Result<(), RuntimeError> {
+    let limit = runtime_get_int_max_str_digits();
+    if limit > 0 && digits.len() > limit as usize {
+        return Err(RuntimeError::value_error(format!(
+            "Exceeds the limit ({} digits) for integer string conversion: value has {} digits; use sys.set_int_max_str_digits() to increase the limit",
+            limit,
+            digits.len()
+        )));
+    }
+    Ok(())
+}
+
+fn json_decode_error_runtime_error(message: &str, source: &str, pos: usize) -> RuntimeError {
+    let prefix_end = source
+        .char_indices()
+        .take_while(|(idx, _)| *idx < pos)
+        .map(|(idx, ch)| idx + ch.len_utf8())
+        .last()
+        .unwrap_or(0);
+    let prefix = &source[..prefix_end.min(source.len())];
+    let lineno = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let last_newline = prefix.rfind('\n').map(|idx| idx + 1).unwrap_or(0);
+    let colno = source[last_newline..prefix_end.min(source.len())]
+        .chars()
+        .count()
+        + 1;
+
+    let rendered = format!("{message}: line {lineno} column {colno} (char {pos})");
+    let exception = ExceptionObject::new("JSONDecodeError", Some(rendered));
+    {
+        let mut attrs = exception.attrs.borrow_mut();
+        attrs.insert("msg".to_string(), Value::Str(message.to_string()));
+        attrs.insert("doc".to_string(), Value::Str(source.to_string()));
+        attrs.insert("pos".to_string(), Value::Int(pos as i64));
+        attrs.insert("lineno".to_string(), Value::Int(lineno as i64));
+        attrs.insert("colno".to_string(), Value::Int(colno as i64));
+    }
+    RuntimeError::from_exception(exception)
 }
 
 #[derive(Debug)]
@@ -648,59 +1344,95 @@ enum JsonNode {
     Object(Vec<(String, JsonNode)>),
 }
 
+const JSON_PARSE_NATIVE_STACK_SAFE_DEPTH: usize = 1000;
+
+#[derive(Debug, Clone)]
+struct JsonParseError {
+    message: String,
+    pos: usize,
+}
+
+impl JsonParseError {
+    fn new(message: impl Into<String>, pos: usize) -> Self {
+        Self {
+            message: message.into(),
+            pos,
+        }
+    }
+}
+
+fn json_runtime_error_from_parse(err: JsonParseError) -> RuntimeError {
+    RuntimeError::new(err.message)
+}
+
 /// Small recursive-descent parser for JSON text input.
 struct JsonParser<'a> {
     source: &'a [u8],
     pos: usize,
+    depth_limit: usize,
 }
 
 impl<'a> JsonParser<'a> {
-    fn new(source: &'a str) -> Self {
+    fn new(source: &'a str, depth_limit: usize) -> Self {
         Self {
             source: source.as_bytes(),
             pos: 0,
+            depth_limit: depth_limit.max(1),
         }
     }
 
     /// Parse the full input and require trailing-whitespace-only remainder.
-    fn parse(mut self) -> Result<JsonNode, RuntimeError> {
+    fn parse(mut self) -> Result<JsonNode, JsonParseError> {
         self.skip_ws();
-        let value = self.parse_value()?;
+        let value = self.parse_value(0)?;
         self.skip_ws();
         if self.pos != self.source.len() {
-            return Err(RuntimeError::new("invalid JSON trailing data"));
+            return Err(JsonParseError::new("Extra data", self.pos));
         }
         Ok(value)
     }
 
-    fn parse_value(&mut self) -> Result<JsonNode, RuntimeError> {
+    fn parse_value(&mut self, depth: usize) -> Result<JsonNode, JsonParseError> {
+        if depth >= self.depth_limit {
+            return Err(JsonParseError::new(
+                "maximum recursion depth exceeded",
+                self.pos,
+            ));
+        }
         self.skip_ws();
+        if self.source.get(self.pos..self.pos + 9) == Some(b"-Infinity") {
+            self.pos += 9;
+            return Ok(JsonNode::Float(f64::NEG_INFINITY));
+        }
         let byte = self
             .peek()
-            .ok_or_else(|| RuntimeError::new("unexpected end of JSON"))?;
+            .ok_or_else(|| JsonParseError::new("Expecting value", self.pos))?;
         match byte {
             b'n' => self.parse_literal(b"null", JsonNode::Null),
             b't' => self.parse_literal(b"true", JsonNode::Bool(true)),
             b'f' => self.parse_literal(b"false", JsonNode::Bool(false)),
+            b'N' => self.parse_literal(b"NaN", JsonNode::Float(f64::NAN)),
+            b'I' => self.parse_literal(b"Infinity", JsonNode::Float(f64::INFINITY)),
             b'"' => self.parse_string().map(JsonNode::String),
-            b'[' => self.parse_array(),
-            b'{' => self.parse_object(),
+            b'[' => self.parse_array(depth + 1),
+            b'{' => self.parse_object(depth + 1),
             b'-' | b'0'..=b'9' => self.parse_number(),
-            _ => Err(RuntimeError::new("invalid JSON value")),
+            _ => Err(JsonParseError::new("Expecting value", self.pos)),
         }
     }
 
-    fn parse_literal(&mut self, text: &[u8], node: JsonNode) -> Result<JsonNode, RuntimeError> {
+    fn parse_literal(&mut self, text: &[u8], node: JsonNode) -> Result<JsonNode, JsonParseError> {
         if self.source.get(self.pos..self.pos + text.len()) == Some(text) {
             self.pos += text.len();
             Ok(node)
         } else {
-            Err(RuntimeError::new("invalid JSON literal"))
+            Err(JsonParseError::new("Expecting value", self.pos))
         }
     }
 
-    fn parse_string(&mut self) -> Result<String, RuntimeError> {
-        self.expect(b'"')?;
+    fn parse_string(&mut self) -> Result<String, JsonParseError> {
+        let start_quote_pos = self.pos;
+        self.expect(b'"', "Expecting value")?;
         let mut out = String::new();
         while let Some(byte) = self.next() {
             match byte {
@@ -708,7 +1440,7 @@ impl<'a> JsonParser<'a> {
                 b'\\' => {
                     let esc = self
                         .next()
-                        .ok_or_else(|| RuntimeError::new("invalid JSON escape"))?;
+                        .ok_or_else(|| JsonParseError::new("invalid JSON escape", self.pos))?;
                     match esc {
                         b'"' => out.push('"'),
                         b'\\' => out.push('\\'),
@@ -721,40 +1453,50 @@ impl<'a> JsonParser<'a> {
                         b'u' => {
                             let code = self.parse_hex_u16()?;
                             if (0xD800..=0xDBFF).contains(&code) {
-                                self.expect(b'\\')?;
-                                self.expect(b'u')?;
+                                self.expect(b'\\', "invalid unicode escape")?;
+                                self.expect(b'u', "invalid unicode escape")?;
                                 let low = self.parse_hex_u16()?;
                                 if !(0xDC00..=0xDFFF).contains(&low) {
-                                    return Err(RuntimeError::value_error(
+                                    return Err(JsonParseError::new(
                                         "invalid unicode escape",
+                                        self.pos,
                                     ));
                                 }
                                 let scalar = 0x10000
                                     + (((code as u32 - 0xD800) << 10) | (low as u32 - 0xDC00));
                                 let ch = char::from_u32(scalar).ok_or_else(|| {
-                                    RuntimeError::value_error("invalid unicode escape")
+                                    JsonParseError::new("invalid unicode escape", self.pos)
                                 })?;
                                 out.push(ch);
                             } else if (0xDC00..=0xDFFF).contains(&code) {
-                                return Err(RuntimeError::value_error("invalid unicode escape"));
+                                return Err(JsonParseError::new("invalid unicode escape", self.pos));
                             } else {
                                 let ch = char::from_u32(code as u32).ok_or_else(|| {
-                                    RuntimeError::value_error("invalid unicode escape")
+                                    JsonParseError::new("invalid unicode escape", self.pos)
                                 })?;
                                 out.push(ch);
                             }
                         }
-                        _ => return Err(RuntimeError::new("invalid JSON escape")),
+                        _ => return Err(JsonParseError::new("invalid JSON escape", self.pos)),
                     }
+                }
+                b if b < 0x20 => {
+                    return Err(JsonParseError::new(
+                        "invalid control character in JSON string",
+                        self.pos.saturating_sub(1),
+                    ));
                 }
                 b if b < 0x80 => out.push(b as char),
                 b => self.push_utf8_char(b, &mut out)?,
             }
         }
-        Err(RuntimeError::new("unterminated JSON string"))
+        Err(JsonParseError::new(
+            "Unterminated string starting at",
+            start_quote_pos,
+        ))
     }
 
-    fn push_utf8_char(&mut self, first: u8, out: &mut String) -> Result<(), RuntimeError> {
+    fn push_utf8_char(&mut self, first: u8, out: &mut String) -> Result<(), JsonParseError> {
         let width = if first >> 5 == 0b110 {
             2
         } else if first >> 4 == 0b1110 {
@@ -762,95 +1504,145 @@ impl<'a> JsonParser<'a> {
         } else if first >> 3 == 0b11110 {
             4
         } else {
-            return Err(RuntimeError::value_error("invalid UTF-8 in JSON string"));
+            return Err(JsonParseError::new("invalid UTF-8 in JSON string", self.pos));
         };
         let mut bytes = vec![first];
         for _ in 1..width {
             let next = self
                 .next()
-                .ok_or_else(|| RuntimeError::value_error("invalid UTF-8 in JSON string"))?;
+                .ok_or_else(|| JsonParseError::new("invalid UTF-8 in JSON string", self.pos))?;
             if (next & 0b1100_0000) != 0b1000_0000 {
-                return Err(RuntimeError::value_error("invalid UTF-8 in JSON string"));
+                return Err(JsonParseError::new("invalid UTF-8 in JSON string", self.pos));
             }
             bytes.push(next);
         }
         let text = std::str::from_utf8(&bytes)
-            .map_err(|_| RuntimeError::value_error("invalid UTF-8 in JSON string"))?;
+            .map_err(|_| JsonParseError::new("invalid UTF-8 in JSON string", self.pos))?;
         let ch = text
             .chars()
             .next()
-            .ok_or_else(|| RuntimeError::value_error("invalid UTF-8 in JSON string"))?;
+            .ok_or_else(|| JsonParseError::new("invalid UTF-8 in JSON string", self.pos))?;
         out.push(ch);
         Ok(())
     }
 
-    fn parse_hex_u16(&mut self) -> Result<u16, RuntimeError> {
+    fn parse_hex_u16(&mut self) -> Result<u16, JsonParseError> {
         let mut value: u16 = 0;
         for _ in 0..4 {
             let byte = self
                 .next()
-                .ok_or_else(|| RuntimeError::value_error("invalid unicode escape"))?;
+                .ok_or_else(|| JsonParseError::new("invalid unicode escape", self.pos))?;
             value <<= 4;
             value |= match byte {
                 b'0'..=b'9' => (byte - b'0') as u16,
                 b'a'..=b'f' => (byte - b'a' + 10) as u16,
                 b'A'..=b'F' => (byte - b'A' + 10) as u16,
-                _ => return Err(RuntimeError::value_error("invalid unicode escape")),
+                _ => return Err(JsonParseError::new("invalid unicode escape", self.pos)),
             };
         }
         Ok(value)
     }
 
-    fn parse_array(&mut self) -> Result<JsonNode, RuntimeError> {
-        self.expect(b'[')?;
+    fn parse_array(&mut self, depth: usize) -> Result<JsonNode, JsonParseError> {
+        self.expect(b'[', "Expecting value")?;
         self.skip_ws();
         let mut values = Vec::new();
         if self.peek() == Some(b']') {
             self.pos += 1;
             return Ok(JsonNode::Array(values));
         }
+        let mut trailing_comma_pos: Option<usize> = None;
         loop {
-            values.push(self.parse_value()?);
+            if let Some(comma_pos) = trailing_comma_pos.take() {
+                if self.peek() == Some(b']') {
+                    return Err(JsonParseError::new(
+                        "Illegal trailing comma before end of array",
+                        comma_pos,
+                    ));
+                }
+            }
+            values.push(self.parse_value(depth)?);
             self.skip_ws();
             match self.next() {
                 Some(b',') => {
+                    trailing_comma_pos = Some(self.pos.saturating_sub(1));
                     self.skip_ws();
+                    if self.peek().is_none() {
+                        return Err(JsonParseError::new("Expecting value", self.pos));
+                    }
                 }
                 Some(b']') => break,
-                _ => return Err(RuntimeError::new("invalid JSON array")),
+                Some(_) => {
+                    return Err(JsonParseError::new(
+                        "Expecting ',' delimiter",
+                        self.pos.saturating_sub(1),
+                    ));
+                }
+                None => return Err(JsonParseError::new("Expecting ',' delimiter", self.pos)),
             }
         }
         Ok(JsonNode::Array(values))
     }
 
-    fn parse_object(&mut self) -> Result<JsonNode, RuntimeError> {
-        self.expect(b'{')?;
+    fn parse_object(&mut self, depth: usize) -> Result<JsonNode, JsonParseError> {
+        self.expect(b'{', "Expecting value")?;
         self.skip_ws();
         let mut values = Vec::new();
         if self.peek() == Some(b'}') {
             self.pos += 1;
             return Ok(JsonNode::Object(values));
         }
+        let mut trailing_comma_pos: Option<usize> = None;
         loop {
+            if let Some(comma_pos) = trailing_comma_pos.take() {
+                if self.peek() == Some(b'}') {
+                    return Err(JsonParseError::new(
+                        "Illegal trailing comma before end of object",
+                        comma_pos,
+                    ));
+                }
+            }
+            if self.peek() != Some(b'"') {
+                return Err(JsonParseError::new(
+                    "Expecting property name enclosed in double quotes",
+                    self.pos,
+                ));
+            }
             let key = self.parse_string()?;
             self.skip_ws();
-            self.expect(b':')?;
+            self.expect(b':', "Expecting ':' delimiter")?;
             self.skip_ws();
-            let value = self.parse_value()?;
+            if self.peek().is_none() {
+                return Err(JsonParseError::new("Expecting value", self.pos));
+            }
+            let value = self.parse_value(depth)?;
             values.push((key, value));
             self.skip_ws();
             match self.next() {
                 Some(b',') => {
+                    trailing_comma_pos = Some(self.pos.saturating_sub(1));
                     self.skip_ws();
+                    if self.peek().is_none() {
+                        return Err(JsonParseError::new(
+                            "Expecting property name enclosed in double quotes",
+                            self.pos,
+                        ));
+                    }
                 }
                 Some(b'}') => break,
-                _ => return Err(RuntimeError::new("invalid JSON object")),
+                Some(_) => {
+                    return Err(JsonParseError::new(
+                        "Expecting ',' delimiter",
+                        self.pos.saturating_sub(1),
+                    ));
+                }
+                None => return Err(JsonParseError::new("Expecting ',' delimiter", self.pos)),
             }
         }
         Ok(JsonNode::Object(values))
     }
 
-    fn parse_number(&mut self) -> Result<JsonNode, RuntimeError> {
+    fn parse_number(&mut self) -> Result<JsonNode, JsonParseError> {
         let start = self.pos;
         if self.peek() == Some(b'-') {
             self.pos += 1;
@@ -859,7 +1651,7 @@ impl<'a> JsonParser<'a> {
             Some(b'0') => {
                 self.pos += 1;
                 if matches!(self.peek(), Some(b'0'..=b'9')) {
-                    return Err(RuntimeError::value_error("invalid JSON number"));
+                    return Err(JsonParseError::new("invalid JSON number", self.pos));
                 }
             }
             Some(b'1'..=b'9') => {
@@ -868,12 +1660,12 @@ impl<'a> JsonParser<'a> {
                     self.pos += 1;
                 }
             }
-            _ => return Err(RuntimeError::value_error("invalid JSON number")),
+            _ => return Err(JsonParseError::new("invalid JSON number", self.pos)),
         }
         if self.peek() == Some(b'.') {
             self.pos += 1;
             if !matches!(self.peek(), Some(b'0'..=b'9')) {
-                return Err(RuntimeError::value_error("invalid JSON number"));
+                return Err(JsonParseError::new("invalid JSON number", self.pos));
             }
             while matches!(self.peek(), Some(b'0'..=b'9')) {
                 self.pos += 1;
@@ -885,18 +1677,18 @@ impl<'a> JsonParser<'a> {
                 self.pos += 1;
             }
             if !matches!(self.peek(), Some(b'0'..=b'9')) {
-                return Err(RuntimeError::value_error("invalid JSON number"));
+                return Err(JsonParseError::new("invalid JSON number", self.pos));
             }
             while matches!(self.peek(), Some(b'0'..=b'9')) {
                 self.pos += 1;
             }
         }
         let text = std::str::from_utf8(&self.source[start..self.pos])
-            .map_err(|_| RuntimeError::value_error("invalid JSON number"))?;
+            .map_err(|_| JsonParseError::new("invalid JSON number", self.pos))?;
         if text.contains('.') || text.contains('e') || text.contains('E') {
             let value = text
                 .parse::<f64>()
-                .map_err(|_| RuntimeError::value_error("invalid JSON number"))?;
+                .map_err(|_| JsonParseError::new("invalid JSON number", self.pos))?;
             Ok(JsonNode::Float(value))
         } else if let Ok(value) = text.parse::<i64>() {
             Ok(JsonNode::Int(value))
@@ -905,8 +1697,11 @@ impl<'a> JsonParser<'a> {
                 Some(rest) => (true, rest),
                 None => (false, text),
             };
+            json_validate_int_digits_limit(digits).map_err(|err| {
+                JsonParseError::new(err.message, self.pos)
+            })?;
             let mut value = BigInt::from_str_radix(digits, 10)
-                .ok_or_else(|| RuntimeError::value_error("invalid JSON number"))?;
+                .ok_or_else(|| JsonParseError::new("invalid JSON number", self.pos))?;
             if negative {
                 value = value.negated();
             }
@@ -920,10 +1715,13 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn expect(&mut self, byte: u8) -> Result<(), RuntimeError> {
-        match self.next() {
-            Some(found) if found == byte => Ok(()),
-            _ => Err(RuntimeError::new("invalid JSON syntax")),
+    fn expect(&mut self, byte: u8, message: &'static str) -> Result<(), JsonParseError> {
+        match self.peek() {
+            Some(found) if found == byte => {
+                self.pos += 1;
+                Ok(())
+            }
+            _ => Err(JsonParseError::new(message, self.pos)),
         }
     }
 
@@ -938,18 +1736,94 @@ impl<'a> JsonParser<'a> {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn parse_json_node(source: &str) -> Result<JsonNode, RuntimeError> {
-    JsonParser::new(source).parse()
+    parse_json_node_with_limit(source, JSON_PARSE_NATIVE_STACK_SAFE_DEPTH)
 }
 
+fn parse_json_node_with_limit(source: &str, depth_limit: usize) -> Result<JsonNode, RuntimeError> {
+    parse_json_node_with_limit_detail(source, depth_limit).map_err(json_runtime_error_from_parse)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 fn parse_json_node_from_index(source: &str, idx: usize) -> Result<(JsonNode, usize), RuntimeError> {
+    parse_json_node_from_index_with_limit(source, idx, JSON_PARSE_NATIVE_STACK_SAFE_DEPTH)
+}
+
+fn parse_json_node_with_limit_detail(
+    source: &str,
+    depth_limit: usize,
+) -> Result<JsonNode, JsonParseError> {
+    JsonParser::new(source, depth_limit).parse()
+}
+
+fn parse_json_node_from_index_with_limit(
+    source: &str,
+    idx: usize,
+    depth_limit: usize,
+) -> Result<(JsonNode, usize), RuntimeError> {
+    parse_json_node_from_index_with_limit_detail(source, idx, depth_limit)
+        .map_err(json_runtime_error_from_parse)
+}
+
+fn parse_json_node_from_index_with_limit_detail(
+    source: &str,
+    idx: usize,
+    depth_limit: usize,
+) -> Result<(JsonNode, usize), JsonParseError> {
     if idx > source.len() {
-        return Err(RuntimeError::new("unexpected end of JSON"));
+        return Err(JsonParseError::new("Expecting value", source.len()));
     }
-    let mut parser = JsonParser::new(source);
+    let mut parser = JsonParser::new(source, depth_limit);
     parser.pos = idx;
-    let node = parser.parse_value()?;
+    let node = parser.parse_value(0)?;
     Ok((node, parser.pos))
+}
+
+fn utf8_char_index_to_byte(source: &str, char_index: usize) -> Option<usize> {
+    let char_len = source.chars().count();
+    if char_index > char_len {
+        return None;
+    }
+    if char_index == char_len {
+        return Some(source.len());
+    }
+    source
+        .char_indices()
+        .nth(char_index)
+        .map(|(byte_idx, _)| byte_idx)
+}
+
+fn utf8_byte_index_to_char(source: &str, byte_index: usize) -> Option<usize> {
+    if byte_index > source.len() || !source.is_char_boundary(byte_index) {
+        return None;
+    }
+    Some(source[..byte_index].chars().count())
+}
+
+fn json_string_has_unescaped_ascii_control_char(source: &str, start: usize, end: usize) -> bool {
+    if start >= end || end > source.len() {
+        return false;
+    }
+    let bytes = source.as_bytes();
+    let mut idx = start.saturating_add(1);
+    let content_end = end.saturating_sub(1);
+    while idx < content_end {
+        let byte = bytes[idx];
+        if byte == b'\\' {
+            idx += 1;
+            if idx >= content_end {
+                break;
+            }
+            if bytes[idx] == b'u' {
+                idx = idx.saturating_add(4).min(content_end);
+            }
+        } else if byte < 0x20 {
+            return true;
+        }
+        idx += 1;
+    }
+    false
 }
 
 fn json_node_to_value(node: JsonNode, heap: &Heap) -> Value {
@@ -989,6 +1863,12 @@ mod tests {
     fn json_escape_string_ensure_ascii_uses_lowercase_hex() {
         let escaped = json_escape_string("A☺😊", true);
         assert_eq!(escaped, "\"A\\u263a\\ud83d\\ude0a\"");
+    }
+
+    #[test]
+    fn json_escape_string_uses_short_control_escapes_for_backspace_and_formfeed() {
+        let escaped = json_escape_string("\u{0008}\u{000C}", true);
+        assert_eq!(escaped, "\"\\b\\f\"");
     }
 
     #[test]
@@ -1088,6 +1968,13 @@ mod tests {
     }
 
     #[test]
+    fn parse_json_node_rejects_unescaped_control_chars_in_strings() {
+        let err = parse_json_node("[\"\ttab\tcharacter\tin\tstring\t\"]")
+            .expect_err("unescaped tab should fail");
+        assert!(err.message.contains("invalid control character"));
+    }
+
+    #[test]
     fn parse_json_node_rejects_invalid_surrogate_sequences() {
         let low_only = parse_json_node("\"\\udc00\"").expect_err("unpaired low surrogate");
         assert!(low_only.message.contains("invalid unicode escape"));
@@ -1130,23 +2017,47 @@ mod tests {
                 HashMap::from([("allow_nan".to_string(), Value::Bool(false))]),
             )
             .expect_err("allow_nan=False should reject NaN");
-        assert!(nan_err.message.contains("not JSON compliant"));
+        assert!(nan_err.message.contains("not JSON compliant: nan"));
 
         let bad_key_dict = vm
             .heap
-            .alloc_dict(vec![(Value::Int(1), Value::Str("x".to_string()))]);
+            .alloc_dict(vec![(vm.heap.alloc_bytes(b"x".to_vec()), Value::Str("y".to_string()))]);
         let key_err = vm
             .builtin_json_dumps(vec![bad_key_dict.clone()], HashMap::new())
-            .expect_err("non-string key should fail when skipkeys is false");
-        assert!(key_err.message.contains("keys must be str"));
+            .expect_err("unsupported key should fail when skipkeys is false");
+        assert!(key_err.message.contains("keys must be str, int, float, bool or None, not bytes"));
 
         let skipped = vm
             .builtin_json_dumps(
                 vec![bad_key_dict],
                 HashMap::from([("skipkeys".to_string(), Value::Bool(true))]),
             )
-            .expect("skipkeys=True should drop non-string keys");
+            .expect("skipkeys=True should drop unsupported keys");
         assert_eq!(skipped, Value::Str("{}".to_string()));
+
+        let numeric_key = vm
+            .builtin_json_dumps(
+                vec![vm
+                    .heap
+                    .alloc_dict(vec![(Value::Int(1), Value::Str("x".to_string()))])],
+                HashMap::new(),
+            )
+            .expect("int keys should be serialized as JSON object-string keys");
+        assert_eq!(numeric_key, Value::Str("{\"1\": \"x\"}".to_string()));
+
+        let nan_key_dict = vm.heap.alloc_dict(vec![(Value::Float(f64::NAN), Value::Int(1))]);
+        let nan_key_err = vm
+            .builtin_json_dumps(
+                vec![nan_key_dict.clone()],
+                HashMap::from([("allow_nan".to_string(), Value::Bool(false))]),
+            )
+            .expect_err("allow_nan=False should reject non-finite float keys");
+        assert!(nan_key_err.message.contains("not JSON compliant: nan"));
+
+        let nan_key_ok = vm
+            .builtin_json_dumps(vec![nan_key_dict], HashMap::new())
+            .expect("allow_nan=True should serialize non-finite float keys");
+        assert_eq!(nan_key_ok, Value::Str("{\"NaN\": 1}".to_string()));
     }
 
     #[test]

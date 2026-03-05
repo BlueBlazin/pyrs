@@ -77,7 +77,7 @@ use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
     GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject, MemoryViewObject,
     ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError,
-    SuperObject, Value, format_repr, format_value,
+    SuperObject, Value, format_repr, format_value, runtime_get_int_max_str_digits,
 };
 
 #[derive(Debug, Clone)]
@@ -94,6 +94,7 @@ unsafe extern "C" {
 type VmExecutionDeadline = f64;
 #[cfg(not(target_arch = "wasm32"))]
 type VmExecutionDeadline = Instant;
+const VM_STACK_SAFE_RECURSION_LIMIT: i64 = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TraceFrame {
@@ -912,6 +913,9 @@ struct Frame {
     generator_pending_throw: Option<Value>,
     generator_resume_kind: Option<GeneratorResumeKind>,
     yield_from_iter: Option<Value>,
+    // Tracks an in-flight non-recursive SEND delegation:
+    // (delegated_generator_owner_id, SEND target ip).
+    send_delegate_state: Option<(u64, usize)>,
     quickened_sites: Vec<QuickenedSiteKind>,
     load_fast_inline_cache: Vec<Option<LoadFastSiteCacheEntry>>,
     load_attr_inline_cache: Vec<[Option<LoadAttrSiteCacheEntry>; LOAD_ATTR_CACHE_WAYS]>,
@@ -968,6 +972,7 @@ impl Frame {
             generator_pending_throw: None,
             generator_resume_kind: None,
             yield_from_iter: None,
+            send_delegate_state: None,
             quickened_sites: vec![QuickenedSiteKind::None; instruction_len],
             load_fast_inline_cache: vec![None; instruction_len],
             load_attr_inline_cache: (0..instruction_len).map(|_| [None, None]).collect(),
@@ -1008,6 +1013,7 @@ impl Frame {
         debug_assert!(self.generator_pending_throw.is_none());
         debug_assert!(self.generator_resume_kind.is_none());
         debug_assert!(self.yield_from_iter.is_none());
+        debug_assert!(self.send_delegate_state.is_none());
         self.code = code;
         self.ip = 0;
         self.last_ip = 0;
@@ -1030,6 +1036,7 @@ impl Frame {
         self.return_class = false;
         self.expect_none_return = false;
         self.generator_awaiting_resume_value = false;
+        self.send_delegate_state = None;
         self.simple_one_arg_no_cells = false;
 
         if !same_code {
@@ -1059,6 +1066,7 @@ impl Frame {
             && self.module.id() == module.id()
             && self.owner_class.is_none()
             && owner_class.is_none()
+            && self.send_delegate_state.is_none()
             && self.fast_locals.len() == 1
             && code.plain_positional_arg0_slot == Some(0)
         {
@@ -1089,6 +1097,7 @@ impl Frame {
         debug_assert!(self.generator_pending_throw.is_none());
         debug_assert!(self.generator_resume_kind.is_none());
         debug_assert!(self.yield_from_iter.is_none());
+        debug_assert!(self.send_delegate_state.is_none());
         debug_assert!(self.active_exception.is_none());
         debug_assert!(self.except_star_match_lasti.is_none());
         debug_assert!(self.reraise_lasti_override.is_none());
@@ -1250,6 +1259,7 @@ pub struct Vm {
     is_finalizing: bool,
     recursion_limit: i64,
     switch_interval: f64,
+    sys_trace_hook: Value,
     asyncgen_firstiter_hook: Value,
     asyncgen_finalizer_hook: Value,
     gc_enabled: bool,
@@ -1557,6 +1567,7 @@ impl Vm {
             is_finalizing: false,
             recursion_limit: 1000,
             switch_interval: 0.005,
+            sys_trace_hook: Value::None,
             asyncgen_firstiter_hook: Value::None,
             asyncgen_finalizer_hook: Value::None,
             gc_enabled: true,
@@ -2145,8 +2156,16 @@ impl Vm {
     }
 
     #[inline]
+    fn effective_recursion_limit(&self) -> i64 {
+        self.recursion_limit
+            .max(1)
+            .min(VM_STACK_SAFE_RECURSION_LIMIT)
+    }
+
+    #[inline]
     fn ensure_can_push_python_frame(&self) -> Result<(), RuntimeError> {
-        if self.frames.len() as i64 >= self.recursion_limit {
+        let effective_limit = self.effective_recursion_limit();
+        if self.frames.len() as i64 >= effective_limit {
             if self.host.env_var_os("PYRS_TRACE_RECURSION_LIMIT").is_some() {
                 let frame_summary = self
                     .frames
@@ -2157,9 +2176,10 @@ impl Vm {
                     .collect::<Vec<_>>()
                     .join(" <= ");
                 eprintln!(
-                    "[recursion-limit] frames={} limit={} top={}",
+                    "[recursion-limit] frames={} limit={} effective_limit={} top={}",
                     self.frames.len(),
                     self.recursion_limit,
+                    effective_limit,
                     frame_summary
                 );
             }
@@ -2248,6 +2268,7 @@ impl Vm {
         frame.generator_pending_throw = None;
         frame.generator_resume_kind = None;
         frame.yield_from_iter = None;
+        frame.send_delegate_state = None;
         frame.simple_one_arg_no_cells = false;
         self.frame_pool.push(frame);
     }
@@ -2379,6 +2400,7 @@ impl Vm {
             && frame.generator_pending_throw.is_none()
             && frame.generator_resume_kind.is_none()
             && frame.yield_from_iter.is_none()
+            && frame.send_delegate_state.is_none()
             && frame.active_exception.is_none()
             && frame.except_star_match_lasti.is_none()
             && frame.reraise_lasti_override.is_none()
@@ -2452,6 +2474,9 @@ impl Vm {
         if frame.yield_from_iter.is_some() {
             frame.yield_from_iter = None;
         }
+        if frame.send_delegate_state.is_some() {
+            frame.send_delegate_state = None;
+        }
         if frame.active_exception.is_some() {
             frame.active_exception = None;
         }
@@ -2514,6 +2539,7 @@ impl Vm {
         debug_assert!(frame.generator_pending_throw.is_none());
         debug_assert!(frame.generator_resume_kind.is_none());
         debug_assert!(frame.yield_from_iter.is_none());
+        debug_assert!(frame.send_delegate_state.is_none());
         debug_assert!(frame.active_exception.is_none());
         debug_assert!(frame.except_star_match_lasti.is_none());
         debug_assert!(frame.reraise_lasti_override.is_none());
@@ -4388,7 +4414,7 @@ impl Vm {
                     Value::Int(0),
                     Value::Int(0),
                     Value::Bool(false),
-                    Value::Int(4300),
+                    Value::Int(runtime_get_int_max_str_digits()),
                 ],
             );
             if let Value::Instance(flags_instance) = flags_value.clone()
@@ -5072,6 +5098,22 @@ impl Vm {
             module_data.globals.insert(
                 "call_tracing".to_string(),
                 Value::Builtin(BuiltinFunction::SysCallTracing),
+            );
+            module_data.globals.insert(
+                "gettrace".to_string(),
+                Value::Builtin(BuiltinFunction::SysGetTrace),
+            );
+            module_data.globals.insert(
+                "settrace".to_string(),
+                Value::Builtin(BuiltinFunction::SysSetTrace),
+            );
+            module_data.globals.insert(
+                "get_int_max_str_digits".to_string(),
+                Value::Builtin(BuiltinFunction::SysGetIntMaxStrDigits),
+            );
+            module_data.globals.insert(
+                "set_int_max_str_digits".to_string(),
+                Value::Builtin(BuiltinFunction::SysSetIntMaxStrDigits),
             );
             module_data.globals.insert(
                 "exception".to_string(),
@@ -6556,6 +6598,29 @@ fn value_to_f64(value: Value) -> Result<f64, RuntimeError> {
         Value::BigInt(value) => Ok(value.to_f64()),
         Value::Bool(value) => Ok(if value { 1.0 } else { 0.0 }),
         Value::Complex { real, imag: 0.0 } => Ok(real),
+        Value::Instance(instance) => {
+            let Object::Instance(instance_data) = &*instance.kind() else {
+                return Err(RuntimeError::new("expected numeric value"));
+            };
+            if let Some(Value::Float(value)) = instance_data.attrs.get(FLOAT_BACKING_STORAGE_ATTR)
+            {
+                return Ok(*value);
+            }
+            if let Some(backing) = instance_data.attrs.get(INT_BACKING_STORAGE_ATTR) {
+                return match backing {
+                    Value::Int(value) => Ok(*value as f64),
+                    Value::BigInt(value) => Ok(value.to_f64()),
+                    Value::Bool(value) => Ok(if *value { 1.0 } else { 0.0 }),
+                    _ => Err(RuntimeError::new("expected numeric value")),
+                };
+            }
+            if let Some(Value::Complex { real, imag: 0.0 }) =
+                instance_data.attrs.get(COMPLEX_BACKING_STORAGE_ATTR)
+            {
+                return Ok(*real);
+            }
+            Err(RuntimeError::new("expected numeric value"))
+        }
         Value::Str(value) => value
             .trim()
             .parse::<f64>()
@@ -7940,6 +8005,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                 }
                 IteratorKind::CallIter { .. }
                 | IteratorKind::Count { .. }
+                | IteratorKind::Enumerate { .. }
                 | IteratorKind::Cycle { .. }
                 | IteratorKind::Zip { .. }
                 | IteratorKind::Chain { .. }
@@ -9715,7 +9781,8 @@ fn sre_run_program(
                     return None;
                 }
                 let next_pc = until_pc + 1;
-                let hard_max = max_count_raw.min(chars.len().saturating_sub(cursor).saturating_add(1));
+                let hard_max =
+                    max_count_raw.min(chars.len().saturating_sub(cursor).saturating_add(1));
                 let mut states = Vec::new();
                 states.push((cursor, marks.clone()));
                 let mut rep_pos = cursor;

@@ -21,6 +21,61 @@ const RE_MATCH_CLASS_NAME: &str = "Match";
 const RE_FLAG_UNICODE: i64 = 32;
 const RE_FLAG_VERBOSE: i64 = 64;
 
+fn clamp_index(len: usize, raw: i64) -> usize {
+    if raw < 0 {
+        (len as i64 + raw).max(0) as usize
+    } else {
+        (raw as usize).min(len)
+    }
+}
+
+fn utf8_char_index_to_byte(text: &str, char_index: usize) -> Option<usize> {
+    let char_len = text.chars().count();
+    if char_index > char_len {
+        return None;
+    }
+    if char_index == char_len {
+        return Some(text.len());
+    }
+    text.char_indices()
+        .nth(char_index)
+        .map(|(byte_idx, _)| byte_idx)
+}
+
+fn utf8_byte_index_to_char(text: &str, byte_index: usize) -> Option<usize> {
+    if byte_index > text.len() || !text.is_char_boundary(byte_index) {
+        return None;
+    }
+    Some(text[..byte_index].chars().count())
+}
+
+fn utf8_slice_by_char_range(text: &str, start_char: usize, end_char: usize) -> Option<String> {
+    if start_char > end_char {
+        return None;
+    }
+    let start_byte = utf8_char_index_to_byte(text, start_char)?;
+    let end_byte = utf8_char_index_to_byte(text, end_char)?;
+    Some(text[start_byte..end_byte].to_string())
+}
+
+fn normalize_string_window(
+    text: &str,
+    raw_pos: i64,
+    raw_end: i64,
+) -> Result<(usize, usize, i64, i64), RuntimeError> {
+    let char_len = text.chars().count();
+    let start_char = clamp_index(char_len, raw_pos);
+    let mut stop_char = clamp_index(char_len, raw_end);
+    if stop_char < start_char {
+        stop_char = start_char;
+    }
+    let start_byte = utf8_char_index_to_byte(text, start_char)
+        .ok_or_else(|| RuntimeError::new("invalid regex match bounds"))?;
+    let stop_byte = utf8_char_index_to_byte(text, stop_char)
+        .ok_or_else(|| RuntimeError::new("invalid regex match bounds"))?;
+    Ok((start_byte, stop_byte, start_char as i64, stop_char as i64))
+}
+
 fn decimal_parser_groupindex_entries(pattern: &str) -> Option<Vec<(&'static str, i64)>> {
     let looks_like_decimal_parser = pattern.contains("(?P<sign>[-+])?")
         && pattern.contains("(?P<int>\\d*)")
@@ -165,15 +220,25 @@ impl Vm {
         }
         let mut groups = Vec::with_capacity(captures.len());
         let mut spans = Vec::with_capacity(captures.len());
+        let mut stored_match_start = match_start;
+        let mut stored_match_end = match_end;
         match &source {
             Value::Str(text) => {
+                stored_match_start = utf8_byte_index_to_char(text, match_start)
+                    .ok_or_else(|| RuntimeError::new("invalid regex match bounds"))?;
+                stored_match_end = utf8_byte_index_to_char(text, match_end)
+                    .ok_or_else(|| RuntimeError::new("invalid regex match bounds"))?;
                 for capture in &captures {
                     match capture {
                         Some((start, end)) => {
                             groups.push(Value::Str(text[*start..*end].to_string()));
+                            let span_start = utf8_byte_index_to_char(text, *start)
+                                .ok_or_else(|| RuntimeError::new("invalid regex match bounds"))?;
+                            let span_end = utf8_byte_index_to_char(text, *end)
+                                .ok_or_else(|| RuntimeError::new("invalid regex match bounds"))?;
                             spans.push(self.heap.alloc_tuple(vec![
-                                Value::Int(*start as i64),
-                                Value::Int(*end as i64),
+                                Value::Int(span_start as i64),
+                                Value::Int(span_end as i64),
                             ]));
                         }
                         None => {
@@ -215,8 +280,8 @@ impl Vm {
             let regs = {
                 let mut entries = Vec::with_capacity(spans.len() + 1);
                 entries.push(self.heap.alloc_tuple(vec![
-                    Value::Int(match_start as i64),
-                    Value::Int(match_end as i64),
+                    Value::Int(stored_match_start as i64),
+                    Value::Int(stored_match_end as i64),
                 ]));
                 for span in &spans {
                     if let Value::Tuple(tuple_obj) = span {
@@ -260,10 +325,10 @@ impl Vm {
                 .insert("_source".to_string(), source.clone());
             instance_data
                 .attrs
-                .insert("_start".to_string(), Value::Int(match_start as i64));
+                .insert("_start".to_string(), Value::Int(stored_match_start as i64));
             instance_data
                 .attrs
-                .insert("_end".to_string(), Value::Int(match_end as i64));
+                .insert("_end".to_string(), Value::Int(stored_match_end as i64));
             instance_data
                 .attrs
                 .insert("_groups".to_string(), groups_tuple.clone());
@@ -403,7 +468,15 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         if index == 0 {
             return match source {
-                Value::Str(text) => Ok(Value::Str(text[start as usize..end as usize].to_string())),
+                Value::Str(text) => {
+                    let start = usize::try_from(start)
+                        .map_err(|_| RuntimeError::new("invalid regex match bounds"))?;
+                    let end = usize::try_from(end)
+                        .map_err(|_| RuntimeError::new("invalid regex match bounds"))?;
+                    let matched = utf8_slice_by_char_range(text, start, end)
+                        .ok_or_else(|| RuntimeError::new("invalid regex match bounds"))?;
+                    Ok(Value::Str(matched))
+                }
                 Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
                     let bytes = bytes_like_from_value(source.clone())?;
                     Ok(self
@@ -611,7 +684,15 @@ impl Vm {
         let (source, start, end, _groups, _spans, _groupindex) =
             self.re_match_snapshot(receiver)?;
         let matched = match &source {
-            Value::Str(text) => Value::Str(text[start as usize..end as usize].to_string()),
+            Value::Str(text) => {
+                let start = usize::try_from(start)
+                    .map_err(|_| RuntimeError::new("invalid regex match bounds"))?;
+                let end = usize::try_from(end)
+                    .map_err(|_| RuntimeError::new("invalid regex match bounds"))?;
+                let matched = utf8_slice_by_char_range(text, start, end)
+                    .ok_or_else(|| RuntimeError::new("invalid regex match bounds"))?;
+                Value::Str(matched)
+            }
             Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
                 let bytes = bytes_like_from_value(source)?;
                 self.heap
@@ -971,14 +1052,6 @@ impl Vm {
             other => Value::Str(format_value(&other)),
         };
 
-        let clamp_index = |len: usize, raw: i64| -> usize {
-            if raw < 0 {
-                (len as i64 + raw).max(0) as usize
-            } else {
-                (raw as usize).min(len)
-            }
-        };
-
         match target {
             Value::Str(text) => {
                 if !matches!(pattern, RePatternValue::Str(_)) {
@@ -1014,19 +1087,10 @@ impl Vm {
                 let raw_end = if let Some(value) = args.get(1) {
                     value_to_int(value.clone())?
                 } else {
-                    text.len() as i64
+                    text.chars().count() as i64
                 };
-                let mut start = clamp_index(text.len(), raw_pos);
-                let mut stop = clamp_index(text.len(), raw_end);
-                while start > 0 && !text.is_char_boundary(start) {
-                    start -= 1;
-                }
-                while stop > 0 && !text.is_char_boundary(stop) {
-                    stop -= 1;
-                }
-                if stop < start {
-                    stop = start;
-                }
+                let (start, stop, _start_char, _stop_char) =
+                    normalize_string_window(&text, raw_pos, raw_end)?;
                 let mut matches = Vec::new();
                 let mut cursor = start;
                 while cursor <= stop {
@@ -1195,14 +1259,6 @@ impl Vm {
         };
         let groupindex = self.re_match_groupindex_from_pattern_arg(&pattern_arg);
 
-        let clamp_index = |len: usize, raw: i64| -> usize {
-            if raw < 0 {
-                (len as i64 + raw).max(0) as usize
-            } else {
-                (raw as usize).min(len)
-            }
-        };
-
         let match_values = match target {
             Value::Str(text) => {
                 if !matches!(pattern, RePatternValue::Str(_)) {
@@ -1218,19 +1274,10 @@ impl Vm {
                 let raw_end = if let Some(value) = args.get(1) {
                     value_to_int(value.clone())?
                 } else {
-                    text.len() as i64
+                    text.chars().count() as i64
                 };
-                let mut start = clamp_index(text.len(), raw_pos);
-                let mut stop = clamp_index(text.len(), raw_end);
-                while start > 0 && !text.is_char_boundary(start) {
-                    start -= 1;
-                }
-                while stop > 0 && !text.is_char_boundary(stop) {
-                    stop -= 1;
-                }
-                if stop < start {
-                    stop = start;
-                }
+                let (start, stop, start_char, stop_char) =
+                    normalize_string_window(&text, raw_pos, raw_end)?;
 
                 let source = Value::Str(text.clone());
                 let mut out = Vec::new();
@@ -1261,8 +1308,8 @@ impl Vm {
                         source.clone(),
                         detail,
                         groupindex.clone(),
-                        start as i64,
-                        stop as i64,
+                        start_char,
+                        stop_char,
                     )?);
                     if absolute_end == absolute_start {
                         if absolute_end >= stop {
@@ -1542,20 +1589,13 @@ impl Vm {
         let compiled_program = re_compiled_regex_program_from_argument(&compiled_pattern);
         let groupindex = self.re_match_groupindex_from_pattern_arg(&compiled_pattern);
         let target = args[1].clone();
-        let clamp_index = |len: usize, raw: i64| -> usize {
-            if raw < 0 {
-                (len as i64 + raw).max(0) as usize
-            } else {
-                (raw as usize).min(len)
-            }
-        };
         let raw_pos = if let Some(value) = args.get(2) {
             value_to_int(value.clone())?
         } else {
             0
         };
         let default_end = match &target {
-            Value::Str(text) => text.len() as i64,
+            Value::Str(text) => text.chars().count() as i64,
             Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
                 bytes_like_from_value(target.clone())?.len() as i64
             }
@@ -1569,17 +1609,8 @@ impl Vm {
 
         let (found, pos, endpos) = match target.clone() {
             Value::Str(text) => {
-                let mut start = clamp_index(text.len(), raw_pos);
-                let mut stop = clamp_index(text.len(), raw_end);
-                while start > 0 && !text.is_char_boundary(start) {
-                    start -= 1;
-                }
-                while stop > 0 && !text.is_char_boundary(stop) {
-                    stop -= 1;
-                }
-                if stop < start {
-                    stop = start;
-                }
+                let (start, stop, start_char, stop_char) =
+                    normalize_string_window(&text, raw_pos, raw_end)?;
                 let segment = Value::Str(text[start..stop].to_string());
                 let found = re_match_details(&pattern, &segment, mode, compiled_program.as_ref())?
                     .map(|mut detail| {
@@ -1591,7 +1622,7 @@ impl Vm {
                         }
                         detail
                     });
-                (found, start as i64, stop as i64)
+                (found, start_char, stop_char)
             }
             Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
                 let bytes = bytes_like_from_value(target.clone())?;

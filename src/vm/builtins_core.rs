@@ -34,7 +34,10 @@ use crate::ast::{
     Pattern as AstPattern, Stmt, StmtKind, TypeParam as AstTypeParam,
     TypeParamKind as AstTypeParamKind, UnaryOp as AstUnaryOp,
 };
-use crate::runtime::value_lookup_hash;
+use crate::runtime::{
+    MIN_INT_MAX_STR_DIGITS, runtime_get_int_max_str_digits, runtime_set_int_max_str_digits,
+    value_lookup_hash,
+};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -2560,6 +2563,42 @@ impl Vm {
                 ));
             }
         };
+        let mut single_mode_displayhook = false;
+        let single_mode_source = self.compiled_code_metadata(&code).and_then(|metadata| {
+            if metadata.mode == CompiledCodeMode::Single {
+                metadata.source.clone()
+            } else {
+                None
+            }
+        });
+        let execution_code = if let Some(source_text) = single_mode_source.as_deref() {
+            if let Ok(module_ast) = parser::parse_module(source_text) {
+                if module_ast.body.len() == 1
+                    && let StmtKind::Expr(expr) = &module_ast.body[0].node
+                {
+                    let expr_code =
+                        compiler::compile_expression_with_filename(expr, &code.filename).map_err(
+                            |err| {
+                                self.compile_syntax_error_runtime_error(
+                                    err.message,
+                                    &code.filename,
+                                    source_text,
+                                    err.span.map(|span| span.line),
+                                    err.span.map(|span| span.column),
+                                )
+                            },
+                        )?;
+                    single_mode_displayhook = true;
+                    Rc::new(expr_code)
+                } else {
+                    code.clone()
+                }
+            } else {
+                code.clone()
+            }
+        } else {
+            code.clone()
+        };
 
         let caller_depth = self.frames.len();
         if caller_depth == 0 {
@@ -2654,14 +2693,21 @@ impl Vm {
             }
         }
 
-        let closure_cells = self.exec_closure_cells(&code, closure_kw)?;
-        let cells = self.build_cells(&code, closure_cells);
-        let mut frame = Frame::new(code, locals_module.clone(), true, false, cells, None);
+        let closure_cells = self.exec_closure_cells(&execution_code, closure_kw)?;
+        let cells = self.build_cells(&execution_code, closure_cells);
+        let mut frame = Frame::new(
+            execution_code,
+            locals_module.clone(),
+            true,
+            false,
+            cells,
+            None,
+        );
         frame.function_globals = globals_module.clone();
         if locals_module.id() != globals_module.id() {
             frame.globals_fallback = Some(globals_module.clone());
         }
-        frame.discard_result = true;
+        frame.discard_result = !single_mode_displayhook;
         self.push_frame_checked(Box::new(frame))?;
 
         let previous_stop = self.run_stop_depth;
@@ -2683,6 +2729,13 @@ impl Vm {
         }
 
         run_result?;
+        if single_mode_displayhook {
+            let Some(caller_frame) = self.frames.get_mut(caller_index) else {
+                return Err(RuntimeError::new("exec() caller frame unavailable"));
+            };
+            let result = caller_frame.stack.pop().unwrap_or(Value::None);
+            self.invoke_sys_displayhook(result)?;
+        }
         Ok(Value::None)
     }
 
@@ -3901,6 +3954,100 @@ impl Vm {
                 Err(self.runtime_error_from_active_exception("sys.call_tracing() failed"))
             }
         }
+    }
+
+    pub(super) fn builtin_sys_gettrace(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.gettrace() takes no keyword arguments",
+            ));
+        }
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "sys.gettrace() takes no arguments ({} given)",
+                args.len()
+            )));
+        }
+        Ok(self.sys_trace_hook.clone())
+    }
+
+    pub(super) fn builtin_sys_settrace(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.settrace() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "sys.settrace() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        self.sys_trace_hook = args.remove(0);
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_sys_get_int_max_str_digits(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.get_int_max_str_digits() takes no keyword arguments",
+            ));
+        }
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "sys.get_int_max_str_digits() takes no arguments ({} given)",
+                args.len()
+            )));
+        }
+        Ok(Value::Int(runtime_get_int_max_str_digits()))
+    }
+
+    pub(super) fn builtin_sys_set_int_max_str_digits(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.set_int_max_str_digits() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "sys.set_int_max_str_digits() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let maxdigits = value_to_int(args[0].clone())?;
+        if maxdigits != 0 && maxdigits < MIN_INT_MAX_STR_DIGITS {
+            return Err(RuntimeError::value_error(format!(
+                "maxdigits must be >= {} or 0 for unlimited",
+                MIN_INT_MAX_STR_DIGITS
+            )));
+        }
+        runtime_set_int_max_str_digits(maxdigits);
+        if let Some(sys_module) = self.modules.get("sys").cloned()
+            && let Object::Module(module_data) = &mut *sys_module.kind_mut()
+            && let Some(Value::Instance(flags)) = module_data.globals.get("flags").cloned()
+            && let Object::Instance(flags_data) = &mut *flags.kind_mut()
+        {
+            flags_data
+                .attrs
+                .insert("int_max_str_digits".to_string(), Value::Int(maxdigits));
+        }
+        Ok(Value::None)
     }
 
     pub(super) fn builtin_sys_exit(
@@ -8245,10 +8392,7 @@ impl Vm {
                     Object::Module(module_data) if module_data.name == "__re_match__" => {
                         Some(Value::Class(self.ensure_re_runtime_type_class("Match")))
                     }
-                    _ => self
-                        .types_module_or_private_class("ModuleType")
-                        .map(Value::Class)
-                        .or(Some(Value::Builtin(BuiltinFunction::TypesModuleType))),
+                    _ => Some(Value::Builtin(BuiltinFunction::TypesModuleType)),
                 },
                 Value::None => Some(Value::Class(
                     self.types_module_or_private_class("NoneType")
@@ -8291,14 +8435,15 @@ impl Vm {
             {
                 base_classes.push(object_class);
             }
-            let namespace = self.class_namespace_attrs_map(&args[name_index + 2])?;
+            let namespace_value = args[name_index + 2].clone();
+            let namespace = self.class_namespace_attrs_map(&namespace_value)?;
 
             let class_value = self.build_default_class_value(
                 class_name,
                 namespace,
                 base_classes,
                 Some(metaclass),
-                None,
+                Some(&namespace_value),
             )?;
             self.preserve_type_bases_tuple_subclass(&class_value, &args[name_index + 1]);
             if let Value::Class(class_ref) = &class_value
@@ -15253,10 +15398,51 @@ impl Vm {
                             return Ok(true);
                         }
                     }
-                    Ok(self
-                        .class_mro_entries(class)
-                        .iter()
-                        .any(|entry| entry.id() == expected.id()))
+                    let mro = self.class_mro_entries(class);
+                    if mro.iter().any(|entry| entry.id() == expected.id()) {
+                        return Ok(true);
+                    }
+                    // Some exception surfaces still materialize synthetic class objects
+                    // from exception-type markers. Fall back to module+name matching for
+                    // exception classes so issubclass()/assertRaises observe CPython parity.
+                    if self.class_is_exception_class(class) && self.class_is_exception_class(expected)
+                    {
+                        let (expected_name, expected_module) = match &*expected.kind() {
+                            Object::Class(expected_data) => (
+                                expected_data.name.clone(),
+                                expected_data.attrs.get("__module__").and_then(|value| match value
+                                {
+                                    Value::Str(module_name) => Some(module_name.clone()),
+                                    _ => None,
+                                }),
+                            ),
+                            _ => (String::new(), None),
+                        };
+                        let by_name_and_module = mro.iter().any(|entry| {
+                            let Object::Class(entry_data) = &*entry.kind() else {
+                                return false;
+                            };
+                            if entry_data.name != expected_name {
+                                return false;
+                            }
+                            let entry_module = entry_data.attrs.get("__module__").and_then(
+                                |value| match value {
+                                    Value::Str(module_name) => Some(module_name.clone()),
+                                    _ => None,
+                                },
+                            );
+                            match (&expected_module, &entry_module) {
+                                (Some(expected_module), Some(entry_module)) => {
+                                    expected_module == entry_module
+                                }
+                                _ => true,
+                            }
+                        });
+                        if by_name_and_module {
+                            return Ok(true);
+                        }
+                    }
+                    Ok(false)
                 }
                 Value::Exception(exception) => {
                     let Object::Class(class_data) = &*expected.kind() else {
@@ -15957,17 +16143,16 @@ impl Vm {
             0
         };
         let iterable = args.remove(0);
-        let values = self
-            .collect_iterable_values(iterable)
+        let iterator = self
+            .to_iterator_value(iterable)
             .map_err(|_| RuntimeError::type_error("enumerate() expects iterable"))?;
-        let mut out = Vec::with_capacity(values.len());
-        for (offset, value) in values.into_iter().enumerate() {
-            out.push(
-                self.heap
-                    .alloc_tuple(vec![Value::Int(start + offset as i64), value]),
-            );
-        }
-        Ok(self.heap.alloc_list(out))
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Enumerate {
+                iterator,
+                next_index: start,
+            },
+            index: 0,
+        }))
     }
 
     fn typing_module_global_value(&self, name: &str) -> Option<Value> {
@@ -17451,12 +17636,17 @@ functions outside a stub module should always be followed by an implementation t
                     }
                     Ok(self.alloc_native_bound_method(NativeMethodKind::ExceptionAddNote, wrapper))
                 }
-                "__notes__" => Ok(exception
+                "__notes__" => exception
                     .attrs
                     .borrow()
                     .get("__notes__")
                     .cloned()
-                    .unwrap_or(Value::None)),
+                    .ok_or_else(|| {
+                        RuntimeError::attribute_error(format!(
+                            "'{}' object has no attribute '__notes__'",
+                            exception.name
+                        ))
+                    }),
                 "__cause__" => Ok(exception
                     .cause
                     .as_ref()

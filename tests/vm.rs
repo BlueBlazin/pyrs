@@ -1256,6 +1256,17 @@ fn exposes_sys_implementation_identity() {
 }
 
 #[test]
+fn module_type_name_matches_cpython() {
+    let source = "import sys, types\nok = (type(sys).__name__ == 'module' and types.ModuleType.__name__ == 'module')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_warnoptions() {
     let source = "import sys\nn = len(sys.warnoptions)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -1280,6 +1291,28 @@ fn exposes_sys_abiflags_and_platlibdir() {
 #[test]
 fn exposes_sys_filesystem_encoding_helpers() {
     let source = "import sys\nok = sys.getfilesystemencoding() == 'utf-8' and sys.getfilesystemencodeerrors() == 'surrogateescape'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn exposes_sys_gettrace_and_settrace_contract() {
+    let source = "import sys\nmarker = object()\nnone_before = (sys.gettrace() is None)\nsys.settrace(marker)\nmarker_roundtrip = (sys.gettrace() is marker)\nsys.settrace(None)\nnone_after = (sys.gettrace() is None)\ngettrace_args_error = False\ngettrace_kwargs_error = False\nsettrace_arity0_error = False\nsettrace_arity2_error = False\nsettrace_kwargs_error = False\ntry:\n    sys.gettrace(1)\nexcept TypeError:\n    gettrace_args_error = True\ntry:\n    sys.gettrace(tracefunc=None)\nexcept TypeError:\n    gettrace_kwargs_error = True\ntry:\n    sys.settrace()\nexcept TypeError:\n    settrace_arity0_error = True\ntry:\n    sys.settrace(1, 2)\nexcept TypeError:\n    settrace_arity2_error = True\ntry:\n    sys.settrace(tracefunc=None)\nexcept TypeError:\n    settrace_kwargs_error = True\nok = (none_before and marker_roundtrip and none_after and gettrace_args_error and gettrace_kwargs_error and settrace_arity0_error and settrace_arity2_error and settrace_kwargs_error)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn exposes_sys_int_max_str_digits_control_surface() {
+    let source = "import sys\norig = sys.get_int_max_str_digits()\nsmall_error = False\noverflow_error = False\ntry:\n    sys.set_int_max_str_digits(100)\nexcept ValueError:\n    small_error = True\nsys.set_int_max_str_digits(640)\nflags_synced = (sys.flags.int_max_str_digits == 640)\nint('1' * 640)\ntry:\n    int('1' * 641)\nexcept ValueError:\n    overflow_error = True\nsys.set_int_max_str_digits(orig)\nrestored = (sys.get_int_max_str_digits() == orig and sys.flags.int_max_str_digits == orig)\nok = (small_error and flags_synced and overflow_error and restored)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -3663,6 +3696,132 @@ fallback_text = json.dumps(Unknown(), default=fallback, sort_keys=True)
     assert_eq!(
         vm.get_global("fallback_text"),
         Some(Value::Str("{\"fallback\": \"ok\"}".to_string()))
+    );
+}
+
+#[test]
+fn json_dumps_serializes_dict_subclasses_and_scalar_keys() {
+    let source = r#"import json
+class D(dict):
+    def keys(self):
+        return []
+d = D()
+d[1337] = "true.dat"
+subclass_text = json.dumps(d, sort_keys=True)
+scalar_text = json.dumps({2: 3.0, 4.0: 5, False: 1, 6: True}, sort_keys=True)
+mixed_sort_error = ""
+try:
+    json.dumps({"a": 1, 2: 3}, sort_keys=True)
+except Exception as exc:
+    mixed_sort_error = f"{type(exc).__name__}: {exc}"
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(
+        vm.get_global("subclass_text"),
+        Some(Value::Str("{\"1337\": \"true.dat\"}".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("scalar_text"),
+        Some(Value::Str(
+            "{\"false\": 1, \"2\": 3.0, \"4.0\": 5, \"6\": true}".to_string()
+        ))
+    );
+    let Some(Value::Str(mixed_sort_error)) = vm.get_global("mixed_sort_error") else {
+        panic!("mixed_sort_error should be a string");
+    };
+    assert!(mixed_sort_error.starts_with("TypeError:"));
+    assert!(mixed_sort_error.contains("'<' not supported between instances of"));
+}
+
+#[test]
+fn json_dumps_sort_keys_matches_cpython_type_error_for_incomparable_keys() {
+    let source = r#"import json
+error_text = ""
+try:
+    json.dumps({"a": 1, 2: 3}, sort_keys=True)
+except Exception as exc:
+    error_text = f"{type(exc).__name__}: {exc}"
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    let Some(Value::Str(error_text)) = vm.get_global("error_text") else {
+        panic!("error_text should be a string");
+    };
+    assert!(error_text.starts_with("TypeError:"));
+    assert!(error_text.contains("'<' not supported between instances of"));
+}
+
+#[test]
+fn json_dumps_sort_keys_orders_numeric_and_bool_keys_like_cpython() {
+    let source = r#"import json
+text = json.dumps({2: 3.0, 4.0: 5, False: 1, 6: True}, sort_keys=True)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(
+        vm.get_global("text"),
+        Some(Value::Str(
+            "{\"false\": 1, \"2\": 3.0, \"4.0\": 5, \"6\": true}".to_string()
+        ))
+    );
+}
+
+#[test]
+fn json_dumps_skipkeys_indent_matches_cpython() {
+    let source = r#"import json
+v = {b'invalid_key': False, 'valid_key': True}
+pretty = json.dumps(v, skipkeys=True, indent=4)
+empty = json.dumps({b'invalid_key': False}, skipkeys=True, indent=4)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(
+        vm.get_global("pretty"),
+        Some(Value::Str("{\n    \"valid_key\": true\n}".to_string()))
+    );
+    assert_eq!(vm.get_global("empty"), Some(Value::Str("{}".to_string())));
+}
+
+#[test]
+fn json_dumps_handles_intenum_keys_and_values_like_cpython() {
+    let source = r#"import json
+class Num(int):
+    pass
+text = json.dumps({Num(1): Num(2)})
+parsed = json.loads(text)
+ok = (text == '{"1": 2}' and parsed == {"1": 2})
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn json_dumps_handles_default_callback_list_mutation() {
+    let source = r#"import json
+a = [object()] * 10
+def crasher(obj):
+    del a[-1]
+text = json.dumps(a, default=crasher)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(
+        vm.get_global("text"),
+        Some(Value::Str("[null, null, null, null, null]".to_string()))
     );
 }
 
@@ -8388,6 +8547,74 @@ ok = (value == "abc\n" and end == 7 and value2 == value and end2 == end)
 }
 
 #[test]
+fn json_decoder_scanstring_unicode_offsets_match_cpython() {
+    let source = r#"import json.decoder as decoder
+s = '"b_é": 2}'
+value1, end1 = decoder.py_scanstring(s, 1)
+value2, end2 = decoder.scanstring(s, 1)
+ok = (
+    value1 == "b_é"
+    and value2 == "b_é"
+    and end1 == 5
+    and end2 == 5
+    and s[end1] == ":"
+    and s[end2] == ":"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn json_dumps_bad_default_propagates_serialization_notes() {
+    let source = r#"import collections
+import json
+def default(obj):
+    if obj is NotImplemented:
+        raise ValueError()
+    if obj is ...:
+        return NotImplemented
+    if obj is type:
+        return collections
+    return [...]
+notes = None
+try:
+    json.dumps(type, default=default)
+except ValueError as exc:
+    notes = exc.__notes__
+ok = (notes == [
+    'when serializing ellipsis object',
+    'when serializing list item 0',
+    'when serializing module object',
+    'when serializing type object',
+])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn collections_ordereddict_move_to_end_is_available() {
+    let source = r#"import collections
+od = collections.OrderedDict(a=1, b=2, c=3)
+od.move_to_end('b')
+od.move_to_end('a', False)
+ok = (list(od.items()) == [('a', 1), ('c', 3), ('b', 2)])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn os_path_relpath_is_available_for_unittest_discovery() {
     let source = r#"import os
 p = os.path.relpath('/tmp/a/b', '/tmp')
@@ -9920,6 +10147,73 @@ ok = (swapmod is sys) and (v == sys.version)\n";
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 
     let _ = std::fs::remove_file(temp_dir.join("swapmod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn plain_import_reads_replaced_sys_modules_entry() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_import_swapmod_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(
+        temp_dir.join("swapmod.py"),
+        "import sys as _sys\n_sys.modules[__name__] = _sys\n",
+    )
+    .expect("write swap module");
+
+    let source = "\
+import swapmod, sys\n\
+ok = (swapmod is sys) and (sys.modules['swapmod'] is sys)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp_dir.join("swapmod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn importlib_import_module_preserves_plain_import_replacement_binding() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_importlib_swapmod_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("repimpl.py"), "sentinel = 7\n").expect("write repimpl module");
+    std::fs::write(
+        temp_dir.join("repwrap.py"),
+        "import repimpl\nimport sys\nsys.modules[__name__] = repimpl\n",
+    )
+    .expect("write repwrap module");
+    std::fs::write(
+        temp_dir.join("repconsumer.py"),
+        "import repwrap\nimport sys\nok = (repwrap is sys.modules['repwrap'], getattr(repwrap, 'sentinel', None), getattr(sys.modules['repwrap'], 'sentinel', None))\n",
+    )
+    .expect("write repconsumer module");
+
+    let source = "\
+import importlib\n\
+m = importlib.import_module('repconsumer')\n\
+ok = (m.ok == (True, 7, 7))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp_dir.join("repconsumer.py"));
+    let _ = std::fs::remove_file(temp_dir.join("repwrap.py"));
+    let _ = std::fs::remove_file(temp_dir.join("repimpl.py"));
     let _ = std::fs::remove_dir(&temp_dir);
 }
 
@@ -11631,6 +11925,34 @@ ok = ord_ok and dict_ok and all_ok and divmod_ok and make_ok
 }
 
 #[test]
+fn core_chr_contract_errors_are_typed() {
+    let source = r#"arity_ok = False
+type_ok = False
+range_ok = False
+bool_ok = False
+try:
+    chr()
+except Exception as exc:
+    arity_ok = (type(exc).__name__ == "TypeError")
+try:
+    chr("a")
+except Exception as exc:
+    type_ok = (type(exc).__name__ == "TypeError") and ("cannot be interpreted as an integer" in str(exc))
+try:
+    chr(0x110000)
+except Exception as exc:
+    range_ok = (type(exc).__name__ == "ValueError")
+bool_ok = (chr(True) == "\x01")
+ok = arity_ok and type_ok and range_ok and bool_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn io_open_contract_errors_are_typed() {
     let source = r#"import io
 type_ok = False
@@ -12773,6 +13095,26 @@ fn re_match_supports_basic_capturing_parentheses() {
 #[test]
 fn re_match_exposes_group_groups_and_end() {
     let source = "import re\nm = re.match('([A])([AO]*)', 'AOO')\nok = (m is not None and m.group(1) == 'A' and m.groups() == ('A', 'OO') and m.end() == 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn re_match_uses_character_offsets_for_unicode_text() {
+    let source = "import re\ns = 'xéz'\nm = re.search('é', s)\np = re.compile('z')\nm2 = p.search(s, 2)\nok = (\n    m is not None\n    and m.start() == 1\n    and m.end() == 2\n    and m.span() == (1, 2)\n    and s[m.start():m.end()] == 'é'\n    and m.group(0) == 'é'\n    and m2 is not None\n    and m2.start() == 2\n    and m2.group(0) == 'z'\n)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn re_sub_handles_unicode_prefix_without_byte_boundary_panics() {
+    let source = "import re\ns = 'ሴx'\np = re.compile('x')\nout = p.sub('y', s)\nout2 = p.sub(lambda m: 'y', s)\nok = (out == 'ሴy' and out2 == 'ሴy')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -17489,6 +17831,16 @@ ok = (result == 42)\n";
 }
 
 #[test]
+fn compile_builtin_single_mode_uses_displayhook_on_exec() {
+    let source = "import sys\nclass Capture:\n    def __init__(self):\n        self.out = ''\n    def write(self, s):\n        self.out = self.out + s\n    def flush(self):\n        return None\nbuf = Capture()\norig = sys.stdout\nsys.stdout = buf\ntry:\n    co = compile('20 + 22', '<inline>', 'single')\n    exec(co, {})\nfinally:\n    sys.stdout = orig\nok = (buf.out == '42\\n')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn eval_builtin_resolves_callsite_and_explicit_namespaces() {
     let source = "x = 4\n\
 base = eval('x + 6')\n\
@@ -20950,6 +21302,117 @@ except StopIteration as exc:
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn json_raw_decode_invalid_token_reports_integer_position() {
+    let source = r#"import _json
+scan_once = _json.make_scanner(object())
+ok = False
+try:
+    scan_once("nan", 0)
+except StopIteration as exc:
+    ok = (type(exc.value) is int and exc.value == 0)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn preserves_unknown_backslash_escapes_in_string_literals() {
+    let source = r#"s = "\y"
+ok = (s == "\\y" and len(s) == 2)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn json_loads_rejects_invalid_escape_sequences() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping json invalid-escape test (CPython Lib path not available)");
+        return;
+    };
+    run_with_large_stack("json-invalid-escape", move || {
+        let source = r#"import json
+ok = False
+try:
+    json.loads("[\"abc\\y\"]")
+except json.JSONDecodeError as exc:
+    ok = ("escape" in str(exc))
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn json_loads_enforces_int_max_str_digits_limit() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping json int-digit-limit test (CPython Lib path not available)");
+        return;
+    };
+    run_with_large_stack("json-int-digit-limit", move || {
+        let source = r#"import json
+import sys
+orig = sys.get_int_max_str_digits()
+overflow = False
+restored = False
+try:
+    sys.set_int_max_str_digits(640)
+    try:
+        json.loads("1" * 641)
+    except ValueError:
+        overflow = True
+finally:
+    sys.set_int_max_str_digits(orig)
+    restored = (sys.get_int_max_str_digits() == orig)
+ok = overflow and restored
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn json_loads_accepts_nonfinite_constants_with_c_scanner() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping json non-finite constants test (CPython Lib path not available)");
+        return;
+    };
+    run_with_large_stack("json-nonfinite-constants", move || {
+        let source = r#"import json
+inf = json.loads("Infinity")
+neg_inf = json.loads("-Infinity")
+nan = json.loads("NaN")
+ok = (
+    json.scanner.make_scanner.__module__ == "_json"
+    and inf == float("inf")
+    and neg_inf == float("-inf")
+    and nan != nan
+)
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]

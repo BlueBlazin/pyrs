@@ -364,7 +364,7 @@ fn run_entry(
             "import sys\nimport importlib\n{executable_patch}sys.path = [{lib_path:?}]\nimportlib.import_module({import_name:?})\n"
         ),
         SuiteMode::StrictUnittest => format!(
-            "import os\nimport sys\nimport importlib\nimport unittest\n{executable_patch}sys.path = [{lib_path:?}]\nmodule = importlib.import_module({import_name:?})\nloader = unittest.defaultTestLoader\nbefore_errors = len(getattr(loader, 'errors', []))\nsuite = loader.loadTestsFromModule(module)\nafter_errors = len(getattr(loader, 'errors', []))\nif after_errors > before_errors:\n    raise RuntimeError('strict unittest loader failed')\nverbosity = int(os.environ.get('PYRS_STRICT_UNITTEST_VERBOSITY', '0'))\nresult = unittest.TextTestRunner(verbosity=verbosity, failfast=True).run(suite)\nif not result.wasSuccessful():\n    raise RuntimeError('strict unittest suite failed')\n"
+            "import os\nimport sys\nimport importlib\nimport unittest\nimport test.support\n{executable_patch}sys.path = [{lib_path:?}]\ntest.support.use_resources = {{}}\nmodule = importlib.import_module({import_name:?})\nloader = unittest.defaultTestLoader\nbefore_errors = len(getattr(loader, 'errors', []))\nsuite = loader.loadTestsFromModule(module)\nafter_errors = len(getattr(loader, 'errors', []))\nif after_errors > before_errors:\n    raise RuntimeError('strict unittest loader failed')\nverbosity = int(os.environ.get('PYRS_STRICT_UNITTEST_VERBOSITY', '0'))\nresult = unittest.TextTestRunner(verbosity=verbosity, failfast=True).run(suite)\nif not result.wasSuccessful():\n    raise RuntimeError('strict unittest suite failed')\n"
         ),
     };
 

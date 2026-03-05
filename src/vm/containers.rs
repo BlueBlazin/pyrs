@@ -1,4 +1,6 @@
-use crate::runtime::{ObjRef, Object, RuntimeError, SetObject, Value, value_lookup_hash};
+use crate::runtime::{
+    ObjRef, Object, RuntimeError, SetObject, Value, value_key_equal, value_lookup_hash,
+};
 
 pub(crate) fn dedup_hashable_values(values: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
     let mut deduped = SetObject::new(Vec::new());
@@ -16,10 +18,19 @@ pub(crate) fn dict_get_value(dict: &ObjRef, key: &Value) -> Option<Value> {
         _ => return None,
     };
     if let Some(hash) = value_lookup_hash(key) {
-        entries.find_with_hash(key, hash).cloned()
-    } else {
-        entries.find(key).cloned()
+        if let Some(value) = entries.find_with_hash(key, hash) {
+            return Some(value.clone());
+        }
     }
+    entries
+        .iter()
+        .find_map(|(stored, value)| value_key_equal(stored, key).then_some(value.clone()))
+}
+
+fn dict_find_index_linear(entries: &crate::runtime::DictObject, key: &Value) -> Option<usize> {
+    entries
+        .iter()
+        .position(|(stored, _)| value_key_equal(stored, key))
 }
 
 pub(crate) fn dict_set_value(dict: &ObjRef, key: Value, value: Value) {
@@ -37,13 +48,14 @@ pub(crate) fn dict_remove_value(dict: &ObjRef, key: &Value) -> Option<Value> {
         Object::Dict(entries) => entries,
         _ => return None,
     };
-    if let Some(hash) = value_lookup_hash(key) {
-        entries
-            .remove_key_with_hash(key, hash)
-            .map(|(_, value)| value)
-    } else {
-        entries.remove_key(key).map(|(_, value)| value)
+    if let Some(hash) = value_lookup_hash(key)
+        && let Some((_, value)) = entries.remove_key_with_hash(key, hash)
+    {
+        return Some(value);
     }
+    let index = dict_find_index_linear(entries, key)?;
+    let (_, value) = entries.remove(index);
+    Some(value)
 }
 
 pub(crate) fn dict_contains_key_checked(dict: &ObjRef, key: &Value) -> Result<bool, RuntimeError> {
@@ -55,7 +67,10 @@ pub(crate) fn dict_contains_key_checked(dict: &ObjRef, key: &Value) -> Result<bo
         Object::Dict(entries) => entries,
         _ => return Err(RuntimeError::type_error("unsupported operand type for in")),
     };
-    Ok(entries.contains_key_with_hash(key, hash))
+    if entries.contains_key_with_hash(key, hash) {
+        return Ok(true);
+    }
+    Ok(dict_find_index_linear(entries, key).is_some())
 }
 
 pub(crate) fn dict_set_value_checked(

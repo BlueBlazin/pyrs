@@ -1012,6 +1012,194 @@ impl Vm {
         let _debug_depth_guard =
             DebugDepthGuard::enter_for_vm(self, &DEBUG_EXEC_INSTR_DEPTH, "execute_instruction");
         match instr.opcode {
+            Opcode::Send => self.execute_instruction_send(instr),
+            Opcode::YieldFrom => self.execute_instruction_yield_from(instr),
+            _ => self.execute_instruction_slow(instr),
+        }
+    }
+
+    #[inline]
+    fn execute_instruction_send(
+        &mut self,
+        instr: Instruction,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let target = instr
+            .arg
+            .ok_or_else(|| RuntimeError::new("missing send target"))?
+            as usize;
+        let sent = self.pop_value()?;
+        let iter = self.pop_value()?;
+        if sent == Value::None
+            && let Value::Generator(delegate) = &iter
+        {
+            let (running, closed) = match &*delegate.kind() {
+                Object::Generator(state) => (state.running, state.closed),
+                _ => (false, false),
+            };
+            if running {
+                return Err(RuntimeError::value_error("generator already executing"));
+            }
+            if !closed {
+                let mut delegated_frame = self
+                    .generator_states
+                    .remove(&delegate.id())
+                    .ok_or_else(|| RuntimeError::new("generator has no suspended frame"))?;
+                delegated_frame.generator_resume_value = Some(Value::None);
+                delegated_frame.generator_pending_throw = None;
+                delegated_frame.generator_resume_kind = Some(GeneratorResumeKind::Next);
+                self.set_generator_running(delegate, true)?;
+                self.set_generator_started(delegate, true)?;
+                {
+                    let frame = self.frames.last_mut().expect("frame exists");
+                    frame.stack.push(iter.clone());
+                    frame.send_delegate_state = Some((delegate.id(), target));
+                }
+                self.push_frame_checked(delegated_frame)?;
+                return Ok(None);
+            }
+        }
+        match self.delegate_yield_from(&iter, sent, None, GeneratorResumeKind::Next)? {
+            GeneratorResumeOutcome::Yield(value) => {
+                self.push_value(iter);
+                self.push_value(value);
+            }
+            GeneratorResumeOutcome::Complete(value) => {
+                self.push_value(value);
+                let frame = self.frames.last_mut().expect("frame exists");
+                frame.ip = target;
+            }
+            GeneratorResumeOutcome::PropagatedException => {
+                self.propagate_pending_generator_exception()?;
+                return Ok(None);
+            }
+        }
+        Ok(None)
+    }
+
+    #[inline]
+    fn execute_instruction_yield_from(
+        &mut self,
+        _instr: Instruction,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let owner = self
+            .frames
+            .last()
+            .and_then(|frame| frame.generator_owner.clone())
+            .ok_or_else(|| RuntimeError::new("yield from outside generator"))?;
+        let owner_id = owner.id();
+        let (iter_opt, source_opt, sent, thrown, resume_kind) = {
+            let frame = self.frames.last_mut().expect("frame exists");
+            let source =
+                if frame.yield_from_iter.is_some() {
+                    None
+                } else {
+                    Some(frame.stack.pop().ok_or_else(|| {
+                        RuntimeError::new("stack underflow (Send source)")
+                    })?)
+                };
+            let iter = frame.yield_from_iter.take();
+            let sent = frame.generator_resume_value.take().unwrap_or(Value::None);
+            let thrown = frame.generator_pending_throw.take();
+            let resume_kind = frame
+                .generator_resume_kind
+                .take()
+                .unwrap_or(GeneratorResumeKind::Next);
+            (iter, source, sent, thrown, resume_kind)
+        };
+        let iter = if let Some(iter) = iter_opt {
+            iter
+        } else {
+            match self.to_iterator_value(source_opt.expect("source present")) {
+                Ok(iter) => iter,
+                Err(err) => {
+                    let exc = self.runtime_error_to_exception_value(err);
+                    self.raise_exception(exc)?;
+                    return Ok(None);
+                }
+            }
+        };
+        if sent == Value::None
+            && thrown.is_none()
+            && resume_kind == GeneratorResumeKind::Next
+            && let Value::Generator(delegate) = &iter
+        {
+            let (running, closed) = match &*delegate.kind() {
+                Object::Generator(state) => (state.running, state.closed),
+                _ => (false, false),
+            };
+            if running {
+                return Err(RuntimeError::value_error("generator already executing"));
+            }
+            if !closed {
+                let mut delegated_frame = self
+                    .generator_states
+                    .remove(&delegate.id())
+                    .ok_or_else(|| RuntimeError::new("generator has no suspended frame"))?;
+                delegated_frame.generator_resume_value = Some(Value::None);
+                delegated_frame.generator_pending_throw = None;
+                delegated_frame.generator_resume_kind = Some(GeneratorResumeKind::Next);
+                self.set_generator_running(delegate, true)?;
+                self.set_generator_started(delegate, true)?;
+                {
+                    let frame = self.frames.last_mut().expect("frame exists");
+                    frame.ip = frame.ip.saturating_sub(1);
+                    frame.yield_from_iter = Some(iter.clone());
+                    frame.generator_awaiting_resume_value = false;
+                    frame.generator_resume_value = None;
+                    frame.generator_pending_throw = None;
+                    // Remember parent resume intent so child-yield handling can preserve
+                    // close/next parity without recursive resume.
+                    frame.generator_resume_kind = Some(GeneratorResumeKind::Next);
+                }
+                self.push_frame_checked(delegated_frame)?;
+                return Ok(None);
+            }
+        }
+        match self.delegate_yield_from(&iter, sent, thrown, resume_kind)? {
+            GeneratorResumeOutcome::Yield(value) => {
+                let mut frame = self.frames.pop().expect("frame exists");
+                frame.ip = frame.ip.saturating_sub(1);
+                frame.yield_from_iter = Some(iter);
+                frame.generator_awaiting_resume_value = false;
+                frame.generator_resume_value = None;
+                frame.generator_pending_throw = None;
+                self.set_generator_running(&owner, false)?;
+                self.set_generator_started(&owner, true)?;
+                self.generator_states.insert(owner_id, frame);
+                if resume_kind == GeneratorResumeKind::Close {
+                    return Err(RuntimeError::new("generator ignored GeneratorExit"));
+                }
+                if self.active_generator_resume == Some(owner_id) {
+                    self.generator_resume_outcome =
+                        Some(GeneratorResumeOutcome::Yield(value));
+                } else if let Some(caller) = self.frames.last_mut() {
+                    caller.stack.push(value);
+                } else {
+                    return Ok(Some(Value::None));
+                }
+            }
+            GeneratorResumeOutcome::Complete(value) => {
+                let frame = self.frames.last_mut().expect("frame exists");
+                frame.yield_from_iter = None;
+                frame.generator_resume_value = None;
+                frame.generator_pending_throw = None;
+                frame.generator_awaiting_resume_value = false;
+                frame.stack.push(value);
+            }
+            GeneratorResumeOutcome::PropagatedException => {
+                self.propagate_pending_generator_exception()?;
+                return Ok(None);
+            }
+        }
+        Ok(None)
+    }
+
+    #[inline]
+    fn execute_instruction_slow(
+        &mut self,
+        instr: Instruction,
+    ) -> Result<Option<Value>, RuntimeError> {
+        match instr.opcode {
             Opcode::Nop => {}
             Opcode::MakeCell => {
                 let idx = instr
@@ -2208,7 +2396,12 @@ impl Vm {
                                 .borrow()
                                 .get("__notes__")
                                 .cloned()
-                                .unwrap_or(Value::None),
+                                .ok_or_else(|| {
+                                    RuntimeError::attribute_error(format!(
+                                        "'{}' object has no attribute '__notes__'",
+                                        exception.name
+                                    ))
+                                })?,
                             "__cause__" => exception
                                 .cause
                                 .as_ref()
@@ -6524,7 +6717,7 @@ impl Vm {
                 let depth_before_import = self.frames.len();
                 let module = self.import_module_object(&name)?;
                 if self.frames.len() > depth_before_import {
-                    self.run_pending_import_frames(caller_depth)?;
+                    self.run_pending_import_frames_force(caller_depth)?;
                 }
                 let module = self.canonical_imported_module_for_name(&name, module);
                 let result_module = self.module_for_plain_import(&name, module);
@@ -6556,7 +6749,7 @@ impl Vm {
                 let depth_before_import = self.frames.len();
                 let module = self.import_module_object(&resolved_name)?;
                 if self.frames.len() > depth_before_import {
-                    self.run_pending_import_frames(caller_depth)?;
+                    self.run_pending_import_frames_force(caller_depth)?;
                 }
                 let module = self.canonical_imported_module_for_name(&resolved_name, module);
                 let result_module = if self.fromlist_requested(&fromlist) {
@@ -7036,12 +7229,61 @@ impl Vm {
                 if resume_kind == GeneratorResumeKind::Close {
                     return Err(RuntimeError::new("generator ignored GeneratorExit"));
                 }
-                if self.active_generator_resume == Some(owner_id) {
-                    self.generator_resume_outcome = Some(GeneratorResumeOutcome::Yield(yielded));
-                } else if let Some(caller) = self.frames.last_mut() {
-                    caller.stack.push(yielded);
-                } else {
-                    return Ok(Some(Value::None));
+                let yielded_value = yielded;
+                let mut propagated_owner = owner;
+                loop {
+                    if let Some(caller) = self.frames.last_mut()
+                        && let Some((delegated_owner_id, _target)) = caller.send_delegate_state
+                        && delegated_owner_id == propagated_owner.id()
+                    {
+                        caller.send_delegate_state = None;
+                        caller.stack.push(yielded_value);
+                        return Ok(None);
+                    }
+
+                    let delegated_parent = self.frames.last().and_then(|caller| {
+                        let delegated_child_matches = matches!(
+                            caller.yield_from_iter.as_ref(),
+                            Some(Value::Generator(child)) if child.id() == propagated_owner.id()
+                        );
+                        if !delegated_child_matches {
+                            return None;
+                        }
+                        caller.generator_owner.as_ref().map(|parent_owner| {
+                            (
+                                parent_owner.clone(),
+                                caller
+                                    .generator_resume_kind
+                                    .unwrap_or(GeneratorResumeKind::Next),
+                            )
+                        })
+                    });
+                    if let Some((parent_owner, parent_resume_kind)) = delegated_parent {
+                        let parent_owner_id = parent_owner.id();
+                        let mut parent_frame = self.frames.pop().expect("frame exists");
+                        parent_frame.generator_awaiting_resume_value = false;
+                        parent_frame.generator_resume_value = None;
+                        parent_frame.generator_pending_throw = None;
+                        parent_frame.generator_resume_kind = None;
+                        self.set_generator_running(&parent_owner, false)?;
+                        self.set_generator_started(&parent_owner, true)?;
+                        self.generator_states.insert(parent_owner_id, parent_frame);
+                        if parent_resume_kind == GeneratorResumeKind::Close {
+                            return Err(RuntimeError::new("generator ignored GeneratorExit"));
+                        }
+                        propagated_owner = parent_owner;
+                        continue;
+                    }
+
+                    if self.active_generator_resume == Some(propagated_owner.id()) {
+                        self.generator_resume_outcome =
+                            Some(GeneratorResumeOutcome::Yield(yielded_value));
+                    } else if let Some(caller) = self.frames.last_mut() {
+                        caller.stack.push(yielded_value);
+                    } else {
+                        return Ok(Some(Value::None));
+                    }
+                    return Ok(None);
                 }
             }
             Opcode::Send => {
@@ -8521,6 +8763,12 @@ impl Vm {
                 return Ok(());
             }
             if let Some(owner) = frame.generator_owner {
+                if let Some(caller) = self.frames.last_mut()
+                    && let Some((delegated_owner_id, _)) = caller.send_delegate_state
+                    && delegated_owner_id == owner.id()
+                {
+                    caller.send_delegate_state = None;
+                }
                 self.generator_states.remove(&owner.id());
                 let _ = self.set_generator_running(&owner, false);
                 let _ = self.set_generator_started(&owner, true);
