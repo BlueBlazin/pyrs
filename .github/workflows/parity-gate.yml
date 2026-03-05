@@ -247,6 +247,71 @@ jobs:
           PYRS_COVERAGE_POLICY_FILE: docs/COVERAGE_GATE_POLICY.json
         run: ./scripts/run_coverage_gate.sh
 
+  bundled-stdlib-smoke:
+    needs: integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux native build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev
+
+      - name: Build debug pyrs binary
+        run: cargo build -q --bin pyrs
+
+      - name: Verify host CPython 3.14 stdlib roots are absent
+        run: |
+          for root in \
+            /Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14 \
+            /opt/homebrew/Frameworks/Python.framework/Versions/3.14/lib/python3.14 \
+            /usr/local/lib/python3.14 \
+            /usr/lib/python3.14; do
+            if [ -d "$root" ]; then
+              echo "unexpected host CPython 3.14 stdlib root present: $root" >&2
+              exit 1
+            fi
+          done
+
+      - name: Build CPython stdlib bundle (official source)
+        run: |
+          python3 scripts/build_cpython_stdlib_pack.py \
+            --cpython-version 3.14.3 \
+            --release-page-url https://www.python.org/downloads/release/python-3143/ \
+            --source-url https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz \
+            --source-sha256 d7fe130d0501ae047ca318fa92aa642603ab6f217901015a1df6ce650d5470cd \
+            --out /tmp/pyrs-stdlib-cpython-3.14.3.tar.gz
+
+      - name: Stage bundled stdlib in isolated user data root
+        run: |
+          rm -rf /tmp/pyrs-stdlib-smoke
+          mkdir -p /tmp/pyrs-stdlib-smoke/extract
+          tar -xzf /tmp/pyrs-stdlib-cpython-3.14.3.tar.gz -C /tmp/pyrs-stdlib-smoke/extract
+          mkdir -p /tmp/pyrs-stdlib-smoke/xdg/pyrs/stdlib/3.14.3
+          cp -R \
+            /tmp/pyrs-stdlib-smoke/extract/pyrs-stdlib-cpython-3.14.3/Lib \
+            /tmp/pyrs-stdlib-smoke/xdg/pyrs/stdlib/3.14.3/Lib
+
+      - name: Smoke test bundled stdlib import path
+        run: |
+          mkdir -p /tmp/pyrs-stdlib-smoke/home
+          export HOME=/tmp/pyrs-stdlib-smoke/home
+          export XDG_DATA_HOME=/tmp/pyrs-stdlib-smoke/xdg
+          unset PYRS_CPYTHON_LIB
+          unset PYTHONHOME
+          unset PYTHONPATH
+          target/debug/pyrs -c "import json, os, sys; bundle=os.path.join(os.environ['XDG_DATA_HOME'],'pyrs','stdlib','3.14.3','Lib'); assert bundle in sys.path, sys.path; jf=getattr(json,'__file__',''); assert jf.startswith(bundle), jf; print('bundled-stdlib-smoke-ok')"
+
   numpy-probes:
     needs: integrity
     runs-on: ubuntu-latest

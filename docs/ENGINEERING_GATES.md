@@ -144,6 +144,7 @@ Run this pipeline continuously during Milestone 13 and Milestone 14:
 12. native perf smoke gate (`scripts/perf_smoke_native.py`) on CI as a blocking lane; it fails when `pyrs` mean runtime exceeds `--max-pyrs-seconds` or when `pyrs_mean/python_mean` exceeds `--max-pyrs-vs-python-ratio`; latest artifact: `perf/native_perf_smoke_latest.json`
 13. generated Unicode-name table drift check (`scripts/generate_unicode_name_table.py --check`) to prevent unvetted/manual changes in parser Unicode data
 14. builtin surface parity gate (`scripts/run_builtin_parity_gate.sh`) for inventory + semantic probes against CPython
+15. bundled-stdlib smoke lane (`.github/workflows/parity-gate.yml::bundled-stdlib-smoke`) to verify `pyrs` can import stdlib modules from the shipped CPython 3.14.3 bundle in an isolated environment without host Python 3.14 stdlib roots
 
 Strict stdlib harness policy:
 - `tests/cpython_harness.rs` strict suite runs in isolated subprocesses with a per-entry timeout (`PYRS_STRICT_HARNESS_TIMEOUT_SECS`, default 120s) to prevent unbounded hangs/memory growth from masking regressions.
