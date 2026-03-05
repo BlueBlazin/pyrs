@@ -247,10 +247,15 @@ impl Vm {
                         force_nested_sync
                     );
                 }
-                if self.pending_import_drain_depth > 0
-                    && !cpython_context_active
-                    && !force_nested_sync
-                {
+                if self.pending_import_drain_depth > 0 && !cpython_context_active {
+                    // Nested Python import paths must not re-enter `run()` while an
+                    // outer import-drain loop is already active; doing so creates
+                    // one Rust stack frame per nested import and can overflow on
+                    // stdlib import chains (for example `import os` -> `abc`).
+                    //
+                    // The active outer drain already targets an equal-or-shallower
+                    // stop depth, so returning here preserves synchronous import
+                    // semantics without recursive VM re-entry.
                     return Ok(());
                 }
             } else {
@@ -359,7 +364,14 @@ impl Vm {
             Object::Module(module_data) => module_data.name.clone(),
             _ => String::new(),
         };
-        let canonical = self.canonical_imported_module_for_name(&module_name, module);
+        let mut canonical = self.canonical_imported_module_for_name(&module_name, module);
+        if Self::module_is_initializing(&canonical) {
+            // Nested importlib flows can defer drain to an outer import loop.
+            // If we would otherwise return an initializing placeholder, force a
+            // local drain so import statements bind the finalized sys.modules entry.
+            self.run_pending_import_frames_force(caller_depth)?;
+            canonical = self.canonical_imported_module_for_name(&module_name, canonical);
+        }
         self.sync_re_module_flag_aliases(&canonical);
         Ok(canonical)
     }
