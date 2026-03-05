@@ -1335,8 +1335,8 @@ impl Vm {
             {
                 // Use host system entropy where available.
                 fs::File::open("/dev/urandom")
-                .and_then(|mut file| file.read_exact(&mut out))
-                .is_ok()
+                    .and_then(|mut file| file.read_exact(&mut out))
+                    .is_ok()
             }
         };
         if !entropy_fill_ok {

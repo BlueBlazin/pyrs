@@ -13296,9 +13296,14 @@ impl Vm {
             BuiltinFunction::DateTimeRepr => self.builtin_datetime_repr(args, kwargs),
             BuiltinFunction::DateTimeStr => self.builtin_datetime_str(args, kwargs),
             BuiltinFunction::DateInit => self.builtin_date_init(args, kwargs),
+            BuiltinFunction::DateRepr => self.builtin_date_repr(args, kwargs),
+            BuiltinFunction::DateStr => self.builtin_date_str(args, kwargs),
             BuiltinFunction::DateReplace => self.builtin_date_replace(args, kwargs),
+            BuiltinFunction::DateFromIsoFormat => self.builtin_date_fromisoformat(args, kwargs),
             BuiltinFunction::DateFromIsoCalendar => self.builtin_date_fromisocalendar(args, kwargs),
             BuiltinFunction::DateTimeDeltaInit => self.builtin_datetime_delta_init(args, kwargs),
+            BuiltinFunction::DateTimeDeltaRepr => self.builtin_datetime_delta_repr(args, kwargs),
+            BuiltinFunction::DateTimeDeltaStr => self.builtin_datetime_delta_str(args, kwargs),
             BuiltinFunction::DateTimeTimezoneInit => {
                 self.builtin_datetime_timezone_init(args, kwargs)
             }

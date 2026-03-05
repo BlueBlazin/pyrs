@@ -127,6 +127,40 @@ from datetime import datetime\n",
 }
 
 #[wasm_bindgen_test]
+fn vm_probe_repl_date_fromisoformat_and_timedelta_repr_str_execute() {
+    let mut repl = WasmReplSession::new();
+
+    let imported = repl.execute_input(
+        "import datetime\n\
+from datetime import date, timedelta\n",
+    );
+    assert_eq!(imported.phase(), "ok".to_string());
+    assert!(imported.success());
+    assert!(imported.stderr().is_empty());
+
+    let from_iso = repl.execute_input("date.fromisoformat('2019-12-04')");
+    assert_eq!(from_iso.phase(), "ok".to_string());
+    assert!(from_iso.success());
+    assert_eq!(from_iso.stdout(), "datetime.date(2019, 12, 4)".to_string());
+    assert!(from_iso.stderr().is_empty());
+
+    let delta_repr = repl.execute_input("timedelta(days=365)");
+    assert_eq!(delta_repr.phase(), "ok".to_string());
+    assert!(delta_repr.success());
+    assert_eq!(
+        delta_repr.stdout(),
+        "datetime.timedelta(days=365)".to_string()
+    );
+    assert!(delta_repr.stderr().is_empty());
+
+    let delta_str = repl.execute_input("print(timedelta(days=365))");
+    assert_eq!(delta_str.phase(), "ok".to_string());
+    assert!(delta_str.success());
+    assert_eq!(delta_str.stdout().trim(), "365 days, 0:00:00".to_string());
+    assert!(delta_str.stderr().is_empty());
+}
+
+#[wasm_bindgen_test]
 fn vm_probe_worker_state_gate_roundtrip() {
     let baseline = wasm_worker_info();
     assert_eq!(baseline.backend(), "vm_probe".to_string());

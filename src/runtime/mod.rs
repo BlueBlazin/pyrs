@@ -4647,9 +4647,14 @@ pub enum BuiltinFunction {
     DateTimeRepr,
     DateTimeStr,
     DateInit,
+    DateRepr,
+    DateStr,
     DateReplace,
+    DateFromIsoFormat,
     DateFromIsoCalendar,
     DateTimeDeltaInit,
+    DateTimeDeltaRepr,
+    DateTimeDeltaStr,
     DateTimeTimezoneInit,
     DateToOrdinal,
     DateWeekday,
@@ -7926,9 +7931,14 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::DateTimeRepr
             | BuiltinFunction::DateTimeStr
             | BuiltinFunction::DateInit
+            | BuiltinFunction::DateRepr
+            | BuiltinFunction::DateStr
             | BuiltinFunction::DateReplace
+            | BuiltinFunction::DateFromIsoFormat
             | BuiltinFunction::DateFromIsoCalendar
             | BuiltinFunction::DateTimeDeltaInit
+            | BuiltinFunction::DateTimeDeltaRepr
+            | BuiltinFunction::DateTimeDeltaStr
             | BuiltinFunction::DateTimeTimezoneInit
             | BuiltinFunction::DateToOrdinal
             | BuiltinFunction::DateWeekday

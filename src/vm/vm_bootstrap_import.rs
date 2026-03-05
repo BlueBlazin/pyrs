@@ -7915,8 +7915,20 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::DateInit),
             );
             class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::DateRepr),
+            );
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Builtin(BuiltinFunction::DateStr),
+            );
+            class_data.attrs.insert(
                 "today".to_string(),
                 Value::Builtin(BuiltinFunction::DateToday),
+            );
+            class_data.attrs.insert(
+                "fromisoformat".to_string(),
+                Value::Builtin(BuiltinFunction::DateFromIsoFormat),
             );
             class_data.attrs.insert(
                 "fromisocalendar".to_string(),
@@ -7958,6 +7970,14 @@ impl Vm {
             class_data.attrs.insert(
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::DateTimeDeltaInit),
+            );
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaRepr),
+            );
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaStr),
             );
         }
         let time_class = match self

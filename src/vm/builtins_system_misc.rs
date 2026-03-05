@@ -1,13 +1,12 @@
 use super::{
     BuiltinFunction, HashMap, InstanceObject, InternalCallOutcome, IpAddr, IteratorKind,
     IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
-    SIGNAL_SIGINT, SocketAddr, TimeParts, ToSocketAddrs, Value, Vm,
-    apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil,
-    decode_text_bytes, dict_get_value, format_strftime, format_uuid_hex, format_uuid_hyphenated,
-    is_truthy, parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp,
-    unix_time_now_duration,
-    uuid_hash_mix_bytes, uuid_random_bytes, uuid_timestamp_100ns_since_gregorian, value_to_f64,
-    value_to_int,
+    SIGNAL_SIGINT, SocketAddr, TimeParts, ToSocketAddrs, Value, Vm, apply_uuid_variant,
+    apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil, decode_text_bytes,
+    dict_get_value, format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
+    parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp,
+    unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes,
+    uuid_timestamp_100ns_since_gregorian, value_to_f64, value_to_int,
 };
 
 const DATETIME_MIN_YEAR: i64 = 1;
@@ -26,6 +25,36 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let m = mp + if mp < 10 { 3 } else { -9 };
     let year = y + if m <= 2 { 1 } else { 0 };
     (year, m as u32, d as u32)
+}
+
+fn parse_ascii_i64_component(text: &str) -> Option<i64> {
+    if text.is_empty() || !text.as_bytes().iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    text.parse::<i64>().ok()
+}
+
+fn escaped_single_quoted(input: &str) -> String {
+    input.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
+fn is_leap_year(year: i64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+fn days_in_month(year: i64, month: u32) -> Option<u32> {
+    Some(match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if is_leap_year(year) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => return None,
+    })
 }
 
 impl Vm {
@@ -1222,8 +1251,7 @@ impl Vm {
             parts.push(microsecond.to_string());
         }
         if let Some(tzinfo_value) = tzinfo {
-            let Value::Str(tzinfo_repr) =
-                self.builtin_repr(vec![tzinfo_value], HashMap::new())?
+            let Value::Str(tzinfo_repr) = self.builtin_repr(vec![tzinfo_value], HashMap::new())?
             else {
                 return Err(RuntimeError::type_error("__repr__ returned non-string"));
             };
@@ -1232,7 +1260,10 @@ impl Vm {
         if fold != 0 {
             parts.push(format!("fold={fold}"));
         }
-        Ok(Value::Str(format!("datetime.datetime({})", parts.join(", "))))
+        Ok(Value::Str(format!(
+            "datetime.datetime({})",
+            parts.join(", ")
+        )))
     }
 
     pub(super) fn builtin_datetime_str(
@@ -1256,6 +1287,54 @@ impl Vm {
             vec![Value::Instance(instance), Value::Str(" ".to_string())],
             HashMap::new(),
         )
+    }
+
+    pub(super) fn builtin_date_repr(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "__repr__() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "date.__repr__")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "__repr__() takes no arguments ({} given)",
+                args.len()
+            )));
+        }
+        let read_part = |name: &str| -> Result<i64, RuntimeError> {
+            Self::instance_attr_get(&instance, name)
+                .ok_or_else(|| RuntimeError::new(format!("date.__repr__() missing {name}")))
+                .and_then(value_to_int)
+        };
+        let year = read_part("year")?;
+        let month = read_part("month")?;
+        let day = read_part("day")?;
+        Ok(Value::Str(format!("datetime.date({year}, {month}, {day})")))
+    }
+
+    pub(super) fn builtin_date_str(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "__str__() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "date.__str__")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "__str__() takes no arguments ({} given)",
+                args.len()
+            )));
+        }
+        self.builtin_date_isoformat(vec![Value::Instance(instance)], HashMap::new())
     }
 
     pub(super) fn builtin_date_init(
@@ -1477,6 +1556,95 @@ impl Vm {
         Ok((value_to_int(year)?, value_to_int(week)?, value_to_int(day)?))
     }
 
+    fn parse_date_fromisoformat_components(
+        &self,
+        dtstr: &str,
+    ) -> Result<(i64, u32, u32), RuntimeError> {
+        let invalid = || {
+            RuntimeError::value_error(format!(
+                "Invalid isoformat string: '{}'",
+                escaped_single_quoted(dtstr)
+            ))
+        };
+
+        let parse_ymd =
+            |year: &str, month: &str, day: &str| -> Result<(i64, u32, u32), RuntimeError> {
+                let year = parse_ascii_i64_component(year).ok_or_else(invalid)?;
+                let month = parse_ascii_i64_component(month).ok_or_else(invalid)?;
+                let day = parse_ascii_i64_component(day).ok_or_else(invalid)?;
+
+                if !(DATETIME_MIN_YEAR..=DATETIME_MAX_YEAR).contains(&year) {
+                    return Err(RuntimeError::value_error(format!(
+                        "year must be in {}..{}, not {}",
+                        DATETIME_MIN_YEAR, DATETIME_MAX_YEAR, year
+                    )));
+                }
+                if !(1..=12).contains(&month) {
+                    return Err(RuntimeError::value_error(format!(
+                        "month must be in 1..12, not {}",
+                        month
+                    )));
+                }
+                let month_u32 = month as u32;
+                let max_day = days_in_month(year, month_u32).ok_or_else(invalid)?;
+                if day < 1 || day > max_day as i64 {
+                    return Err(RuntimeError::value_error(format!(
+                        "day {} must be in range 1..{} for month {} in year {}",
+                        day, max_day, month, year
+                    )));
+                }
+                Ok((year, month_u32, day as u32))
+            };
+
+        if dtstr.len() == 10
+            && dtstr.as_bytes().get(4) == Some(&b'-')
+            && dtstr.as_bytes().get(7) == Some(&b'-')
+        {
+            return parse_ymd(&dtstr[0..4], &dtstr[5..7], &dtstr[8..10]);
+        }
+        if dtstr.len() == 8 && dtstr.as_bytes().iter().all(u8::is_ascii_digit) {
+            return parse_ymd(&dtstr[0..4], &dtstr[4..6], &dtstr[6..8]);
+        }
+
+        let (iso_year, iso_week, iso_day) = if dtstr.len() == 10
+            && dtstr.as_bytes().get(4) == Some(&b'-')
+            && dtstr.as_bytes().get(5) == Some(&b'W')
+            && dtstr.as_bytes().get(8) == Some(&b'-')
+        {
+            (
+                parse_ascii_i64_component(&dtstr[0..4]).ok_or_else(invalid)?,
+                parse_ascii_i64_component(&dtstr[6..8]).ok_or_else(invalid)?,
+                parse_ascii_i64_component(&dtstr[9..10]).ok_or_else(invalid)?,
+            )
+        } else if dtstr.len() == 8 && dtstr.as_bytes().get(4) == Some(&b'W') {
+            (
+                parse_ascii_i64_component(&dtstr[0..4]).ok_or_else(invalid)?,
+                parse_ascii_i64_component(&dtstr[5..7]).ok_or_else(invalid)?,
+                parse_ascii_i64_component(&dtstr[7..8]).ok_or_else(invalid)?,
+            )
+        } else if dtstr.len() == 8
+            && dtstr.as_bytes().get(4) == Some(&b'-')
+            && dtstr.as_bytes().get(5) == Some(&b'W')
+        {
+            (
+                parse_ascii_i64_component(&dtstr[0..4]).ok_or_else(invalid)?,
+                parse_ascii_i64_component(&dtstr[6..8]).ok_or_else(invalid)?,
+                1,
+            )
+        } else if dtstr.len() == 7 && dtstr.as_bytes().get(4) == Some(&b'W') {
+            (
+                parse_ascii_i64_component(&dtstr[0..4]).ok_or_else(invalid)?,
+                parse_ascii_i64_component(&dtstr[5..7]).ok_or_else(invalid)?,
+                1,
+            )
+        } else {
+            return Err(invalid());
+        };
+
+        self.iso_to_ymd(iso_year, iso_week, iso_day)
+            .map_err(|_| invalid())
+    }
+
     fn iso_week1_monday_ordinal(&self, year: i64) -> i64 {
         let first_day = days_from_civil(year, 1, 1) + UNIX_EPOCH_ORDINAL;
         let first_weekday = (first_day + 6).rem_euclid(7);
@@ -1541,6 +1709,39 @@ impl Vm {
         let (iso_year, iso_week, iso_day) =
             self.parse_fromisocalendar_args(&mut args, &mut kwargs)?;
         let (year, month, day) = self.iso_to_ymd(iso_year, iso_week, iso_day)?;
+        self.date_instance_from_parts(class, year, month, day)
+    }
+
+    pub(super) fn builtin_date_fromisoformat(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let class = if let Some(Value::Class(_)) = args.first() {
+            self.receiver_from_value(&args.remove(0))?
+        } else {
+            self.date_default_class()?
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "date.fromisoformat() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "date.fromisoformat() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let dtstr = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "fromisoformat: argument must be str",
+                ));
+            }
+        };
+        let (year, month, day) = self.parse_date_fromisoformat_components(&dtstr)?;
         self.date_instance_from_parts(class, year, month, day)
     }
 
@@ -1936,6 +2137,97 @@ impl Vm {
             Value::Int(normalized_microseconds as i64),
         );
         Ok(Value::None)
+    }
+
+    pub(super) fn builtin_datetime_delta_repr(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "__repr__() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "timedelta.__repr__")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "__repr__() takes no arguments ({} given)",
+                args.len()
+            )));
+        }
+        let read_part = |name: &str| -> Result<i64, RuntimeError> {
+            Self::instance_attr_get(&instance, name)
+                .ok_or_else(|| RuntimeError::new(format!("timedelta.__repr__() missing {name}")))
+                .and_then(value_to_int)
+        };
+        let days = read_part("days")?;
+        let seconds = read_part("seconds")?;
+        let microseconds = read_part("microseconds")?;
+
+        let mut parts = Vec::new();
+        if days != 0 {
+            parts.push(format!("days={days}"));
+        }
+        if seconds != 0 {
+            parts.push(format!("seconds={seconds}"));
+        }
+        if microseconds != 0 {
+            parts.push(format!("microseconds={microseconds}"));
+        }
+        if parts.is_empty() {
+            parts.push("0".to_string());
+        }
+        Ok(Value::Str(format!(
+            "datetime.timedelta({})",
+            parts.join(", ")
+        )))
+    }
+
+    pub(super) fn builtin_datetime_delta_str(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "__str__() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "timedelta.__str__")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "__str__() takes no arguments ({} given)",
+                args.len()
+            )));
+        }
+        let read_part = |name: &str| -> Result<i64, RuntimeError> {
+            Self::instance_attr_get(&instance, name)
+                .ok_or_else(|| RuntimeError::new(format!("timedelta.__str__() missing {name}")))
+                .and_then(value_to_int)
+        };
+        let days = read_part("days")?;
+        let total_seconds = read_part("seconds")?;
+        let microseconds = read_part("microseconds")?;
+        let hours = total_seconds.div_euclid(3600);
+        let minutes = total_seconds.rem_euclid(3600).div_euclid(60);
+        let seconds = total_seconds.rem_euclid(60);
+
+        let rendered = if days != 0 {
+            let day_suffix = if days == 1 || days == -1 { "" } else { "s" };
+            if microseconds != 0 {
+                format!(
+                    "{days} day{day_suffix}, {hours}:{minutes:02}:{seconds:02}.{microseconds:06}"
+                )
+            } else {
+                format!("{days} day{day_suffix}, {hours}:{minutes:02}:{seconds:02}")
+            }
+        } else if microseconds != 0 {
+            format!("{hours}:{minutes:02}:{seconds:02}.{microseconds:06}")
+        } else {
+            format!("{hours}:{minutes:02}:{seconds:02}")
+        };
+        Ok(Value::Str(rendered))
     }
 
     pub(super) fn builtin_time_init(

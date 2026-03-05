@@ -8269,6 +8269,29 @@ ok = (\n\
 }
 
 #[test]
+fn datetime_date_fromisoformat_and_timedelta_repr_str_match_cpython_shape() {
+    let source = "import datetime\n\
+d = datetime.date.fromisoformat('2019-12-04')\n\
+d_basic = datetime.date.fromisoformat('20191204')\n\
+d_week = datetime.date.fromisoformat('2019-W49-3')\n\
+td = datetime.timedelta(days=365)\n\
+ok = (\n\
+    d.isoformat() == '2019-12-04'\n\
+    and d_basic.isoformat() == '2019-12-04'\n\
+    and d_week.isoformat() == '2019-12-04'\n\
+    and repr(d) == 'datetime.date(2019, 12, 4)'\n\
+    and str(d) == '2019-12-04'\n\
+    and repr(td) == 'datetime.timedelta(days=365)'\n\
+    and str(td) == '365 days, 0:00:00'\n\
+)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn threading_condition_supports_context_manager_protocol() {
     let source = r#"import threading
 c = threading.Condition()
@@ -9884,7 +9907,9 @@ vals = (r.getrandbits(64), r.getrandbits(64), r.getrandbits(64), r.getrandbits(6
     let code = compiler::compile_module(&module).expect("compile should succeed");
 
     let mut vm_one = Vm::new();
-    vm_one.execute(&code).expect("first execution should succeed");
+    vm_one
+        .execute(&code)
+        .expect("first execution should succeed");
     let first = tuple_values(vm_one.get_global("vals"))
         .expect("first vals tuple should exist")
         .iter()
@@ -9892,7 +9917,9 @@ vals = (r.getrandbits(64), r.getrandbits(64), r.getrandbits(64), r.getrandbits(6
         .collect::<Vec<_>>();
 
     let mut vm_two = Vm::new();
-    vm_two.execute(&code).expect("second execution should succeed");
+    vm_two
+        .execute(&code)
+        .expect("second execution should succeed");
     let second = tuple_values(vm_two.get_global("vals"))
         .expect("second vals tuple should exist")
         .iter()

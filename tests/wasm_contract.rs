@@ -23,9 +23,9 @@ use crate::wasm_worker_contract::{
     WASM_WORKER_TIMEOUT_FIXTURES, WASM_WORKER_TIMEOUT_PHASE_KEYS,
     WASM_WORKER_TIMEOUT_PHASE_KEYS_VM_PROBE_EXTRA, WasmWorkerExecuteFixture,
 };
+use js_sys::Reflect;
 #[cfg(feature = "wasm-vm-probe")]
 use js_sys::{Array, JSON};
-use js_sys::Reflect;
 #[cfg(feature = "wasm-vm-probe")]
 use pyrs::wasm::wasm_worker_force_failed_state_for_tests;
 use pyrs::wasm::{
@@ -361,7 +361,10 @@ fn load_curated_stdlib_pack_into_runtime() -> usize {
         accepted += 1;
     }
 
-    assert!(accepted > 0, "curated stdlib pack should register at least one module");
+    assert!(
+        accepted > 0,
+        "curated stdlib pack should register at least one module"
+    );
     assert!(
         saw_functools && saw_random,
         "curated stdlib pack should include functools and random"
@@ -377,7 +380,10 @@ fn load_curated_stdlib_pack_into_runtime() -> usize {
 #[cfg(feature = "wasm-vm-probe")]
 fn parse_stdout_f64(stdout: &str, context: &str) -> f64 {
     stdout.trim().parse::<f64>().unwrap_or_else(|err| {
-        panic!("expected float stdout for {context}; got {:?}: {err}", stdout)
+        panic!(
+            "expected float stdout for {context}; got {:?}: {err}",
+            stdout
+        )
     })
 }
 
@@ -3050,7 +3056,8 @@ fn wasm_vm_probe_random_values_change_after_repl_reset_and_worker_recycle() {
         "random.random() should not deterministically repeat after REPL reset"
     );
 
-    let worker_first = wasm_worker_execute_with_operation("import random\nvalue = random.random()\n");
+    let worker_first =
+        wasm_worker_execute_with_operation("import random\nvalue = random.random()\n");
     assert_eq!(worker_first.phase(), "ok".to_string());
     assert!(worker_first.success());
     assert!(worker_first.stderr().is_empty());
@@ -3065,7 +3072,8 @@ fn wasm_vm_probe_random_values_change_after_repl_reset_and_worker_recycle() {
     assert_eq!(recycled.state(), "ready".to_string());
     assert!(recycled.success());
 
-    let worker_second = wasm_worker_execute_with_operation("import random\nvalue = random.random()\n");
+    let worker_second =
+        wasm_worker_execute_with_operation("import random\nvalue = random.random()\n");
     assert_eq!(worker_second.phase(), "ok".to_string());
     assert!(worker_second.success());
     assert!(worker_second.stderr().is_empty());
@@ -3189,7 +3197,10 @@ assert st.median(values) == (5.1 + 7.8) / 2\n",
     assert!(output.success());
     assert!(output.error().is_none());
     assert!(output.stderr().is_empty());
-    assert_eq!(output.stdout().trim(), "(Sample(tag='fib+stats', total=6765), 21)");
+    assert_eq!(
+        output.stdout().trim(),
+        "(Sample(tag='fib+stats', total=6765), 21)"
+    );
 }
 
 #[cfg(feature = "wasm-vm-probe")]
@@ -3227,5 +3238,8 @@ assert st.median(values) == (5.1 + 7.8) / 2\n",
     assert!(output.error().is_none());
     assert!(output.stderr().is_empty());
     assert_eq!(output.state(), "ready".to_string());
-    assert_eq!(output.stdout().trim(), "(Sample(tag='worker', total=6765), 21)");
+    assert_eq!(
+        output.stdout().trim(),
+        "(Sample(tag='worker', total=6765), 21)"
+    );
 }

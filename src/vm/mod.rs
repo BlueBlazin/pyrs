@@ -5284,7 +5284,10 @@ impl Vm {
                 ),
             ],
             vec![
-                ("SOURCE_SUFFIXES", self.heap.alloc_list(vec![Value::Str(".py".to_string())])),
+                (
+                    "SOURCE_SUFFIXES",
+                    self.heap.alloc_list(vec![Value::Str(".py".to_string())]),
+                ),
                 (
                     "BYTECODE_SUFFIXES",
                     self.heap.alloc_list(vec![Value::Str(".pyc".to_string())]),
@@ -6288,9 +6291,7 @@ fn fresh_random_seed_u64() -> u64 {
     let counter = RANDOM_SEED_FALLBACK_COUNTER
         .fetch_add(1, AtomicOrdering::Relaxed)
         .wrapping_add(1);
-    nanos
-        ^ counter.rotate_left(17)
-        ^ nanos.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+    nanos ^ counter.rotate_left(17) ^ nanos.wrapping_mul(0x9E37_79B9_7F4A_7C15)
 }
 
 fn random_range_count(start: i64, stop: i64, step: i64) -> Result<i64, RuntimeError> {
