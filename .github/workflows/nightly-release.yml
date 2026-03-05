@@ -10,6 +10,12 @@ permissions:
   contents: write
   packages: write
 
+env:
+  CPYTHON_STDLIB_VERSION: "3.14.3"
+  CPYTHON_STDLIB_RELEASE_PAGE: "https://www.python.org/downloads/release/python-3143/"
+  CPYTHON_STDLIB_SOURCE_URL: "https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz"
+  CPYTHON_STDLIB_SOURCE_SHA256: "d7fe130d0501ae047ca318fa92aa642603ab6f217901015a1df6ce650d5470cd"
+
 jobs:
   build-binaries:
     name: build-${{ matrix.target }}
@@ -115,12 +121,24 @@ jobs:
     needs: build-binaries
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download packaged artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: nightly-*
           path: dist
           merge-multiple: true
+
+      - name: Build CPython stdlib bundle (official source)
+        run: |
+          python3 scripts/build_cpython_stdlib_pack.py \
+            --cpython-version "${CPYTHON_STDLIB_VERSION}" \
+            --release-page-url "${CPYTHON_STDLIB_RELEASE_PAGE}" \
+            --source-url "${CPYTHON_STDLIB_SOURCE_URL}" \
+            --source-sha256 "${CPYTHON_STDLIB_SOURCE_SHA256}" \
+            --out "dist/pyrs-stdlib-cpython-${CPYTHON_STDLIB_VERSION}.tar.gz"
 
       - name: Generate SHA256SUMS
         run: |

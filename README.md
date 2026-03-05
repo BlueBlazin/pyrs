@@ -40,10 +40,10 @@
 
 ## Quick Start
 
-Install from GitHub with Cargo:
+Install from GitHub Releases (binary + bundled CPython 3.14.3 stdlib):
 
 ```bash
-cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs
+curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash
 pyrs --version
 ```
 
@@ -67,11 +67,25 @@ pyrs path/to/script.py
 
 ## Installation
 
-### Cargo (recommended)
+### GitHub one-command installer (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash
+```
+
+Nightly channel:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash -s -- --nightly
+```
+
+### Cargo install (bring your own CPython stdlib)
 
 ```bash
 cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs
 ```
+
+`cargo install` only installs the `pyrs` binary. For full stdlib behavior, ensure CPython 3.14 stdlib is available (or set `PYRS_CPYTHON_LIB=/path/to/python3.14/Lib`).
 
 ### Cargo install from local repo path
 

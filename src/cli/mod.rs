@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::env;
 use std::path::{Path, PathBuf};
 
-use crate::{CPYTHON_COMPAT_VERSION, VERSION};
+use crate::{CPYTHON_COMPAT_VERSION, CPYTHON_STDLIB_VERSION, VERSION};
 use crate::compiler;
 use crate::parser;
 use crate::parser::ParseError;
@@ -15,7 +15,6 @@ use crate::runtime::Value;
 use crate::vm::Vm;
 
 const HELP: &str = "pyrs (CPython 3.14 compatible)\n\nUsage:\n  pyrs                    Start interactive REPL (or read from stdin when piped)\n  pyrs <file.py>          Run a Python file\n  pyrs <file.pyc>         Run a CPython .pyc file\n  pyrs -S <file.py>       Run without importing site on startup\n  pyrs --ast <file.py>    Print parsed AST\n  pyrs --bytecode <file.py>  Print bytecode disassembly\n  pyrs --version          Print version\n  pyrs --help             Show help\n";
-const CPYTHON_STDLIB_VERSION: &str = "3.14.3";
 const CPYTHON_STDLIB_RELEASE_PAGE_URL: &str = "https://www.python.org/downloads/release/python-3143/";
 
 pub fn run() -> i32 {

@@ -78,6 +78,7 @@ use crate::runtime::{
     ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError,
     SuperObject, Value, format_repr, format_value,
 };
+use crate::CPYTHON_STDLIB_VERSION;
 
 #[derive(Debug, Clone)]
 struct Block {
@@ -4134,14 +4135,59 @@ impl Vm {
                 return Some(path);
             }
         }
-        let local = PathBuf::from(".local/Python-3.14.3/Lib");
+
+        let stdlib_suffix = PathBuf::from(format!("stdlib/{CPYTHON_STDLIB_VERSION}/Lib"));
+        if let Some(executable_path) = self.host.current_exe()
+            && let Some(bin_dir) = executable_path.parent()
+        {
+            for candidate in [
+                bin_dir.join("../share/pyrs").join(&stdlib_suffix),
+                bin_dir.join("../libexec").join(&stdlib_suffix),
+                bin_dir.join("../stdlib").join(&stdlib_suffix),
+            ] {
+                if self.host.path_is_dir(&candidate) {
+                    return Some(candidate);
+                }
+            }
+        }
+
+        if let Some(xdg_data_home) = self.host.env_var_os("XDG_DATA_HOME") {
+            let candidate = PathBuf::from(xdg_data_home).join("pyrs").join(&stdlib_suffix);
+            if self.host.path_is_dir(&candidate) {
+                return Some(candidate);
+            }
+        } else if let Some(home) = self.host.env_var_os("HOME") {
+            let candidate = PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("pyrs")
+                .join(&stdlib_suffix);
+            if self.host.path_is_dir(&candidate) {
+                return Some(candidate);
+            }
+        }
+
+        let local = PathBuf::from(format!(".local/Python-{CPYTHON_STDLIB_VERSION}/Lib"));
         if self.host.path_is_dir(&local) {
             return Some(local);
         }
-        let framework =
-            PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14");
-        if self.host.path_is_dir(&framework) {
-            return Some(framework);
+
+        if let Some(home) = self.host.env_var("PYTHONHOME") {
+            let candidate = PathBuf::from(home).join("lib").join("python3.14");
+            if self.host.path_is_dir(&candidate) {
+                return Some(candidate);
+            }
+        }
+
+        for candidate in [
+            PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14"),
+            PathBuf::from("/opt/homebrew/Frameworks/Python.framework/Versions/3.14/lib/python3.14"),
+            PathBuf::from("/usr/local/lib/python3.14"),
+            PathBuf::from("/usr/lib/python3.14"),
+        ] {
+            if self.host.path_is_dir(&candidate) {
+                return Some(candidate);
+            }
         }
         None
     }
