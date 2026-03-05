@@ -1,5 +1,17 @@
 export type TerminalLine = string | { text: string; prompt?: boolean };
 
+export const githubInstallerCommands = [
+	"curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash",
+	"pyrs --version",
+];
+
+export const githubInstallerStableCommands = [
+	"curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash -s -- --stable",
+	"pyrs --version",
+];
+
+export const homebrewHeadCommands = ["brew install --HEAD blueblazin/tap/pyrs", "pyrs --version"];
+
 export const cargoInstallGitHubCommands = [
 	"cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs",
 	"pyrs --version",

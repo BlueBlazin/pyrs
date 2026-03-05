@@ -1,11 +1,9 @@
 ---
 import InstallMethod from "./InstallMethod.astro";
 import {
+	githubInstallerCommands,
+	homebrewHeadCommands,
 	cargoInstallGitHubCommands,
-	cargoSourceBuildRunCommands,
-	dockerNightlyCommands,
-	nightlyArchiveLinuxCommands,
-	nightlyArchiveMacosTerminalCommands,
 	type TerminalLine,
 } from "../../config/installCommands";
 
@@ -19,48 +17,33 @@ type InstallMethodData = {
 const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 	macos: [
 		{
-			title: "Cargo install (GitHub)",
-			description: "Install pyrs into your cargo bin directory directly from GitHub.",
+			title: "Homebrew (--HEAD)",
+			description: "Install from tip of master via Homebrew (default channel for macOS).",
 			recommended: true,
+			lines: homebrewHeadCommands,
+		},
+		{
+			title: "GitHub installer",
+			description: "One command install from GitHub Releases (defaults to nightly).",
+			lines: githubInstallerCommands,
+		},
+		{
+			title: "Cargo install (advanced)",
+			description: "Installs only the pyrs binary; requires local CPython 3.14 stdlib.",
 			lines: cargoInstallGitHubCommands,
-		},
-		{
-			title: "Cargo (source build)",
-			description: "Build directly from source with Rust stable.",
-			lines: cargoSourceBuildRunCommands,
-		},
-		{
-			title: "Docker (nightly container)",
-			description: "Run the latest published nightly image from GHCR.",
-			lines: dockerNightlyCommands,
-		},
-		{
-			title: "Nightly archive",
-			description: "Download the latest MacOS nightly archive for your architecture.",
-			lines: nightlyArchiveMacosTerminalCommands,
 		},
 	],
 	linux: [
 		{
-			title: "Cargo install (GitHub)",
-			description: "Install pyrs into your cargo bin directory directly from GitHub.",
+			title: "GitHub installer",
+			description: "One command install from GitHub Releases (defaults to nightly).",
 			recommended: true,
+			lines: githubInstallerCommands,
+		},
+		{
+			title: "Cargo install (advanced)",
+			description: "Installs only the pyrs binary; requires local CPython 3.14 stdlib.",
 			lines: cargoInstallGitHubCommands,
-		},
-		{
-			title: "Cargo (source build)",
-			description: "Build from source and run the release binary locally.",
-			lines: cargoSourceBuildRunCommands,
-		},
-		{
-			title: "Docker (nightly container)",
-			description: "Use the nightly container as a fast runtime path.",
-			lines: dockerNightlyCommands,
-		},
-		{
-			title: "Nightly archive",
-			description: "Fetch the latest Linux nightly binary archive.",
-			lines: nightlyArchiveLinuxCommands,
 		},
 	],
 };
