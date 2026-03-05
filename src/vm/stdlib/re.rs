@@ -1,8 +1,8 @@
 use super::super::{
-    HashMap, ModuleObject, ObjRef, Object, ReMatchDetail, ReMode, RePatternValue, RuntimeError,
+    HashMap, InstanceObject, ObjRef, Object, ReMatchDetail, ReMode, RePatternValue, RuntimeError,
     Value, Vm, bytes_like_from_value, dict_get_value, format_value,
-    re_compiled_regex_program_from_argument, re_compiled_regex_program_from_module,
-    re_match_details, re_pattern_from_argument, re_pattern_from_compiled_module, value_to_int,
+    re_compiled_regex_program_from_argument, re_compiled_regex_program_from_object,
+    re_match_details, re_pattern_from_argument, re_pattern_from_compiled_object, value_to_int,
 };
 
 const CSV_SNIFFER_PATTERN_1: &str =
@@ -14,7 +14,11 @@ const CSV_SNIFFER_PATTERN_3: &str =
 const CSV_SNIFFER_PATTERN_4: &str = r#"(?:^|\n)(?P<quote>["\']).*?(?P=quote)(?:$|\n)"#;
 const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
     r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
+const RE_PATTERN_MODULE_NAME: &str = "__re_pattern__";
 const RE_MATCH_MODULE_NAME: &str = "__re_match__";
+const RE_PATTERN_CLASS_NAME: &str = "Pattern";
+const RE_MATCH_CLASS_NAME: &str = "Match";
+const RE_FLAG_UNICODE: i64 = 32;
 const RE_FLAG_VERBOSE: i64 = 64;
 
 fn decimal_parser_groupindex_entries(pattern: &str) -> Option<Vec<(&'static str, i64)>> {
@@ -45,13 +49,69 @@ impl Vm {
         value_to_int(coerced).map_err(|_| RuntimeError::type_error("an integer is required"))
     }
 
+    fn is_re_runtime_class_instance(&self, receiver: &ObjRef, class_name: &str) -> bool {
+        let Object::Instance(instance_data) = &*receiver.kind() else {
+            return false;
+        };
+        let Object::Class(class_data) = &*instance_data.class.kind() else {
+            return false;
+        };
+        class_data.name == class_name
+            && matches!(
+                class_data.attrs.get("__module__"),
+                Some(Value::Str(module_name)) if module_name == "re"
+            )
+    }
+
+    fn re_match_attr(&self, receiver: &ObjRef, name: &str) -> Option<Value> {
+        match &*receiver.kind() {
+            Object::Instance(instance_data)
+                if self.is_re_runtime_class_instance(receiver, RE_MATCH_CLASS_NAME) =>
+            {
+                instance_data.attrs.get(name).cloned()
+            }
+            Object::Module(module_data) if module_data.name == RE_MATCH_MODULE_NAME => {
+                // Legacy compatibility path for stale module-backed match objects.
+                module_data.globals.get(name).cloned()
+            }
+            _ => None,
+        }
+    }
+
+    fn re_pattern_attr(&self, receiver: &ObjRef, name: &str) -> Option<Value> {
+        match &*receiver.kind() {
+            Object::Instance(instance_data)
+                if self.is_re_runtime_class_instance(receiver, RE_PATTERN_CLASS_NAME) =>
+            {
+                instance_data.attrs.get(name).cloned()
+            }
+            Object::Module(module_data) if module_data.name == RE_PATTERN_MODULE_NAME => {
+                // Legacy compatibility path for stale module-backed pattern objects.
+                module_data.globals.get(name).cloned()
+            }
+            _ => None,
+        }
+    }
+
     fn re_match_groupindex_from_pattern_arg(&self, pattern_arg: &Value) -> Value {
         match pattern_arg {
+            Value::Instance(instance)
+                if self.is_re_runtime_class_instance(instance, RE_PATTERN_CLASS_NAME) =>
+            {
+                let Object::Instance(instance_data) = &*instance.kind() else {
+                    return self.heap.alloc_dict(Vec::new());
+                };
+                instance_data
+                    .attrs
+                    .get("groupindex")
+                    .cloned()
+                    .unwrap_or_else(|| self.heap.alloc_dict(Vec::new()))
+            }
             Value::Module(module) => {
                 let Object::Module(module_data) = &*module.kind() else {
                     return self.heap.alloc_dict(Vec::new());
                 };
-                if module_data.name != "__re_pattern__" {
+                if module_data.name != RE_PATTERN_MODULE_NAME {
                     return self.heap.alloc_dict(Vec::new());
                 }
                 module_data
@@ -75,9 +135,12 @@ impl Vm {
 
     fn alloc_re_match_value(
         &mut self,
+        pattern: Value,
         source: Value,
         detail: ReMatchDetail,
         groupindex: Value,
+        pos: i64,
+        endpos: i64,
     ) -> Result<Value, RuntimeError> {
         let ReMatchDetail {
             start: match_start,
@@ -141,39 +204,95 @@ impl Vm {
             _ => return Err(RuntimeError::new("re match source is invalid")),
         }
 
-        let match_obj = match self
-            .heap
-            .alloc_module(ModuleObject::new(RE_MATCH_MODULE_NAME.to_string()))
-        {
-            Value::Module(obj) => obj,
+        let match_class = self.ensure_re_runtime_type_class(RE_MATCH_CLASS_NAME);
+        let match_obj = match self.heap.alloc_instance(InstanceObject::new(match_class)) {
+            Value::Instance(obj) => obj,
             _ => unreachable!(),
         };
-        if let Object::Module(module_data) = &mut *match_obj.kind_mut() {
-            module_data.globals.insert(
-                "__class__".to_string(),
-                Value::Class(self.ensure_re_runtime_type_class("Match")),
-            );
-            module_data.globals.insert("_source".to_string(), source);
-            module_data
-                .globals
+        if let Object::Instance(instance_data) = &mut *match_obj.kind_mut() {
+            let groups_tuple = self.heap.alloc_tuple(groups.clone());
+            let spans_list = self.heap.alloc_list(spans.clone());
+            let regs = {
+                let mut entries = Vec::with_capacity(spans.len() + 1);
+                entries.push(self.heap.alloc_tuple(vec![
+                    Value::Int(match_start as i64),
+                    Value::Int(match_end as i64),
+                ]));
+                for span in &spans {
+                    if let Value::Tuple(tuple_obj) = span {
+                        entries.push(Value::Tuple(tuple_obj.clone()));
+                    } else {
+                        entries.push(self.heap.alloc_tuple(vec![Value::Int(-1), Value::Int(-1)]));
+                    }
+                }
+                self.heap.alloc_tuple(entries)
+            };
+            let groupindex_obj = match &groupindex {
+                Value::Dict(obj) => Some(obj.clone()),
+                _ => None,
+            };
+            let lastindex_value = captures
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(index, capture)| capture.map(|_| Value::Int((index + 1) as i64)))
+                .unwrap_or(Value::None);
+            let lastgroup_value = if let (Value::Int(lastindex), Some(mapping)) =
+                (&lastindex_value, groupindex_obj.as_ref())
+            {
+                let name = match &*mapping.kind() {
+                    Object::Dict(entries) => entries.iter().find_map(|(key, value)| {
+                        let Value::Str(name) = key else {
+                            return None;
+                        };
+                        let index = value_to_int(value.clone()).ok()?;
+                        (index == *lastindex).then_some(name.clone())
+                    }),
+                    _ => None,
+                };
+                name.map(Value::Str).unwrap_or(Value::None)
+            } else {
+                Value::None
+            };
+
+            instance_data
+                .attrs
+                .insert("_source".to_string(), source.clone());
+            instance_data
+                .attrs
                 .insert("_start".to_string(), Value::Int(match_start as i64));
-            module_data
-                .globals
+            instance_data
+                .attrs
                 .insert("_end".to_string(), Value::Int(match_end as i64));
-            module_data
-                .globals
-                .insert("_groups".to_string(), self.heap.alloc_tuple(groups));
-            module_data
-                .globals
-                .insert("_spans".to_string(), self.heap.alloc_list(spans));
-            module_data
-                .globals
-                .insert("_groupindex".to_string(), groupindex);
+            instance_data
+                .attrs
+                .insert("_groups".to_string(), groups_tuple.clone());
+            instance_data
+                .attrs
+                .insert("_spans".to_string(), spans_list.clone());
+            instance_data
+                .attrs
+                .insert("_groupindex".to_string(), groupindex.clone());
+            instance_data.attrs.insert("re".to_string(), pattern);
+            instance_data.attrs.insert("string".to_string(), source);
+            instance_data
+                .attrs
+                .insert("pos".to_string(), Value::Int(pos.max(0)));
+            instance_data
+                .attrs
+                .insert("endpos".to_string(), Value::Int(endpos.max(0)));
+            instance_data
+                .attrs
+                .insert("lastindex".to_string(), lastindex_value);
+            instance_data
+                .attrs
+                .insert("lastgroup".to_string(), lastgroup_value);
+            instance_data.attrs.insert("regs".to_string(), regs);
         }
-        Ok(Value::Module(match_obj))
+        Ok(Value::Instance(match_obj))
     }
 
-    fn re_match_snapshot(
+    pub(in crate::vm) fn re_match_snapshot(
         &self,
         receiver: &ObjRef,
     ) -> Result<
@@ -187,26 +306,23 @@ impl Vm {
         ),
         RuntimeError,
     > {
-        let Object::Module(module_data) = &*receiver.kind() else {
-            return Err(RuntimeError::type_error("re match receiver is invalid"));
-        };
-        if module_data.name != RE_MATCH_MODULE_NAME {
+        if !self.is_re_runtime_class_instance(receiver, RE_MATCH_CLASS_NAME)
+            && !matches!(&*receiver.kind(), Object::Module(module_data) if module_data.name == RE_MATCH_MODULE_NAME)
+        {
             return Err(RuntimeError::type_error("re match receiver is invalid"));
         }
-        let source = module_data
-            .globals
-            .get("_source")
-            .cloned()
+        let source = self
+            .re_match_attr(receiver, "_source")
             .ok_or_else(|| RuntimeError::type_error("re match receiver is invalid"))?;
-        let start = match module_data.globals.get("_start") {
-            Some(Value::Int(value)) => *value,
+        let start = match self.re_match_attr(receiver, "_start") {
+            Some(Value::Int(value)) => value,
             _ => return Err(RuntimeError::type_error("re match receiver is invalid")),
         };
-        let end = match module_data.globals.get("_end") {
-            Some(Value::Int(value)) => *value,
+        let end = match self.re_match_attr(receiver, "_end") {
+            Some(Value::Int(value)) => value,
             _ => return Err(RuntimeError::type_error("re match receiver is invalid")),
         };
-        let groups = match module_data.globals.get("_groups") {
+        let groups = match self.re_match_attr(receiver, "_groups") {
             Some(Value::Tuple(obj)) => match &*obj.kind() {
                 Object::Tuple(values) => values.clone(),
                 _ => return Err(RuntimeError::type_error("re match receiver is invalid")),
@@ -217,7 +333,7 @@ impl Vm {
             },
             _ => return Err(RuntimeError::type_error("re match receiver is invalid")),
         };
-        let spans = match module_data.globals.get("_spans") {
+        let spans = match self.re_match_attr(receiver, "_spans") {
             Some(Value::List(obj)) => match &*obj.kind() {
                 Object::List(values) => values
                     .iter()
@@ -245,7 +361,7 @@ impl Vm {
             },
             _ => return Err(RuntimeError::type_error("re match receiver is invalid")),
         };
-        let groupindex = match module_data.globals.get("_groupindex") {
+        let groupindex = match self.re_match_attr(receiver, "_groupindex") {
             Some(Value::Dict(dict)) => Some(dict.clone()),
             _ => None,
         };
@@ -443,6 +559,76 @@ impl Vm {
             .alloc_tuple(vec![Value::Int(group_start), Value::Int(group_end)]))
     }
 
+    pub(in crate::vm) fn native_re_pattern_repr(
+        &mut self,
+        receiver: &ObjRef,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "__repr__() takes no arguments ({} given)",
+                args.len()
+            )));
+        }
+        let pattern = self
+            .re_pattern_attr(receiver, "pattern")
+            .ok_or_else(|| RuntimeError::type_error("pattern receiver is invalid"))?;
+        let flags = match self.re_pattern_attr(receiver, "flags") {
+            Some(Value::Int(value)) => value,
+            _ => 0,
+        };
+        let pattern_repr = match self.builtin_repr(vec![pattern], HashMap::new())? {
+            Value::Str(text) => text,
+            _ => return Err(RuntimeError::type_error("__repr__ returned non-string")),
+        };
+        let effective_flags = if matches!(
+            self.re_pattern_attr(receiver, "pattern"),
+            Some(Value::Str(_))
+        ) {
+            flags & !RE_FLAG_UNICODE
+        } else {
+            flags
+        };
+        if effective_flags == 0 {
+            return Ok(Value::Str(format!("re.compile({pattern_repr})")));
+        }
+        Ok(Value::Str(format!(
+            "re.compile({pattern_repr}, {effective_flags})"
+        )))
+    }
+
+    pub(in crate::vm) fn native_re_match_repr(
+        &mut self,
+        receiver: &ObjRef,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "__repr__() takes no arguments ({} given)",
+                args.len()
+            )));
+        }
+        let (source, start, end, _groups, _spans, _groupindex) =
+            self.re_match_snapshot(receiver)?;
+        let matched = match &source {
+            Value::Str(text) => Value::Str(text[start as usize..end as usize].to_string()),
+            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
+                let bytes = bytes_like_from_value(source)?;
+                self.heap
+                    .alloc_bytes(bytes[start as usize..end as usize].to_vec())
+            }
+            _ => return Err(RuntimeError::type_error("re match receiver is invalid")),
+        };
+        let matched_repr = match self.builtin_repr(vec![matched], HashMap::new())? {
+            Value::Str(text) => text,
+            _ => return Err(RuntimeError::type_error("__repr__ returned non-string")),
+        };
+        Ok(Value::Str(format!(
+            "<re.Match object; span=({}, {}), match={}>",
+            start, end, matched_repr
+        )))
+    }
+
     pub(in crate::vm) fn builtin_re_search(
         &mut self,
         args: Vec<Value>,
@@ -483,10 +669,15 @@ impl Vm {
             0
         };
         let pattern_value = match args.remove(0) {
+            Value::Instance(instance)
+                if self.is_re_runtime_class_instance(&instance, RE_PATTERN_CLASS_NAME) =>
+            {
+                return Ok(Value::Instance(instance));
+            }
             Value::Module(module) => {
                 let compiled_pattern = matches!(
                     &*module.kind(),
-                    Object::Module(module_data) if module_data.name == "__re_pattern__"
+                    Object::Module(module_data) if module_data.name == RE_PATTERN_MODULE_NAME
                 );
                 if compiled_pattern {
                     return Ok(Value::Module(module));
@@ -524,29 +715,23 @@ impl Vm {
             }
             _ => pattern_value.clone(),
         };
-        let compiled = match self
-            .heap
-            .alloc_module(ModuleObject::new("__re_pattern__".to_string()))
-        {
-            Value::Module(obj) => obj,
+        let pattern_class = self.ensure_re_runtime_type_class(RE_PATTERN_CLASS_NAME);
+        let compiled = match self.heap.alloc_instance(InstanceObject::new(pattern_class)) {
+            Value::Instance(obj) => obj,
             _ => unreachable!(),
         };
-        if let Object::Module(module_data) = &mut *compiled.kind_mut() {
-            module_data.globals.insert(
-                "__class__".to_string(),
-                Value::Class(self.ensure_re_runtime_type_class("Pattern")),
-            );
-            module_data
-                .globals
+        if let Object::Instance(instance_data) = &mut *compiled.kind_mut() {
+            instance_data
+                .attrs
                 .insert("pattern".to_string(), pattern_value);
-            module_data.globals.insert(
+            instance_data.attrs.insert(
                 "__pyrs_compiled_pattern__".to_string(),
                 compiled_pattern_value,
             );
-            module_data
-                .globals
+            instance_data
+                .attrs
                 .insert("flags".to_string(), Value::Int(flags));
-            let groupindex = if let Some(pattern) = module_data.globals.get("pattern") {
+            let groupindex = if let Some(pattern) = instance_data.attrs.get("pattern") {
                 match pattern {
                     Value::Str(text) => {
                         let entries = csv_sniffer_groupindex_entries(text)
@@ -562,11 +747,26 @@ impl Vm {
             } else {
                 self.heap.alloc_dict(Vec::new())
             };
-            module_data
-                .globals
+            let groups = match &groupindex {
+                Value::Dict(dict_obj) => match &*dict_obj.kind() {
+                    Object::Dict(entries) => entries
+                        .iter()
+                        .filter_map(|(_, value)| value_to_int(value.clone()).ok())
+                        .filter(|index| *index > 0)
+                        .max()
+                        .unwrap_or(0),
+                    _ => 0,
+                },
+                _ => 0,
+            };
+            instance_data
+                .attrs
                 .insert("groupindex".to_string(), groupindex);
+            instance_data
+                .attrs
+                .insert("groups".to_string(), Value::Int(groups.max(0)));
         }
-        Ok(Value::Module(compiled))
+        Ok(Value::Instance(compiled))
     }
 
     pub(in crate::vm) fn builtin_sre_compile(
@@ -605,24 +805,25 @@ impl Vm {
         };
 
         let compiled = self.builtin_re_compile(vec![pattern, Value::Int(flags)], HashMap::new())?;
-        if let Value::Module(compiled_obj) = &compiled
-            && let Object::Module(module_data) = &mut *compiled_obj.kind_mut()
+        if let Value::Instance(compiled_obj) = &compiled
+            && let Object::Instance(instance_data) = &mut *compiled_obj.kind_mut()
         {
-            module_data
-                .globals
+            instance_data
+                .attrs
                 .insert("flags".to_string(), Value::Int(flags));
-            module_data
-                .globals
+            instance_data
+                .attrs
                 .insert("groups".to_string(), Value::Int(groups.max(0)));
-            module_data
-                .globals
+            instance_data
+                .attrs
                 .insert("groupindex".to_string(), groupindex);
-            module_data
-                .globals
+            instance_data
+                .attrs
                 .insert("indexgroup".to_string(), indexgroup);
-            module_data
-                .globals
-                .insert("__pyrs_sre_code__".to_string(), self.heap.alloc_list(normalized_code));
+            instance_data.attrs.insert(
+                "__pyrs_sre_code__".to_string(),
+                self.heap.alloc_list(normalized_code),
+            );
         }
         Ok(compiled)
     }
@@ -762,8 +963,8 @@ impl Vm {
             ));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
-        let pattern = re_pattern_from_compiled_module(&receiver)?;
-        let compiled_program = re_compiled_regex_program_from_module(&receiver);
+        let pattern = re_pattern_from_compiled_object(&receiver)?;
+        let compiled_program = re_compiled_regex_program_from_object(&receiver);
         let target = args.remove(0);
         let target = match target {
             Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => target,
@@ -937,8 +1138,9 @@ impl Vm {
                             .first()
                             .and_then(|capture| *capture)
                             .map(|(capture_start, capture_end)| {
-                                self.heap
-                                    .alloc_bytes(bytes[cursor + capture_start..cursor + capture_end].to_vec())
+                                self.heap.alloc_bytes(
+                                    bytes[cursor + capture_start..cursor + capture_end].to_vec(),
+                                )
                             })
                             .unwrap_or(Value::None);
                         matches.push(value);
@@ -984,8 +1186,8 @@ impl Vm {
         }
         let pattern_arg = args.remove(0);
         let receiver = self.receiver_from_value(&pattern_arg)?;
-        let pattern = re_pattern_from_compiled_module(&receiver)?;
-        let compiled_program = re_compiled_regex_program_from_module(&receiver);
+        let pattern = re_pattern_from_compiled_object(&receiver)?;
+        let compiled_program = re_compiled_regex_program_from_object(&receiver);
         let target = args.remove(0);
         let target = match target {
             Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => target,
@@ -1055,9 +1257,12 @@ impl Vm {
                     let absolute_start = detail.start;
                     let absolute_end = detail.end;
                     out.push(self.alloc_re_match_value(
+                        pattern_arg.clone(),
                         source.clone(),
                         detail,
                         groupindex.clone(),
+                        start as i64,
+                        stop as i64,
                     )?);
                     if absolute_end == absolute_start {
                         if absolute_end >= stop {
@@ -1122,9 +1327,12 @@ impl Vm {
                     let absolute_start = detail.start;
                     let absolute_end = detail.end;
                     out.push(self.alloc_re_match_value(
+                        pattern_arg.clone(),
                         source.clone(),
                         detail,
                         groupindex.clone(),
+                        start as i64,
+                        stop as i64,
                     )?);
                     if absolute_end == absolute_start {
                         if absolute_end >= stop {
@@ -1158,8 +1366,8 @@ impl Vm {
             ));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
-        let pattern = re_pattern_from_compiled_module(&receiver)?;
-        let compiled_program = re_compiled_regex_program_from_module(&receiver);
+        let pattern = re_pattern_from_compiled_object(&receiver)?;
+        let compiled_program = re_compiled_regex_program_from_object(&receiver);
         let target = args.remove(0);
         let target = match target {
             Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => target,
@@ -1323,9 +1531,16 @@ impl Vm {
         if !kwargs.is_empty() || args.len() < 2 || args.len() > 4 {
             return Err(RuntimeError::new("re function expects pattern and string"));
         }
-        let pattern = re_pattern_from_argument(&args[0])?;
-        let compiled_program = re_compiled_regex_program_from_argument(&args[0]);
-        let groupindex = self.re_match_groupindex_from_pattern_arg(&args[0]);
+        let compiled_pattern = if let Value::Instance(instance) = &args[0]
+            && self.is_re_runtime_class_instance(instance, RE_PATTERN_CLASS_NAME)
+        {
+            Value::Instance(instance.clone())
+        } else {
+            self.builtin_re_compile(vec![args[0].clone()], HashMap::new())?
+        };
+        let pattern = re_pattern_from_argument(&compiled_pattern)?;
+        let compiled_program = re_compiled_regex_program_from_argument(&compiled_pattern);
+        let groupindex = self.re_match_groupindex_from_pattern_arg(&compiled_pattern);
         let target = args[1].clone();
         let clamp_index = |len: usize, raw: i64| -> usize {
             if raw < 0 {
@@ -1352,7 +1567,7 @@ impl Vm {
             default_end
         };
 
-        let found = match target.clone() {
+        let (found, pos, endpos) = match target.clone() {
             Value::Str(text) => {
                 let mut start = clamp_index(text.len(), raw_pos);
                 let mut stop = clamp_index(text.len(), raw_end);
@@ -1366,17 +1581,17 @@ impl Vm {
                     stop = start;
                 }
                 let segment = Value::Str(text[start..stop].to_string());
-                re_match_details(&pattern, &segment, mode, compiled_program.as_ref())?.map(
-                    |mut detail| {
-                    detail.start += start;
-                    detail.end += start;
-                    for (cap_start, cap_end) in detail.captures.iter_mut().flatten() {
-                        *cap_start += start;
-                        *cap_end += start;
-                    }
-                    detail
-                },
-                )
+                let found = re_match_details(&pattern, &segment, mode, compiled_program.as_ref())?
+                    .map(|mut detail| {
+                        detail.start += start;
+                        detail.end += start;
+                        for (cap_start, cap_end) in detail.captures.iter_mut().flatten() {
+                            *cap_start += start;
+                            *cap_end += start;
+                        }
+                        detail
+                    });
+                (found, start as i64, stop as i64)
             }
             Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
                 let bytes = bytes_like_from_value(target.clone())?;
@@ -1386,23 +1601,29 @@ impl Vm {
                     stop = start;
                 }
                 let segment = self.heap.alloc_bytes(bytes[start..stop].to_vec());
-                re_match_details(&pattern, &segment, mode, compiled_program.as_ref())?.map(
-                    |mut detail| {
-                    detail.start += start;
-                    detail.end += start;
-                    for (cap_start, cap_end) in detail.captures.iter_mut().flatten() {
-                        *cap_start += start;
-                        *cap_end += start;
-                    }
-                    detail
-                },
-                )
+                let found = re_match_details(&pattern, &segment, mode, compiled_program.as_ref())?
+                    .map(|mut detail| {
+                        detail.start += start;
+                        detail.end += start;
+                        for (cap_start, cap_end) in detail.captures.iter_mut().flatten() {
+                            *cap_start += start;
+                            *cap_end += start;
+                        }
+                        detail
+                    });
+                (found, start as i64, stop as i64)
             }
-            other => re_match_details(&pattern, &other, mode, compiled_program.as_ref())?,
+            other => (
+                re_match_details(&pattern, &other, mode, compiled_program.as_ref())?,
+                raw_pos.max(0),
+                raw_end.max(0),
+            ),
         };
 
         match found {
-            Some(detail) => self.alloc_re_match_value(target, detail, groupindex),
+            Some(detail) => {
+                self.alloc_re_match_value(compiled_pattern, target, detail, groupindex, pos, endpos)
+            }
             None => Ok(Value::None),
         }
     }
@@ -1905,15 +2126,14 @@ mod tests {
                 HashMap::new(),
             )
             .expect("_sre.compile should succeed");
-        let Value::Module(module_obj) = compiled else {
-            panic!("_sre.compile should return compiled pattern module");
+        let Value::Instance(pattern_obj) = compiled else {
+            panic!("_sre.compile should return compiled pattern instance");
         };
-        let Object::Module(module_data) = &*module_obj.kind() else {
-            panic!("compiled pattern should be module object");
+        let Object::Instance(instance_data) = &*pattern_obj.kind() else {
+            panic!("compiled pattern should be instance object");
         };
-        assert_eq!(module_data.name, "__re_pattern__");
-        assert_eq!(module_data.globals.get("flags"), Some(&Value::Int(0)));
-        assert_eq!(module_data.globals.get("groups"), Some(&Value::Int(1)));
-        assert_eq!(module_data.globals.get("groupindex"), Some(&groupindex));
+        assert_eq!(instance_data.attrs.get("flags"), Some(&Value::Int(0)));
+        assert_eq!(instance_data.attrs.get("groups"), Some(&Value::Int(1)));
+        assert_eq!(instance_data.attrs.get("groupindex"), Some(&groupindex));
     }
 }

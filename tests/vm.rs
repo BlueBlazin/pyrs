@@ -6431,6 +6431,56 @@ ok = (
 }
 
 #[test]
+fn re_pattern_and_match_repr_and_core_attributes_follow_cpython_shape() {
+    let source = r#"import re
+pat = re.compile("d")
+m = pat.search("dog")
+ok = (
+    repr(pat) == "re.compile('d')"
+    and repr(m) == "<re.Match object; span=(0, 1), match='d'>"
+    and str(m) == "<re.Match object; span=(0, 1), match='d'>"
+    and hasattr(pat, "__repr__")
+    and hasattr(m, "__repr__")
+    and type(pat) is re.Pattern
+    and type(m) is re.Match
+    and m.re is pat
+    and m.string == "dog"
+    and m.pos == 0
+    and m.endpos == 3
+    and m.regs == ((0, 1),)
+    and m.lastindex is None
+    and m.lastgroup is None
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn re_runtime_types_expose_match_and_pattern_methods_in_dir_and_hasattr() {
+    let source = r#"import re
+pat = re.compile("d")
+m = pat.search("dog")
+pattern_names = ("search", "match", "fullmatch", "sub", "subn", "findall", "finditer", "split", "__repr__", "__str__")
+match_names = ("group", "__getitem__", "groups", "groupdict", "start", "end", "span", "__repr__", "__str__", "re", "string", "pos", "endpos", "lastindex", "lastgroup", "regs")
+ok = (
+    all(hasattr(pat, name) for name in pattern_names)
+    and all(name in dir(pat) for name in pattern_names)
+    and all(hasattr(m, name) for name in match_names)
+    and all(name in dir(m) for name in match_names)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn int_subclass_custom_new_skips_double_builtin_initialization() {
     let source = r#"class X(int):
     def __new__(cls, value, name):

@@ -191,6 +191,8 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
 - [x] `P2` Validate/bootstrap-minimize for `re` (line 3395):
   - pure-stdlib preference is validated by
     `tests/vm.rs::re_import_prefers_cpython_pure_module_when_lib_path_is_added`.
+  - runtime `re.Pattern` and `re.Match` objects are now instance-backed `re` classes (not module-backed `__re_pattern__` / `__re_match__` surrogates), with class-bound method surfaces and CPython-shaped repr/attribute baselines (`re`, `string`, `pos`, `endpos`, `lastindex`, `lastgroup`, `regs`);
+  - covered by `tests/vm.rs::re_pattern_and_match_repr_and_core_attributes_follow_cpython_shape` and `tests/vm.rs::re_runtime_types_expose_match_and_pattern_methods_in_dir_and_hasattr`.
 - [x] `P2` Validate/bootstrap-minimize for `collections` (line 4045):
   - pure-stdlib preference is validated by
     `tests/vm.rs::collections_import_prefers_cpython_pure_module_when_lib_path_is_added`.

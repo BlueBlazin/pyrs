@@ -18,7 +18,7 @@ use super::{
     find_bytes_subslice, format_value, is_truthy, memoryview_bounds, memoryview_decode_tolist,
     memoryview_format_for_view, memoryview_shape_and_strides_from_parts, normalize_codec_encoding,
     normalize_codec_errors, parse_memoryview_cast_format, parse_string_formatter,
-    py_rsplit_whitespace, py_split_whitespace, py_splitlines, re_pattern_from_compiled_module,
+    py_rsplit_whitespace, py_split_whitespace, py_splitlines, re_pattern_from_compiled_object,
     runtime_error_matches_exception, split_formatter_field_name, value_from_bigint,
     value_to_bigint, value_to_int, with_bytes_like_source,
 };
@@ -345,6 +345,8 @@ impl Vm {
                     | NativeMethodKind::RePatternSearch
                     | NativeMethodKind::RePatternMatch
                     | NativeMethodKind::RePatternFullMatch
+                    | NativeMethodKind::RePatternRepr
+                    | NativeMethodKind::ReMatchRepr
                     | NativeMethodKind::FunctionAnnotate
                     | NativeMethodKind::GenericAliasCall
                     | NativeMethodKind::Builtin(_)
@@ -5653,7 +5655,12 @@ impl Vm {
                     NativeMethodKind::RePatternFullMatch => ReMode::FullMatch,
                     _ => unreachable!(),
                 };
-                let mut forwarded = vec![Value::Module(receiver.clone())];
+                let receiver_value = match &*receiver.kind() {
+                    Object::Instance(_) => Value::Instance(receiver.clone()),
+                    Object::Module(_) => Value::Module(receiver.clone()),
+                    _ => return Err(RuntimeError::type_error("pattern receiver is invalid")),
+                };
+                let mut forwarded = vec![receiver_value];
                 forwarded.push(args[0].clone());
                 let pos = args.get(1).cloned().or(keyword_pos);
                 let endpos = args.get(2).cloned().or(keyword_endpos);
@@ -5675,15 +5682,18 @@ impl Vm {
             NativeMethodKind::RePatternSub | NativeMethodKind::RePatternSubN => {
                 let return_count = matches!(kind, NativeMethodKind::RePatternSubN);
                 if args.len() < 2 || args.len() > 3 {
-                    return Err(RuntimeError::new(
-                        if return_count {
-                            "subn() expects replacement, string, optional count"
-                        } else {
-                            "sub() expects replacement, string, optional count"
-                        },
-                    ));
+                    return Err(RuntimeError::new(if return_count {
+                        "subn() expects replacement, string, optional count"
+                    } else {
+                        "sub() expects replacement, string, optional count"
+                    }));
                 }
-                let pattern = re_pattern_from_compiled_module(&receiver)?;
+                let receiver_value = match &*receiver.kind() {
+                    Object::Instance(_) => Value::Instance(receiver.clone()),
+                    Object::Module(_) => Value::Module(receiver.clone()),
+                    _ => return Err(RuntimeError::type_error("pattern receiver is invalid")),
+                };
+                let pattern = re_pattern_from_compiled_object(&receiver)?;
                 let count = if let Some(value) = args.get(2) {
                     value_to_int(value.clone())?
                 } else {
@@ -5728,49 +5738,34 @@ impl Vm {
                             }
                             let match_value = self.builtin_re_match_mode(
                                 vec![
-                                    Value::Module(receiver.clone()),
+                                    receiver_value.clone(),
                                     Value::Str(text.clone()),
                                     Value::Int(search_pos as i64),
                                 ],
                                 HashMap::new(),
                                 ReMode::Search,
                             )?;
-                            let Value::Module(match_module) = match_value else {
-                                break;
+                            let match_receiver = match self.receiver_from_value(&match_value) {
+                                Ok(receiver) => receiver,
+                                Err(_) => break,
                             };
-                            let (match_start, match_end, groups) = {
-                                let Object::Module(module_data) = &*match_module.kind() else {
-                                    return Err(RuntimeError::new("re match receiver is invalid"));
-                                };
-                                let match_start = match module_data.globals.get("_start") {
-                                    Some(Value::Int(value)) if *value >= 0 => *value as usize,
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "re match receiver is invalid",
-                                        ));
+                            let (match_start, match_end, groups) =
+                                match self.re_match_snapshot(&match_receiver) {
+                                    Ok((_source, start, end, groups, _spans, _groupindex)) => {
+                                        let Ok(start) = usize::try_from(start) else {
+                                            return Err(RuntimeError::new(
+                                                "re match receiver is invalid",
+                                            ));
+                                        };
+                                        let Ok(end) = usize::try_from(end) else {
+                                            return Err(RuntimeError::new(
+                                                "re match receiver is invalid",
+                                            ));
+                                        };
+                                        (start, end, groups)
                                     }
+                                    Err(_) => break,
                                 };
-                                let match_end = match module_data.globals.get("_end") {
-                                    Some(Value::Int(value)) if *value >= 0 => *value as usize,
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "re match receiver is invalid",
-                                        ));
-                                    }
-                                };
-                                let groups = match module_data.globals.get("_groups") {
-                                    Some(Value::Tuple(obj)) => match &*obj.kind() {
-                                        Object::Tuple(values) => values.clone(),
-                                        _ => Vec::new(),
-                                    },
-                                    Some(Value::List(obj)) => match &*obj.kind() {
-                                        Object::List(values) => values.clone(),
-                                        _ => Vec::new(),
-                                    },
-                                    _ => Vec::new(),
-                                };
-                                (match_start, match_end, groups)
-                            };
                             if match_start < search_pos
                                 || match_start > text.len()
                                 || match_end > text.len()
@@ -5778,11 +5773,14 @@ impl Vm {
                             {
                                 return Err(RuntimeError::new("invalid regex match bounds"));
                             }
+                            if match_end < match_start {
+                                break;
+                            }
                             out.push_str(&text[segment_start..match_start]);
                             let replacement_text = if replacement_is_callable {
                                 let replacement_value = match self.call_internal(
                                     replacement.clone(),
-                                    vec![Value::Module(match_module.clone())],
+                                    vec![match_value.clone()],
                                     HashMap::new(),
                                 )? {
                                     InternalCallOutcome::Value(value) => value,
@@ -5916,6 +5914,9 @@ impl Vm {
                     }
                 }
             }
+            NativeMethodKind::RePatternRepr => Ok(NativeCallResult::Value(
+                self.native_re_pattern_repr(&receiver, args)?,
+            )),
             NativeMethodKind::ReMatchGroup => Ok(NativeCallResult::Value(
                 self.native_re_match_group(&receiver, args)?,
             )),
@@ -5933,6 +5934,9 @@ impl Vm {
             )),
             NativeMethodKind::ReMatchSpan => Ok(NativeCallResult::Value(
                 self.native_re_match_span(&receiver, args)?,
+            )),
+            NativeMethodKind::ReMatchRepr => Ok(NativeCallResult::Value(
+                self.native_re_match_repr(&receiver, args)?,
             )),
             NativeMethodKind::ExceptionWithTraceback => {
                 if args.len() != 1 {

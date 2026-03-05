@@ -424,12 +424,14 @@ pub enum NativeMethodKind {
     RePatternFullMatch,
     RePatternSub,
     RePatternSubN,
+    RePatternRepr,
     ReMatchGroup,
     ReMatchGroups,
     ReMatchGroupDict,
     ReMatchStart,
     ReMatchEnd,
     ReMatchSpan,
+    ReMatchRepr,
     ExceptionWithTraceback,
     ExceptionAddNote,
     DescriptorReduceTypeError,
@@ -9986,6 +9988,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::RePatternSub => "<bound method Pattern.sub>".to_string(),
                     NativeMethodKind::RePatternSubN => "<bound method Pattern.subn>".to_string(),
+                    NativeMethodKind::RePatternRepr => {
+                        "<bound method Pattern.__repr__>".to_string()
+                    }
                     NativeMethodKind::ReMatchGroup => "<bound method Match.group>".to_string(),
                     NativeMethodKind::ReMatchGroups => "<bound method Match.groups>".to_string(),
                     NativeMethodKind::ReMatchGroupDict => {
@@ -9994,6 +9999,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::ReMatchStart => "<bound method Match.start>".to_string(),
                     NativeMethodKind::ReMatchEnd => "<bound method Match.end>".to_string(),
                     NativeMethodKind::ReMatchSpan => "<bound method Match.span>".to_string(),
+                    NativeMethodKind::ReMatchRepr => "<bound method Match.__repr__>".to_string(),
                     NativeMethodKind::ExceptionWithTraceback => {
                         "<bound method BaseException.with_traceback>".to_string()
                     }

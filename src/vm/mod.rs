@@ -62,6 +62,7 @@ use self::stdlib::hashlib::{HashState, HmacState};
 use self::stdlib::lzma::{LzmaCompressorState, LzmaDecompressorState};
 use self::stdlib::sqlite3::{SqliteBlobState, SqliteConnectionState, SqliteCursorState};
 use self::stdlib::zlib::{ZlibCompressObjectState, ZlibDecompressObjectState};
+use crate::CPYTHON_STDLIB_VERSION;
 use crate::bytecode::cpython;
 use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::{CodeObject, Instruction, Opcode};
@@ -78,7 +79,6 @@ use crate::runtime::{
     ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError,
     SuperObject, Value, format_repr, format_value,
 };
-use crate::CPYTHON_STDLIB_VERSION;
 
 #[derive(Debug, Clone)]
 struct Block {
@@ -4158,7 +4158,9 @@ impl Vm {
         }
 
         if let Some(xdg_data_home) = self.host.env_var_os("XDG_DATA_HOME") {
-            let candidate = PathBuf::from(xdg_data_home).join("pyrs").join(&stdlib_suffix);
+            let candidate = PathBuf::from(xdg_data_home)
+                .join("pyrs")
+                .join(&stdlib_suffix);
             if self.host.path_is_dir(&candidate) {
                 return Some(candidate);
             }
@@ -8010,9 +8012,33 @@ fn re_pattern_from_value(value: &Value) -> Result<RePatternValue, RuntimeError> 
     }
 }
 
-fn re_pattern_from_compiled_module(module: &ObjRef) -> Result<RePatternValue, RuntimeError> {
-    match &*module.kind() {
+fn is_re_runtime_class(class: &ObjRef, expected_name: &str) -> bool {
+    let Object::Class(class_data) = &*class.kind() else {
+        return false;
+    };
+    if class_data.name != expected_name {
+        return false;
+    }
+    matches!(
+        class_data.attrs.get("__module__"),
+        Some(Value::Str(module_name)) if module_name == "re"
+    )
+}
+
+fn re_pattern_from_compiled_object(receiver: &ObjRef) -> Result<RePatternValue, RuntimeError> {
+    match &*receiver.kind() {
+        Object::Instance(instance_data) if is_re_runtime_class(&instance_data.class, "Pattern") => {
+            let pattern = instance_data
+                .attrs
+                .get("__pyrs_compiled_pattern__")
+                .or_else(|| instance_data.attrs.get("pattern"));
+            let Some(pattern) = pattern else {
+                return Err(RuntimeError::new("pattern receiver is invalid"));
+            };
+            re_pattern_from_value(pattern)
+        }
         Object::Module(module_data) if module_data.name == "__re_pattern__" => {
+            // Legacy compatibility path for any stale module-backed compiled regex objects.
             let pattern = module_data
                 .globals
                 .get("__pyrs_compiled_pattern__")
@@ -8029,7 +8055,14 @@ fn re_pattern_from_compiled_module(module: &ObjRef) -> Result<RePatternValue, Ru
 fn re_pattern_from_argument(value: &Value) -> Result<RePatternValue, RuntimeError> {
     match value {
         Value::Module(module) => {
-            if let Ok(pattern) = re_pattern_from_compiled_module(module) {
+            if let Ok(pattern) = re_pattern_from_compiled_object(module) {
+                Ok(pattern)
+            } else {
+                Err(RuntimeError::type_error("pattern must be string or bytes"))
+            }
+        }
+        Value::Instance(instance) => {
+            if let Ok(pattern) = re_pattern_from_compiled_object(instance) {
                 Ok(pattern)
             } else {
                 Err(RuntimeError::type_error("pattern must be string or bytes"))
@@ -8039,17 +8072,28 @@ fn re_pattern_from_argument(value: &Value) -> Result<RePatternValue, RuntimeErro
     }
 }
 
-fn re_compiled_regex_program_from_module(module: &ObjRef) -> Option<ReCompiledRegexProgram> {
-    let Object::Module(module_data) = &*module.kind() else {
-        return None;
+fn re_compiled_regex_program_from_object(receiver: &ObjRef) -> Option<ReCompiledRegexProgram> {
+    let (code_value, groups_value) = match &*receiver.kind() {
+        Object::Instance(instance_data) if is_re_runtime_class(&instance_data.class, "Pattern") => {
+            let code_value = instance_data
+                .attrs
+                .get("__pyrs_sre_code__")
+                .or_else(|| instance_data.attrs.get("code"))?;
+            let groups_value = instance_data.attrs.get("groups").cloned();
+            (code_value.clone(), groups_value)
+        }
+        Object::Module(module_data) if module_data.name == "__re_pattern__" => {
+            // Legacy compatibility path for any stale module-backed compiled regex objects.
+            let code_value = module_data
+                .globals
+                .get("__pyrs_sre_code__")
+                .or_else(|| module_data.globals.get("code"))?;
+            let groups_value = module_data.globals.get("groups").cloned();
+            (code_value.clone(), groups_value)
+        }
+        _ => return None,
     };
-    if module_data.name != "__re_pattern__" {
-        return None;
-    }
-    let code_value = module_data
-        .globals
-        .get("__pyrs_sre_code__")
-        .or_else(|| module_data.globals.get("code"))?;
+
     let code_items = match code_value {
         Value::List(obj) => match &*obj.kind() {
             Object::List(values) => values.clone(),
@@ -8065,10 +8109,7 @@ fn re_compiled_regex_program_from_module(module: &ObjRef) -> Option<ReCompiledRe
     for item in code_items {
         code.push(value_to_int(item).ok()?);
     }
-    let groups = module_data
-        .globals
-        .get("groups")
-        .cloned()
+    let groups = groups_value
         .and_then(|value| value_to_int(value).ok())
         .unwrap_or(0)
         .max(0) as usize;
@@ -8077,7 +8118,8 @@ fn re_compiled_regex_program_from_module(module: &ObjRef) -> Option<ReCompiledRe
 
 fn re_compiled_regex_program_from_argument(value: &Value) -> Option<ReCompiledRegexProgram> {
     match value {
-        Value::Module(module) => re_compiled_regex_program_from_module(module),
+        Value::Module(module) => re_compiled_regex_program_from_object(module),
+        Value::Instance(instance) => re_compiled_regex_program_from_object(instance),
         _ => None,
     }
 }
@@ -9276,7 +9318,11 @@ fn sre_category_matches(category: i64, ch: char) -> bool {
 
 fn sre_at_matches(at: i64, chars: &[char], pos: usize) -> bool {
     let len = chars.len();
-    let prev = if pos > 0 { chars.get(pos - 1).copied() } else { None };
+    let prev = if pos > 0 {
+        chars.get(pos - 1).copied()
+    } else {
+        None
+    };
     let cur = chars.get(pos).copied();
     match at {
         SRE_AT_BEGINNING | SRE_AT_BEGINNING_STRING => pos == 0,
@@ -9514,7 +9560,9 @@ fn sre_run_program(
                 let group = sre_read_usize(code, pc + 1)?;
                 let ignore_case = matches!(
                     opcode,
-                    SRE_OP_GROUPREF_IGNORE | SRE_OP_GROUPREF_LOC_IGNORE | SRE_OP_GROUPREF_UNI_IGNORE
+                    SRE_OP_GROUPREF_IGNORE
+                        | SRE_OP_GROUPREF_LOC_IGNORE
+                        | SRE_OP_GROUPREF_UNI_IGNORE
                 );
                 let next = sre_groupref_matches(chars, cursor, &marks, group, ignore_case)?;
                 cursor = next;

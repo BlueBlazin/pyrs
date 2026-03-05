@@ -7712,6 +7712,13 @@ impl Vm {
     }
 
     fn mark_re_runtime_type_class(&mut self, class: &ObjRef, class_name: &str) {
+        let object_base = self.builtins.get("object").and_then(|value| match value {
+            Value::Class(base) => Some(base.clone()),
+            _ => None,
+        });
+        let default_meta = self.default_type_metaclass();
+        let method_attrs = self.re_runtime_type_method_attrs(class.clone(), class_name);
+
         if let Object::Class(class_data) = &mut *class.kind_mut() {
             class_data
                 .attrs
@@ -7727,6 +7734,215 @@ impl Vm {
                 "__pyrs_disallow_subclassing__".to_string(),
                 Value::Bool(true),
             );
+            class_data.attrs.insert(
+                "__pyrs_disallow_instantiation__".to_string(),
+                Value::Bool(true),
+            );
+            if class_data.bases.is_empty()
+                && let Some(base) = object_base
+            {
+                class_data.bases.push(base);
+            }
+            if class_data.metaclass.is_none() {
+                class_data.metaclass = default_meta;
+            }
+        }
+        let (bases, class_ref) = match &*class.kind() {
+            Object::Class(class_data) => (class_data.bases.clone(), class.clone()),
+            _ => (Vec::new(), class.clone()),
+        };
+        let mro = if bases.is_empty() {
+            vec![class_ref.clone()]
+        } else {
+            self.build_class_mro(&class_ref, &bases)
+                .unwrap_or_else(|_| {
+                    let mut fallback = vec![class_ref.clone()];
+                    fallback.extend(bases.iter().cloned());
+                    fallback
+                })
+        };
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.mro = mro.clone();
+            class_data.attrs.insert(
+                "__bases__".to_string(),
+                self.heap
+                    .alloc_tuple(bases.iter().cloned().map(Value::Class).collect::<Vec<_>>()),
+            );
+            class_data.attrs.insert(
+                "__mro__".to_string(),
+                self.heap
+                    .alloc_tuple(mro.into_iter().map(Value::Class).collect::<Vec<_>>()),
+            );
+            for (name, value) in method_attrs {
+                class_data.attrs.insert(name, value);
+            }
+        }
+    }
+
+    fn re_runtime_type_method_attrs(
+        &self,
+        class: ObjRef,
+        class_name: &str,
+    ) -> Vec<(String, Value)> {
+        let owner = Value::Class(class);
+        match class_name {
+            "Pattern" => vec![
+                (
+                    "search".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_pattern_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::RePatternSearch,
+                    ),
+                ),
+                (
+                    "match".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_pattern_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::RePatternMatch,
+                    ),
+                ),
+                (
+                    "fullmatch".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_pattern_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::RePatternFullMatch,
+                    ),
+                ),
+                (
+                    "sub".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_pattern_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::RePatternSub,
+                    ),
+                ),
+                (
+                    "subn".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_pattern_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::RePatternSubN,
+                    ),
+                ),
+                (
+                    "findall".to_string(),
+                    self.alloc_builtin_unbound_method(
+                        "__re_pattern_unbound_method__",
+                        owner.clone(),
+                        BuiltinFunction::RePatternFindAll,
+                    ),
+                ),
+                (
+                    "finditer".to_string(),
+                    self.alloc_builtin_unbound_method(
+                        "__re_pattern_unbound_method__",
+                        owner.clone(),
+                        BuiltinFunction::RePatternFindIter,
+                    ),
+                ),
+                (
+                    "split".to_string(),
+                    self.alloc_builtin_unbound_method(
+                        "__re_pattern_unbound_method__",
+                        owner.clone(),
+                        BuiltinFunction::RePatternSplit,
+                    ),
+                ),
+                (
+                    "__repr__".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_pattern_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::RePatternRepr,
+                    ),
+                ),
+                (
+                    "__str__".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_pattern_unbound_method__",
+                        owner,
+                        NativeMethodKind::RePatternRepr,
+                    ),
+                ),
+            ],
+            "Match" => vec![
+                (
+                    "group".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_match_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::ReMatchGroup,
+                    ),
+                ),
+                (
+                    "__getitem__".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_match_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::ReMatchGroup,
+                    ),
+                ),
+                (
+                    "groups".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_match_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::ReMatchGroups,
+                    ),
+                ),
+                (
+                    "groupdict".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_match_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::ReMatchGroupDict,
+                    ),
+                ),
+                (
+                    "start".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_match_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::ReMatchStart,
+                    ),
+                ),
+                (
+                    "end".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_match_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::ReMatchEnd,
+                    ),
+                ),
+                (
+                    "span".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_match_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::ReMatchSpan,
+                    ),
+                ),
+                (
+                    "__repr__".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_match_unbound_method__",
+                        owner.clone(),
+                        NativeMethodKind::ReMatchRepr,
+                    ),
+                ),
+                (
+                    "__str__".to_string(),
+                    self.alloc_native_unbound_method(
+                        "__re_match_unbound_method__",
+                        owner,
+                        NativeMethodKind::ReMatchRepr,
+                    ),
+                ),
+            ],
+            _ => Vec::new(),
         }
     }
 
