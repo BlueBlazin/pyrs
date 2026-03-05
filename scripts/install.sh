@@ -6,18 +6,19 @@ CPYTHON_STDLIB_VERSION="3.14.3"
 BIN_DIR="${HOME}/.local/bin"
 DATA_DIR="${HOME}/.local/share/pyrs"
 TAG=""
-USE_NIGHTLY=0
+USE_NIGHTLY=1
+CHANNEL_FLAG_SET=0
 
 usage() {
   cat <<'USAGE'
 Install pyrs from GitHub releases (binary + CPython 3.14.3 stdlib bundle).
 
 Usage:
-  install.sh [--nightly] [--tag <tag>] [--repo <owner/repo>] [--bin-dir <dir>] [--data-dir <dir>]
+  install.sh [--nightly] [--stable] [--tag <tag>] [--repo <owner/repo>] [--bin-dir <dir>] [--data-dir <dir>]
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash
-  curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash -s -- --nightly
+  curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash -s -- --stable
   curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash -s -- --tag v0.3.0
 USAGE
 }
@@ -26,6 +27,12 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --nightly)
       USE_NIGHTLY=1
+      CHANNEL_FLAG_SET=1
+      shift
+      ;;
+    --stable)
+      USE_NIGHTLY=0
+      CHANNEL_FLAG_SET=1
       shift
       ;;
     --tag)
@@ -56,8 +63,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "${USE_NIGHTLY}" -eq 1 && -n "${TAG}" ]]; then
-  echo "error: --nightly and --tag cannot be used together" >&2
+if [[ -n "${TAG}" && "${CHANNEL_FLAG_SET}" -eq 1 ]]; then
+  echo "error: --nightly/--stable cannot be combined with --tag" >&2
   exit 2
 fi
 
