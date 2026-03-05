@@ -17,9 +17,10 @@ use super::{
     call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, compare_ge, compare_gt,
     compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
     dict_remove_value, dict_set_value, dict_set_value_checked, div_values, encode_text_bytes,
+    floor_div_values,
     format_float_hex, format_repr, format_value, frame_cell_value, invert_value,
     is_import_error_family, is_missing_attribute_error, is_os_error_family,
-    is_runtime_type_name_marker, is_truthy, matmul_values, mul_values, neg_value,
+    is_runtime_type_name_marker, is_truthy, matmul_values, mod_values, mul_values, neg_value,
     normalize_codec_encoding, normalize_codec_errors, or_values, ordering_from_cmp_value,
     parse_hex_float_literal, parser, pos_value, round_float_with_ndigits,
     runtime_error_matches_exception, sub_values, value_from_bigint, value_from_object_ref,
@@ -3174,6 +3175,73 @@ impl Vm {
         }
         let value = args.remove(0);
         Ok(Value::Bool(self.truthy_from_value(&value)?))
+    }
+
+    pub(super) fn builtin_abs(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("abs() expects one argument"));
+        }
+        let value = args.remove(0);
+        match &value {
+            Value::Int(number) => Ok(Value::Int(number.abs())),
+            Value::Bool(flag) => Ok(Value::Int(if *flag { 1 } else { 0 })),
+            Value::Float(number) => Ok(Value::Float(number.abs())),
+            _ => {
+                if let Some(result) = self.call_unary_special_method(&value, "__abs__")?
+                    && !self.is_not_implemented_singleton(&result)
+                {
+                    return Ok(result);
+                }
+                Err(RuntimeError::type_error(format!(
+                    "bad operand type for abs(): '{}'",
+                    self.value_type_name_for_error(&value)
+                )))
+            }
+        }
+    }
+
+    pub(super) fn builtin_divmod(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("divmod() expects two arguments"));
+        }
+        let left = args[0].clone();
+        let right = args[1].clone();
+        match call_builtin_with_kwargs(
+            &self.heap,
+            BuiltinFunction::DivMod,
+            vec![left.clone(), right.clone()],
+            HashMap::new(),
+        ) {
+            Ok(value) => Ok(value),
+            Err(err) if err.message.contains("unsupported operand type") => {
+                if let Some(value) =
+                    self.call_binary_special_method(&left, "__divmod__", right.clone())?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    return Ok(value);
+                }
+                if let Some(value) =
+                    self.call_binary_special_method(&right, "__rdivmod__", left.clone())?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    return Ok(value);
+                }
+                Err(RuntimeError::type_error(format!(
+                    "unsupported operand type(s) for divmod(): '{}' and '{}'",
+                    self.value_type_name_for_error(&left),
+                    self.value_type_name_for_error(&right)
+                )))
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub(super) fn normalize_len_result(&self, result: Value) -> Result<Value, RuntimeError> {
@@ -13332,6 +13400,63 @@ impl Vm {
                 }
                 if trace {
                     eprintln!("[bin-div] no usable __truediv__/__rtruediv__");
+                }
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn binary_floor_div_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
+        match floor_div_values(left.clone(), right.clone()) {
+            Ok(value) => Ok(value),
+            Err(err)
+                if err.message.contains("unsupported operand type")
+                    && err.message.contains("for //") =>
+            {
+                if let Some(value) =
+                    self.call_binary_special_method(&left, "__floordiv__", right.clone())?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    return Ok(value);
+                }
+                if let Some(value) =
+                    self.call_binary_special_method(&right, "__rfloordiv__", left)?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    return Ok(value);
+                }
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn binary_mod_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
+        match mod_values(left.clone(), right.clone(), &self.heap) {
+            Ok(value) => Ok(value),
+            Err(err)
+                if err.message.contains("unsupported operand type")
+                    && err.message.contains("for %") =>
+            {
+                if let Some(value) =
+                    self.call_binary_special_method(&left, "__mod__", right.clone())?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    return Ok(value);
+                }
+                if let Some(value) = self.call_binary_special_method(&right, "__rmod__", left)?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    return Ok(value);
                 }
                 Err(err)
             }

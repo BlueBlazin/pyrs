@@ -20,10 +20,10 @@ use super::{
     SOURCELESS_FILE_LOADER, TraceFrame, Value, Vm, and_values, apply_bindings, bind_arguments,
     builtin_exception_parent, class_attr_lookup, class_attr_lookup_direct, decode_call_counts,
     deref_name, dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked,
-    exception_message_from_call_args, floor_div_values, format_repr, format_value,
+    exception_message_from_call_args, format_repr, format_value,
     is_comprehension_code, is_import_error_family, is_os_error_family, is_truthy, lshift_values,
     memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
-    memoryview_format_for_view, memoryview_layout_1d_from_parts, mod_values,
+    memoryview_format_for_view, memoryview_layout_1d_from_parts,
     module_globals_version, pos_value, pow_values, rshift_values, runtime_error_matches_exception,
     slice_bounds_for_step_one, slice_indices, slot_names_from_value, source_path_from_cache_path,
     value_from_bigint, value_from_object_ref, value_to_int, value_to_optional_index,
@@ -3329,7 +3329,7 @@ impl Vm {
             Opcode::BinaryFloorDiv => {
                 let right = self.pop_value()?;
                 let left = self.pop_value()?;
-                let value = floor_div_values(left, right)?;
+                let value = self.binary_floor_div_runtime(left, right)?;
                 #[cfg(not(debug_assertions))]
                 let value = match self.try_fast_terminal_return_simple_no_cells(value) {
                     Ok(()) => return Ok(None),
@@ -3340,7 +3340,7 @@ impl Vm {
             Opcode::BinaryMod => {
                 let right = self.pop_value()?;
                 let left = self.pop_value()?;
-                let value = mod_values(left, right, &self.heap)?;
+                let value = self.binary_mod_runtime(left, right)?;
                 #[cfg(not(debug_assertions))]
                 let value = match self.try_fast_terminal_return_simple_no_cells(value) {
                     Ok(()) => return Ok(None),

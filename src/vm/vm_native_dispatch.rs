@@ -12107,9 +12107,11 @@ impl Vm {
         match builtin {
             BuiltinFunction::Print => self.builtin_print(args, kwargs),
             BuiltinFunction::Input => self.builtin_input(args, kwargs),
+            BuiltinFunction::Abs => self.builtin_abs(args, kwargs),
             BuiltinFunction::Repr => self.builtin_repr(args, kwargs),
             BuiltinFunction::Ascii => self.builtin_ascii(args, kwargs),
             BuiltinFunction::Len => self.builtin_len(args, kwargs),
+            BuiltinFunction::DivMod => self.builtin_divmod(args, kwargs),
             BuiltinFunction::Locals => self.builtin_locals(args, kwargs),
             BuiltinFunction::Globals => self.builtin_globals(args, kwargs),
             BuiltinFunction::Vars => self.builtin_vars(args, kwargs),
@@ -13607,8 +13609,24 @@ impl Vm {
             BuiltinFunction::DateFromIsoFormat => self.builtin_date_fromisoformat(args, kwargs),
             BuiltinFunction::DateFromIsoCalendar => self.builtin_date_fromisocalendar(args, kwargs),
             BuiltinFunction::DateTimeDeltaInit => self.builtin_datetime_delta_init(args, kwargs),
+            BuiltinFunction::DateTimeDeltaAdd => self.builtin_datetime_delta_add(args, kwargs),
+            BuiltinFunction::DateTimeDeltaRAdd => self.builtin_datetime_delta_radd(args, kwargs),
+            BuiltinFunction::DateTimeDeltaSub => self.builtin_datetime_delta_sub(args, kwargs),
+            BuiltinFunction::DateTimeDeltaRSub => self.builtin_datetime_delta_rsub(args, kwargs),
+            BuiltinFunction::DateTimeDeltaNeg => self.builtin_datetime_delta_neg(args, kwargs),
+            BuiltinFunction::DateTimeDeltaPos => self.builtin_datetime_delta_pos(args, kwargs),
+            BuiltinFunction::DateTimeDeltaAbs => self.builtin_datetime_delta_abs(args, kwargs),
+            BuiltinFunction::DateTimeDeltaBool => self.builtin_datetime_delta_bool(args, kwargs),
             BuiltinFunction::DateTimeDeltaMul => self.builtin_datetime_delta_mul(args, kwargs),
             BuiltinFunction::DateTimeDeltaRMul => self.builtin_datetime_delta_rmul(args, kwargs),
+            BuiltinFunction::DateTimeDeltaFloorDiv => {
+                self.builtin_datetime_delta_floordiv(args, kwargs)
+            }
+            BuiltinFunction::DateTimeDeltaTrueDiv => {
+                self.builtin_datetime_delta_truediv(args, kwargs)
+            }
+            BuiltinFunction::DateTimeDeltaMod => self.builtin_datetime_delta_mod(args, kwargs),
+            BuiltinFunction::DateTimeDeltaDivMod => self.builtin_datetime_delta_divmod(args, kwargs),
             BuiltinFunction::DateTimeDeltaRepr => self.builtin_datetime_delta_repr(args, kwargs),
             BuiltinFunction::DateTimeDeltaStr => self.builtin_datetime_delta_str(args, kwargs),
             BuiltinFunction::DateTimeTimezoneInit => {

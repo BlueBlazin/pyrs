@@ -3,10 +3,10 @@ use super::{
     InternalCallOutcome, IteratorKind, IteratorObject, MAPPING_PROXY_STORAGE_ATTR, ModuleObject,
     NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values, and_values,
     binary_operator, bytes_like_from_value, class_attr_lookup, class_name_for_instance, compare_ge,
-    compare_gt, compare_le, compare_lt, dict_remove_value, dict_set_value_checked, div_values,
-    ensure_hashable, floor_div_values, format_repr, is_missing_attribute_error, is_truthy,
-    lshift_values, mod_values, mul_values, pow_values, rshift_values,
-    runtime_error_matches_exception, sub_values, unary_predicate, value_to_int, xor_values,
+    compare_gt, compare_le, compare_lt, dict_remove_value, dict_set_value_checked,
+    ensure_hashable, format_repr, is_missing_attribute_error, is_truthy, lshift_values,
+    pow_values, rshift_values, runtime_error_matches_exception, unary_predicate, value_to_int,
+    xor_values,
 };
 use crate::runtime::FunctionObject;
 
@@ -19,9 +19,10 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        binary_operator(args, kwargs, |left, right| {
-            add_values(left, right, &self.heap)
-        })
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("binary operator expects two arguments"));
+        }
+        self.binary_add_runtime(args[0].clone(), args[1].clone())
     }
 
     pub(super) fn builtin_operator_sub(
@@ -29,9 +30,10 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        binary_operator(args, kwargs, |left, right| {
-            sub_values(left, right, &self.heap)
-        })
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("binary operator expects two arguments"));
+        }
+        self.binary_sub_runtime(args[0].clone(), args[1].clone())
     }
 
     pub(super) fn builtin_operator_mul(
@@ -39,9 +41,10 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        binary_operator(args, kwargs, |left, right| {
-            mul_values(left, right, &self.heap)
-        })
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("binary operator expects two arguments"));
+        }
+        self.binary_mul_runtime(args[0].clone(), args[1].clone())
     }
 
     pub(super) fn builtin_operator_mod(
@@ -49,9 +52,10 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        binary_operator(args, kwargs, |left, right| {
-            mod_values(left, right, &self.heap)
-        })
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("binary operator expects two arguments"));
+        }
+        self.binary_mod_runtime(args[0].clone(), args[1].clone())
     }
 
     pub(super) fn builtin_operator_pow(
@@ -156,7 +160,10 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        binary_operator(args, kwargs, div_values)
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("binary operator expects two arguments"));
+        }
+        self.binary_div_runtime(args[0].clone(), args[1].clone())
     }
 
     pub(super) fn builtin_operator_floordiv(
@@ -164,7 +171,10 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        binary_operator(args, kwargs, floor_div_values)
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("binary operator expects two arguments"));
+        }
+        self.binary_floor_div_runtime(args[0].clone(), args[1].clone())
     }
 
     pub(super) fn builtin_operator_index(

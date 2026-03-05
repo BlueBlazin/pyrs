@@ -5,7 +5,7 @@ use super::{
     apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil, decode_text_bytes,
     dict_get_value, format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
     parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp,
-    unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes,
+    unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes, value_from_bigint,
     uuid_timestamp_100ns_since_gregorian, value_to_f64, value_to_int,
 };
 
@@ -697,6 +697,56 @@ impl Vm {
         }
     }
 
+    fn timedelta_float_ratio(value: f64) -> Result<(BigInt, BigInt), RuntimeError> {
+        if value.is_nan() {
+            return Err(RuntimeError::value_error(
+                "cannot convert NaN to integer ratio",
+            ));
+        }
+        if value.is_infinite() {
+            return Err(RuntimeError::overflow_error(
+                "cannot convert Infinity to integer ratio",
+            ));
+        }
+        if value == 0.0 {
+            return Ok((BigInt::zero(), BigInt::one()));
+        }
+
+        let bits = value.to_bits();
+        let negative = (bits >> 63) != 0;
+        let exponent_bits = ((bits >> 52) & 0x7ff) as i32;
+        let fraction = bits & ((1u64 << 52) - 1);
+
+        let mut mantissa = if exponent_bits == 0 {
+            fraction
+        } else {
+            (1u64 << 52) | fraction
+        };
+        let mut exponent = if exponent_bits == 0 {
+            1 - 1023 - 52
+        } else {
+            exponent_bits - 1023 - 52
+        };
+
+        if exponent < 0 {
+            let reduce = mantissa.trailing_zeros().min((-exponent) as u32);
+            mantissa >>= reduce;
+            exponent += reduce as i32;
+        }
+
+        let mut numerator = BigInt::from_u64(mantissa);
+        if negative {
+            numerator = numerator.negated();
+        }
+        let denominator = if exponent >= 0 {
+            numerator = numerator.shl_bits(exponent as usize);
+            BigInt::one()
+        } else {
+            BigInt::one().shl_bits((-exponent) as usize)
+        };
+        Ok((numerator, denominator))
+    }
+
     fn timedelta_read_parts(
         instance: &ObjRef,
         method_name: &str,
@@ -770,6 +820,21 @@ impl Vm {
             .add(&BigInt::from_i64(microseconds)))
     }
 
+    fn timedelta_instance_arg(
+        &mut self,
+        value: &Value,
+    ) -> Result<Option<ObjRef>, RuntimeError> {
+        let Value::Instance(instance) = value else {
+            return Ok(None);
+        };
+        let timedelta_class = self.timedelta_default_class()?;
+        if self.value_is_instance_of(value, &Value::Class(timedelta_class))? {
+            Ok(Some(instance.clone()))
+        } else {
+            Ok(None)
+        }
+    }
+
     fn timedelta_instance_from_total_microseconds(
         &mut self,
         total_microseconds: BigInt,
@@ -785,18 +850,99 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
+    fn timedelta_divide_nearest(
+        &self,
+        numerator: &BigInt,
+        denominator: &BigInt,
+    ) -> Result<BigInt, RuntimeError> {
+        if denominator.is_zero() {
+            return Err(RuntimeError::zero_division_error("division by zero"));
+        }
+
+        let numerator_abs = numerator.abs();
+        let denominator_abs = denominator.abs();
+        let (mut quotient, remainder) = numerator_abs
+            .div_mod_floor(&denominator_abs)
+            .ok_or_else(|| RuntimeError::zero_division_error("division by zero"))?;
+        let doubled_remainder = remainder.mul_small(2);
+        match doubled_remainder.cmp_total(&denominator_abs) {
+            std::cmp::Ordering::Greater => {
+                quotient = quotient.add(&BigInt::one());
+            }
+            std::cmp::Ordering::Equal if self.bigint_is_odd(&quotient)? => {
+                quotient = quotient.add(&BigInt::one());
+            }
+            _ => {}
+        }
+
+        let same_sign = numerator.is_negative() == denominator.is_negative();
+        Ok(if same_sign || quotient.is_zero() {
+            quotient
+        } else {
+            quotient.negated()
+        })
+    }
+
+    fn timedelta_binary_pair_totals(
+        &mut self,
+        left: &ObjRef,
+        right: &Value,
+        method_name: &str,
+    ) -> Result<Option<(BigInt, BigInt)>, RuntimeError> {
+        let Some(right) = self.timedelta_instance_arg(right)? else {
+            return Ok(None);
+        };
+        let left_total = Self::timedelta_total_microseconds_from_instance(left, method_name)?;
+        let right_total = Self::timedelta_total_microseconds_from_instance(&right, method_name)?;
+        Ok(Some((left_total, right_total)))
+    }
+
+    fn timedelta_multiply_total_by_factor(
+        &mut self,
+        total_microseconds: BigInt,
+        factor: &Value,
+    ) -> Result<Value, RuntimeError> {
+        if let Some(factor) = Self::timedelta_integer_factor(factor) {
+            return self.timedelta_instance_from_total_microseconds(total_microseconds.mul(&factor));
+        }
+        if let Value::Float(value) = factor {
+            let (numerator, denominator) = Self::timedelta_float_ratio(*value)?;
+            let scaled = total_microseconds.mul(&numerator);
+            let rounded = self.timedelta_divide_nearest(&scaled, &denominator)?;
+            return self.timedelta_instance_from_total_microseconds(rounded);
+        }
+        Ok(self.timedelta_not_implemented())
+    }
+
+    fn timedelta_divide_by_value(
+        &mut self,
+        total_microseconds: BigInt,
+        divisor: &Value,
+    ) -> Result<Value, RuntimeError> {
+        if let Some(divisor) = Self::timedelta_integer_factor(divisor) {
+            let rounded = self.timedelta_divide_nearest(&total_microseconds, &divisor)?;
+            return self.timedelta_instance_from_total_microseconds(rounded);
+        }
+        match divisor {
+            Value::Float(value) => {
+                let (numerator, denominator) = Self::timedelta_float_ratio(*value)?;
+                let scaled = total_microseconds.mul(&denominator);
+                let rounded = self.timedelta_divide_nearest(&scaled, &numerator)?;
+                self.timedelta_instance_from_total_microseconds(rounded)
+            }
+            _ => Ok(self.timedelta_not_implemented()),
+        }
+    }
+
     fn timedelta_multiply_instance(
         &mut self,
         instance: &ObjRef,
         factor: &Value,
         method_name: &str,
     ) -> Result<Value, RuntimeError> {
-        let Some(factor) = Self::timedelta_integer_factor(factor) else {
-            return Ok(self.timedelta_not_implemented());
-        };
         let total_microseconds =
             Self::timedelta_total_microseconds_from_instance(instance, method_name)?;
-        self.timedelta_instance_from_total_microseconds(total_microseconds.mul(&factor))
+        self.timedelta_multiply_total_by_factor(total_microseconds, factor)
     }
 
     fn date_instance_from_parts(
@@ -2369,6 +2515,27 @@ impl Vm {
         Ok(Value::Str(rendered))
     }
 
+    fn timedelta_unary_method_args(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        method_name: &str,
+    ) -> Result<ObjRef, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "{method_name}() takes no keyword arguments"
+            )));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, method_name)?;
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "{method_name}() takes no arguments ({} given)",
+                args.len()
+            )));
+        }
+        Ok(instance)
+    }
+
     fn builtin_datetime_delta_mul_common(
         &mut self,
         mut args: Vec<Value>,
@@ -2390,6 +2557,159 @@ impl Vm {
         self.timedelta_multiply_instance(&instance, &args[0], method_name)
     }
 
+    fn builtin_datetime_delta_add_common(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        method_name: &str,
+        reflected: bool,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "{method_name}() takes no keyword arguments"
+            )));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, method_name)?;
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "{method_name}() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let arg = &args[0];
+        if reflected {
+            return match self.timedelta_binary_pair_totals(&instance, arg, method_name)? {
+                Some((left, right)) => {
+                    self.timedelta_instance_from_total_microseconds(right.add(&left))
+                }
+                None => Ok(self.timedelta_not_implemented()),
+            };
+        }
+        match self.timedelta_binary_pair_totals(&instance, arg, method_name)? {
+            Some((left, right)) => {
+                self.timedelta_instance_from_total_microseconds(left.add(&right))
+            }
+            None => Ok(self.timedelta_not_implemented()),
+        }
+    }
+
+    fn builtin_datetime_delta_sub_common(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        method_name: &str,
+        reflected: bool,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "{method_name}() takes no keyword arguments"
+            )));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, method_name)?;
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "{method_name}() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let arg = &args[0];
+        if reflected {
+            return match self.timedelta_binary_pair_totals(&instance, arg, method_name)? {
+                Some((left, right)) => {
+                    self.timedelta_instance_from_total_microseconds(right.sub(&left))
+                }
+                None => Ok(self.timedelta_not_implemented()),
+            };
+        }
+        match self.timedelta_binary_pair_totals(&instance, arg, method_name)? {
+            Some((left, right)) => {
+                self.timedelta_instance_from_total_microseconds(left.sub(&right))
+            }
+            None => Ok(self.timedelta_not_implemented()),
+        }
+    }
+
+    pub(super) fn builtin_datetime_delta_add(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_datetime_delta_add_common(args, kwargs, "timedelta.__add__", false)
+    }
+
+    pub(super) fn builtin_datetime_delta_radd(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_datetime_delta_add_common(args, kwargs, "timedelta.__radd__", true)
+    }
+
+    pub(super) fn builtin_datetime_delta_sub(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_datetime_delta_sub_common(args, kwargs, "timedelta.__sub__", false)
+    }
+
+    pub(super) fn builtin_datetime_delta_rsub(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_datetime_delta_sub_common(args, kwargs, "timedelta.__rsub__", true)
+    }
+
+    pub(super) fn builtin_datetime_delta_neg(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.timedelta_unary_method_args(args, kwargs, "timedelta.__neg__")?;
+        let total_microseconds =
+            Self::timedelta_total_microseconds_from_instance(&instance, "timedelta.__neg__")?;
+        self.timedelta_instance_from_total_microseconds(total_microseconds.negated())
+    }
+
+    pub(super) fn builtin_datetime_delta_pos(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.timedelta_unary_method_args(args, kwargs, "timedelta.__pos__")?;
+        let total_microseconds =
+            Self::timedelta_total_microseconds_from_instance(&instance, "timedelta.__pos__")?;
+        self.timedelta_instance_from_total_microseconds(total_microseconds)
+    }
+
+    pub(super) fn builtin_datetime_delta_abs(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.timedelta_unary_method_args(args, kwargs, "timedelta.__abs__")?;
+        let total_microseconds =
+            Self::timedelta_total_microseconds_from_instance(&instance, "timedelta.__abs__")?;
+        let total_microseconds = if total_microseconds.is_negative() {
+            total_microseconds.negated()
+        } else {
+            total_microseconds
+        };
+        self.timedelta_instance_from_total_microseconds(total_microseconds)
+    }
+
+    pub(super) fn builtin_datetime_delta_bool(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.timedelta_unary_method_args(args, kwargs, "timedelta.__bool__")?;
+        let (days, seconds, microseconds) =
+            Self::timedelta_read_parts(&instance, "timedelta.__bool__")?;
+        Ok(Value::Bool(days != 0 || seconds != 0 || microseconds != 0))
+    }
+
     pub(super) fn builtin_datetime_delta_mul(
         &mut self,
         args: Vec<Value>,
@@ -2404,6 +2724,135 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         self.builtin_datetime_delta_mul_common(args, kwargs, "timedelta.__rmul__")
+    }
+
+    pub(super) fn builtin_datetime_delta_floordiv(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "timedelta.__floordiv__() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "timedelta.__floordiv__")?;
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "timedelta.__floordiv__() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let total_microseconds =
+            Self::timedelta_total_microseconds_from_instance(&instance, "timedelta.__floordiv__")?;
+        if let Some(divisor) = Self::timedelta_integer_factor(&args[0]) {
+            let (quotient, _) = total_microseconds
+                .div_mod_floor(&divisor)
+                .ok_or_else(|| RuntimeError::zero_division_error("division by zero"))?;
+            return self.timedelta_instance_from_total_microseconds(quotient);
+        }
+        if let Some(other) = self.timedelta_instance_arg(&args[0])? {
+            let other_total = Self::timedelta_total_microseconds_from_instance(
+                &other,
+                "timedelta.__floordiv__",
+            )?;
+            let (quotient, _) = total_microseconds
+                .div_mod_floor(&other_total)
+                .ok_or_else(|| RuntimeError::zero_division_error("division by zero"))?;
+            return Ok(value_from_bigint(quotient));
+        }
+        Ok(self.timedelta_not_implemented())
+    }
+
+    pub(super) fn builtin_datetime_delta_truediv(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "timedelta.__truediv__() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "timedelta.__truediv__")?;
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "timedelta.__truediv__() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let total_microseconds =
+            Self::timedelta_total_microseconds_from_instance(&instance, "timedelta.__truediv__")?;
+        if let Some(other) = self.timedelta_instance_arg(&args[0])? {
+            let other_total =
+                Self::timedelta_total_microseconds_from_instance(&other, "timedelta.__truediv__")?;
+            if other_total.is_zero() {
+                return Err(RuntimeError::zero_division_error("division by zero"));
+            }
+            return Ok(Value::Float(
+                total_microseconds.to_f64() / other_total.to_f64(),
+            ));
+        }
+        self.timedelta_divide_by_value(total_microseconds, &args[0])
+    }
+
+    pub(super) fn builtin_datetime_delta_mod(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "timedelta.__mod__() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "timedelta.__mod__")?;
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "timedelta.__mod__() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        match self.timedelta_binary_pair_totals(&instance, &args[0], "timedelta.__mod__")? {
+            Some((left, right)) => {
+                let (_, remainder) = left
+                    .div_mod_floor(&right)
+                    .ok_or_else(|| RuntimeError::zero_division_error("division by zero"))?;
+                self.timedelta_instance_from_total_microseconds(remainder)
+            }
+            None => Ok(self.timedelta_not_implemented()),
+        }
+    }
+
+    pub(super) fn builtin_datetime_delta_divmod(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "timedelta.__divmod__() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "timedelta.__divmod__")?;
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "timedelta.__divmod__() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        match self.timedelta_binary_pair_totals(&instance, &args[0], "timedelta.__divmod__")? {
+            Some((left, right)) => {
+                let (quotient, remainder) = left
+                    .div_mod_floor(&right)
+                    .ok_or_else(|| RuntimeError::zero_division_error("division by zero"))?;
+                let remainder = self.timedelta_instance_from_total_microseconds(remainder)?;
+                Ok(self
+                    .heap
+                    .alloc_tuple(vec![value_from_bigint(quotient), remainder]))
+            }
+            None => Ok(self.timedelta_not_implemented()),
+        }
     }
 
     pub(super) fn builtin_time_init(

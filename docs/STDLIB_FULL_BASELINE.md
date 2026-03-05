@@ -88,10 +88,12 @@ python3 scripts/probe_stdlib_full.py \
     normalization and timezone offset adjustment,
   - overflow paths now raise `OverflowError` instead of panicking on integer underflow/overflow.
 - native `timedelta` arithmetic surface expanded:
-  - `_datetime.timedelta` now implements CPython-shaped integer `__mul__` / `__rmul__`
+  - `_datetime.timedelta` now implements CPython-shaped core arithmetic methods
+    (`__add__`, `__radd__`, `__sub__`, `__rsub__`, unary `+`/`-`, `abs`, `bool`,
+    integer/float multiply, floor/true division, modulo, and `divmod`)
     using shared total-microseconds normalization with constructor-aligned day-range checks.
-  - base `timedelta` results and direct `NotImplemented` fallback now match CPython
-    for unsupported reflected multiply operands.
+  - VM dispatch for `//`, `%`, builtin `abs()`, and builtin `divmod()` now falls back
+    through Python special-method semantics instead of stopping at primitive-only helpers.
 - CLI `sys.argv` shape now matches CPython startup mode semantics:
   - script execution now sets `sys.argv` to `[script_path, ...script_args]`
     (without executable prefix),

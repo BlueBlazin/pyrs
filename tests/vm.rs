@@ -8781,6 +8781,52 @@ ok = (
 }
 
 #[test]
+fn datetime_timedelta_arithmetic_surface_matches_cpython_shape() {
+    let source = r#"import datetime
+class MyDelta(datetime.timedelta):
+    pass
+a = datetime.timedelta(days=2, seconds=3)
+b = datetime.timedelta(days=1, seconds=4)
+us = datetime.timedelta(microseconds=1)
+sub_a = MyDelta(days=1)
+sub_b = MyDelta(days=-1, seconds=-3600)
+q, r = divmod(datetime.timedelta(days=3), datetime.timedelta(days=2))
+overflow_ok = False
+try:
+    datetime.timedelta(days=1) * (10 ** 9)
+except OverflowError as exc:
+    overflow_ok = (str(exc) == 'days=1000000000; must have magnitude <= 999999999')
+ok = (
+    repr(a + b) == 'datetime.timedelta(days=3, seconds=7)'
+    and repr(a - b) == 'datetime.timedelta(seconds=86399)'
+    and repr(b.__rsub__(a)) == 'datetime.timedelta(seconds=86399)'
+    and repr(-a) == 'datetime.timedelta(days=-3, seconds=86397)'
+    and repr(+a) == 'datetime.timedelta(days=2, seconds=3)'
+    and repr(abs(datetime.timedelta(days=-2, seconds=3))) == 'datetime.timedelta(days=1, seconds=86397)'
+    and (not bool(datetime.timedelta(0)))
+    and bool(datetime.timedelta(microseconds=1))
+    and repr(datetime.timedelta(days=1) * 1.5) == 'datetime.timedelta(days=1, seconds=43200)'
+    and repr(datetime.timedelta(days=1) / 2) == 'datetime.timedelta(seconds=43200)'
+    and repr((3 * us) / 2) == 'datetime.timedelta(microseconds=2)'
+    and repr(datetime.timedelta(days=3) // 2) == 'datetime.timedelta(days=1, seconds=43200)'
+    and (datetime.timedelta(days=3) // datetime.timedelta(days=2)) == 1
+    and ((datetime.timedelta(days=3) / datetime.timedelta(days=2)) == 1.5)
+    and repr(datetime.timedelta(days=3) % datetime.timedelta(days=2)) == 'datetime.timedelta(days=1)'
+    and q == 1
+    and repr(r) == 'datetime.timedelta(days=1)'
+    and type(sub_a + sub_b) is datetime.timedelta
+    and type(sub_a * 2) is datetime.timedelta
+    and overflow_ok
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn threading_condition_supports_context_manager_protocol() {
     let source = r#"import threading
 c = threading.Condition()

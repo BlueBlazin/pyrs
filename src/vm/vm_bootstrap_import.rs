@@ -7972,6 +7972,38 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::DateTimeDeltaInit),
             );
             class_data.attrs.insert(
+                "__add__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaAdd),
+            );
+            class_data.attrs.insert(
+                "__radd__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaRAdd),
+            );
+            class_data.attrs.insert(
+                "__sub__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaSub),
+            );
+            class_data.attrs.insert(
+                "__rsub__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaRSub),
+            );
+            class_data.attrs.insert(
+                "__neg__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaNeg),
+            );
+            class_data.attrs.insert(
+                "__pos__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaPos),
+            );
+            class_data.attrs.insert(
+                "__abs__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaAbs),
+            );
+            class_data.attrs.insert(
+                "__bool__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaBool),
+            );
+            class_data.attrs.insert(
                 "__repr__".to_string(),
                 Value::Builtin(BuiltinFunction::DateTimeDeltaRepr),
             );
@@ -7986,6 +8018,22 @@ impl Vm {
             class_data.attrs.insert(
                 "__rmul__".to_string(),
                 Value::Builtin(BuiltinFunction::DateTimeDeltaRMul),
+            );
+            class_data.attrs.insert(
+                "__floordiv__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaFloorDiv),
+            );
+            class_data.attrs.insert(
+                "__truediv__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaTrueDiv),
+            );
+            class_data.attrs.insert(
+                "__mod__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaMod),
+            );
+            class_data.attrs.insert(
+                "__divmod__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaDivMod),
             );
         }
         let time_class = match self
