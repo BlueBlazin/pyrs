@@ -119,8 +119,6 @@ jobs:
     name: publish-nightly
     runs-on: ubuntu-latest
     needs: build-binaries
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout
@@ -149,23 +147,18 @@ jobs:
 
       - name: Move nightly tag to current commit
         env:
-          NIGHTLY_TAG_TOKEN: ${{ secrets.NIGHTLY_TAG_TOKEN }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          token="${NIGHTLY_TAG_TOKEN:-$GITHUB_TOKEN}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f nightly "${GITHUB_SHA}"
-          if ! git push "https://x-access-token:${token}@github.com/${GITHUB_REPOSITORY}.git" refs/tags/nightly --force; then
-            if [ -n "${NIGHTLY_TAG_TOKEN:-}" ] && [ "${token}" != "${GITHUB_TOKEN}" ]; then
-              echo "nightly tag push failed with NIGHTLY_TAG_TOKEN; retrying with GITHUB_TOKEN"
-              git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" refs/tags/nightly --force
-            else
-              echo "nightly tag push failed; set NIGHTLY_TAG_TOKEN (repo-scoped token with contents:write) if GITHUB_TOKEN is restricted"
-              exit 1
-            fi
-          fi
+          gh api \
+            --method PATCH \
+            /repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly \
+            -f sha=${GITHUB_SHA} \
+            -F force=true \
+          || gh api \
+            --method POST \
+            /repos/${GITHUB_REPOSITORY}/git/refs \
+            -f ref=refs/tags/nightly \
+            -f sha=${GITHUB_SHA}
 
       - name: Publish nightly release
         uses: softprops/action-gh-release@v2
