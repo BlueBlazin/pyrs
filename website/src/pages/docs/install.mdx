@@ -11,6 +11,9 @@ import DataTable from "../../components/docs/DataTable.astro";
 import Callout from "../../components/docs/Callout.astro";
 import { withBasePath } from "../../lib/paths";
 import {
+	homebrewHeadCommands,
+	githubInstallerCommands,
+	githubInstallerStableCommands,
 	cargoInstallGitHubCommands,
 	cargoInstallRepoPathCommands,
 	cargoSourceBuildCommands,
@@ -20,23 +23,45 @@ import {
 } from "../../config/installCommands";
 
 <DocSection>
-	Install PYRS with the path that matches your workflow. Most users should start with Cargo install
-	from GitHub, then verify with `pyrs --version`.
+	Install PYRS with the path that matches your workflow. The default channel is nightly (tip of
+	`master`). Use `--stable` only when you want the latest tagged release.
 </DocSection>
 
-<DocSection title="Recommended: Cargo Install from GitHub">
-	<p>This installs `pyrs` into your cargo bin and keeps command usage simple:</p>
-	<CommandBlock commands={cargoInstallGitHubCommands} />
+<DocSection title="Recommended on macOS: Homebrew (--HEAD)">
+	<p>Install from tip of `master` with Homebrew:</p>
+	<CommandBlock commands={homebrewHeadCommands} />
 	<Callout title="Default Choice">
-		Use this method unless you specifically need source hacking, containerized runs, or nightly archives.
+		On macOS, this is the smoothest default path and tracks the nightly channel.
 	</Callout>
+</DocSection>
+
+<DocSection title="Recommended on Linux: GitHub Installer (nightly default)">
+	<p>Install from GitHub Releases (default channel is nightly):</p>
+	<CommandBlock commands={githubInstallerCommands} />
+</DocSection>
+
+<DocSection title="Optional: GitHub Installer (stable channel)">
+	<p>Use this when you want the latest tagged release instead of nightly:</p>
+	<CommandBlock commands={githubInstallerStableCommands} />
 </DocSection>
 
 <DocSection title="Choose by Workflow">
 	<DataTable headers={["Need", "Best Install Path"]}>
 		<tr>
-			<td>Fast local setup on macOS/Linux</td>
-			<td>Use <code>cargo install --locked --git ... --bin pyrs</code> (recommended default).</td>
+			<td>Fast macOS setup</td>
+			<td>Use <code>brew install --HEAD blueblazin/tap/pyrs</code>.</td>
+		</tr>
+		<tr>
+			<td>Fast Linux setup</td>
+			<td>Use the GitHub installer (<code>curl ... install.sh | bash</code>).</td>
+		</tr>
+		<tr>
+			<td>Pinned stable channel</td>
+			<td>Run installer with <code>--stable</code> or pin with <code>--tag vX.Y.Z</code>.</td>
+		</tr>
+		<tr>
+			<td>Cargo-managed install</td>
+			<td><code>cargo install --locked --git ... --bin pyrs</code> (requires local CPython 3.14 stdlib).</td>
 		</tr>
 		<tr>
 			<td>Install from a cloned local repo</td>
@@ -48,13 +73,17 @@ import {
 		</tr>
 		<tr>
 			<td>Containerized runs</td>
-			<td>Run nightly container image <code>ghcr.io/blueblazin/pyrs:nightly</code> via Docker.</td>
-		</tr>
-		<tr>
-			<td>No local Rust toolchain</td>
-			<td>Download a nightly release archive for your platform.</td>
+			<td>Run image <code>ghcr.io/blueblazin/pyrs:nightly</code> via Docker.</td>
 		</tr>
 	</DataTable>
+</DocSection>
+
+<DocSection title="Alternative: Cargo Install from GitHub (Advanced)">
+	<p>
+		This installs only the `pyrs` binary. You must provide a CPython 3.14 stdlib
+		(via `PYRS_CPYTHON_LIB` or a local CPython 3.14 install).
+	</p>
+	<CommandBlock commands={cargoInstallGitHubCommands} />
 </DocSection>
 
 <DocSection title="Alternative: Cargo Install from Local Repo Path">
@@ -72,8 +101,8 @@ import {
 	<CommandBlock commands={dockerNightlyCommands} />
 </DocSection>
 
-<DocSection title="Alternative: Nightly Archives">
-	<p>Use release archives when you want direct binaries without local toolchain setup.</p>
+<DocSection title="Alternative: Direct Nightly Archives">
+	<p>Use release archives when you want direct binaries without install scripts.</p>
 
 	<h3 class="text-[1.02rem] font-semibold tracking-[-0.01em] text-docs-text">macOS</h3>
 	<CommandBlock commands={nightlyArchiveMacosCommands} />

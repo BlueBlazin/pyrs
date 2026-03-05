@@ -13,7 +13,7 @@ import DocSection from "../../components/docs/DocSection.astro";
 import CommandBlock from "../../components/docs/CommandBlock.astro";
 import Callout from "../../components/docs/Callout.astro";
 import DocsLinkGrid from "../../components/docs/DocsLinkGrid.astro";
-import { cargoInstallGitHubCommands, quickRunCommands } from "../../config/installCommands";
+import { githubInstallerCommands, quickRunCommands } from "../../config/installCommands";
 import { withBasePath } from "../../lib/paths";
 
 <DocSection>
@@ -23,9 +23,10 @@ import { withBasePath } from "../../lib/paths";
 
 <DocSection title="Prerequisites" toc={false}>
 	<ul class="docs-list">
-		<li>Rust stable toolchain (`rustup`, `cargo`)</li>
-		<li>Git</li>
 		<li>macOS or Linux</li>
+		<li><code>curl</code> and <code>tar</code> for the one-command installer</li>
+		<li>Homebrew (optional, macOS only) for <code>brew install --HEAD ...</code></li>
+		<li>Rust stable toolchain only for Cargo/source-build paths</li>
 	</ul>
 </DocSection>
 
@@ -34,7 +35,7 @@ import { withBasePath } from "../../lib/paths";
 		items={[
 			{
 				title: "Installation",
-				description: "Cargo, source-build, Docker, and nightly archive install paths.",
+				description: "Homebrew --HEAD, one-command installer, Cargo/source-build, and archive paths.",
 				href: "/docs/install/",
 			},
 			{
@@ -62,10 +63,10 @@ import { withBasePath } from "../../lib/paths";
 </DocSection>
 
 <DocSection title="Install and Verify">
-	Install the latest `pyrs` from GitHub and verify your binary is available.
-	<CommandBlock commands={cargoInstallGitHubCommands} />
+	Install `pyrs` from GitHub and verify your binary is available. The default channel is nightly.
+	<CommandBlock commands={githubInstallerCommands} />
 	<Callout title="Need more options">
-		For all install methods (Cargo source build, Docker, nightly archives), open the{" "}
+		For Homebrew `--HEAD`, stable/pinned channels, Cargo/source-build, Docker, and archive paths, open the{" "}
 		<a href={withBasePath("/docs/install/")}>Installation page</a>.
 	</Callout>
 </DocSection>

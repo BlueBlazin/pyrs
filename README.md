@@ -40,7 +40,7 @@
 
 ## Quick Start
 
-Install from GitHub Releases (binary + bundled CPython 3.14.3 stdlib):
+Install from GitHub Releases (binary + bundled CPython 3.14.3 stdlib). Default channel is nightly:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash
@@ -73,10 +73,10 @@ pyrs path/to/script.py
 curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash
 ```
 
-Nightly channel:
+Stable tagged channel:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash -s -- --nightly
+curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash -s -- --stable
 ```
 
 ### Cargo install (bring your own CPython stdlib)
@@ -107,7 +107,7 @@ cargo build --release
 ### Homebrew (tap)
 
 ```bash
-brew install blueblazin/tap/pyrs
+brew install --HEAD blueblazin/tap/pyrs
 ```
 
 ### Docker nightly
