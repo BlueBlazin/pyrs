@@ -3696,6 +3696,40 @@ ok = ok and hasattr(json, 'encoder') and hasattr(json, 'decoder')
 }
 
 #[test]
+fn decimal_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-decimal import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("decimal-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import decimal
+origin = getattr(decimal, '__file__', '')
+norm = origin.replace("\\", "/")
+ctx = decimal.getcontext()
+origin_ok = norm.endswith('/decimal.py') or norm.endswith('/_pydecimal.py')
+shim_ok = ('/shims/' not in norm)
+decimal_ok = hasattr(decimal, 'Decimal')
+context_ok = hasattr(decimal, 'Context')
+ctx_ok = (ctx is not None)
+ok = origin_ok and shim_ok and decimal_ok and context_ok and ctx_ok
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn decimal import preference thread");
+    handle
+        .join()
+        .expect("decimal import preference thread should complete");
+}
+
+#[test]
 fn weakref_import_prefers_cpython_pure_module_when_lib_path_is_added() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pure-weakref import preference test (CPython Lib path not available)");
@@ -3811,6 +3845,44 @@ ok = (
     handle
         .join()
         .expect("__future__ import preference thread should complete");
+}
+
+#[test]
+fn collections_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping pure-collections import preference test (CPython Lib path not available)"
+        );
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("collections-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import collections
+origin = getattr(collections, '__file__', '')
+norm = origin.replace("\\", "/")
+dq = collections.deque([1, 2])
+cm = collections.ChainMap({'a': 7})
+ok = (
+    norm.endswith('/collections/__init__.py')
+    and ('/shims/' not in norm)
+    and list(dq) == [1, 2]
+    and cm['a'] == 7
+    and hasattr(collections, 'abc')
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn collections import preference thread");
+    handle
+        .join()
+        .expect("collections import preference thread should complete");
 }
 
 #[test]
@@ -4483,6 +4555,109 @@ ok = (
     handle
         .join()
         .expect("sysconfig import preference thread should complete");
+}
+
+#[test]
+fn pathlib_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-pathlib import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("pathlib-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import pathlib
+origin = getattr(pathlib, '__file__', '')
+norm = origin.replace("\\", "/")
+p = pathlib.PurePosixPath('a') / 'b'
+ok = (
+    norm.endswith('/pathlib/__init__.py')
+    and ('/shims/' not in norm)
+    and str(p) == 'a/b'
+    and hasattr(pathlib, 'Path')
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn pathlib import preference thread");
+    handle
+        .join()
+        .expect("pathlib import preference thread should complete");
+}
+
+#[test]
+fn types_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-types import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("types-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import types
+origin = getattr(types, '__file__', '')
+norm = origin.replace("\\", "/")
+ok = (
+    norm.endswith('/types.py')
+    and ('/shims/' not in norm)
+    and callable(types.ModuleType)
+    and hasattr(types, 'GenericAlias')
+    and hasattr(types, 'SimpleNamespace')
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn types import preference thread");
+    handle
+        .join()
+        .expect("types import preference thread should complete");
+}
+
+#[test]
+fn typing_import_prefers_cpython_pure_module_when_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pure-typing import preference test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("typing-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import typing
+origin = getattr(typing, '__file__', '')
+norm = origin.replace("\\", "/")
+T = typing.TypeVar('T')
+ok = (
+    norm.endswith('/typing.py')
+    and ('/shims/' not in norm)
+    and (typing.get_origin(list[int]) is list)
+    and hasattr(T, '__name__')
+    and (T.__name__ == 'T')
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn typing import preference thread");
+    handle
+        .join()
+        .expect("typing import preference thread should complete");
 }
 
 #[test]

@@ -181,13 +181,30 @@ These modules are bootstrapped as builtins even though pure stdlib modules exist
 
 ### 3.2 Already in unload preference groups, but still bootstrap-first
 
-- [ ] `P2` Validate/bootstrap-minimize for `decimal` (line 848)
-- [ ] `P2` Validate/bootstrap-minimize for `json` (line 1561)
-- [ ] `P2` Validate/bootstrap-minimize for `re` (line 3395)
-- [ ] `P2` Validate/bootstrap-minimize for `collections` (line 4045)
-- [ ] `P2` Validate/bootstrap-minimize for `types` (line 4485)
-- [ ] `P2` Validate/bootstrap-minimize for `typing` (line 3765)
-- [ ] `P2` Validate/bootstrap-minimize for `pathlib` (line 1499)
+- [x] `P2` Validate/bootstrap-minimize for `decimal` (line 848):
+  - pure-stdlib preference validated under CPython Lib-path with
+    `tests/vm.rs::decimal_import_prefers_cpython_pure_module_when_lib_path_is_added`;
+  - accepts both `Lib/decimal.py` and `Lib/_pydecimal.py` origins (CPython fallback shape when `_decimal` accelerator is unavailable).
+- [x] `P2` Validate/bootstrap-minimize for `json` (line 1561):
+  - pure-stdlib preference is validated by
+    `tests/vm.rs::json_import_prefers_cpython_pure_module_when_lib_path_is_added_by_default`.
+- [x] `P2` Validate/bootstrap-minimize for `re` (line 3395):
+  - pure-stdlib preference is validated by
+    `tests/vm.rs::re_import_prefers_cpython_pure_module_when_lib_path_is_added`.
+- [x] `P2` Validate/bootstrap-minimize for `collections` (line 4045):
+  - pure-stdlib preference is validated by
+    `tests/vm.rs::collections_import_prefers_cpython_pure_module_when_lib_path_is_added`.
+- [x] `P2` Validate/bootstrap-minimize for `types` (line 4485):
+  - pure-stdlib preference is validated by
+    `tests/vm.rs::types_import_prefers_cpython_pure_module_when_lib_path_is_added`.
+- [x] `P2` Validate/bootstrap-minimize for `typing` (line 3765):
+  - pure-stdlib preference is validated by
+    `tests/vm.rs::typing_import_prefers_cpython_pure_module_when_lib_path_is_added`.
+- [x] `P2` Validate/bootstrap-minimize for `pathlib` (line 1499):
+  - pure-stdlib preference is validated by
+    `tests/vm.rs::pathlib_import_prefers_cpython_pure_module_when_lib_path_is_added`;
+  - import-time filesystem-preference matching now includes `pathlib` in
+    `should_prefer_filesystem_module` (not only unload-preference pass).
 
 ## 4) Alias-Copy Module Debt
 

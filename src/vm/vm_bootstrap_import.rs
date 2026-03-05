@@ -11723,6 +11723,7 @@ impl Vm {
         );
         let is_collections_stack = matches!(name, "collections" | "collections.abc");
         let is_decimal_stack = name == "decimal";
+        let is_pathlib_stack = name == "pathlib";
         let is_functools_stack = name == "functools";
         let is_types_stack = matches!(name, "types" | "typing");
         let is_random_stack = name == "random";
@@ -11731,6 +11732,7 @@ impl Vm {
             && !is_re_stack
             && !is_collections_stack
             && !is_decimal_stack
+            && !is_pathlib_stack
             && !is_functools_stack
             && !is_types_stack
             && !is_random_stack
