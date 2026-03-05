@@ -1,6 +1,7 @@
 use super::super::{
     HashMap, ModuleObject, ObjRef, Object, ReMatchDetail, ReMode, RePatternValue, RuntimeError,
-    Value, Vm, bytes_like_from_value, dict_get_value, format_value, re_match_bounds,
+    Value, Vm, bytes_like_from_value, dict_get_value, format_value,
+    re_compiled_regex_program_from_argument, re_compiled_regex_program_from_module,
     re_match_details, re_pattern_from_argument, re_pattern_from_compiled_module, value_to_int,
 };
 
@@ -589,18 +590,19 @@ impl Vm {
             },
             _ => return Err(RuntimeError::new("compile() code must be list of integers")),
         };
-        for value in code_seq {
-            let _ = self.coerce_sre_int_arg(value)?;
+        let mut normalized_code = Vec::with_capacity(code_seq.len());
+        for value in &code_seq {
+            normalized_code.push(Value::Int(self.coerce_sre_int_arg(value.clone())?));
         }
         let groups = self.coerce_sre_int_arg(args[3].clone())?;
         let groupindex = match &args[4] {
             Value::Dict(_) => args[4].clone(),
             _ => return Err(RuntimeError::new("groupindex must be a dict")),
         };
-        match &args[5] {
-            Value::Tuple(_) | Value::List(_) => {}
+        let indexgroup = match &args[5] {
+            Value::Tuple(_) | Value::List(_) => args[5].clone(),
             _ => return Err(RuntimeError::new("indexgroup must be a tuple")),
-        }
+        };
 
         let compiled = self.builtin_re_compile(vec![pattern, Value::Int(flags)], HashMap::new())?;
         if let Value::Module(compiled_obj) = &compiled
@@ -615,6 +617,12 @@ impl Vm {
             module_data
                 .globals
                 .insert("groupindex".to_string(), groupindex);
+            module_data
+                .globals
+                .insert("indexgroup".to_string(), indexgroup);
+            module_data
+                .globals
+                .insert("__pyrs_sre_code__".to_string(), self.heap.alloc_list(normalized_code));
         }
         Ok(compiled)
     }
@@ -755,6 +763,7 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         let pattern = re_pattern_from_compiled_module(&receiver)?;
+        let compiled_program = re_compiled_regex_program_from_module(&receiver);
         let target = args.remove(0);
         let target = match target {
             Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => target,
@@ -821,17 +830,47 @@ impl Vm {
                 let mut cursor = start;
                 while cursor <= stop {
                     let segment = Value::Str(text[cursor..stop].to_string());
-                    let Some((match_start, match_end)) =
-                        re_match_bounds(&pattern, &segment, ReMode::Search)?
+                    let Some(detail) = re_match_details(
+                        &pattern,
+                        &segment,
+                        ReMode::Search,
+                        compiled_program.as_ref(),
+                    )?
                     else {
                         break;
                     };
-                    let absolute_start = cursor + match_start;
-                    let absolute_end = cursor + match_end;
+                    let absolute_start = cursor + detail.start;
+                    let absolute_end = cursor + detail.end;
                     if absolute_start > stop || absolute_end > stop {
                         break;
                     }
-                    matches.push(Value::Str(text[absolute_start..absolute_end].to_string()));
+                    if detail.captures.is_empty() {
+                        matches.push(Value::Str(text[absolute_start..absolute_end].to_string()));
+                    } else if detail.captures.len() == 1 {
+                        let value = detail
+                            .captures
+                            .first()
+                            .and_then(|capture| *capture)
+                            .map(|(capture_start, capture_end)| {
+                                Value::Str(
+                                    text[cursor + capture_start..cursor + capture_end].to_string(),
+                                )
+                            })
+                            .unwrap_or(Value::None);
+                        matches.push(value);
+                    } else {
+                        let groups = detail
+                            .captures
+                            .iter()
+                            .map(|capture| match capture {
+                                Some((capture_start, capture_end)) => Value::Str(
+                                    text[cursor + capture_start..cursor + capture_end].to_string(),
+                                ),
+                                None => Value::None,
+                            })
+                            .collect::<Vec<_>>();
+                        matches.push(self.heap.alloc_tuple(groups));
+                    }
                     if absolute_end == absolute_start {
                         if absolute_end >= stop {
                             break;
@@ -873,20 +912,49 @@ impl Vm {
                 let mut cursor = start;
                 while cursor <= stop {
                     let segment = self.heap.alloc_bytes(bytes[cursor..stop].to_vec());
-                    let Some((match_start, match_end)) =
-                        re_match_bounds(&pattern, &segment, ReMode::Search)?
+                    let Some(detail) = re_match_details(
+                        &pattern,
+                        &segment,
+                        ReMode::Search,
+                        compiled_program.as_ref(),
+                    )?
                     else {
                         break;
                     };
-                    let absolute_start = cursor + match_start;
-                    let absolute_end = cursor + match_end;
+                    let absolute_start = cursor + detail.start;
+                    let absolute_end = cursor + detail.end;
                     if absolute_start > stop || absolute_end > stop {
                         break;
                     }
-                    matches.push(
-                        self.heap
-                            .alloc_bytes(bytes[absolute_start..absolute_end].to_vec()),
-                    );
+                    if detail.captures.is_empty() {
+                        matches.push(
+                            self.heap
+                                .alloc_bytes(bytes[absolute_start..absolute_end].to_vec()),
+                        );
+                    } else if detail.captures.len() == 1 {
+                        let value = detail
+                            .captures
+                            .first()
+                            .and_then(|capture| *capture)
+                            .map(|(capture_start, capture_end)| {
+                                self.heap
+                                    .alloc_bytes(bytes[cursor + capture_start..cursor + capture_end].to_vec())
+                            })
+                            .unwrap_or(Value::None);
+                        matches.push(value);
+                    } else {
+                        let groups = detail
+                            .captures
+                            .iter()
+                            .map(|capture| match capture {
+                                Some((capture_start, capture_end)) => self.heap.alloc_bytes(
+                                    bytes[cursor + capture_start..cursor + capture_end].to_vec(),
+                                ),
+                                None => Value::None,
+                            })
+                            .collect::<Vec<_>>();
+                        matches.push(self.heap.alloc_tuple(groups));
+                    }
                     if absolute_end == absolute_start {
                         if absolute_end >= stop {
                             break;
@@ -917,6 +985,7 @@ impl Vm {
         let pattern_arg = args.remove(0);
         let receiver = self.receiver_from_value(&pattern_arg)?;
         let pattern = re_pattern_from_compiled_module(&receiver)?;
+        let compiled_program = re_compiled_regex_program_from_module(&receiver);
         let target = args.remove(0);
         let target = match target {
             Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => target,
@@ -966,7 +1035,12 @@ impl Vm {
                 let mut cursor = start;
                 while cursor <= stop {
                     let segment = Value::Str(text[cursor..stop].to_string());
-                    let Some(mut detail) = re_match_details(&pattern, &segment, ReMode::Search)?
+                    let Some(mut detail) = re_match_details(
+                        &pattern,
+                        &segment,
+                        ReMode::Search,
+                        compiled_program.as_ref(),
+                    )?
                     else {
                         break;
                     };
@@ -1028,7 +1102,12 @@ impl Vm {
                 let mut cursor = start;
                 while cursor <= stop {
                     let segment = self.heap.alloc_bytes(bytes[cursor..stop].to_vec());
-                    let Some(mut detail) = re_match_details(&pattern, &segment, ReMode::Search)?
+                    let Some(mut detail) = re_match_details(
+                        &pattern,
+                        &segment,
+                        ReMode::Search,
+                        compiled_program.as_ref(),
+                    )?
                     else {
                         break;
                     };
@@ -1080,6 +1159,7 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         let pattern = re_pattern_from_compiled_module(&receiver)?;
+        let compiled_program = re_compiled_regex_program_from_module(&receiver);
         let target = args.remove(0);
         let target = match target {
             Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => target,
@@ -1113,26 +1193,33 @@ impl Vm {
                     ));
                 }
                 let stop = text.len();
-                let mut cursor = 0usize;
+                let mut segment_start = 0usize;
+                let mut search_pos = 0usize;
                 let mut splits = 0usize;
                 let mut out = Vec::new();
-                while cursor <= stop && (maxsplit == 0 || splits < maxsplit) {
-                    let segment = Value::Str(text[cursor..stop].to_string());
-                    let Some(detail) = re_match_details(&pattern, &segment, ReMode::Search)? else {
+                while search_pos <= stop && (maxsplit == 0 || splits < maxsplit) {
+                    let segment = Value::Str(text[search_pos..stop].to_string());
+                    let Some(detail) = re_match_details(
+                        &pattern,
+                        &segment,
+                        ReMode::Search,
+                        compiled_program.as_ref(),
+                    )?
+                    else {
                         break;
                     };
-                    let absolute_start = cursor + detail.start;
-                    let absolute_end = cursor + detail.end;
+                    let absolute_start = search_pos + detail.start;
+                    let absolute_end = search_pos + detail.end;
                     if absolute_start > stop || absolute_end > stop {
                         break;
                     }
-                    out.push(Value::Str(text[cursor..absolute_start].to_string()));
+                    out.push(Value::Str(text[segment_start..absolute_start].to_string()));
                     if !detail.captures.is_empty() {
                         for capture in &detail.captures {
                             match capture {
                                 Some((capture_start, capture_end)) => {
-                                    let capture_start = cursor + capture_start;
-                                    let capture_end = cursor + capture_end;
+                                    let capture_start = search_pos + capture_start;
+                                    let capture_end = search_pos + capture_end;
                                     out.push(Value::Str(
                                         text[capture_start..capture_end].to_string(),
                                     ));
@@ -1142,6 +1229,7 @@ impl Vm {
                         }
                     }
                     splits += 1;
+                    segment_start = absolute_end;
                     if absolute_end == absolute_start {
                         if absolute_end >= stop {
                             break;
@@ -1150,12 +1238,12 @@ impl Vm {
                         while next < stop && !text.is_char_boundary(next) {
                             next += 1;
                         }
-                        cursor = next;
+                        search_pos = next;
                     } else {
-                        cursor = absolute_end;
+                        search_pos = absolute_end;
                     }
                 }
-                out.push(Value::Str(text[cursor..].to_string()));
+                out.push(Value::Str(text[segment_start..].to_string()));
                 Ok(self.heap.alloc_list(out))
             }
             Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
@@ -1166,29 +1254,36 @@ impl Vm {
                 }
                 let bytes = bytes_like_from_value(target)?;
                 let stop = bytes.len();
-                let mut cursor = 0usize;
+                let mut segment_start = 0usize;
+                let mut search_pos = 0usize;
                 let mut splits = 0usize;
                 let mut out = Vec::new();
-                while cursor <= stop && (maxsplit == 0 || splits < maxsplit) {
-                    let segment = self.heap.alloc_bytes(bytes[cursor..stop].to_vec());
-                    let Some(detail) = re_match_details(&pattern, &segment, ReMode::Search)? else {
+                while search_pos <= stop && (maxsplit == 0 || splits < maxsplit) {
+                    let segment = self.heap.alloc_bytes(bytes[search_pos..stop].to_vec());
+                    let Some(detail) = re_match_details(
+                        &pattern,
+                        &segment,
+                        ReMode::Search,
+                        compiled_program.as_ref(),
+                    )?
+                    else {
                         break;
                     };
-                    let absolute_start = cursor + detail.start;
-                    let absolute_end = cursor + detail.end;
+                    let absolute_start = search_pos + detail.start;
+                    let absolute_end = search_pos + detail.end;
                     if absolute_start > stop || absolute_end > stop {
                         break;
                     }
                     out.push(
                         self.heap
-                            .alloc_bytes(bytes[cursor..absolute_start].to_vec()),
+                            .alloc_bytes(bytes[segment_start..absolute_start].to_vec()),
                     );
                     if !detail.captures.is_empty() {
                         for capture in &detail.captures {
                             match capture {
                                 Some((capture_start, capture_end)) => {
-                                    let capture_start = cursor + capture_start;
-                                    let capture_end = cursor + capture_end;
+                                    let capture_start = search_pos + capture_start;
+                                    let capture_end = search_pos + capture_end;
                                     out.push(
                                         self.heap.alloc_bytes(
                                             bytes[capture_start..capture_end].to_vec(),
@@ -1200,16 +1295,17 @@ impl Vm {
                         }
                     }
                     splits += 1;
+                    segment_start = absolute_end;
                     if absolute_end == absolute_start {
                         if absolute_end >= stop {
                             break;
                         }
-                        cursor = absolute_end + 1;
+                        search_pos = absolute_end + 1;
                     } else {
-                        cursor = absolute_end;
+                        search_pos = absolute_end;
                     }
                 }
-                out.push(self.heap.alloc_bytes(bytes[cursor..].to_vec()));
+                out.push(self.heap.alloc_bytes(bytes[segment_start..].to_vec()));
                 Ok(self.heap.alloc_list(out))
             }
             _ => Err(RuntimeError::new(
@@ -1228,6 +1324,7 @@ impl Vm {
             return Err(RuntimeError::new("re function expects pattern and string"));
         }
         let pattern = re_pattern_from_argument(&args[0])?;
+        let compiled_program = re_compiled_regex_program_from_argument(&args[0]);
         let groupindex = self.re_match_groupindex_from_pattern_arg(&args[0]);
         let target = args[1].clone();
         let clamp_index = |len: usize, raw: i64| -> usize {
@@ -1269,7 +1366,8 @@ impl Vm {
                     stop = start;
                 }
                 let segment = Value::Str(text[start..stop].to_string());
-                re_match_details(&pattern, &segment, mode)?.map(|mut detail| {
+                re_match_details(&pattern, &segment, mode, compiled_program.as_ref())?.map(
+                    |mut detail| {
                     detail.start += start;
                     detail.end += start;
                     for (cap_start, cap_end) in detail.captures.iter_mut().flatten() {
@@ -1277,7 +1375,8 @@ impl Vm {
                         *cap_end += start;
                     }
                     detail
-                })
+                },
+                )
             }
             Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
                 let bytes = bytes_like_from_value(target.clone())?;
@@ -1287,7 +1386,8 @@ impl Vm {
                     stop = start;
                 }
                 let segment = self.heap.alloc_bytes(bytes[start..stop].to_vec());
-                re_match_details(&pattern, &segment, mode)?.map(|mut detail| {
+                re_match_details(&pattern, &segment, mode, compiled_program.as_ref())?.map(
+                    |mut detail| {
                     detail.start += start;
                     detail.end += start;
                     for (cap_start, cap_end) in detail.captures.iter_mut().flatten() {
@@ -1295,9 +1395,10 @@ impl Vm {
                         *cap_end += start;
                     }
                     detail
-                })
+                },
+                )
             }
-            other => re_match_details(&pattern, &other, mode)?,
+            other => re_match_details(&pattern, &other, mode, compiled_program.as_ref())?,
         };
 
         match found {

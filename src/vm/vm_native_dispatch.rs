@@ -5672,10 +5672,15 @@ impl Vm {
                     mode,
                 )?))
             }
-            NativeMethodKind::RePatternSub => {
+            NativeMethodKind::RePatternSub | NativeMethodKind::RePatternSubN => {
+                let return_count = matches!(kind, NativeMethodKind::RePatternSubN);
                 if args.len() < 2 || args.len() > 3 {
                     return Err(RuntimeError::new(
-                        "sub() expects replacement, string, optional count",
+                        if return_count {
+                            "subn() expects replacement, string, optional count"
+                        } else {
+                            "sub() expects replacement, string, optional count"
+                        },
                     ));
                 }
                 let pattern = re_pattern_from_compiled_module(&receiver)?;
@@ -5706,9 +5711,15 @@ impl Vm {
                             _ => return Err(RuntimeError::new("string must be string")),
                         };
                         if pattern_text.is_empty() {
-                            return Ok(NativeCallResult::Value(Value::Str(text)));
+                            let value = Value::Str(text);
+                            return Ok(NativeCallResult::Value(if return_count {
+                                self.heap.alloc_tuple(vec![value, Value::Int(0)])
+                            } else {
+                                value
+                            }));
                         }
-                        let mut cursor = 0usize;
+                        let mut segment_start = 0usize;
+                        let mut search_pos = 0usize;
                         let mut out = String::new();
                         let mut replaced = 0usize;
                         loop {
@@ -5719,7 +5730,7 @@ impl Vm {
                                 vec![
                                     Value::Module(receiver.clone()),
                                     Value::Str(text.clone()),
-                                    Value::Int(cursor as i64),
+                                    Value::Int(search_pos as i64),
                                 ],
                                 HashMap::new(),
                                 ReMode::Search,
@@ -5760,14 +5771,14 @@ impl Vm {
                                 };
                                 (match_start, match_end, groups)
                             };
-                            if match_start < cursor
+                            if match_start < search_pos
                                 || match_start > text.len()
                                 || match_end > text.len()
                                 || match_end < match_start
                             {
                                 return Err(RuntimeError::new("invalid regex match bounds"));
                             }
-                            out.push_str(&text[cursor..match_start]);
+                            out.push_str(&text[segment_start..match_start]);
                             let replacement_text = if replacement_is_callable {
                                 let replacement_value = match self.call_internal(
                                     replacement.clone(),
@@ -5847,28 +5858,40 @@ impl Vm {
                             };
                             out.push_str(&replacement_text);
                             replaced += 1;
-                            if match_end == cursor {
-                                if cursor >= text.len() {
+                            segment_start = match_end;
+                            if match_end == match_start {
+                                if search_pos >= text.len() {
                                     break;
                                 }
-                                let step = text[cursor..]
+                                let step = text[search_pos..]
                                     .chars()
                                     .next()
                                     .map(|ch| ch.len_utf8())
                                     .unwrap_or(1);
-                                cursor = (cursor + step).min(text.len());
+                                search_pos = (search_pos + step).min(text.len());
                             } else {
-                                cursor = match_end;
+                                search_pos = match_end;
                             }
                         }
-                        out.push_str(&text[cursor..]);
-                        Ok(NativeCallResult::Value(Value::Str(out)))
+                        out.push_str(&text[segment_start..]);
+                        let value = Value::Str(out);
+                        Ok(NativeCallResult::Value(if return_count {
+                            self.heap
+                                .alloc_tuple(vec![value, Value::Int(replaced as i64)])
+                        } else {
+                            value
+                        }))
                     }
                     RePatternValue::Bytes(pattern_bytes) => {
                         let replacement = bytes_like_from_value(args[0].clone())?;
                         let text = bytes_like_from_value(args[1].clone())?;
                         if pattern_bytes.is_empty() {
-                            return Ok(NativeCallResult::Value(self.heap.alloc_bytes(text)));
+                            let value = self.heap.alloc_bytes(text);
+                            return Ok(NativeCallResult::Value(if return_count {
+                                self.heap.alloc_tuple(vec![value, Value::Int(0)])
+                            } else {
+                                value
+                            }));
                         }
                         let mut remaining: &[u8] = &text;
                         let mut out: Vec<u8> = Vec::new();
@@ -5883,7 +5906,13 @@ impl Vm {
                             replaced += 1;
                         }
                         out.extend_from_slice(remaining);
-                        Ok(NativeCallResult::Value(self.heap.alloc_bytes(out)))
+                        let value = self.heap.alloc_bytes(out);
+                        Ok(NativeCallResult::Value(if return_count {
+                            self.heap
+                                .alloc_tuple(vec![value, Value::Int(replaced as i64)])
+                        } else {
+                            value
+                        }))
                     }
                 }
             }

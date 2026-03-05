@@ -8174,6 +8174,7 @@ impl Vm {
                 "match" => Some(NativeMethodKind::RePatternMatch),
                 "fullmatch" => Some(NativeMethodKind::RePatternFullMatch),
                 "sub" => Some(NativeMethodKind::RePatternSub),
+                "subn" => Some(NativeMethodKind::RePatternSubN),
                 "findall" => Some(NativeMethodKind::Builtin(BuiltinFunction::RePatternFindAll)),
                 "finditer" => Some(NativeMethodKind::Builtin(
                     BuiltinFunction::RePatternFindIter,

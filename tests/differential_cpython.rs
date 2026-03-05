@@ -130,6 +130,44 @@ fn run_pyrs_json(source: &str) -> Result<String, String> {
     }
 }
 
+fn detect_cpython_lib_for_cli() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("PYRS_CPYTHON_LIB") {
+        let candidate = PathBuf::from(path);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    let local = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".local/Python-3.14.3/Lib");
+    if local.is_dir() {
+        return Some(local);
+    }
+    None
+}
+
+fn run_pyrs_cli_json(source: &str) -> Result<String, String> {
+    let Some(bin) = pyrs_bin_path() else {
+        return Err("pyrs binary not found".to_string());
+    };
+    let script = format!("{source}\nimport json\nprint(json.dumps(result))\n");
+    let mut cmd = Command::new(bin);
+    cmd.arg("-S").arg("-c").arg(script);
+    if let Some(lib) = detect_cpython_lib_for_cli() {
+        cmd.env("PYRS_CPYTHON_LIB", lib);
+    }
+    let output = cmd
+        .output()
+        .map_err(|err| format!("failed to launch pyrs: {err}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "pyrs execution failed".to_string()
+        } else {
+            stderr
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 fn pyrs_bin_path() -> Option<PathBuf> {
     if let Some(path) = option_env!("CARGO_BIN_EXE_pyrs") {
         let candidate = PathBuf::from(path);
@@ -388,6 +426,39 @@ fn differential_corpus_matches_cpython() {
             "differential mismatch for source:\n{source}"
         );
     }
+}
+
+#[test]
+fn differential_re_docs_core_examples_match_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"import re
+result = {
+    "findall_basic": re.compile(r"\bf[a-z]*").findall("which foot or hand fell fastest"),
+    "finditer_spans": [(m.group(0), m.span()) for m in re.compile(r"\bf[a-z]*").finditer("which foot or hand fell fastest")],
+    "findall_groups": re.compile(r"(\w+)=(\d+)").findall("a=1 b=20"),
+    "group_backref": re.search(r"(?P<word>\w+)\s+(?P=word)", "the the").group(0),
+    "group_number_backref": re.search(r"(\w+)\s+\1", "bye bye").group(0),
+    "lookahead_pos": re.search(r"foo(?=bar)", "foobar").group(0),
+    "lookahead_neg": re.search(r"foo(?!bar)", "foobaz").group(0),
+    "lookbehind_pos": re.search(r"(?<=abc)def", "abcdef").group(0),
+    "lookbehind_neg": re.search(r"(?<!abc)def", "xyzdef").group(0),
+    "multiline_anchor": re.compile(r"^\w+", re.MULTILINE).findall("first\nsecond\nthird"),
+    "non_greedy": re.search(r"<.*?>", "<a> b <c>").group(0),
+    "sub_basic": re.compile(r"\sAND\s", re.IGNORECASE).sub(" & ", "Baked Beans And Spam"),
+    "subn_basic": re.compile("x*").subn("-", "abxd"),
+    "split_empty_match": re.compile(r"x*").split("abxd"),
+    "unicode_w": re.compile(r"\w+").findall("abc ümlaut"),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython should run");
+    let ours = run_pyrs_cli_json(source).expect("pyrs should run");
+    assert_eq!(
+        normalize_jsonish(&py),
+        normalize_jsonish(&ours),
+        "regex docs differential mismatch"
+    );
 }
 
 #[test]

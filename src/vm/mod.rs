@@ -413,6 +413,12 @@ enum RePatternValue {
     Bytes(Vec<u8>),
 }
 
+#[derive(Clone)]
+struct ReCompiledRegexProgram {
+    code: Vec<i64>,
+    groups: usize,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum OneArgCallHotPath {
     Generic,
@@ -8033,6 +8039,49 @@ fn re_pattern_from_argument(value: &Value) -> Result<RePatternValue, RuntimeErro
     }
 }
 
+fn re_compiled_regex_program_from_module(module: &ObjRef) -> Option<ReCompiledRegexProgram> {
+    let Object::Module(module_data) = &*module.kind() else {
+        return None;
+    };
+    if module_data.name != "__re_pattern__" {
+        return None;
+    }
+    let code_value = module_data
+        .globals
+        .get("__pyrs_sre_code__")
+        .or_else(|| module_data.globals.get("code"))?;
+    let code_items = match code_value {
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => values.clone(),
+            _ => return None,
+        },
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => values.clone(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let mut code = Vec::with_capacity(code_items.len());
+    for item in code_items {
+        code.push(value_to_int(item).ok()?);
+    }
+    let groups = module_data
+        .globals
+        .get("groups")
+        .cloned()
+        .and_then(|value| value_to_int(value).ok())
+        .unwrap_or(0)
+        .max(0) as usize;
+    Some(ReCompiledRegexProgram { code, groups })
+}
+
+fn re_compiled_regex_program_from_argument(value: &Value) -> Option<ReCompiledRegexProgram> {
+    match value {
+        Value::Module(module) => re_compiled_regex_program_from_module(module),
+        _ => None,
+    }
+}
+
 fn find_bytes_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
@@ -9112,10 +9161,556 @@ fn pydecimal_parser_match_detail(text: &str) -> Option<ReMatchDetail> {
     None
 }
 
+const SRE_OP_FAILURE: i64 = 0;
+const SRE_OP_SUCCESS: i64 = 1;
+const SRE_OP_ANY: i64 = 2;
+const SRE_OP_ANY_ALL: i64 = 3;
+const SRE_OP_ASSERT: i64 = 4;
+const SRE_OP_ASSERT_NOT: i64 = 5;
+const SRE_OP_AT: i64 = 6;
+const SRE_OP_BRANCH: i64 = 7;
+const SRE_OP_CATEGORY: i64 = 8;
+const SRE_OP_GROUPREF: i64 = 11;
+const SRE_OP_IN: i64 = 13;
+const SRE_OP_INFO: i64 = 14;
+const SRE_OP_JUMP: i64 = 15;
+const SRE_OP_LITERAL: i64 = 16;
+const SRE_OP_MARK: i64 = 17;
+const SRE_OP_NOT_LITERAL: i64 = 20;
+const SRE_OP_NEGATE: i64 = 21;
+const SRE_OP_RANGE: i64 = 22;
+const SRE_OP_REPEAT_ONE: i64 = 24;
+const SRE_OP_MIN_REPEAT_ONE: i64 = 26;
+const SRE_OP_GROUPREF_IGNORE: i64 = 30;
+const SRE_OP_IN_IGNORE: i64 = 31;
+const SRE_OP_LITERAL_IGNORE: i64 = 32;
+const SRE_OP_NOT_LITERAL_IGNORE: i64 = 33;
+const SRE_OP_GROUPREF_LOC_IGNORE: i64 = 34;
+const SRE_OP_IN_LOC_IGNORE: i64 = 35;
+const SRE_OP_LITERAL_LOC_IGNORE: i64 = 36;
+const SRE_OP_NOT_LITERAL_LOC_IGNORE: i64 = 37;
+const SRE_OP_GROUPREF_UNI_IGNORE: i64 = 38;
+const SRE_OP_IN_UNI_IGNORE: i64 = 39;
+const SRE_OP_LITERAL_UNI_IGNORE: i64 = 40;
+const SRE_OP_NOT_LITERAL_UNI_IGNORE: i64 = 41;
+const SRE_OP_RANGE_UNI_IGNORE: i64 = 42;
+
+const SRE_AT_BEGINNING: i64 = 0;
+const SRE_AT_BEGINNING_LINE: i64 = 1;
+const SRE_AT_BEGINNING_STRING: i64 = 2;
+const SRE_AT_BOUNDARY: i64 = 3;
+const SRE_AT_NON_BOUNDARY: i64 = 4;
+const SRE_AT_END: i64 = 5;
+const SRE_AT_END_LINE: i64 = 6;
+const SRE_AT_END_STRING: i64 = 7;
+const SRE_AT_LOC_BOUNDARY: i64 = 8;
+const SRE_AT_LOC_NON_BOUNDARY: i64 = 9;
+const SRE_AT_UNI_BOUNDARY: i64 = 10;
+const SRE_AT_UNI_NON_BOUNDARY: i64 = 11;
+
+const SRE_CATEGORY_DIGIT: i64 = 0;
+const SRE_CATEGORY_NOT_DIGIT: i64 = 1;
+const SRE_CATEGORY_SPACE: i64 = 2;
+const SRE_CATEGORY_NOT_SPACE: i64 = 3;
+const SRE_CATEGORY_WORD: i64 = 4;
+const SRE_CATEGORY_NOT_WORD: i64 = 5;
+const SRE_CATEGORY_LINEBREAK: i64 = 6;
+const SRE_CATEGORY_NOT_LINEBREAK: i64 = 7;
+const SRE_CATEGORY_LOC_WORD: i64 = 8;
+const SRE_CATEGORY_LOC_NOT_WORD: i64 = 9;
+const SRE_CATEGORY_UNI_DIGIT: i64 = 10;
+const SRE_CATEGORY_UNI_NOT_DIGIT: i64 = 11;
+const SRE_CATEGORY_UNI_SPACE: i64 = 12;
+const SRE_CATEGORY_UNI_NOT_SPACE: i64 = 13;
+const SRE_CATEGORY_UNI_WORD: i64 = 14;
+const SRE_CATEGORY_UNI_NOT_WORD: i64 = 15;
+const SRE_CATEGORY_UNI_LINEBREAK: i64 = 16;
+const SRE_CATEGORY_UNI_NOT_LINEBREAK: i64 = 17;
+
+fn sre_read_usize(code: &[i64], index: usize) -> Option<usize> {
+    let raw = *code.get(index)?;
+    if raw < 0 {
+        return None;
+    }
+    Some(raw as usize)
+}
+
+fn sre_char_equal_ignore_case(left: char, right: char) -> bool {
+    if left == right {
+        return true;
+    }
+    left.to_lowercase().to_string() == right.to_lowercase().to_string()
+}
+
+fn sre_char_is_word_ascii(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric()
+}
+
+fn sre_char_is_word_unicode(ch: char) -> bool {
+    ch == '_' || ch.is_alphanumeric()
+}
+
+fn sre_category_matches(category: i64, ch: char) -> bool {
+    match category {
+        SRE_CATEGORY_DIGIT => ch.is_ascii_digit(),
+        SRE_CATEGORY_NOT_DIGIT => !ch.is_ascii_digit(),
+        SRE_CATEGORY_SPACE => ch.is_ascii_whitespace(),
+        SRE_CATEGORY_NOT_SPACE => !ch.is_ascii_whitespace(),
+        SRE_CATEGORY_WORD => sre_char_is_word_ascii(ch),
+        SRE_CATEGORY_NOT_WORD => !sre_char_is_word_ascii(ch),
+        SRE_CATEGORY_LINEBREAK => ch == '\n',
+        SRE_CATEGORY_NOT_LINEBREAK => ch != '\n',
+        SRE_CATEGORY_LOC_WORD => sre_char_is_word_ascii(ch),
+        SRE_CATEGORY_LOC_NOT_WORD => !sre_char_is_word_ascii(ch),
+        SRE_CATEGORY_UNI_DIGIT => ch.is_ascii_digit(),
+        SRE_CATEGORY_UNI_NOT_DIGIT => !ch.is_ascii_digit(),
+        SRE_CATEGORY_UNI_SPACE => ch.is_whitespace(),
+        SRE_CATEGORY_UNI_NOT_SPACE => !ch.is_whitespace(),
+        SRE_CATEGORY_UNI_WORD => sre_char_is_word_unicode(ch),
+        SRE_CATEGORY_UNI_NOT_WORD => !sre_char_is_word_unicode(ch),
+        SRE_CATEGORY_UNI_LINEBREAK => ch == '\n',
+        SRE_CATEGORY_UNI_NOT_LINEBREAK => ch != '\n',
+        _ => false,
+    }
+}
+
+fn sre_at_matches(at: i64, chars: &[char], pos: usize) -> bool {
+    let len = chars.len();
+    let prev = if pos > 0 { chars.get(pos - 1).copied() } else { None };
+    let cur = chars.get(pos).copied();
+    match at {
+        SRE_AT_BEGINNING | SRE_AT_BEGINNING_STRING => pos == 0,
+        SRE_AT_BEGINNING_LINE => pos == 0 || prev == Some('\n'),
+        SRE_AT_END => pos == len || (pos + 1 == len && cur == Some('\n')),
+        SRE_AT_END_LINE => pos == len || cur == Some('\n'),
+        SRE_AT_END_STRING => pos == len,
+        SRE_AT_BOUNDARY => {
+            let left = prev.map(sre_char_is_word_ascii).unwrap_or(false);
+            let right = cur.map(sre_char_is_word_ascii).unwrap_or(false);
+            left != right
+        }
+        SRE_AT_NON_BOUNDARY => {
+            let left = prev.map(sre_char_is_word_ascii).unwrap_or(false);
+            let right = cur.map(sre_char_is_word_ascii).unwrap_or(false);
+            left == right
+        }
+        SRE_AT_LOC_BOUNDARY => {
+            let left = prev.map(sre_char_is_word_ascii).unwrap_or(false);
+            let right = cur.map(sre_char_is_word_ascii).unwrap_or(false);
+            left != right
+        }
+        SRE_AT_LOC_NON_BOUNDARY => {
+            let left = prev.map(sre_char_is_word_ascii).unwrap_or(false);
+            let right = cur.map(sre_char_is_word_ascii).unwrap_or(false);
+            left == right
+        }
+        SRE_AT_UNI_BOUNDARY => {
+            let left = prev.map(sre_char_is_word_unicode).unwrap_or(false);
+            let right = cur.map(sre_char_is_word_unicode).unwrap_or(false);
+            left != right
+        }
+        SRE_AT_UNI_NON_BOUNDARY => {
+            let left = prev.map(sre_char_is_word_unicode).unwrap_or(false);
+            let right = cur.map(sre_char_is_word_unicode).unwrap_or(false);
+            left == right
+        }
+        _ => false,
+    }
+}
+
+fn sre_class_matches(
+    code: &[i64],
+    class_start: usize,
+    class_end: usize,
+    op: i64,
+    ch: char,
+) -> Option<bool> {
+    let ignore_case = matches!(
+        op,
+        SRE_OP_IN_IGNORE | SRE_OP_IN_LOC_IGNORE | SRE_OP_IN_UNI_IGNORE
+    );
+    let mut idx = class_start;
+    let mut negate = false;
+    let mut matched = false;
+    while idx < class_end {
+        let opcode = *code.get(idx)?;
+        idx += 1;
+        match opcode {
+            SRE_OP_FAILURE => break,
+            SRE_OP_NEGATE => negate = true,
+            SRE_OP_LITERAL
+            | SRE_OP_LITERAL_IGNORE
+            | SRE_OP_LITERAL_LOC_IGNORE
+            | SRE_OP_LITERAL_UNI_IGNORE => {
+                let value = *code.get(idx)? as u32;
+                idx += 1;
+                let expected = char::from_u32(value)?;
+                let is_match = if ignore_case {
+                    sre_char_equal_ignore_case(ch, expected)
+                } else {
+                    ch == expected
+                };
+                matched |= is_match;
+            }
+            SRE_OP_RANGE | SRE_OP_RANGE_UNI_IGNORE => {
+                let lo = char::from_u32(*code.get(idx)? as u32)?;
+                let hi = char::from_u32(*code.get(idx + 1)? as u32)?;
+                idx += 2;
+                let is_match = if ignore_case || opcode == SRE_OP_RANGE_UNI_IGNORE {
+                    let lower = ch.to_lowercase().next().unwrap_or(ch);
+                    lower >= lo.to_lowercase().next().unwrap_or(lo)
+                        && lower <= hi.to_lowercase().next().unwrap_or(hi)
+                } else {
+                    ch >= lo && ch <= hi
+                };
+                matched |= is_match;
+            }
+            SRE_OP_CATEGORY => {
+                let category = *code.get(idx)?;
+                idx += 1;
+                matched |= sre_category_matches(category, ch);
+            }
+            _ => return None,
+        }
+    }
+    Some(if negate { !matched } else { matched })
+}
+
+fn sre_groupref_matches(
+    chars: &[char],
+    pos: usize,
+    marks: &[Option<usize>],
+    group: usize,
+    ignore_case: bool,
+) -> Option<usize> {
+    let start = marks.get(group * 2).copied().flatten()?;
+    let end = marks.get(group * 2 + 1).copied().flatten()?;
+    if end < start {
+        return None;
+    }
+    let len = end - start;
+    let candidate_end = pos.checked_add(len)?;
+    if candidate_end > chars.len() {
+        return None;
+    }
+    let captured = &chars[start..end];
+    let candidate = &chars[pos..candidate_end];
+    let equal = if ignore_case {
+        captured
+            .iter()
+            .zip(candidate.iter())
+            .all(|(left, right)| sre_char_equal_ignore_case(*left, *right))
+    } else {
+        captured == candidate
+    };
+    equal.then_some(candidate_end)
+}
+
+fn sre_run_program(
+    code: &[i64],
+    pc_start: usize,
+    pc_limit: usize,
+    chars: &[char],
+    pos: usize,
+    marks: &[Option<usize>],
+    depth: usize,
+) -> Option<(usize, Vec<Option<usize>>)> {
+    if depth > 512 {
+        return None;
+    }
+    let mut pc = pc_start;
+    let mut cursor = pos;
+    let mut marks = marks.to_vec();
+    while pc < pc_limit {
+        let opcode = *code.get(pc)?;
+        match opcode {
+            SRE_OP_SUCCESS => return Some((cursor, marks)),
+            SRE_OP_FAILURE => return None,
+            SRE_OP_INFO => {
+                let skip = sre_read_usize(code, pc + 1)?;
+                pc = pc + 1 + skip;
+            }
+            SRE_OP_AT => {
+                let at = *code.get(pc + 1)?;
+                if !sre_at_matches(at, chars, cursor) {
+                    return None;
+                }
+                pc += 2;
+            }
+            SRE_OP_LITERAL
+            | SRE_OP_LITERAL_IGNORE
+            | SRE_OP_LITERAL_LOC_IGNORE
+            | SRE_OP_LITERAL_UNI_IGNORE => {
+                let expected = char::from_u32(*code.get(pc + 1)? as u32)?;
+                let current = *chars.get(cursor)?;
+                let matched = matches!(
+                    opcode,
+                    SRE_OP_LITERAL_IGNORE | SRE_OP_LITERAL_LOC_IGNORE | SRE_OP_LITERAL_UNI_IGNORE
+                )
+                .then(|| sre_char_equal_ignore_case(current, expected))
+                .unwrap_or(current == expected);
+                if !matched {
+                    return None;
+                }
+                cursor += 1;
+                pc += 2;
+            }
+            SRE_OP_NOT_LITERAL
+            | SRE_OP_NOT_LITERAL_IGNORE
+            | SRE_OP_NOT_LITERAL_LOC_IGNORE
+            | SRE_OP_NOT_LITERAL_UNI_IGNORE => {
+                let expected = char::from_u32(*code.get(pc + 1)? as u32)?;
+                let current = *chars.get(cursor)?;
+                let equal = matches!(
+                    opcode,
+                    SRE_OP_NOT_LITERAL_IGNORE
+                        | SRE_OP_NOT_LITERAL_LOC_IGNORE
+                        | SRE_OP_NOT_LITERAL_UNI_IGNORE
+                )
+                .then(|| sre_char_equal_ignore_case(current, expected))
+                .unwrap_or(current == expected);
+                if equal {
+                    return None;
+                }
+                cursor += 1;
+                pc += 2;
+            }
+            SRE_OP_ANY => {
+                let current = *chars.get(cursor)?;
+                if current == '\n' {
+                    return None;
+                }
+                cursor += 1;
+                pc += 1;
+            }
+            SRE_OP_ANY_ALL => {
+                let _ = chars.get(cursor)?;
+                cursor += 1;
+                pc += 1;
+            }
+            SRE_OP_IN | SRE_OP_IN_IGNORE | SRE_OP_IN_LOC_IGNORE | SRE_OP_IN_UNI_IGNORE => {
+                let skip = sre_read_usize(code, pc + 1)?;
+                let class_start = pc + 2;
+                let class_end = pc + 1 + skip;
+                let current = *chars.get(cursor)?;
+                if !sre_class_matches(code, class_start, class_end, opcode, current)? {
+                    return None;
+                }
+                cursor += 1;
+                pc = class_end;
+            }
+            SRE_OP_MARK => {
+                let mark_index = sre_read_usize(code, pc + 1)?;
+                if mark_index >= marks.len() {
+                    marks.resize(mark_index + 1, None);
+                }
+                marks[mark_index] = Some(cursor);
+                pc += 2;
+            }
+            SRE_OP_GROUPREF
+            | SRE_OP_GROUPREF_IGNORE
+            | SRE_OP_GROUPREF_LOC_IGNORE
+            | SRE_OP_GROUPREF_UNI_IGNORE => {
+                let group = sre_read_usize(code, pc + 1)?;
+                let ignore_case = matches!(
+                    opcode,
+                    SRE_OP_GROUPREF_IGNORE | SRE_OP_GROUPREF_LOC_IGNORE | SRE_OP_GROUPREF_UNI_IGNORE
+                );
+                let next = sre_groupref_matches(chars, cursor, &marks, group, ignore_case)?;
+                cursor = next;
+                pc += 2;
+            }
+            SRE_OP_BRANCH => {
+                let mut branch = pc + 1;
+                loop {
+                    let skip = sre_read_usize(code, branch)?;
+                    if skip == 0 {
+                        return None;
+                    }
+                    let branch_start = branch + 1;
+                    if let Some(matched) = sre_run_program(
+                        code,
+                        branch_start,
+                        pc_limit,
+                        chars,
+                        cursor,
+                        &marks,
+                        depth + 1,
+                    ) {
+                        return Some(matched);
+                    }
+                    branch += skip;
+                    if branch >= pc_limit {
+                        return None;
+                    }
+                }
+            }
+            SRE_OP_JUMP => {
+                let skip = sre_read_usize(code, pc + 1)?;
+                pc = pc + 1 + skip;
+            }
+            SRE_OP_ASSERT | SRE_OP_ASSERT_NOT => {
+                let skip = sre_read_usize(code, pc + 1)?;
+                let back = sre_read_usize(code, pc + 2)?;
+                let sub_start = pc + 3;
+                let sub_limit = pc + 1 + skip;
+                let Some(assert_pos) = cursor.checked_sub(back) else {
+                    return None;
+                };
+                let sub_result = sre_run_program(
+                    code,
+                    sub_start,
+                    sub_limit,
+                    chars,
+                    assert_pos,
+                    &marks,
+                    depth + 1,
+                );
+                match opcode {
+                    SRE_OP_ASSERT => {
+                        let Some((_sub_end, sub_marks)) = sub_result else {
+                            return None;
+                        };
+                        marks = sub_marks;
+                    }
+                    SRE_OP_ASSERT_NOT => {
+                        if sub_result.is_some() {
+                            return None;
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+                pc = sub_limit;
+            }
+            SRE_OP_REPEAT_ONE | SRE_OP_MIN_REPEAT_ONE => {
+                let skip = sre_read_usize(code, pc + 1)?;
+                let min_count = sre_read_usize(code, pc + 2)?;
+                let max_count_raw = sre_read_usize(code, pc + 3)?;
+                let unit_start = pc + 4;
+                let next_pc = pc + 1 + skip;
+                let hard_max = max_count_raw.min(chars.len().saturating_sub(cursor));
+                let mut states = Vec::new();
+                states.push((cursor, marks.clone()));
+                let mut rep_pos = cursor;
+                let mut rep_marks = marks.clone();
+                for _ in 0..hard_max {
+                    let Some((next_pos, next_marks)) = sre_run_program(
+                        code,
+                        unit_start,
+                        next_pc,
+                        chars,
+                        rep_pos,
+                        &rep_marks,
+                        depth + 1,
+                    ) else {
+                        break;
+                    };
+                    if next_pos == rep_pos {
+                        break;
+                    }
+                    rep_pos = next_pos;
+                    rep_marks = next_marks.clone();
+                    states.push((rep_pos, next_marks));
+                }
+                if min_count > states.len().saturating_sub(1) {
+                    return None;
+                }
+                if opcode == SRE_OP_REPEAT_ONE {
+                    for reps in (min_count..states.len()).rev() {
+                        let (candidate_pos, candidate_marks) = states[reps].clone();
+                        if let Some(result) = sre_run_program(
+                            code,
+                            next_pc,
+                            pc_limit,
+                            chars,
+                            candidate_pos,
+                            &candidate_marks,
+                            depth + 1,
+                        ) {
+                            return Some(result);
+                        }
+                    }
+                } else {
+                    for (candidate_pos, candidate_marks) in states.iter().skip(min_count) {
+                        if let Some(result) = sre_run_program(
+                            code,
+                            next_pc,
+                            pc_limit,
+                            chars,
+                            *candidate_pos,
+                            candidate_marks,
+                            depth + 1,
+                        ) {
+                            return Some(result);
+                        }
+                    }
+                }
+                return None;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn compiled_regex_match_details(
+    program: &ReCompiledRegexProgram,
+    text: &str,
+    mode: ReMode,
+) -> Option<ReMatchDetail> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut byte_offsets: Vec<usize> = text.char_indices().map(|(idx, _)| idx).collect();
+    byte_offsets.push(text.len());
+
+    let mut starts = Vec::new();
+    match mode {
+        ReMode::Search => starts.extend(0..=chars.len()),
+        ReMode::Match | ReMode::FullMatch => starts.push(0),
+    }
+    let initial_marks = vec![None; program.groups.saturating_mul(2)];
+    for start in starts {
+        let Some((end, marks)) = sre_run_program(
+            &program.code,
+            0,
+            program.code.len(),
+            &chars,
+            start,
+            &initial_marks,
+            0,
+        ) else {
+            continue;
+        };
+        if matches!(mode, ReMode::FullMatch) && end != chars.len() {
+            continue;
+        }
+        let mut captures = Vec::with_capacity(program.groups);
+        for group in 0..program.groups {
+            let capture_start = marks.get(group * 2).copied().flatten();
+            let capture_end = marks.get(group * 2 + 1).copied().flatten();
+            let capture = match (capture_start, capture_end) {
+                (Some(cap_start), Some(cap_end))
+                    if cap_start <= cap_end && cap_end <= chars.len() =>
+                {
+                    Some((byte_offsets[cap_start], byte_offsets[cap_end]))
+                }
+                _ => None,
+            };
+            captures.push(capture);
+        }
+        return Some(ReMatchDetail {
+            start: byte_offsets[start],
+            end: byte_offsets[end],
+            captures,
+        });
+    }
+    None
+}
+
 fn re_match_details(
     pattern: &RePatternValue,
     text: &Value,
     mode: ReMode,
+    compiled_program: Option<&ReCompiledRegexProgram>,
 ) -> Result<Option<ReMatchDetail>, RuntimeError> {
     match pattern {
         RePatternValue::Str(pattern_text) => {
@@ -9128,7 +9723,9 @@ fn re_match_details(
                 }
                 _ => return Err(RuntimeError::new("string must be string")),
             };
-            let found = if pattern_text == PKGUTIL_RESOLVE_NAME_PATTERN {
+            let found = if let Some(program) = compiled_program {
+                compiled_regex_match_details(program, text, mode)
+            } else if pattern_text == PKGUTIL_RESOLVE_NAME_PATTERN {
                 pkgutil_resolve_name_match_detail(text)
             } else if decimal_parser_pattern_matches(pattern_text) {
                 pydecimal_parser_match_detail(text)
@@ -9267,14 +9864,6 @@ fn re_match_details(
             Ok(found)
         }
     }
-}
-
-fn re_match_bounds(
-    pattern: &RePatternValue,
-    text: &Value,
-    mode: ReMode,
-) -> Result<Option<(usize, usize)>, RuntimeError> {
-    Ok(re_match_details(pattern, text, mode)?.map(|detail| (detail.start, detail.end)))
 }
 
 fn bytes_like_from_value(value: Value) -> Result<Vec<u8>, RuntimeError> {

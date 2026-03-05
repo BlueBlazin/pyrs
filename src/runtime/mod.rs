@@ -423,6 +423,7 @@ pub enum NativeMethodKind {
     RePatternMatch,
     RePatternFullMatch,
     RePatternSub,
+    RePatternSubN,
     ReMatchGroup,
     ReMatchGroups,
     ReMatchGroupDict,
@@ -9984,6 +9985,7 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method Pattern.fullmatch>".to_string()
                     }
                     NativeMethodKind::RePatternSub => "<bound method Pattern.sub>".to_string(),
+                    NativeMethodKind::RePatternSubN => "<bound method Pattern.subn>".to_string(),
                     NativeMethodKind::ReMatchGroup => "<bound method Match.group>".to_string(),
                     NativeMethodKind::ReMatchGroups => "<bound method Match.groups>".to_string(),
                     NativeMethodKind::ReMatchGroupDict => {
