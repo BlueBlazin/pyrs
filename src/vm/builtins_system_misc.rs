@@ -1,5 +1,5 @@
 use super::{
-    BuiltinFunction, HashMap, InstanceObject, InternalCallOutcome, IpAddr, IteratorKind,
+    BigInt, BuiltinFunction, HashMap, InstanceObject, InternalCallOutcome, IpAddr, IteratorKind,
     IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
     SIGNAL_SIGINT, SocketAddr, TimeParts, ToSocketAddrs, Value, Vm, apply_uuid_variant,
     apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil, decode_text_bytes,
@@ -11,6 +11,11 @@ use super::{
 
 const DATETIME_MIN_YEAR: i64 = 1;
 const DATETIME_MAX_YEAR: i64 = 9999;
+const DATETIME_MAX_DELTA_DAYS: i64 = 999_999_999;
+const DATETIME_SECONDS_PER_DAY: i64 = 86_400;
+const DATETIME_MICROSECONDS_PER_SECOND: i64 = 1_000_000;
+const DATETIME_MICROSECONDS_PER_DAY: i64 =
+    DATETIME_SECONDS_PER_DAY * DATETIME_MICROSECONDS_PER_SECOND;
 const UNIX_EPOCH_ORDINAL: i64 = 719_163;
 
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
@@ -660,6 +665,138 @@ impl Vm {
             return Err(RuntimeError::new("datetime.date is unavailable"));
         };
         Ok(class.clone())
+    }
+
+    fn timedelta_default_class(&self) -> Result<ObjRef, RuntimeError> {
+        let module = self
+            .modules
+            .get("datetime")
+            .ok_or_else(|| RuntimeError::new("datetime module not initialized"))?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return Err(RuntimeError::new("datetime module not initialized"));
+        };
+        let Some(Value::Class(class)) = module_data.globals.get("timedelta") else {
+            return Err(RuntimeError::new("datetime.timedelta is unavailable"));
+        };
+        Ok(class.clone())
+    }
+
+    fn timedelta_not_implemented(&self) -> Value {
+        self.builtins
+            .get("NotImplemented")
+            .cloned()
+            .unwrap_or(Value::None)
+    }
+
+    fn timedelta_integer_factor(value: &Value) -> Option<BigInt> {
+        match value {
+            Value::Int(number) => Some(BigInt::from_i64(*number)),
+            Value::Bool(flag) => Some(BigInt::from_i64(if *flag { 1 } else { 0 })),
+            Value::BigInt(number) => Some((**number).clone()),
+            _ => None,
+        }
+    }
+
+    fn timedelta_read_parts(
+        instance: &ObjRef,
+        method_name: &str,
+    ) -> Result<(i64, i64, i64), RuntimeError> {
+        let read_part = |name: &str| -> Result<i64, RuntimeError> {
+            Self::instance_attr_get(instance, name)
+                .ok_or_else(|| RuntimeError::new(format!("{method_name}() missing {name}")))
+                .and_then(value_to_int)
+        };
+        Ok((
+            read_part("days")?,
+            read_part("seconds")?,
+            read_part("microseconds")?,
+        ))
+    }
+
+    fn normalized_timedelta_parts_from_total_microseconds(
+        total_microseconds: &BigInt,
+    ) -> Result<(i64, i64, i64), RuntimeError> {
+        let day_us = BigInt::from_i64(DATETIME_MICROSECONDS_PER_DAY);
+        let us_per_second = BigInt::from_i64(DATETIME_MICROSECONDS_PER_SECOND);
+        let max_days = BigInt::from_i64(DATETIME_MAX_DELTA_DAYS);
+        let min_days = max_days.negated();
+        let (days, remainder) = total_microseconds
+            .div_mod_floor(&day_us)
+            .expect("timedelta day divisor must be non-zero");
+        if days.cmp_total(&min_days) == std::cmp::Ordering::Less
+            || days.cmp_total(&max_days) == std::cmp::Ordering::Greater
+        {
+            return Err(RuntimeError::overflow_error(format!(
+                "days={days}; must have magnitude <= {DATETIME_MAX_DELTA_DAYS}"
+            )));
+        }
+        let (seconds, microseconds) = remainder
+            .div_mod_floor(&us_per_second)
+            .expect("timedelta second divisor must be non-zero");
+        let days = days
+            .to_i64()
+            .expect("timedelta day count should fit after range check");
+        let seconds = seconds
+            .to_i64()
+            .expect("timedelta seconds remainder should fit in i64");
+        let microseconds = microseconds
+            .to_i64()
+            .expect("timedelta microseconds remainder should fit in i64");
+        Ok((days, seconds, microseconds))
+    }
+
+    fn timedelta_apply_normalized_parts(
+        instance: &ObjRef,
+        days: i64,
+        seconds: i64,
+        microseconds: i64,
+    ) -> Result<(), RuntimeError> {
+        Self::instance_attr_set(instance, "days", Value::Int(days))?;
+        Self::instance_attr_set(instance, "seconds", Value::Int(seconds))?;
+        Self::instance_attr_set(instance, "microseconds", Value::Int(microseconds))?;
+        Ok(())
+    }
+
+    fn timedelta_total_microseconds_from_instance(
+        instance: &ObjRef,
+        method_name: &str,
+    ) -> Result<BigInt, RuntimeError> {
+        let (days, seconds, microseconds) = Self::timedelta_read_parts(instance, method_name)?;
+        let day_part = BigInt::from_i64(days).mul(&BigInt::from_i64(DATETIME_MICROSECONDS_PER_DAY));
+        let second_part =
+            BigInt::from_i64(seconds).mul(&BigInt::from_i64(DATETIME_MICROSECONDS_PER_SECOND));
+        Ok(day_part
+            .add(&second_part)
+            .add(&BigInt::from_i64(microseconds)))
+    }
+
+    fn timedelta_instance_from_total_microseconds(
+        &mut self,
+        total_microseconds: BigInt,
+    ) -> Result<Value, RuntimeError> {
+        let class = self.timedelta_default_class()?;
+        let instance = match self.heap.alloc_instance(InstanceObject::new(class)) {
+            Value::Instance(obj) => obj,
+            _ => unreachable!(),
+        };
+        let (days, seconds, microseconds) =
+            Self::normalized_timedelta_parts_from_total_microseconds(&total_microseconds)?;
+        Self::timedelta_apply_normalized_parts(&instance, days, seconds, microseconds)?;
+        Ok(Value::Instance(instance))
+    }
+
+    fn timedelta_multiply_instance(
+        &mut self,
+        instance: &ObjRef,
+        factor: &Value,
+        method_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        let Some(factor) = Self::timedelta_integer_factor(factor) else {
+            return Ok(self.timedelta_not_implemented());
+        };
+        let total_microseconds =
+            Self::timedelta_total_microseconds_from_instance(instance, method_name)?;
+        self.timedelta_instance_from_total_microseconds(total_microseconds.mul(&factor))
     }
 
     fn date_instance_from_parts(
@@ -2108,34 +2245,36 @@ impl Vm {
             ));
         }
 
-        let day_us: i128 = 86_400_i128 * 1_000_000_i128;
-        let mut total_microseconds = microseconds as i128;
-        total_microseconds += milliseconds as i128 * 1_000_i128;
-        total_microseconds += seconds as i128 * 1_000_000_i128;
-        total_microseconds += minutes as i128 * 60_i128 * 1_000_000_i128;
-        total_microseconds += hours as i128 * 3_600_i128 * 1_000_000_i128;
-        total_microseconds += (days as i128 + weeks as i128 * 7_i128) * day_us;
+        let total_microseconds = BigInt::from_i64(microseconds)
+            .add(&BigInt::from_i64(milliseconds).mul(&BigInt::from_i64(1_000)))
+            .add(
+                &BigInt::from_i64(seconds)
+                    .mul(&BigInt::from_i64(DATETIME_MICROSECONDS_PER_SECOND)),
+            )
+            .add(
+                &BigInt::from_i64(minutes).mul(&BigInt::from_i64(
+                    60 * DATETIME_MICROSECONDS_PER_SECOND,
+                )),
+            )
+            .add(
+                &BigInt::from_i64(hours).mul(&BigInt::from_i64(
+                    3_600 * DATETIME_MICROSECONDS_PER_SECOND,
+                )),
+            )
+            .add(
+                &BigInt::from_i64(days)
+                    .add(&BigInt::from_i64(weeks).mul(&BigInt::from_i64(7)))
+                    .mul(&BigInt::from_i64(DATETIME_MICROSECONDS_PER_DAY)),
+            );
 
-        let normalized_days = total_microseconds.div_euclid(day_us);
-        let rem = total_microseconds.rem_euclid(day_us);
-        let normalized_seconds = rem / 1_000_000_i128;
-        let normalized_microseconds = rem % 1_000_000_i128;
-
-        let Object::Instance(instance_data) = &mut *receiver.kind_mut() else {
-            return Err(RuntimeError::new(
-                "timedelta.__init__() expects instance receiver",
-            ));
-        };
-        instance_data
-            .attrs
-            .insert("days".to_string(), Value::Int(normalized_days as i64));
-        instance_data
-            .attrs
-            .insert("seconds".to_string(), Value::Int(normalized_seconds as i64));
-        instance_data.attrs.insert(
-            "microseconds".to_string(),
-            Value::Int(normalized_microseconds as i64),
-        );
+        let (normalized_days, normalized_seconds, normalized_microseconds) =
+            Self::normalized_timedelta_parts_from_total_microseconds(&total_microseconds)?;
+        Self::timedelta_apply_normalized_parts(
+            &receiver,
+            normalized_days,
+            normalized_seconds,
+            normalized_microseconds,
+        )?;
         Ok(Value::None)
     }
 
@@ -2228,6 +2367,43 @@ impl Vm {
             format!("{hours}:{minutes:02}:{seconds:02}")
         };
         Ok(Value::Str(rendered))
+    }
+
+    fn builtin_datetime_delta_mul_common(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        method_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "{method_name}() takes no keyword arguments"
+            )));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, method_name)?;
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "{method_name}() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        self.timedelta_multiply_instance(&instance, &args[0], method_name)
+    }
+
+    pub(super) fn builtin_datetime_delta_mul(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_datetime_delta_mul_common(args, kwargs, "timedelta.__mul__")
+    }
+
+    pub(super) fn builtin_datetime_delta_rmul(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_datetime_delta_mul_common(args, kwargs, "timedelta.__rmul__")
     }
 
     pub(super) fn builtin_time_init(

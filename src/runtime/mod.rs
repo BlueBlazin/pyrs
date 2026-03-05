@@ -4701,6 +4701,8 @@ pub enum BuiltinFunction {
     DateFromIsoFormat,
     DateFromIsoCalendar,
     DateTimeDeltaInit,
+    DateTimeDeltaMul,
+    DateTimeDeltaRMul,
     DateTimeDeltaRepr,
     DateTimeDeltaStr,
     DateTimeTimezoneInit,
@@ -8011,6 +8013,8 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::DateFromIsoFormat
             | BuiltinFunction::DateFromIsoCalendar
             | BuiltinFunction::DateTimeDeltaInit
+            | BuiltinFunction::DateTimeDeltaMul
+            | BuiltinFunction::DateTimeDeltaRMul
             | BuiltinFunction::DateTimeDeltaRepr
             | BuiltinFunction::DateTimeDeltaStr
             | BuiltinFunction::DateTimeTimezoneInit

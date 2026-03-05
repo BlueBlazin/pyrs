@@ -87,6 +87,11 @@ python3 scripts/probe_stdlib_full.py \
   - `datetime.fromtimestamp` path now uses checked integer arithmetic for second/microsecond
     normalization and timezone offset adjustment,
   - overflow paths now raise `OverflowError` instead of panicking on integer underflow/overflow.
+- native `timedelta` arithmetic surface expanded:
+  - `_datetime.timedelta` now implements CPython-shaped integer `__mul__` / `__rmul__`
+    using shared total-microseconds normalization with constructor-aligned day-range checks.
+  - base `timedelta` results and direct `NotImplemented` fallback now match CPython
+    for unsupported reflected multiply operands.
 - CLI `sys.argv` shape now matches CPython startup mode semantics:
   - script execution now sets `sys.argv` to `[script_path, ...script_args]`
     (without executable prefix),

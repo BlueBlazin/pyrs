@@ -8744,6 +8744,43 @@ ok = (\n\
 }
 
 #[test]
+fn datetime_timedelta_mul_rmul_and_range_match_cpython_shape() {
+    let source = r#"import datetime
+class MyDelta(datetime.timedelta):
+    pass
+td = datetime.timedelta(days=365)
+sub = MyDelta(days=2)
+left = td * 10
+right = 10 * td
+sub_left = sub * 2
+sub_right = 2 * sub
+overflow_ok = False
+try:
+    datetime.timedelta(days=1000000000)
+except OverflowError as exc:
+    overflow_ok = (str(exc) == 'days=1000000000; must have magnitude <= 999999999')
+ok = (
+    repr(left) == 'datetime.timedelta(days=3650)'
+    and str(left) == '3650 days, 0:00:00'
+    and repr(right) == 'datetime.timedelta(days=3650)'
+    and str(right) == '3650 days, 0:00:00'
+    and type(sub_left) is datetime.timedelta
+    and type(sub_right) is datetime.timedelta
+    and str(sub_left) == '4 days, 0:00:00'
+    and str(sub_right) == '4 days, 0:00:00'
+    and datetime.timedelta(days=1).__mul__('x') is NotImplemented
+    and datetime.timedelta(days=1).__rmul__('x') is NotImplemented
+    and overflow_ok
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn threading_condition_supports_context_manager_protocol() {
     let source = r#"import threading
 c = threading.Condition()

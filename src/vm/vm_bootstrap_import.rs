@@ -7979,6 +7979,14 @@ impl Vm {
                 "__str__".to_string(),
                 Value::Builtin(BuiltinFunction::DateTimeDeltaStr),
             );
+            class_data.attrs.insert(
+                "__mul__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaMul),
+            );
+            class_data.attrs.insert(
+                "__rmul__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaRMul),
+            );
         }
         let time_class = match self
             .heap
