@@ -1173,6 +1173,91 @@ impl Vm {
         Ok(replaced)
     }
 
+    pub(super) fn builtin_datetime_repr(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "__repr__() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "datetime.__repr__")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "__repr__() takes no arguments ({} given)",
+                args.len()
+            )));
+        }
+        let read_part = |name: &str| -> Result<i64, RuntimeError> {
+            Self::instance_attr_get(&instance, name)
+                .ok_or_else(|| RuntimeError::new(format!("datetime.__repr__() missing {name}")))
+                .and_then(value_to_int)
+        };
+        let year = read_part("year")?;
+        let month = read_part("month")?;
+        let day = read_part("day")?;
+        let hour = read_part("hour").unwrap_or(0);
+        let minute = read_part("minute").unwrap_or(0);
+        let second = read_part("second").unwrap_or(0);
+        let microsecond = read_part("microsecond").unwrap_or(0);
+        let tzinfo = Self::instance_attr_get(&instance, "tzinfo");
+        let fold = Self::instance_attr_get(&instance, "fold")
+            .map(value_to_int)
+            .transpose()?
+            .unwrap_or(0);
+
+        let mut parts = vec![
+            year.to_string(),
+            month.to_string(),
+            day.to_string(),
+            hour.to_string(),
+            minute.to_string(),
+        ];
+        if second != 0 || microsecond != 0 || tzinfo.is_some() || fold != 0 {
+            parts.push(second.to_string());
+        }
+        if microsecond != 0 || tzinfo.is_some() || fold != 0 {
+            parts.push(microsecond.to_string());
+        }
+        if let Some(tzinfo_value) = tzinfo {
+            let Value::Str(tzinfo_repr) =
+                self.builtin_repr(vec![tzinfo_value], HashMap::new())?
+            else {
+                return Err(RuntimeError::type_error("__repr__ returned non-string"));
+            };
+            parts.push(format!("tzinfo={tzinfo_repr}"));
+        }
+        if fold != 0 {
+            parts.push(format!("fold={fold}"));
+        }
+        Ok(Value::Str(format!("datetime.datetime({})", parts.join(", "))))
+    }
+
+    pub(super) fn builtin_datetime_str(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "__str__() takes no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "datetime.__str__")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "__str__() takes no arguments ({} given)",
+                args.len()
+            )));
+        }
+        self.builtin_date_isoformat(
+            vec![Value::Instance(instance), Value::Str(" ".to_string())],
+            HashMap::new(),
+        )
+    }
+
     pub(super) fn builtin_date_init(
         &mut self,
         mut args: Vec<Value>,

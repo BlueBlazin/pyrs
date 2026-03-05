@@ -8222,6 +8222,21 @@ ok = (dt.strftime('%Y-%m-%d %H:%M:%S %z') == '1970-01-01 00:00:00 +0000' and shi
 }
 
 #[test]
+fn datetime_module_surface_and_repr_str_match_cpython_shape() {
+    let source = "import datetime\n\
+module_has_now = hasattr(datetime, 'now')\n\
+value = datetime.datetime(2024, 1, 2, 3, 4, 5)\n\
+value_repr = repr(value)\n\
+value_str = str(value)\n\
+ok = (module_has_now is False and value_repr == 'datetime.datetime(2024, 1, 2, 3, 4, 5)' and value_str == '2024-01-02 03:04:05')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn datetime_fromtimestamp_extreme_negative_raises_overflowerror() {
     let source = r#"import datetime
 ok = False

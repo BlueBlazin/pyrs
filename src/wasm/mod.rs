@@ -3191,7 +3191,11 @@ mod tests {
     fn wasm_repl_session_vm_probe_datetime_now_executes() {
         let mut session = WasmReplSession::new();
 
-        let imported = session.execute_input("from datetime import datetime\n");
+        let imported = session.execute_input(
+            "import datetime\n\
+assert not hasattr(datetime, 'now')\n\
+from datetime import datetime\n",
+        );
         assert_eq!(imported.phase(), "ok".to_string());
         assert!(imported.success());
         assert!(imported.error().is_none());
@@ -3202,6 +3206,16 @@ mod tests {
         assert!(now.success());
         assert!(now.error().is_none());
         assert!(now.stderr().is_empty());
+        assert!(now.stdout().starts_with("datetime.datetime("));
+
+        let printed = session.execute_input("print(datetime.now())\n");
+        assert_eq!(printed.phase(), "ok".to_string());
+        assert!(printed.success());
+        assert!(printed.error().is_none());
+        assert!(printed.stderr().is_empty());
+        let printed_stdout = printed.stdout();
+        let line = printed_stdout.trim();
+        assert!(line.contains('-') && line.contains(':'));
     }
 
     #[cfg(feature = "wasm-vm-probe")]

@@ -481,6 +481,8 @@ impl Vm {
                 "SetReparseDeferralEnabled".to_string()
             }
             BuiltinFunction::ThreadingRegisterAtexit => "_register_atexit".to_string(),
+            BuiltinFunction::DateTimeRepr => "__repr__".to_string(),
+            BuiltinFunction::DateTimeStr => "__str__".to_string(),
             BuiltinFunction::OperatorContains => "contains".to_string(),
             BuiltinFunction::FunctoolsReduce => "reduce".to_string(),
             _ => self.builtin_runtime_name(builtin),
@@ -657,6 +659,8 @@ impl Vm {
                 "pyexpat.xmlparser.SetReparseDeferralEnabled".to_string()
             }
             BuiltinFunction::ThreadingRegisterAtexit => "threading._register_atexit".to_string(),
+            BuiltinFunction::DateTimeRepr => "datetime.datetime.__repr__".to_string(),
+            BuiltinFunction::DateTimeStr => "datetime.datetime.__str__".to_string(),
             BuiltinFunction::SreCompile => "_sre.compile".to_string(),
             BuiltinFunction::SreTemplate => "_sre.template".to_string(),
             BuiltinFunction::SreAsciiIsCased => "_sre.ascii_iscased".to_string(),

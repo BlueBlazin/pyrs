@@ -100,7 +100,11 @@ fn vm_probe_repl_session_parse_error_clears_pending_multiline_state() {
 fn vm_probe_repl_datetime_now_executes() {
     let mut repl = WasmReplSession::new();
 
-    let imported = repl.execute_input("from datetime import datetime");
+    let imported = repl.execute_input(
+        "import datetime\n\
+assert not hasattr(datetime, 'now')\n\
+from datetime import datetime\n",
+    );
     assert_eq!(imported.phase(), "ok".to_string());
     assert!(imported.success());
     assert!(imported.stderr().is_empty());
@@ -110,6 +114,16 @@ fn vm_probe_repl_datetime_now_executes() {
     assert!(now.success());
     assert!(now.error().is_none());
     assert!(now.stderr().is_empty());
+    assert!(now.stdout().starts_with("datetime.datetime("));
+
+    let printed = repl.execute_input("print(datetime.now())");
+    assert_eq!(printed.phase(), "ok".to_string());
+    assert!(printed.success());
+    assert!(printed.error().is_none());
+    assert!(printed.stderr().is_empty());
+    let printed_stdout = printed.stdout();
+    let line = printed_stdout.trim();
+    assert!(line.contains('-') && line.contains(':'));
 }
 
 #[wasm_bindgen_test]

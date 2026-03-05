@@ -4644,6 +4644,8 @@ pub enum BuiltinFunction {
     DateTimeFromIsoCalendar,
     DateTimeAstimezone,
     DateTimeReplace,
+    DateTimeRepr,
+    DateTimeStr,
     DateInit,
     DateReplace,
     DateFromIsoCalendar,
@@ -7921,6 +7923,8 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::DateTimeFromIsoCalendar
             | BuiltinFunction::DateTimeAstimezone
             | BuiltinFunction::DateTimeReplace
+            | BuiltinFunction::DateTimeRepr
+            | BuiltinFunction::DateTimeStr
             | BuiltinFunction::DateInit
             | BuiltinFunction::DateReplace
             | BuiltinFunction::DateFromIsoCalendar

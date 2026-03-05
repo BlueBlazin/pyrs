@@ -13293,6 +13293,8 @@ impl Vm {
             }
             BuiltinFunction::DateTimeAstimezone => self.builtin_datetime_astimezone(args, kwargs),
             BuiltinFunction::DateTimeReplace => self.builtin_datetime_replace(args, kwargs),
+            BuiltinFunction::DateTimeRepr => self.builtin_datetime_repr(args, kwargs),
+            BuiltinFunction::DateTimeStr => self.builtin_datetime_str(args, kwargs),
             BuiltinFunction::DateInit => self.builtin_date_init(args, kwargs),
             BuiltinFunction::DateReplace => self.builtin_date_replace(args, kwargs),
             BuiltinFunction::DateFromIsoCalendar => self.builtin_date_fromisocalendar(args, kwargs),

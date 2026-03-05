@@ -7850,6 +7850,14 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::DateTimeInit),
             );
             class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeRepr),
+            );
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeStr),
+            );
+            class_data.attrs.insert(
                 "now".to_string(),
                 Value::Builtin(BuiltinFunction::DateTimeNow),
             );
@@ -8019,10 +8027,7 @@ impl Vm {
         };
         self.install_builtin_module(
             "_datetime",
-            &[
-                ("now", BuiltinFunction::DateTimeNow),
-                ("today", BuiltinFunction::DateToday),
-            ],
+            &[],
             vec![
                 ("datetime", Value::Class(datetime_class)),
                 ("date", Value::Class(date_class)),
