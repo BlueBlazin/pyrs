@@ -14,7 +14,9 @@ echo "[parity] running builtin parity gate"
 ./scripts/run_builtin_parity_gate.sh
 
 echo "[parity] running focused parity gate suites"
-cargo test -q \
+cargo nextest run \
+  --status-level fail \
+  --final-status-level fail \
   --test cpython_harness \
   --test differential_cpython \
   --test fuzz_expr \

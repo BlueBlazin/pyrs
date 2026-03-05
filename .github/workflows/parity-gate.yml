@@ -112,6 +112,12 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-nextest
+        run: |
+          if ! command -v cargo-nextest >/dev/null 2>&1; then
+            cargo install cargo-nextest --locked
+          fi
+
       - name: Install Linux native build deps
         run: |
           sudo apt-get update
@@ -158,7 +164,7 @@ jobs:
           echo "PYRS_CPYTHON_LIB=/tmp/Python-3.14.3/Lib" >> "$GITHUB_ENV"
 
       - name: Run full test suite
-        run: cargo test -q
+        run: cargo nextest run --status-level fail --final-status-level fail
 
   parity-profile:
     needs: integrity
@@ -179,6 +185,12 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-nextest
+        run: |
+          if ! command -v cargo-nextest >/dev/null 2>&1; then
+            cargo install cargo-nextest --locked
+          fi
 
       - name: Install Linux native build deps
         run: |
