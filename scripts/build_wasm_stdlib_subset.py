@@ -159,6 +159,7 @@ import importlib
 import sys
 import builtins
 import ast
+import os
 
 lib_root = sys.argv[1]
 seed_modules = ast.literal_eval(sys.argv[2])
@@ -170,6 +171,9 @@ for preload in ("math", "_random", "_datetime"):
         pass
 
 sys.path[:] = [lib_root]
+dynload = os.path.join(lib_root, "lib-dynload")
+if os.path.isdir(dynload):
+    sys.path.append(dynload)
 baseline_modules = set(sys.modules)
 tracked_import_names = set()
 orig_import = builtins.__import__
