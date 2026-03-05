@@ -201,6 +201,7 @@ jobs:
             homepage "https://github.com/BlueBlazin/pyrs"
             url "${HOMEBREW_SOURCE_URL}"
             sha256 "${HOMEBREW_SOURCE_SHA}"
+            head "https://github.com/BlueBlazin/pyrs.git", branch: "master"
 
             depends_on "rust" => :build
 
