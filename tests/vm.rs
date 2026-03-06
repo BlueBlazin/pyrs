@@ -9275,6 +9275,29 @@ fn bytes_like_values_expose_sequence_dunders_and_reversed() {
 }
 
 #[test]
+fn builtin_subclass_reversed_dispatch_uses_inherited_sequence_protocol() {
+    let source = r#"class TokenList(list):
+    pass
+
+token_list = TokenList([1, 2, 3])
+explicit = list(token_list.__reversed__())
+implicit = list(reversed(token_list))
+ok = (
+    hasattr(token_list, '__len__') and
+    hasattr(token_list, '__getitem__') and
+    hasattr(token_list, '__reversed__') and
+    explicit == [3, 2, 1] and
+    implicit == [3, 2, 1]
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn cpython_enum_path_supports_member_value_and_name() {
     let Some(lib_path) = cpython_lib_path() else {
         return;

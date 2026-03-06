@@ -4769,6 +4769,56 @@ impl Vm {
         {
             return self.bind_descriptor_method(method, receiver);
         }
+        if let Value::Instance(instance) = receiver {
+            if let Some(backing_list) = self.instance_backing_list(instance)
+                && let Ok(method) = self.load_attr_list_method(backing_list, method_name)
+            {
+                return Ok(Some(method));
+            }
+            if let Some(backing_tuple) = self.instance_backing_tuple(instance)
+                && let Ok(method) = self.load_attr_tuple_method(backing_tuple, method_name)
+            {
+                return Ok(Some(method));
+            }
+            if let Some(backing_str) = self.instance_backing_str(instance)
+                && let Ok(method) = self.load_attr_str_method(backing_str, method_name)
+            {
+                return Ok(Some(method));
+            }
+            if let Some(backing_bytes) = self.instance_backing_bytes_like(instance)
+                && let Ok(method) = self.load_attr_bytes_method(backing_bytes, method_name)
+            {
+                return Ok(Some(method));
+            }
+            if let Some(backing_dict) = self.instance_backing_dict(instance) {
+                let owner = Some(Value::Instance(instance.clone()));
+                if let Ok(method) =
+                    self.load_attr_dict_method_with_owner(backing_dict, owner, method_name)
+                {
+                    return Ok(Some(method));
+                }
+            }
+            if let Some(backing_set) = self.instance_backing_set(instance)
+                && let Ok(method) = self.load_attr_set_method(backing_set, method_name)
+            {
+                return Ok(Some(method));
+            }
+            if let Some(backing_frozenset) = self.instance_backing_frozenset(instance)
+                && let Ok(method) = self.load_attr_set_method(backing_frozenset, method_name)
+            {
+                return Ok(Some(method));
+            }
+            if let Some(backing_int) = self.instance_backing_int(instance)
+                && let Ok(method) = self.load_attr_int_method(backing_int, method_name)
+            {
+                return Ok(Some(method));
+            }
+            if let Some(backing_float) = self.instance_backing_float(instance)
+                && let Ok(method) = self.load_attr_float_method(backing_float, method_name)
+            {
+                return Ok(Some(method));
+            }
+        }
         if !matches!(receiver, Value::Instance(_) | Value::Module(_))
             && !self.value_is_type_object(receiver)
             && let Some(method) = self.optional_getattr_value(receiver.clone(), method_name)?
@@ -7271,6 +7321,17 @@ impl Vm {
         };
         match instance_data.attrs.get(STR_BACKING_STORAGE_ATTR) {
             Some(Value::Str(text)) => Some(text.clone()),
+            _ => None,
+        }
+    }
+
+    pub(super) fn instance_backing_bytes_like(&self, instance: &ObjRef) -> Option<Value> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        match instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR) {
+            Some(Value::Bytes(bytes)) => Some(Value::Bytes(bytes.clone())),
+            Some(Value::ByteArray(bytearray)) => Some(Value::ByteArray(bytearray.clone())),
             _ => None,
         }
     }

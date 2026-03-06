@@ -497,6 +497,27 @@ fn differential_bytes_like_reversed_and_sequence_dunders_match_cpython() {
 }
 
 #[test]
+fn differential_builtin_subclass_reversed_protocol_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"class TokenList(list):
+    pass
+
+token_list = TokenList([1, 2, 3])
+result = {
+    "has_len": hasattr(token_list, "__len__"),
+    "has_getitem": hasattr(token_list, "__getitem__"),
+    "has_reversed": hasattr(token_list, "__reversed__"),
+    "explicit": list(token_list.__reversed__()),
+    "implicit": list(reversed(token_list)),
+}"#;
+    let py = run_cpython_json(source).expect("CPython should run");
+    let ours = run_pyrs_json(source).expect("pyrs should run");
+    assert_eq!(normalize_jsonish(&py), normalize_jsonish(&ours));
+}
+
+#[test]
 fn differential_template_literal_basic_shape_matches_cpython() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;
