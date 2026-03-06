@@ -2688,6 +2688,34 @@ impl Vm {
                 _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
             }
         }
+        if attr_name == "__len__" {
+            match receiver_value {
+                Value::Bytes(bytes) | Value::ByteArray(bytes) => {
+                    return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, bytes));
+                }
+                _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
+            }
+        }
+        if attr_name == "__getitem__" {
+            match receiver_value {
+                Value::Bytes(bytes) | Value::ByteArray(bytes) => {
+                    return Ok(
+                        self.alloc_builtin_bound_method(BuiltinFunction::OperatorGetItem, bytes)
+                    );
+                }
+                _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
+            }
+        }
+        if attr_name == "__contains__" {
+            match receiver_value {
+                Value::Bytes(bytes) | Value::ByteArray(bytes) => {
+                    return Ok(
+                        self.alloc_builtin_bound_method(BuiltinFunction::OperatorContains, bytes)
+                    );
+                }
+                _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
+            }
+        }
         let type_name = if matches!(receiver_value, Value::ByteArray(_)) {
             "bytearray"
         } else {

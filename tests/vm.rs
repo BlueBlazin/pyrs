@@ -9221,6 +9221,60 @@ fn builtin_type_objects_are_truthy() {
 }
 
 #[test]
+fn bytes_like_values_expose_sequence_dunders_and_reversed() {
+    let source = "result = {\n\
+        'bytes_has_len': hasattr(b'', '__len__'),\n\
+        'bytes_has_getitem': hasattr(b'', '__getitem__'),\n\
+        'bytes_has_contains': hasattr(b'', '__contains__'),\n\
+        'bytearray_has_len': hasattr(bytearray(), '__len__'),\n\
+        'bytearray_has_getitem': hasattr(bytearray(), '__getitem__'),\n\
+        'bytearray_has_contains': hasattr(bytearray(), '__contains__'),\n\
+        'bytes_reversed': list(reversed(b'ab')),\n\
+        'bytearray_reversed': list(reversed(bytearray(b'ab'))),\n\
+        'bytes_getitem': b'ab'.__getitem__(0),\n\
+        'bytearray_getitem': bytearray(b'ab').__getitem__(0),\n\
+        'bytes_contains': b'a' in b'ab',\n\
+        'bytearray_contains': 97 in bytearray(b'ab'),\n\
+    }\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    let result = dict_entries(vm.get_global("result")).expect("result dict expected");
+    let mut by_key = std::collections::HashMap::new();
+    for (key, value) in result {
+        let Value::Str(key) = key else {
+            panic!("expected string key");
+        };
+        by_key.insert(key, value);
+    }
+    assert_eq!(by_key.get("bytes_has_len"), Some(&Value::Bool(true)));
+    assert_eq!(by_key.get("bytes_has_getitem"), Some(&Value::Bool(true)));
+    assert_eq!(by_key.get("bytes_has_contains"), Some(&Value::Bool(true)));
+    assert_eq!(by_key.get("bytearray_has_len"), Some(&Value::Bool(true)));
+    assert_eq!(by_key.get("bytearray_has_getitem"), Some(&Value::Bool(true)));
+    assert_eq!(by_key.get("bytearray_has_contains"), Some(&Value::Bool(true)));
+    assert_eq!(
+        by_key
+            .get("bytes_reversed")
+            .and_then(|value| value.as_list())
+            .expect("bytes_reversed list"),
+        vec![Value::Int(98), Value::Int(97)]
+    );
+    assert_eq!(
+        by_key
+            .get("bytearray_reversed")
+            .and_then(|value| value.as_list())
+            .expect("bytearray_reversed list"),
+        vec![Value::Int(98), Value::Int(97)]
+    );
+    assert_eq!(by_key.get("bytes_getitem"), Some(&Value::Int(97)));
+    assert_eq!(by_key.get("bytearray_getitem"), Some(&Value::Int(97)));
+    assert_eq!(by_key.get("bytes_contains"), Some(&Value::Bool(true)));
+    assert_eq!(by_key.get("bytearray_contains"), Some(&Value::Bool(true)));
+}
+
+#[test]
 fn cpython_enum_path_supports_member_value_and_name() {
     let Some(lib_path) = cpython_lib_path() else {
         return;

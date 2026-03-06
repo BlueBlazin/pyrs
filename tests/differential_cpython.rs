@@ -473,6 +473,30 @@ fn differential_builtin_type_objects_are_truthy() {
 }
 
 #[test]
+fn differential_bytes_like_reversed_and_sequence_dunders_match_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"result = {
+    "bytes_has_len": hasattr(b"", "__len__"),
+    "bytes_has_getitem": hasattr(b"", "__getitem__"),
+    "bytes_has_contains": hasattr(b"", "__contains__"),
+    "bytearray_has_len": hasattr(bytearray(), "__len__"),
+    "bytearray_has_getitem": hasattr(bytearray(), "__getitem__"),
+    "bytearray_has_contains": hasattr(bytearray(), "__contains__"),
+    "bytes_reversed": list(reversed(b"ab")),
+    "bytearray_reversed": list(reversed(bytearray(b"ab"))),
+    "bytes_getitem": b"ab".__getitem__(0),
+    "bytearray_getitem": bytearray(b"ab").__getitem__(0),
+    "bytes_contains": (b"a" in b"ab"),
+    "bytearray_contains": (97 in bytearray(b"ab")),
+}"#;
+    let py = run_cpython_json(source).expect("CPython should run");
+    let ours = run_pyrs_json(source).expect("pyrs should run");
+    assert_eq!(normalize_jsonish(&py), normalize_jsonish(&ours));
+}
+
+#[test]
 fn differential_template_literal_basic_shape_matches_cpython() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;
