@@ -15,6 +15,7 @@ use super::{
     env_var_present_cached, format_repr, memoryview_bounds, runtime_error_matches_exception,
     value_from_bigint, value_from_object_ref, with_bytes_like_source,
 };
+use crate::runtime::builtin_type_name_info;
 
 thread_local! {
     static CALL_INTERNAL_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -262,64 +263,34 @@ impl Vm {
     }
 
     pub(super) fn builtin_type_name(&self, builtin: BuiltinFunction) -> &'static str {
-        match builtin {
-            BuiltinFunction::ObjectNew => "object",
-            BuiltinFunction::Type => "type",
-            BuiltinFunction::Ascii => "ascii",
-            BuiltinFunction::Bool => "bool",
-            BuiltinFunction::Int => "int",
-            BuiltinFunction::Float => "float",
-            BuiltinFunction::Str => "str",
-            BuiltinFunction::List => "list",
-            BuiltinFunction::Tuple => "tuple",
-            BuiltinFunction::Dict => "dict",
-            BuiltinFunction::TypesModuleType => "module",
-            BuiltinFunction::TypesMethodType => "method",
-            BuiltinFunction::CollectionsOrderedDict => "OrderedDict",
-            BuiltinFunction::Set => "set",
-            BuiltinFunction::FrozenSet => "frozenset",
-            BuiltinFunction::Bytes => "bytes",
-            BuiltinFunction::ByteArray => "bytearray",
-            BuiltinFunction::MemoryView => "memoryview",
-            BuiltinFunction::Complex => "complex",
-            BuiltinFunction::Slice => "slice",
-            BuiltinFunction::Range => "range",
-            BuiltinFunction::Enumerate => "enumerate",
-            BuiltinFunction::Zip => "zip",
-            BuiltinFunction::Map => "map",
-            BuiltinFunction::Filter => "filter",
-            BuiltinFunction::GeneratorType => "generator",
-            BuiltinFunction::CoroutineType => "coroutine",
-            BuiltinFunction::AsyncGeneratorType => "async_generator",
-            BuiltinFunction::ClassMethod => "classmethod",
-            BuiltinFunction::StaticMethod => "staticmethod",
-            BuiltinFunction::Property => "property",
-            BuiltinFunction::Super => "super",
-            BuiltinFunction::FunctoolsCachedProperty => "cached_property",
-            BuiltinFunction::CodecsEncode => "encode",
-            BuiltinFunction::CodecsDecode => "decode",
-            BuiltinFunction::CodecsUtf8Encode => "utf_8_encode",
-            BuiltinFunction::CodecsUtf8Decode => "utf_8_decode",
-            BuiltinFunction::CodecsEscapeDecode => "escape_decode",
-            BuiltinFunction::CodecsMakeIdentityDict => "make_identity_dict",
-            BuiltinFunction::CodecsLookup => "lookup",
-            BuiltinFunction::CodecsRegister => "register",
-            BuiltinFunction::CodecsCodecInfoInit => "__init__",
-            BuiltinFunction::CodecsGetIncrementalEncoder => "getincrementalencoder",
-            BuiltinFunction::CodecsGetIncrementalDecoder => "getincrementaldecoder",
-            BuiltinFunction::CodecsIncrementalEncoderInit => "__init__",
-            BuiltinFunction::CodecsIncrementalEncoderEncode => "encode",
-            BuiltinFunction::CodecsIncrementalEncoderReset => "reset",
-            BuiltinFunction::CodecsIncrementalEncoderGetState => "getstate",
-            BuiltinFunction::CodecsIncrementalEncoderSetState => "setstate",
-            BuiltinFunction::CodecsIncrementalDecoderInit => "__init__",
-            BuiltinFunction::CodecsIncrementalDecoderDecode => "decode",
-            BuiltinFunction::CodecsIncrementalDecoderReset => "reset",
-            BuiltinFunction::CodecsIncrementalDecoderGetState => "getstate",
-            BuiltinFunction::CodecsIncrementalDecoderSetState => "setstate",
-            BuiltinFunction::CollectionsDefaultDict => "defaultdict",
-            _ => "builtin",
-        }
+        builtin_type_name_info(builtin)
+            .map(|info| info.name)
+            .unwrap_or(match builtin {
+                BuiltinFunction::Ascii => "ascii",
+                BuiltinFunction::FunctoolsCachedProperty => "cached_property",
+                BuiltinFunction::CodecsEncode => "encode",
+                BuiltinFunction::CodecsDecode => "decode",
+                BuiltinFunction::CodecsUtf8Encode => "utf_8_encode",
+                BuiltinFunction::CodecsUtf8Decode => "utf_8_decode",
+                BuiltinFunction::CodecsEscapeDecode => "escape_decode",
+                BuiltinFunction::CodecsMakeIdentityDict => "make_identity_dict",
+                BuiltinFunction::CodecsLookup => "lookup",
+                BuiltinFunction::CodecsRegister => "register",
+                BuiltinFunction::CodecsCodecInfoInit => "__init__",
+                BuiltinFunction::CodecsGetIncrementalEncoder => "getincrementalencoder",
+                BuiltinFunction::CodecsGetIncrementalDecoder => "getincrementaldecoder",
+                BuiltinFunction::CodecsIncrementalEncoderInit => "__init__",
+                BuiltinFunction::CodecsIncrementalEncoderEncode => "encode",
+                BuiltinFunction::CodecsIncrementalEncoderReset => "reset",
+                BuiltinFunction::CodecsIncrementalEncoderGetState => "getstate",
+                BuiltinFunction::CodecsIncrementalEncoderSetState => "setstate",
+                BuiltinFunction::CodecsIncrementalDecoderInit => "__init__",
+                BuiltinFunction::CodecsIncrementalDecoderDecode => "decode",
+                BuiltinFunction::CodecsIncrementalDecoderReset => "reset",
+                BuiltinFunction::CodecsIncrementalDecoderGetState => "getstate",
+                BuiltinFunction::CodecsIncrementalDecoderSetState => "setstate",
+                _ => "builtin",
+            })
     }
 
     pub(super) fn builtin_runtime_name(&self, builtin: BuiltinFunction) -> String {
@@ -517,7 +488,9 @@ impl Vm {
             BuiltinFunction::DateTimeDeltaStr => "__str__".to_string(),
             BuiltinFunction::OperatorContains => "contains".to_string(),
             BuiltinFunction::FunctoolsReduce => "reduce".to_string(),
-            _ if self.builtin_is_type_object(builtin) => self.builtin_type_name(builtin).to_string(),
+            _ if self.builtin_is_type_object(builtin) => {
+                self.builtin_type_name(builtin).to_string()
+            }
             _ => self.builtin_runtime_name(builtin),
         }
     }
@@ -1366,10 +1339,7 @@ impl Vm {
                         .globals
                         .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Float));
                 }
-                Ok(self.alloc_native_bound_method(
-                    NativeMethodKind::FloatReprMethod,
-                    receiver,
-                ))
+                Ok(self.alloc_native_bound_method(NativeMethodKind::FloatReprMethod, receiver))
             }
             "__format__" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::Format))
@@ -2636,7 +2606,7 @@ impl Vm {
                         ("bytearray_iterator", None, None, None, false, true)
                     }
                     IteratorKind::MemoryView(_) => {
-                        ("memoryview_iterator", None, None, None, false, true)
+                        ("memory_iterator", None, None, None, false, true)
                     }
                     IteratorKind::Cycle { .. } => ("cycle", None, None, None, false, true),
                     IteratorKind::Count { .. } => ("count", None, None, None, false, true),
@@ -2664,6 +2634,7 @@ impl Vm {
                     IteratorKind::Product { .. } => ("product", None, None, None, false, true),
                     IteratorKind::Compress { .. } => ("compress", None, None, None, false, true),
                     IteratorKind::DropWhile { .. } => ("dropwhile", None, None, None, false, true),
+                    IteratorKind::Filter { .. } => ("filter", None, None, None, false, true),
                     IteratorKind::FilterFalse { .. } => {
                         ("filterfalse", None, None, None, false, true)
                     }

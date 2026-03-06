@@ -1585,6 +1585,10 @@ pub enum IteratorKind {
         iterator: Value,
         dropping: bool,
     },
+    Filter {
+        predicate: Value,
+        iterator: Value,
+    },
     FilterFalse {
         predicate: Value,
         iterator: Value,
@@ -1826,6 +1830,14 @@ impl fmt::Debug for IteratorKind {
                 .field("iterator", iterator)
                 .field("dropping", dropping)
                 .finish(),
+            IteratorKind::Filter {
+                predicate,
+                iterator,
+            } => f
+                .debug_struct("Filter")
+                .field("predicate", predicate)
+                .field("iterator", iterator)
+                .finish(),
             IteratorKind::FilterFalse {
                 predicate,
                 iterator,
@@ -1941,6 +1953,439 @@ impl fmt::Debug for IteratorKind {
                 .field("sentinel", sentinel)
                 .finish(),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RuntimeTypeNameInfo {
+    pub module: &'static str,
+    pub name: &'static str,
+    pub qualified_name: &'static str,
+}
+
+impl RuntimeTypeNameInfo {
+    const fn builtins(name: &'static str) -> Self {
+        Self {
+            module: "builtins",
+            name,
+            qualified_name: name,
+        }
+    }
+
+    const fn module(
+        module: &'static str,
+        name: &'static str,
+        qualified_name: &'static str,
+    ) -> Self {
+        Self {
+            module,
+            name,
+            qualified_name,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IteratorReprKind {
+    Object,
+    Range,
+    Count,
+    Repeat,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IteratorTypeInfo {
+    pub type_name: RuntimeTypeNameInfo,
+    pub repr_kind: IteratorReprKind,
+}
+
+pub fn builtin_type_name_info(builtin: BuiltinFunction) -> Option<RuntimeTypeNameInfo> {
+    match builtin {
+        BuiltinFunction::ObjectNew => Some(RuntimeTypeNameInfo::builtins("object")),
+        BuiltinFunction::Type => Some(RuntimeTypeNameInfo::builtins("type")),
+        BuiltinFunction::Bool => Some(RuntimeTypeNameInfo::builtins("bool")),
+        BuiltinFunction::Int => Some(RuntimeTypeNameInfo::builtins("int")),
+        BuiltinFunction::Float => Some(RuntimeTypeNameInfo::builtins("float")),
+        BuiltinFunction::Complex => Some(RuntimeTypeNameInfo::builtins("complex")),
+        BuiltinFunction::Str => Some(RuntimeTypeNameInfo::builtins("str")),
+        BuiltinFunction::List => Some(RuntimeTypeNameInfo::builtins("list")),
+        BuiltinFunction::Tuple => Some(RuntimeTypeNameInfo::builtins("tuple")),
+        BuiltinFunction::Dict => Some(RuntimeTypeNameInfo::builtins("dict")),
+        BuiltinFunction::CollectionsDefaultDict => Some(RuntimeTypeNameInfo::module(
+            "collections",
+            "defaultdict",
+            "collections.defaultdict",
+        )),
+        BuiltinFunction::CollectionsOrderedDict => Some(RuntimeTypeNameInfo::module(
+            "collections",
+            "OrderedDict",
+            "collections.OrderedDict",
+        )),
+        BuiltinFunction::Set => Some(RuntimeTypeNameInfo::builtins("set")),
+        BuiltinFunction::FrozenSet => Some(RuntimeTypeNameInfo::builtins("frozenset")),
+        BuiltinFunction::Bytes => Some(RuntimeTypeNameInfo::builtins("bytes")),
+        BuiltinFunction::ByteArray => Some(RuntimeTypeNameInfo::builtins("bytearray")),
+        BuiltinFunction::MemoryView => Some(RuntimeTypeNameInfo::builtins("memoryview")),
+        BuiltinFunction::Slice => Some(RuntimeTypeNameInfo::builtins("slice")),
+        BuiltinFunction::Range => Some(RuntimeTypeNameInfo::builtins("range")),
+        BuiltinFunction::Enumerate => Some(RuntimeTypeNameInfo::builtins("enumerate")),
+        BuiltinFunction::Zip => Some(RuntimeTypeNameInfo::builtins("zip")),
+        BuiltinFunction::Map => Some(RuntimeTypeNameInfo::builtins("map")),
+        BuiltinFunction::Filter => Some(RuntimeTypeNameInfo::builtins("filter")),
+        BuiltinFunction::Reversed => Some(RuntimeTypeNameInfo::builtins("reversed")),
+        BuiltinFunction::ClassMethod => Some(RuntimeTypeNameInfo::builtins("classmethod")),
+        BuiltinFunction::StaticMethod => Some(RuntimeTypeNameInfo::builtins("staticmethod")),
+        BuiltinFunction::Property => Some(RuntimeTypeNameInfo::builtins("property")),
+        BuiltinFunction::Super => Some(RuntimeTypeNameInfo::builtins("super")),
+        BuiltinFunction::TypesModuleType => Some(RuntimeTypeNameInfo::builtins("module")),
+        BuiltinFunction::TypesFunctionType => Some(RuntimeTypeNameInfo::builtins("function")),
+        BuiltinFunction::TypesMethodType => Some(RuntimeTypeNameInfo::builtins("method")),
+        BuiltinFunction::TypesCoroutine => Some(RuntimeTypeNameInfo::builtins("coroutine")),
+        BuiltinFunction::GeneratorType => Some(RuntimeTypeNameInfo::builtins("generator")),
+        BuiltinFunction::CoroutineType => Some(RuntimeTypeNameInfo::builtins("coroutine")),
+        BuiltinFunction::AsyncGeneratorType => {
+            Some(RuntimeTypeNameInfo::builtins("async_generator"))
+        }
+        BuiltinFunction::ItertoolsChain => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "chain",
+            "itertools.chain",
+        )),
+        BuiltinFunction::ItertoolsAccumulate => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "accumulate",
+            "itertools.accumulate",
+        )),
+        BuiltinFunction::ItertoolsCombinations => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "combinations",
+            "itertools.combinations",
+        )),
+        BuiltinFunction::ItertoolsCombinationsWithReplacement => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "combinations_with_replacement",
+            "itertools.combinations_with_replacement",
+        )),
+        BuiltinFunction::ItertoolsCompress => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "compress",
+            "itertools.compress",
+        )),
+        BuiltinFunction::ItertoolsCount => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "count",
+            "itertools.count",
+        )),
+        BuiltinFunction::ItertoolsCycle => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "cycle",
+            "itertools.cycle",
+        )),
+        BuiltinFunction::ItertoolsDropWhile => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "dropwhile",
+            "itertools.dropwhile",
+        )),
+        BuiltinFunction::ItertoolsFilterFalse => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "filterfalse",
+            "itertools.filterfalse",
+        )),
+        BuiltinFunction::ItertoolsGroupBy => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "groupby",
+            "itertools.groupby",
+        )),
+        BuiltinFunction::ItertoolsISlice => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "islice",
+            "itertools.islice",
+        )),
+        BuiltinFunction::ItertoolsPairwise => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "pairwise",
+            "itertools.pairwise",
+        )),
+        BuiltinFunction::ItertoolsRepeat => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "repeat",
+            "itertools.repeat",
+        )),
+        BuiltinFunction::ItertoolsStarMap => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "starmap",
+            "itertools.starmap",
+        )),
+        BuiltinFunction::ItertoolsTakeWhile => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "takewhile",
+            "itertools.takewhile",
+        )),
+        BuiltinFunction::ItertoolsZipLongest => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "zip_longest",
+            "itertools.zip_longest",
+        )),
+        BuiltinFunction::ItertoolsBatched => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "batched",
+            "itertools.batched",
+        )),
+        BuiltinFunction::ItertoolsPermutations => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "permutations",
+            "itertools.permutations",
+        )),
+        BuiltinFunction::ItertoolsProduct => Some(RuntimeTypeNameInfo::module(
+            "itertools",
+            "product",
+            "itertools.product",
+        )),
+        _ => None,
+    }
+}
+
+pub fn builtin_type_from_name_info(module: &str, name: &str) -> Option<BuiltinFunction> {
+    match (module, name) {
+        ("builtins", "object") => Some(BuiltinFunction::ObjectNew),
+        ("builtins", "type") => Some(BuiltinFunction::Type),
+        ("builtins", "bool") => Some(BuiltinFunction::Bool),
+        ("builtins", "int") => Some(BuiltinFunction::Int),
+        ("builtins", "float") => Some(BuiltinFunction::Float),
+        ("builtins", "complex") => Some(BuiltinFunction::Complex),
+        ("builtins", "str") => Some(BuiltinFunction::Str),
+        ("builtins", "list") => Some(BuiltinFunction::List),
+        ("builtins", "tuple") => Some(BuiltinFunction::Tuple),
+        ("builtins", "dict") => Some(BuiltinFunction::Dict),
+        ("collections", "defaultdict") => Some(BuiltinFunction::CollectionsDefaultDict),
+        ("collections", "OrderedDict") => Some(BuiltinFunction::CollectionsOrderedDict),
+        ("builtins", "set") => Some(BuiltinFunction::Set),
+        ("builtins", "frozenset") => Some(BuiltinFunction::FrozenSet),
+        ("builtins", "bytes") => Some(BuiltinFunction::Bytes),
+        ("builtins", "bytearray") => Some(BuiltinFunction::ByteArray),
+        ("builtins", "memoryview") => Some(BuiltinFunction::MemoryView),
+        ("builtins", "slice") => Some(BuiltinFunction::Slice),
+        ("builtins", "range") => Some(BuiltinFunction::Range),
+        ("builtins", "enumerate") => Some(BuiltinFunction::Enumerate),
+        ("builtins", "zip") => Some(BuiltinFunction::Zip),
+        ("builtins", "map") => Some(BuiltinFunction::Map),
+        ("builtins", "filter") => Some(BuiltinFunction::Filter),
+        ("builtins", "reversed") => Some(BuiltinFunction::Reversed),
+        ("builtins", "classmethod") => Some(BuiltinFunction::ClassMethod),
+        ("builtins", "staticmethod") => Some(BuiltinFunction::StaticMethod),
+        ("builtins", "property") => Some(BuiltinFunction::Property),
+        ("builtins", "super") => Some(BuiltinFunction::Super),
+        ("builtins", "module") => Some(BuiltinFunction::TypesModuleType),
+        ("builtins", "function") => Some(BuiltinFunction::TypesFunctionType),
+        ("builtins", "method") => Some(BuiltinFunction::TypesMethodType),
+        ("builtins", "coroutine") => Some(BuiltinFunction::TypesCoroutine),
+        ("builtins", "generator") => Some(BuiltinFunction::GeneratorType),
+        ("builtins", "async_generator") => Some(BuiltinFunction::AsyncGeneratorType),
+        ("itertools", "chain") => Some(BuiltinFunction::ItertoolsChain),
+        ("itertools", "accumulate") => Some(BuiltinFunction::ItertoolsAccumulate),
+        ("itertools", "combinations") => Some(BuiltinFunction::ItertoolsCombinations),
+        ("itertools", "combinations_with_replacement") => {
+            Some(BuiltinFunction::ItertoolsCombinationsWithReplacement)
+        }
+        ("itertools", "compress") => Some(BuiltinFunction::ItertoolsCompress),
+        ("itertools", "count") => Some(BuiltinFunction::ItertoolsCount),
+        ("itertools", "cycle") => Some(BuiltinFunction::ItertoolsCycle),
+        ("itertools", "dropwhile") => Some(BuiltinFunction::ItertoolsDropWhile),
+        ("itertools", "filterfalse") => Some(BuiltinFunction::ItertoolsFilterFalse),
+        ("itertools", "groupby") => Some(BuiltinFunction::ItertoolsGroupBy),
+        ("itertools", "islice") => Some(BuiltinFunction::ItertoolsISlice),
+        ("itertools", "pairwise") => Some(BuiltinFunction::ItertoolsPairwise),
+        ("itertools", "repeat") => Some(BuiltinFunction::ItertoolsRepeat),
+        ("itertools", "starmap") => Some(BuiltinFunction::ItertoolsStarMap),
+        ("itertools", "takewhile") => Some(BuiltinFunction::ItertoolsTakeWhile),
+        ("itertools", "zip_longest") => Some(BuiltinFunction::ItertoolsZipLongest),
+        ("itertools", "batched") => Some(BuiltinFunction::ItertoolsBatched),
+        ("itertools", "permutations") => Some(BuiltinFunction::ItertoolsPermutations),
+        ("itertools", "product") => Some(BuiltinFunction::ItertoolsProduct),
+        _ => None,
+    }
+}
+
+pub fn iterator_type_info(kind: &IteratorKind) -> IteratorTypeInfo {
+    match kind {
+        IteratorKind::List(_) => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("list_iterator"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Tuple(_) => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("tuple_iterator"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Str(text) if text.is_ascii() => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("str_ascii_iterator"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Str(_) => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("str_iterator"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Dict(_) => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("dict_keyiterator"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Set(_) => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("set_iterator"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Bytes(_) => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("bytes_iterator"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::ByteArray(_) => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("bytearray_iterator"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::MemoryView(_) => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("memory_iterator"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Cycle { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "cycle", "itertools.cycle"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Count { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "count", "itertools.count"),
+            repr_kind: IteratorReprKind::Count,
+        },
+        IteratorKind::RangeObject { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("range"),
+            repr_kind: IteratorReprKind::Range,
+        },
+        IteratorKind::Enumerate { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("enumerate"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Map { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("map"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Zip { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("zip"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "chain", "itertools.chain"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Accumulate { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module(
+                "itertools",
+                "accumulate",
+                "itertools.accumulate",
+            ),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Combinations { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module(
+                "itertools",
+                "combinations",
+                "itertools.combinations",
+            ),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::CombinationsWithReplacement { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module(
+                "itertools",
+                "combinations_with_replacement",
+                "itertools.combinations_with_replacement",
+            ),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Permutations { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module(
+                "itertools",
+                "permutations",
+                "itertools.permutations",
+            ),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Product { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "product", "itertools.product"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Compress { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "compress", "itertools.compress"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::DropWhile { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "dropwhile", "itertools.dropwhile"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Filter { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("filter"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::FilterFalse { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module(
+                "itertools",
+                "filterfalse",
+                "itertools.filterfalse",
+            ),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Islice { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "islice", "itertools.islice"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Pairwise { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "pairwise", "itertools.pairwise"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::StarMap { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "starmap", "itertools.starmap"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::TakeWhile { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "takewhile", "itertools.takewhile"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::ZipLongest { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module(
+                "itertools",
+                "zip_longest",
+                "itertools.zip_longest",
+            ),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Tee { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "_tee", "itertools._tee"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Repeat { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "repeat", "itertools.repeat"),
+            repr_kind: IteratorReprKind::Repeat,
+        },
+        IteratorKind::Batched { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "batched", "itertools.batched"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::GroupBy { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "groupby", "itertools.groupby"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::GroupByGrouper { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::module("itertools", "_grouper", "itertools._grouper"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::Range { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("range_iterator"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::SequenceGetItem { .. } | IteratorKind::CpythonSequence { .. } => {
+            IteratorTypeInfo {
+                type_name: RuntimeTypeNameInfo::builtins("iterator"),
+                repr_kind: IteratorReprKind::Object,
+            }
+        }
+        IteratorKind::CallIter { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("callable_iterator"),
+            repr_kind: IteratorReprKind::Object,
+        },
     }
 }
 
@@ -2727,6 +3172,13 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                 trace_value(predicate, stack, marked);
                 trace_value(iterator, stack, marked);
             }
+            IteratorKind::Filter {
+                predicate,
+                iterator,
+            } => {
+                trace_value(predicate, stack, marked);
+                trace_value(iterator, stack, marked);
+            }
             IteratorKind::FilterFalse {
                 predicate,
                 iterator,
@@ -2915,7 +3367,9 @@ fn clear_object_refs(obj: &ObjRef) {
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
-                IteratorKind::Enumerate { iterator: source, .. } => {
+                IteratorKind::Enumerate {
+                    iterator: source, ..
+                } => {
                     *source = Value::None;
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
@@ -3046,6 +3500,15 @@ fn clear_object_refs(obj: &ObjRef) {
                     *predicate = Value::None;
                     *drop_iter = Value::None;
                     *dropping = false;
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Filter {
+                    predicate,
+                    iterator: filter_iter,
+                } => {
+                    *predicate = Value::None;
+                    *filter_iter = Value::None;
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -5578,9 +6041,9 @@ impl BuiltinFunction {
                 }
                 let codepoint = match &args[0] {
                     Value::Int(value) => *value,
-                    Value::BigInt(value) => value
-                        .to_i64()
-                        .ok_or_else(|| RuntimeError::value_error("chr() arg not in range(0x110000)"))?,
+                    Value::BigInt(value) => value.to_i64().ok_or_else(|| {
+                        RuntimeError::value_error("chr() arg not in range(0x110000)")
+                    })?,
                     Value::Bool(value) => i64::from(*value),
                     other => {
                         return Err(RuntimeError::type_error(format!(
@@ -5590,7 +6053,9 @@ impl BuiltinFunction {
                     }
                 };
                 if !(0..=0x10FFFF).contains(&codepoint) {
-                    return Err(RuntimeError::value_error("chr() arg not in range(0x110000)"));
+                    return Err(RuntimeError::value_error(
+                        "chr() arg not in range(0x110000)",
+                    ));
                 }
                 let ch = internal_char_from_codepoint(codepoint as u32)
                     .ok_or_else(|| RuntimeError::value_error("chr() arg not in range(0x110000)"))?;
@@ -8796,6 +9261,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                 | IteratorKind::Accumulate { .. }
                 | IteratorKind::Compress { .. }
                 | IteratorKind::DropWhile { .. }
+                | IteratorKind::Filter { .. }
                 | IteratorKind::FilterFalse { .. }
                 | IteratorKind::Islice { .. }
                 | IteratorKind::Pairwise { .. }
@@ -8849,7 +9315,10 @@ fn value_type_name(value: &Value) -> &'static str {
         Value::Bytes(_) => "bytes",
         Value::ByteArray(_) => "bytearray",
         Value::MemoryView(_) => "memoryview",
-        Value::Iterator(_) => "iterator",
+        Value::Iterator(obj) => match &*obj.kind() {
+            Object::Iterator(iterator) => iterator_type_info(&iterator.kind).type_name.name,
+            _ => "iterator",
+        },
         Value::Generator(_) => "generator",
         Value::Module(_) => "module",
         Value::Class(_) => "type",
@@ -9232,7 +9701,15 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
         Value::Bytes(_) => Value::Builtin(BuiltinFunction::Bytes),
         Value::ByteArray(_) => Value::Builtin(BuiltinFunction::ByteArray),
         Value::MemoryView(_) => Value::Builtin(BuiltinFunction::MemoryView),
-        Value::Iterator(_) => Value::Str("iterator".to_string()),
+        Value::Iterator(obj) => match &*obj.kind() {
+            Object::Iterator(iterator) => {
+                let info = iterator_type_info(&iterator.kind);
+                builtin_type_from_name_info(info.type_name.module, info.type_name.name)
+                    .map(Value::Builtin)
+                    .unwrap_or_else(|| Value::Str(info.type_name.name.to_string()))
+            }
+            _ => Value::Str("iterator".to_string()),
+        },
         Value::Generator(obj) => match &*obj.kind() {
             Object::Generator(generator) if generator.is_async_generator => {
                 Value::Builtin(BuiltinFunction::AsyncGeneratorType)
@@ -9275,6 +9752,39 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
         Value::Builtin(_) => Value::Builtin(BuiltinFunction::Type),
     };
     Ok(ty)
+}
+
+fn format_range_object_repr(start: &BigInt, stop: &BigInt, step: &BigInt) -> String {
+    if *step == BigInt::one() {
+        format!("range({}, {})", start, stop)
+    } else {
+        format!("range({}, {}, {})", start, stop, step)
+    }
+}
+
+fn format_iterator_value(obj: &ObjRef, iterator: &IteratorObject) -> String {
+    let info = iterator_type_info(&iterator.kind);
+    match (&iterator.kind, info.repr_kind) {
+        (IteratorKind::RangeObject { start, stop, step }, IteratorReprKind::Range) => {
+            format_range_object_repr(start, stop, step)
+        }
+        (IteratorKind::Count { current, step }, IteratorReprKind::Count) => {
+            if *step == 1 {
+                format!("count({current})")
+            } else {
+                format!("count({current}, {step})")
+            }
+        }
+        (IteratorKind::Repeat { value, remaining }, IteratorReprKind::Repeat) => match remaining {
+            Some(remaining) => format!("repeat({}, {})", format_repr(value), remaining),
+            None => format!("repeat({})", format_repr(value)),
+        },
+        _ => format!(
+            "<{} object at 0x{:x}>",
+            info.type_name.qualified_name,
+            obj.id()
+        ),
+    }
 }
 
 fn format_float(value: f64) -> String {
@@ -9744,76 +10254,7 @@ pub fn format_value(value: &Value) -> String {
             _ => "<memoryview>".to_string(),
         },
         Value::Iterator(obj) => match &*obj.kind() {
-            Object::Iterator(iterator) => match &iterator.kind {
-                IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => {
-                    format!("<itertools.chain object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::Accumulate { .. } => {
-                    format!("<itertools.accumulate object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::Combinations { .. } => {
-                    format!("<itertools.combinations object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::CombinationsWithReplacement { .. } => {
-                    format!(
-                        "<itertools.combinations_with_replacement object at 0x{:x}>",
-                        obj.id()
-                    )
-                }
-                IteratorKind::Compress { .. } => {
-                    format!("<itertools.compress object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::Count { .. } => {
-                    format!("<itertools.count object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::Cycle { .. } => {
-                    format!("<itertools.cycle object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::DropWhile { .. } => {
-                    format!("<itertools.dropwhile object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::FilterFalse { .. } => {
-                    format!("<itertools.filterfalse object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::Islice { .. } => {
-                    format!("<itertools.islice object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::Pairwise { .. } => {
-                    format!("<itertools.pairwise object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::Permutations { .. } => {
-                    format!("<itertools.permutations object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::Product { .. } => {
-                    format!("<itertools.product object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::Repeat { value, remaining } => match remaining {
-                    Some(remaining) => format!("repeat({}, {})", format_repr(value), remaining),
-                    None => format!("repeat({})", format_repr(value)),
-                },
-                IteratorKind::StarMap { .. } => {
-                    format!("<itertools.starmap object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::TakeWhile { .. } => {
-                    format!("<itertools.takewhile object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::Batched { .. } => {
-                    format!("<itertools.batched object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::ZipLongest { .. } => {
-                    format!("<itertools.zip_longest object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::Tee { .. } => {
-                    format!("<itertools._tee object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::GroupBy { .. } => {
-                    format!("<itertools.groupby object at 0x{:x}>", obj.id())
-                }
-                IteratorKind::GroupByGrouper { .. } => {
-                    format!("<itertools._grouper object at 0x{:x}>", obj.id())
-                }
-                _ => "<iterator>".to_string(),
-            },
+            Object::Iterator(iterator) => format_iterator_value(obj, iterator),
             _ => "<iterator>".to_string(),
         },
         Value::Generator(obj) => match &*obj.kind() {
@@ -10514,40 +10955,7 @@ pub fn format_repr(value: &Value) -> String {
 }
 
 fn builtin_type_object_name(builtin: BuiltinFunction) -> Option<&'static str> {
-    match builtin {
-        BuiltinFunction::Type => Some("type"),
-        BuiltinFunction::Bool => Some("bool"),
-        BuiltinFunction::Int => Some("int"),
-        BuiltinFunction::Float => Some("float"),
-        BuiltinFunction::Complex => Some("complex"),
-        BuiltinFunction::Str => Some("str"),
-        BuiltinFunction::List => Some("list"),
-        BuiltinFunction::Tuple => Some("tuple"),
-        BuiltinFunction::Dict => Some("dict"),
-        BuiltinFunction::Set => Some("set"),
-        BuiltinFunction::FrozenSet => Some("frozenset"),
-        BuiltinFunction::Bytes => Some("bytes"),
-        BuiltinFunction::ByteArray => Some("bytearray"),
-        BuiltinFunction::MemoryView => Some("memoryview"),
-        BuiltinFunction::Slice => Some("slice"),
-        BuiltinFunction::Range => Some("range"),
-        BuiltinFunction::Enumerate => Some("enumerate"),
-        BuiltinFunction::Zip => Some("zip"),
-        BuiltinFunction::Map => Some("map"),
-        BuiltinFunction::Filter => Some("filter"),
-        BuiltinFunction::ClassMethod => Some("classmethod"),
-        BuiltinFunction::StaticMethod => Some("staticmethod"),
-        BuiltinFunction::Property => Some("property"),
-        BuiltinFunction::Super => Some("super"),
-        BuiltinFunction::TypesModuleType => Some("module"),
-        BuiltinFunction::TypesFunctionType => Some("function"),
-        BuiltinFunction::TypesMethodType => Some("method"),
-        BuiltinFunction::TypesCoroutine => Some("coroutine"),
-        BuiltinFunction::GeneratorType => Some("generator"),
-        BuiltinFunction::CoroutineType => Some("coroutine"),
-        BuiltinFunction::AsyncGeneratorType => Some("async_generator"),
-        _ => None,
-    }
+    builtin_type_name_info(builtin).map(|info| info.qualified_name)
 }
 
 fn builtin_function_display_name(builtin: BuiltinFunction) -> String {

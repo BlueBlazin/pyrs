@@ -3908,7 +3908,7 @@ impl Vm {
         class
     }
 
-    fn mark_synthetic_static_type(&mut self, class: &ObjRef, name: &str) {
+    fn mark_synthetic_static_type_with_module(&mut self, class: &ObjRef, module: &str, name: &str) {
         if let Object::Class(class_data) = &mut *class.kind_mut() {
             class_data
                 .attrs
@@ -3921,7 +3921,7 @@ impl Vm {
             class_data
                 .attrs
                 .entry("__module__".to_string())
-                .or_insert_with(|| Value::Str("builtins".to_string()));
+                .or_insert_with(|| Value::Str(module.to_string()));
             // These stand in for static builtin types in class-base resolution paths.
             // Mark them as non-heap so copyreg._reduce_ex and similar stdlib logic
             // treat them like CPython static types.
@@ -3931,12 +3931,17 @@ impl Vm {
         }
     }
 
-    fn synthetic_builtin_class(&mut self, name: &str) -> ObjRef {
-        if let Some(existing) = self.synthetic_builtin_classes.get(name).cloned() {
+    pub(super) fn synthetic_runtime_type_class(&mut self, module: &str, name: &str) -> ObjRef {
+        let cache_key = if module == "builtins" {
+            name.to_string()
+        } else {
+            format!("{module}.{name}")
+        };
+        if let Some(existing) = self.synthetic_builtin_classes.get(&cache_key).cloned() {
             return existing;
         }
         let class = self.alloc_synthetic_class(name);
-        self.mark_synthetic_static_type(&class, name);
+        self.mark_synthetic_static_type_with_module(&class, module, name);
 
         let object_base = self.builtins.get("object").and_then(|value| match value {
             Value::Class(class) => Some(class.clone()),
@@ -3984,8 +3989,12 @@ impl Vm {
         }
 
         self.synthetic_builtin_classes
-            .insert(name.to_string(), class.clone());
+            .insert(cache_key, class.clone());
         class
+    }
+
+    fn synthetic_builtin_class(&mut self, name: &str) -> ObjRef {
+        self.synthetic_runtime_type_class("builtins", name)
     }
 
     pub(super) fn class_from_base_value(&mut self, base: Value) -> Result<ObjRef, RuntimeError> {

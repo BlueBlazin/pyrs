@@ -2673,6 +2673,97 @@ result = {
 }
 
 #[test]
+fn differential_runtime_iterator_type_identity_and_repr_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import itertools
+
+class Counter:
+    def __init__(self):
+        self.n = 0
+    def __call__(self):
+        self.n += 1
+        return self.n
+
+def normalize_repr(obj):
+    text = repr(obj)
+    start = text.find("0x")
+    if start == -1:
+        return text
+    end = start + 2
+    while end < len(text) and text[end] in "0123456789abcdefABCDEF":
+        end += 1
+    return text[:start] + "0xADDR" + text[end:]
+
+call_iter = iter(Counter(), 3)
+group_item = next(iter(itertools.groupby([1])))[1]
+samples = {
+    "range_obj": range(3),
+    "range_iter": iter(range(3)),
+    "list_iter": iter([1]),
+    "tuple_iter": iter((1,)),
+    "str_ascii_iter": iter("a"),
+    "str_unicode_iter": iter("é"),
+    "dict_keys": {}.keys(),
+    "dict_iter": iter({1: 2}),
+    "set_iter": iter({1}),
+    "bytes_iter": iter(b"a"),
+    "bytearray_iter": iter(bytearray(b"a")),
+    "memoryview_iter": iter(memoryview(b"a")),
+    "callable_iter": call_iter,
+    "enumerate": enumerate([1]),
+    "zip": zip([1], [2]),
+    "map": map(int, ["1"]),
+    "filter": filter(None, [1]),
+    "chain": itertools.chain([1]),
+    "count": itertools.count(),
+    "repeat": itertools.repeat(1),
+    "groupby": itertools.groupby([1]),
+    "grouper": group_item,
+    "tee": itertools.tee([1], 1)[0],
+    "zip_longest": itertools.zip_longest([1], [2]),
+    "batched": itertools.batched([1], 1),
+}
+builtin_types = {
+    "range": range,
+    "enumerate": enumerate,
+    "zip": zip,
+    "map": map,
+    "filter": filter,
+    "reversed": reversed,
+    "itertools.chain": itertools.chain,
+    "itertools.count": itertools.count,
+    "itertools.repeat": itertools.repeat,
+    "itertools.groupby": itertools.groupby,
+    "itertools.batched": itertools.batched,
+}
+result = {
+    "samples": {
+        name: {
+            "type_repr": repr(type(obj)),
+            "class_repr": repr(obj.__class__),
+            "type_matches_class": (obj.__class__ is type(obj)),
+            "repr": normalize_repr(obj),
+        }
+        for name, obj in samples.items()
+    },
+    "builtin_types": {name: repr(obj) for name, obj in builtin_types.items()},
+    "checks": {
+        "filter_values": list(filter(None, [0, 1, '', 2])),
+        "list_iter_isinstance": isinstance(iter([1]), type(iter([1]))),
+        "range_isinstance": isinstance(range(3), type(range(3))),
+        "dict_keys_isinstance": isinstance({}.keys(), type({}.keys())),
+    },
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
 fn differential_runtime_itertools_iterator_helper_parity() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;

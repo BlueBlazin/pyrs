@@ -357,6 +357,110 @@ fn type_str_matches_cpython_for_builtin_type_objects() {
 }
 
 #[test]
+fn iterator_and_runtime_view_type_reprs_match_cpython_shape() {
+    let source = r#"import itertools
+class Counter:
+    def __init__(self):
+        self.n = 0
+    def __call__(self):
+        self.n += 1
+        return self.n
+
+call_iter = iter(Counter(), 3)
+group_item = next(iter(itertools.groupby([1])))[1]
+ok = (
+    repr(type(range(3))) == "<class 'range'>"
+    and repr(range(3)) == "range(0, 3)"
+    and range(3).__class__ is type(range(3))
+    and repr(type(iter(range(3)))) == "<class 'range_iterator'>"
+    and repr(iter(range(3))).startswith("<range_iterator object at 0x")
+    and iter(range(3)).__class__ is type(iter(range(3)))
+    and isinstance(iter(range(3)), type(iter(range(3))))
+    and repr(type(iter([1]))) == "<class 'list_iterator'>"
+    and repr(iter([1])).startswith("<list_iterator object at 0x")
+    and iter([1]).__class__ is type(iter([1]))
+    and isinstance(iter([1]), type(iter([1])))
+    and repr(type(iter((1,)))) == "<class 'tuple_iterator'>"
+    and repr(iter((1,))).startswith("<tuple_iterator object at 0x")
+    and repr(type(iter('a'))) == "<class 'str_ascii_iterator'>"
+    and repr(iter('a')).startswith("<str_ascii_iterator object at 0x")
+    and repr(type(iter('é'))) == "<class 'str_iterator'>"
+    and repr(iter('é')).startswith("<str_iterator object at 0x")
+    and repr(type({}.keys())) == "<class 'dict_keys'>"
+    and {}.keys().__class__ is type({}.keys())
+    and repr(type(iter({1: 2}))) == "<class 'dict_keyiterator'>"
+    and repr(iter({1: 2})).startswith("<dict_keyiterator object at 0x")
+    and repr(type(iter({1}))) == "<class 'set_iterator'>"
+    and repr(iter({1})).startswith("<set_iterator object at 0x")
+    and repr(type(iter(b'a'))) == "<class 'bytes_iterator'>"
+    and repr(iter(b'a')).startswith("<bytes_iterator object at 0x")
+    and repr(type(iter(bytearray(b'a')))) == "<class 'bytearray_iterator'>"
+    and repr(iter(bytearray(b'a'))).startswith("<bytearray_iterator object at 0x")
+    and repr(type(iter(memoryview(b'a')))) == "<class 'memory_iterator'>"
+    and repr(iter(memoryview(b'a'))).startswith("<memory_iterator object at 0x")
+    and repr(type(call_iter)) == "<class 'callable_iterator'>"
+    and repr(call_iter).startswith("<callable_iterator object at 0x")
+    and repr(type(enumerate([1]))) == "<class 'enumerate'>"
+    and repr(enumerate([1])).startswith("<enumerate object at 0x")
+    and repr(type(zip([1], [2]))) == "<class 'zip'>"
+    and repr(zip([1], [2])).startswith("<zip object at 0x")
+    and repr(type(map(int, ['1']))) == "<class 'map'>"
+    and repr(map(int, ['1'])).startswith("<map object at 0x")
+    and repr(type(filter(None, [1]))) == "<class 'filter'>"
+    and repr(filter(None, [1])).startswith("<filter object at 0x")
+    and list(filter(None, [0, 1, '', 2])) == [1, 2]
+    and repr(type(itertools.chain([1]))) == "<class 'itertools.chain'>"
+    and repr(itertools.chain([1])).startswith("<itertools.chain object at 0x")
+    and repr(type(itertools.count())) == "<class 'itertools.count'>"
+    and repr(itertools.count()) == "count(0)"
+    and repr(type(itertools.repeat(1))) == "<class 'itertools.repeat'>"
+    and repr(itertools.repeat(1)) == "repeat(1)"
+    and repr(type(itertools.groupby([1]))) == "<class 'itertools.groupby'>"
+    and repr(itertools.groupby([1])).startswith("<itertools.groupby object at 0x")
+    and repr(type(group_item)) == "<class 'itertools._grouper'>"
+    and repr(group_item).startswith("<itertools._grouper object at 0x")
+    and repr(type(itertools.tee([1], 1)[0])) == "<class 'itertools._tee'>"
+    and repr(itertools.tee([1], 1)[0]).startswith("<itertools._tee object at 0x")
+    and repr(type(itertools.zip_longest([1], [2]))) == "<class 'itertools.zip_longest'>"
+    and repr(itertools.zip_longest([1], [2])).startswith("<itertools.zip_longest object at 0x")
+    and repr(type(itertools.batched([1], 1))) == "<class 'itertools.batched'>"
+    and repr(itertools.batched([1], 1)).startswith("<itertools.batched object at 0x")
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn builtin_iterator_type_objects_render_as_types() {
+    let source = r#"import itertools
+ok = (
+    repr(range) == "<class 'range'>"
+    and repr(enumerate) == "<class 'enumerate'>"
+    and repr(zip) == "<class 'zip'>"
+    and repr(map) == "<class 'map'>"
+    and repr(filter) == "<class 'filter'>"
+    and repr(reversed) == "<class 'reversed'>"
+    and repr(itertools.chain) == "<class 'itertools.chain'>"
+    and repr(itertools.count) == "<class 'itertools.count'>"
+    and repr(itertools.repeat) == "<class 'itertools.repeat'>"
+    and repr(itertools.groupby) == "<class 'itertools.groupby'>"
+    and repr(itertools.batched) == "<class 'itertools.batched'>"
+    and repr(type(range)) == "<class 'type'>"
+    and repr(type(itertools.chain)) == "<class 'type'>"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn builtin_function_repr_and_str_match_cpython_shape() {
     let source = "ok = (\n    repr(len) == \"<built-in function len>\"\n    and str(len) == \"<built-in function len>\"\n    and repr(print) == \"<built-in function print>\"\n    and str(print) == \"<built-in function print>\"\n    and repr(isinstance) == \"<built-in function isinstance>\"\n    and repr(callable) == \"<built-in function callable>\"\n)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -16682,7 +16786,9 @@ fn decimal_alias_replacement_keeps_sys_modules_and_from_import_coherent() {
 #[test]
 fn nested_importlib_flow_binds_decimal_to_canonical_sys_modules_entry() {
     let Some(lib_path) = cpython_lib_path() else {
-        eprintln!("skipping nested decimal importlib coherence test (CPython Lib path not available)");
+        eprintln!(
+            "skipping nested decimal importlib coherence test (CPython Lib path not available)"
+        );
         return;
     };
     let Some(pyrs_bin) = pyrs_binary_path() else {

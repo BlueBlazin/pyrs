@@ -5,11 +5,12 @@ use crate::runtime::{BuiltinFunction, IteratorKind, Object, Value};
 use super::{
     ObjRef, PyBaseObject_Type, PyBool_Type, PyByteArray_Type, PyByteArrayIter_Type, PyBytes_Type,
     PyBytesIter_Type, PyCallIter_Type, PyComplex_Type, PyCoro_Type, PyDict_Type,
-    PyDictIterKey_Type, PyDictProxy_Type, PyEnum_Type, PyFloat_Type, PyFrozenSet_Type, PyFunction_Type,
-    PyGen_Type, PyList_Type, PyListIter_Type, PyLong_Type, PyMap_Type, PyMemoryView_Type,
-    PyMethod_Type, PyModule_Type, PyNone_Type, PyRange_Type, PyRangeIter_Type, PySeqIter_Type,
-    PySet_Type, PySetIter_Type, PySlice_Type, PySuper_Type, PyTuple_Type, PyTupleIter_Type,
-    PyType_Type, PyUnicode_Type, PyUnicodeIter_Type, PyZip_Type, cpython_exception_ptr_for_name,
+    PyDictIterKey_Type, PyDictProxy_Type, PyEnum_Type, PyFilter_Type, PyFloat_Type,
+    PyFrozenSet_Type, PyFunction_Type, PyGen_Type, PyList_Type, PyListIter_Type, PyLong_Type,
+    PyMap_Type, PyMemoryView_Type, PyMethod_Type, PyModule_Type, PyNone_Type, PyRange_Type,
+    PyRangeIter_Type, PySeqIter_Type, PySet_Type, PySetIter_Type, PySlice_Type, PySuper_Type,
+    PyTuple_Type, PyTupleIter_Type, PyType_Type, PyUnicode_Type, PyUnicodeIter_Type, PyZip_Type,
+    cpython_exception_ptr_for_name,
 };
 
 pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
@@ -40,6 +41,7 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
                 IteratorKind::ByteArray(_) => std::ptr::addr_of_mut!(PyByteArrayIter_Type).cast(),
                 IteratorKind::Map { .. } => std::ptr::addr_of_mut!(PyMap_Type).cast(),
                 IteratorKind::Zip { .. } => std::ptr::addr_of_mut!(PyZip_Type).cast(),
+                IteratorKind::Filter { .. } => std::ptr::addr_of_mut!(PyFilter_Type).cast(),
                 IteratorKind::RangeObject { .. } => std::ptr::addr_of_mut!(PyRange_Type).cast(),
                 IteratorKind::Range { .. } => std::ptr::addr_of_mut!(PyRangeIter_Type).cast(),
                 IteratorKind::Enumerate { .. } => std::ptr::addr_of_mut!(PyEnum_Type).cast(),

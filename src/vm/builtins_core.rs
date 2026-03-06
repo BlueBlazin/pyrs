@@ -17,8 +17,7 @@ use super::{
     call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, compare_ge, compare_gt,
     compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
     dict_remove_value, dict_set_value, dict_set_value_checked, div_values, encode_text_bytes,
-    floor_div_values,
-    format_float_hex, format_repr, format_value, frame_cell_value, invert_value,
+    floor_div_values, format_float_hex, format_repr, format_value, frame_cell_value, invert_value,
     is_import_error_family, is_missing_attribute_error, is_os_error_family,
     is_runtime_type_name_marker, is_truthy, matmul_values, mod_values, mul_values, neg_value,
     normalize_codec_encoding, normalize_codec_errors, or_values, ordering_from_cmp_value,
@@ -36,7 +35,8 @@ use crate::ast::{
     TypeParamKind as AstTypeParamKind, UnaryOp as AstUnaryOp,
 };
 use crate::runtime::{
-    MIN_INT_MAX_STR_DIGITS, runtime_get_int_max_str_digits, runtime_set_int_max_str_digits,
+    MIN_INT_MAX_STR_DIGITS, builtin_type_from_name_info, builtin_type_name_info,
+    iterator_type_info, runtime_get_int_max_str_digits, runtime_set_int_max_str_digits,
     value_lookup_hash,
 };
 use crate::unicode::internal_char_from_codepoint;
@@ -286,7 +286,13 @@ impl Vm {
             Value::Bytes(_) => "bytes".to_string(),
             Value::ByteArray(_) => "bytearray".to_string(),
             Value::MemoryView(_) => "memoryview".to_string(),
-            Value::Iterator(_) => "iterator".to_string(),
+            Value::Iterator(obj) => match &*obj.kind() {
+                Object::Iterator(iterator) => iterator_type_info(&iterator.kind)
+                    .type_name
+                    .qualified_name
+                    .to_string(),
+                _ => "iterator".to_string(),
+            },
             Value::Generator(_) => "generator".to_string(),
             Value::Slice { .. } => "slice".to_string(),
             Value::Module(_) => "module".to_string(),
@@ -312,6 +318,35 @@ impl Vm {
                 }
             }
             Value::Cell(_) => "cell".to_string(),
+        }
+    }
+
+    pub(super) fn runtime_type_value_from_name_info(&mut self, module: &str, name: &str) -> Value {
+        if let Some(builtin) = builtin_type_from_name_info(module, name) {
+            Value::Builtin(builtin)
+        } else {
+            Value::Class(self.synthetic_runtime_type_class(module, name))
+        }
+    }
+
+    pub(super) fn iterator_runtime_type_value(&mut self, value: &Value) -> Option<Value> {
+        let Value::Iterator(obj) = value else {
+            return None;
+        };
+        let info = {
+            let obj_kind = obj.kind();
+            let Object::Iterator(iterator) = &*obj_kind else {
+                return None;
+            };
+            iterator_type_info(&iterator.kind)
+        };
+        Some(self.runtime_type_value_from_name_info(info.type_name.module, info.type_name.name))
+    }
+
+    pub(super) fn normalize_runtime_type_value(&mut self, value: Value) -> Value {
+        match value {
+            Value::Str(name) => self.runtime_type_value_from_name_info("builtins", &name),
+            other => other,
         }
     }
 
@@ -4759,9 +4794,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::type_error(
-                "__enter__() expects no arguments",
-            ));
+            return Err(RuntimeError::type_error("__enter__() expects no arguments"));
         }
         Ok(args.remove(0))
     }
@@ -4833,11 +4866,7 @@ impl Vm {
 
         let mut bytes = Vec::new();
         let mut stdin = std::io::stdin();
-        let mut remaining = if size < 0 {
-            None
-        } else {
-            Some(size as usize)
-        };
+        let mut remaining = if size < 0 { None } else { Some(size as usize) };
         let mut byte = [0u8; 1];
         loop {
             if let Some(limit) = remaining.as_mut() {
@@ -8414,41 +8443,7 @@ impl Vm {
     }
 
     pub(super) fn builtin_is_type_object(&self, builtin: BuiltinFunction) -> bool {
-        matches!(
-            builtin,
-            BuiltinFunction::Type
-                | BuiltinFunction::TypesMethodType
-                | BuiltinFunction::TypesModuleType
-                | BuiltinFunction::Bool
-                | BuiltinFunction::Int
-                | BuiltinFunction::Float
-                | BuiltinFunction::Str
-                | BuiltinFunction::List
-                | BuiltinFunction::Tuple
-                | BuiltinFunction::Dict
-                | BuiltinFunction::CollectionsDefaultDict
-                | BuiltinFunction::CollectionsOrderedDict
-                | BuiltinFunction::Set
-                | BuiltinFunction::FrozenSet
-                | BuiltinFunction::Bytes
-                | BuiltinFunction::ByteArray
-                | BuiltinFunction::MemoryView
-                | BuiltinFunction::Complex
-                | BuiltinFunction::Slice
-                | BuiltinFunction::Range
-                | BuiltinFunction::Enumerate
-                | BuiltinFunction::Zip
-                | BuiltinFunction::ClassMethod
-                | BuiltinFunction::StaticMethod
-                | BuiltinFunction::Property
-                | BuiltinFunction::ObjectNew
-                | BuiltinFunction::Super
-                | BuiltinFunction::Map
-                | BuiltinFunction::Filter
-                | BuiltinFunction::GeneratorType
-                | BuiltinFunction::CoroutineType
-                | BuiltinFunction::AsyncGeneratorType
-        )
+        builtin_type_name_info(builtin).is_some()
     }
 
     pub(super) fn builtin_type(
@@ -8464,6 +8459,7 @@ impl Vm {
             }
             let value = &args[0];
             let special = match value {
+                Value::Iterator(_) => self.iterator_runtime_type_value(value),
                 Value::Class(class) => {
                     let metaclass = match &*class.kind() {
                         Object::Class(class_data) => class_data.metaclass.clone(),
@@ -8598,7 +8594,8 @@ impl Vm {
             if let Some(marker) = special {
                 return Ok(marker);
             }
-            return BuiltinFunction::Type.call(&self.heap, args);
+            let type_value = BuiltinFunction::Type.call(&self.heap, args)?;
+            return Ok(self.normalize_runtime_type_value(type_value));
         }
         if args.len() == 4 || args.len() == 5 {
             let (metaclass_index, name_index) = if args.len() == 4 { (0, 1) } else { (1, 2) };
@@ -15110,6 +15107,19 @@ impl Vm {
                     if let Value::Exception(exception) = value {
                         return Ok(self.exception_inherits(&exception.name, &class_data.name));
                     }
+                    if !matches!(
+                        value,
+                        Value::Instance(_) | Value::Module(_) | Value::Class(_)
+                    ) {
+                        let candidate_type =
+                            self.builtin_type(vec![value.clone()], HashMap::new())?;
+                        if self.class_value_is_subclass_of_without_custom(
+                            &candidate_type,
+                            &Value::Class(expected.clone()),
+                        )? {
+                            return Ok(true);
+                        }
+                    }
                 }
                 match value {
                     Value::Instance(instance) => match &*instance.kind() {
@@ -16003,6 +16013,16 @@ impl Vm {
         value: &Value,
         builtin: BuiltinFunction,
     ) -> bool {
+        if let Value::Iterator(obj) = value
+            && let Object::Iterator(iterator) = &*obj.kind()
+        {
+            let info = iterator_type_info(&iterator.kind);
+            if builtin_type_from_name_info(info.type_name.module, info.type_name.name)
+                == Some(builtin)
+            {
+                return true;
+            }
+        }
         match builtin {
             BuiltinFunction::Type => match value {
                 Value::Class(_) | Value::ExceptionType(_) => true,
@@ -16233,28 +16253,6 @@ impl Vm {
                         )
                 )
             }
-            BuiltinFunction::Range => matches!(
-                value,
-                Value::Iterator(obj)
-                    if matches!(
-                        &*obj.kind(),
-                        Object::Iterator(IteratorObject {
-                            kind: IteratorKind::RangeObject { .. },
-                            ..
-                        })
-                    )
-            ),
-            BuiltinFunction::Map => matches!(
-                value,
-                Value::Iterator(obj)
-                    if matches!(
-                        &*obj.kind(),
-                        Object::Iterator(IteratorObject {
-                            kind: IteratorKind::Map { .. },
-                            ..
-                        })
-                    )
-            ),
             _ => false,
         }
     }
@@ -17521,31 +17519,13 @@ functions outside a stub module should always be followed by an implementation t
         let iterator = self
             .to_iterator_value(source)
             .map_err(|_| RuntimeError::new("filter() argument 2 is not iterable"))?;
-        let mut filtered = Vec::new();
-        loop {
-            let item = match self.next_from_iterator_value(&iterator)? {
-                GeneratorResumeOutcome::Yield(value) => value,
-                GeneratorResumeOutcome::Complete(_) => break,
-                GeneratorResumeOutcome::PropagatedException => {
-                    return Err(self.iteration_error_from_state("filter() iteration failed")?);
-                }
-            };
-
-            let include = if matches!(predicate, Value::None) {
-                self.truthy_from_value(&item)?
-            } else {
-                match self.call_internal(predicate.clone(), vec![item.clone()], HashMap::new())? {
-                    InternalCallOutcome::Value(value) => self.truthy_from_value(&value)?,
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(RuntimeError::new("filter() callable failed"));
-                    }
-                }
-            };
-            if include {
-                filtered.push(item);
-            }
-        }
-        Ok(self.heap.alloc_list(filtered))
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Filter {
+                predicate,
+                iterator,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn builtin_aiter(

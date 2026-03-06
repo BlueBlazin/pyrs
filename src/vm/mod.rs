@@ -8048,6 +8048,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                 | IteratorKind::Product { .. }
                 | IteratorKind::Compress { .. }
                 | IteratorKind::DropWhile { .. }
+                | IteratorKind::Filter { .. }
                 | IteratorKind::FilterFalse { .. }
                 | IteratorKind::Islice { .. }
                 | IteratorKind::Pairwise { .. }

@@ -14,16 +14,17 @@ use super::{
     PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc, ReMode, RePatternValue, RuntimeError, Value, Vm,
     bigint_to_fixed_bytes, bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup,
     class_name_for_instance, decode_text_bytes, dict_get_value, dict_remove_value, dict_set_value,
-    dict_set_value_checked, encode_text_bytes, ensure_hashable, exception_is_named, format_repr,
-    find_bytes_subslice, format_value, is_truthy, memoryview_bounds, memoryview_decode_tolist,
-    memoryview_format_for_view, memoryview_shape_and_strides_from_parts, normalize_codec_encoding,
-    normalize_codec_errors, parse_memoryview_cast_format, parse_string_formatter,
-    py_rsplit_whitespace, py_split_whitespace, py_splitlines, re_pattern_from_compiled_object,
-    runtime_error_matches_exception, split_formatter_field_name, value_from_bigint,
-    value_to_bigint, value_to_int, with_bytes_like_source,
+    dict_set_value_checked, encode_text_bytes, ensure_hashable, exception_is_named,
+    find_bytes_subslice, format_repr, format_value, is_truthy, memoryview_bounds,
+    memoryview_decode_tolist, memoryview_format_for_view, memoryview_shape_and_strides_from_parts,
+    normalize_codec_encoding, normalize_codec_errors, parse_memoryview_cast_format,
+    parse_string_formatter, py_rsplit_whitespace, py_split_whitespace, py_splitlines,
+    re_pattern_from_compiled_object, runtime_error_matches_exception, split_formatter_field_name,
+    value_from_bigint, value_to_bigint, value_to_int, with_bytes_like_source,
 };
 use crate::ast::{Constant, ExprKind};
 use crate::parser;
+use crate::runtime::iterator_type_info;
 
 unsafe extern "C" {
     fn PyErr_Clear();
@@ -2546,8 +2547,8 @@ impl Vm {
                 Ok(NativeCallResult::Value(value))
             }
             NativeMethodKind::IntReprMethod => {
-                let value =
-                    self.extract_int_receiver_value_for_repr_call(&receiver, &mut args, "__repr__")?;
+                let value = self
+                    .extract_int_receiver_value_for_repr_call(&receiver, &mut args, "__repr__")?;
                 let rendered = match value {
                     Value::Int(number) => number.to_string(),
                     Value::BigInt(number) => number.to_string(),
@@ -2642,11 +2643,12 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::Float(value)))
             }
             NativeMethodKind::FloatReprMethod => {
-                let value =
-                    self.extract_float_receiver_value_for_method_call(&receiver, &mut args, "__repr__")?;
-                Ok(NativeCallResult::Value(Value::Str(format_repr(&Value::Float(
-                    value,
-                )))))
+                let value = self.extract_float_receiver_value_for_method_call(
+                    &receiver, &mut args, "__repr__",
+                )?;
+                Ok(NativeCallResult::Value(Value::Str(format_repr(
+                    &Value::Float(value),
+                ))))
             }
             NativeMethodKind::StrStartsWith | NativeMethodKind::StrEndsWith => {
                 let method_name = if matches!(kind, NativeMethodKind::StrStartsWith) {
@@ -9195,12 +9197,10 @@ impl Vm {
                 let (array_values, readline_callable) = {
                     let module_kind = module.kind();
                     match &*module_kind {
-                        Object::Module(module_data) if module_data.name == "__array__" => {
-                            (
-                                module_data.globals.get("values").cloned(),
-                                module_data.globals.get("readline").cloned(),
-                            )
-                        }
+                        Object::Module(module_data) if module_data.name == "__array__" => (
+                            module_data.globals.get("values").cloned(),
+                            module_data.globals.get("readline").cloned(),
+                        ),
                         Object::Module(module_data) => {
                             (None, module_data.globals.get("readline").cloned())
                         }
@@ -9714,47 +9714,7 @@ impl Vm {
     pub(super) fn iterator_type_name(&self, iterator: &Value) -> &'static str {
         match iterator {
             Value::Iterator(obj) => match &*obj.kind() {
-                Object::Iterator(state) => match state.kind {
-                    IteratorKind::List(_) => "list_iterator",
-                    IteratorKind::Tuple(_) => "tuple_iterator",
-                    IteratorKind::Str(_) => "str_iterator",
-                    IteratorKind::Dict(_) => "dict_keyiterator",
-                    IteratorKind::Set(_) => "set_iterator",
-                    IteratorKind::Bytes(_) => "bytes_iterator",
-                    IteratorKind::ByteArray(_) => "bytearray_iterator",
-                    IteratorKind::MemoryView(_) => "memoryview_iterator",
-                    IteratorKind::Cycle { .. } => "cycle",
-                    IteratorKind::Count { .. } => "count",
-                    IteratorKind::Enumerate { .. } => "enumerate",
-                    IteratorKind::Map { .. } => "map",
-                    IteratorKind::Zip { .. } => "zip",
-                    IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => "chain",
-                    IteratorKind::Accumulate { .. } => "accumulate",
-                    IteratorKind::Combinations { .. } => "combinations",
-                    IteratorKind::CombinationsWithReplacement { .. } => {
-                        "combinations_with_replacement"
-                    }
-                    IteratorKind::Permutations { .. } => "permutations",
-                    IteratorKind::Product { .. } => "product",
-                    IteratorKind::Compress { .. } => "compress",
-                    IteratorKind::DropWhile { .. } => "dropwhile",
-                    IteratorKind::FilterFalse { .. } => "filterfalse",
-                    IteratorKind::Islice { .. } => "islice",
-                    IteratorKind::Pairwise { .. } => "pairwise",
-                    IteratorKind::StarMap { .. } => "starmap",
-                    IteratorKind::TakeWhile { .. } => "takewhile",
-                    IteratorKind::ZipLongest { .. } => "zip_longest",
-                    IteratorKind::Tee { .. } => "_tee",
-                    IteratorKind::Repeat { .. } => "repeat",
-                    IteratorKind::Batched { .. } => "batched",
-                    IteratorKind::GroupBy { .. } => "groupby",
-                    IteratorKind::GroupByGrouper { .. } => "_grouper",
-                    IteratorKind::RangeObject { .. } => "range",
-                    IteratorKind::Range { .. } => "range_iterator",
-                    IteratorKind::SequenceGetItem { .. } => "iterator",
-                    IteratorKind::CpythonSequence { .. } => "iterator",
-                    IteratorKind::CallIter { .. } => "callable_iterator",
-                },
+                Object::Iterator(state) => iterator_type_info(&state.kind).type_name.qualified_name,
                 _ => "iterator",
             },
             Value::Generator(_) => "generator",
@@ -9821,6 +9781,10 @@ impl Vm {
                 predicate: Value,
                 iterator: Value,
                 dropping: bool,
+            },
+            FilterAdvance {
+                predicate: Value,
+                iterator: Value,
             },
             FilterFalseAdvance {
                 predicate: Value,
@@ -10316,6 +10280,15 @@ impl Vm {
                         dropping: *dropping,
                     };
                 }
+                IteratorKind::Filter {
+                    predicate,
+                    iterator,
+                } => {
+                    pending_step = PendingIteratorStep::FilterAdvance {
+                        predicate: predicate.clone(),
+                        iterator: iterator.clone(),
+                    };
+                }
                 IteratorKind::FilterFalse {
                     predicate,
                     iterator,
@@ -10578,9 +10551,9 @@ impl Vm {
                     Ok(None)
                 }
                 GeneratorResumeOutcome::Complete(_) => Ok(None),
-                GeneratorResumeOutcome::PropagatedException => Err(
-                    self.iteration_error_from_state("enumerate() iteration failed")?,
-                ),
+                GeneratorResumeOutcome::PropagatedException => {
+                    Err(self.iteration_error_from_state("enumerate() iteration failed")?)
+                }
             },
             PendingIteratorStep::MapEvaluate { func, iterators } => {
                 let mut call_args = Vec::with_capacity(iterators.len());
@@ -10998,6 +10971,41 @@ impl Vm {
                     state.index = state.index.saturating_add(1);
                 }
                 return Ok(Some(item));
+            },
+            PendingIteratorStep::FilterAdvance {
+                predicate,
+                iterator,
+            } => loop {
+                let item = match self.next_from_iterator_value(&iterator)? {
+                    GeneratorResumeOutcome::Yield(value) => value,
+                    GeneratorResumeOutcome::Complete(_) => return Ok(None),
+                    GeneratorResumeOutcome::PropagatedException => {
+                        return Err(self.iteration_error_from_state("filter() iterator failed")?);
+                    }
+                };
+                let include = if matches!(predicate, Value::None) {
+                    self.truthy_from_value(&item)?
+                } else {
+                    match self.call_internal(
+                        predicate.clone(),
+                        vec![item.clone()],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(result) => self.truthy_from_value(&result)?,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(RuntimeError::new("filter() predicate raised"));
+                        }
+                    }
+                };
+                if include {
+                    let mut iter = iterator_ref.kind_mut();
+                    if let Object::Iterator(state) = &mut *iter
+                        && let IteratorKind::Filter { .. } = &mut state.kind
+                    {
+                        state.index = state.index.saturating_add(1);
+                    }
+                    return Ok(Some(item));
+                }
             },
             PendingIteratorStep::FilterFalseAdvance {
                 predicate,
@@ -13626,7 +13634,9 @@ impl Vm {
                 self.builtin_datetime_delta_truediv(args, kwargs)
             }
             BuiltinFunction::DateTimeDeltaMod => self.builtin_datetime_delta_mod(args, kwargs),
-            BuiltinFunction::DateTimeDeltaDivMod => self.builtin_datetime_delta_divmod(args, kwargs),
+            BuiltinFunction::DateTimeDeltaDivMod => {
+                self.builtin_datetime_delta_divmod(args, kwargs)
+            }
             BuiltinFunction::DateTimeDeltaRepr => self.builtin_datetime_delta_repr(args, kwargs),
             BuiltinFunction::DateTimeDeltaStr => self.builtin_datetime_delta_str(args, kwargs),
             BuiltinFunction::DateTimeTimezoneInit => {

@@ -20,13 +20,13 @@ use super::{
     SOURCELESS_FILE_LOADER, TraceFrame, Value, Vm, and_values, apply_bindings, bind_arguments,
     builtin_exception_parent, class_attr_lookup, class_attr_lookup_direct, decode_call_counts,
     deref_name, dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked,
-    exception_message_from_call_args, format_repr, format_value,
-    is_comprehension_code, is_import_error_family, is_os_error_family, is_truthy, lshift_values,
-    memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
-    memoryview_format_for_view, memoryview_layout_1d_from_parts,
-    module_globals_version, pos_value, pow_values, rshift_values, runtime_error_matches_exception,
-    slice_bounds_for_step_one, slice_indices, slot_names_from_value, source_path_from_cache_path,
-    value_from_bigint, value_from_object_ref, value_to_int, value_to_optional_index,
+    exception_message_from_call_args, format_repr, format_value, is_comprehension_code,
+    is_import_error_family, is_os_error_family, is_truthy, lshift_values, memoryview_bounds,
+    memoryview_element_offset, memoryview_encode_element, memoryview_format_for_view,
+    memoryview_layout_1d_from_parts, module_globals_version, pos_value, pow_values, rshift_values,
+    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
+    slot_names_from_value, source_path_from_cache_path, value_from_bigint, value_from_object_ref,
+    value_to_int, value_to_optional_index,
 };
 use crate::bytecode::Location;
 use crate::runtime::{ExceptionTracebackFrame, SliceValue};
@@ -1116,8 +1116,7 @@ impl Vm {
     ) -> Result<Option<Value>, RuntimeError> {
         let target = instr
             .arg
-            .ok_or_else(|| RuntimeError::new("missing send target"))?
-            as usize;
+            .ok_or_else(|| RuntimeError::new("missing send target"))? as usize;
         let sent = self.pop_value()?;
         let iter = self.pop_value()?;
         if sent == Value::None
@@ -1180,14 +1179,16 @@ impl Vm {
         let owner_id = owner.id();
         let (iter_opt, source_opt, sent, thrown, resume_kind) = {
             let frame = self.frames.last_mut().expect("frame exists");
-            let source =
-                if frame.yield_from_iter.is_some() {
-                    None
-                } else {
-                    Some(frame.stack.pop().ok_or_else(|| {
-                        RuntimeError::new("stack underflow (Send source)")
-                    })?)
-                };
+            let source = if frame.yield_from_iter.is_some() {
+                None
+            } else {
+                Some(
+                    frame
+                        .stack
+                        .pop()
+                        .ok_or_else(|| RuntimeError::new("stack underflow (Send source)"))?,
+                )
+            };
             let iter = frame.yield_from_iter.take();
             let sent = frame.generator_resume_value.take().unwrap_or(Value::None);
             let thrown = frame.generator_pending_throw.take();
@@ -1261,8 +1262,7 @@ impl Vm {
                     return Err(RuntimeError::new("generator ignored GeneratorExit"));
                 }
                 if self.active_generator_resume == Some(owner_id) {
-                    self.generator_resume_outcome =
-                        Some(GeneratorResumeOutcome::Yield(value));
+                    self.generator_resume_outcome = Some(GeneratorResumeOutcome::Yield(value));
                 } else if let Some(caller) = self.frames.last_mut() {
                     caller.stack.push(value);
                 } else {
@@ -8876,8 +8876,11 @@ impl Vm {
 
     #[inline]
     fn clear_stale_yield_from_on_handler_entry(frame: &mut Frame) {
-        let current_opcode =
-            frame.code.instructions.get(frame.last_ip).map(|instr| instr.opcode);
+        let current_opcode = frame
+            .code
+            .instructions
+            .get(frame.last_ip)
+            .map(|instr| instr.opcode);
         // Only clear delegated-yield state when the exception was raised from
         // `YIELD_FROM`/`SEND` handling itself. This fixes stale await delegates
         // while avoiding unrelated handler-path regressions.
@@ -14369,7 +14372,7 @@ impl Vm {
         self.alloc_native_bound_method(NativeMethodKind::ObjectReduceExBound, wrapper)
     }
 
-    pub(super) fn load_dunder_class_attr(&self, value: &Value) -> Result<Value, RuntimeError> {
+    pub(super) fn load_dunder_class_attr(&mut self, value: &Value) -> Result<Value, RuntimeError> {
         if let Value::Module(module) = value
             && let Object::Module(module_data) = &*module.kind()
             && let Some(Value::Class(class)) = module_data.globals.get("__class__")
@@ -14378,6 +14381,9 @@ impl Vm {
         }
         if let Some(class) = self.class_of_value(value) {
             return Ok(Value::Class(class));
+        }
+        if let Some(runtime_type) = self.iterator_runtime_type_value(value) {
+            return Ok(runtime_type);
         }
         if let Value::Function(_) = value
             && let Some(class) = self.types_module_or_private_class("FunctionType")
@@ -14405,7 +14411,8 @@ impl Vm {
         {
             return Ok(Value::Class(class));
         }
-        BuiltinFunction::Type.call(&self.heap, vec![value.clone()])
+        let type_value = BuiltinFunction::Type.call(&self.heap, vec![value.clone()])?;
+        Ok(self.normalize_runtime_type_value(type_value))
     }
 
     pub(super) fn property_descriptor_parts(
