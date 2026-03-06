@@ -228,7 +228,7 @@ jobs:
         if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
         run: |
           cd tap
-          if git diff --quiet -- Formula/pyrs.rb; then
+          if git ls-files --error-unmatch Formula/pyrs.rb >/dev/null 2>&1 && git diff --quiet -- Formula/pyrs.rb; then
             echo "Formula already up to date"
             exit 0
           fi
