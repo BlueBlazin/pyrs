@@ -67,7 +67,7 @@ const isActive = (href: string) => {
 		border: 1px solid #232a38;
 		border-radius: 0.82rem;
 		background: #0c1119;
-		overflow: clip;
+		overflow: hidden;
 	}
 
 	.sidebar-summary {
@@ -89,6 +89,27 @@ const isActive = (href: string) => {
 
 	.sidebar-inner {
 		padding: 0.86rem 0.78rem 0.88rem;
+		max-height: calc(100vh - 4rem);
+		overflow-y: auto;
+		scrollbar-width: thin;
+		scrollbar-color: rgba(88, 108, 140, 0.45) transparent;
+	}
+
+	.sidebar-inner::-webkit-scrollbar {
+		width: 4px;
+	}
+
+	.sidebar-inner::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	.sidebar-inner::-webkit-scrollbar-thumb {
+		background: rgba(88, 108, 140, 0.45);
+		border-radius: 999px;
+	}
+
+	.sidebar-inner::-webkit-scrollbar-thumb:hover {
+		background: rgba(88, 108, 140, 0.7);
 	}
 
 	.sidebar-title {
@@ -173,6 +194,8 @@ const isActive = (href: string) => {
 
 		.sidebar-inner {
 			padding-top: 0.32rem;
+			max-height: none;
+			overflow-y: visible;
 		}
 	}
 </style>
