@@ -11,7 +11,8 @@ import DataTable from "../../components/docs/DataTable.astro";
 import Callout from "../../components/docs/Callout.astro";
 
 <DocSection>
-	This page describes how PYRS resolves stdlib roots and import paths in CLI and script execution.
+	This page describes how PYRS chooses a CPython 3.14 stdlib root and what extra import entries are
+	added in CLI and script execution.
 </DocSection>
 
 <DocSection title="Path Resolution Rules">
@@ -19,23 +20,70 @@ import Callout from "../../components/docs/Callout.astro";
 		<tr>
 			<td><code>PYRS_CPYTHON_LIB</code></td>
 			<td>
-				When set, PYRS treats it as the explicit stdlib root and resolves CPython stdlib modules from
-				that location.
+				When set, PYRS treats it as the explicit stdlib root, keeps stdlib imports isolated to that
+				tree, and only borrows a host <code>lib-dynload</code> directory if the chosen root does not
+				include one.
 			</td>
+		</tr>
+		<tr>
+			<td>Binary-relative managed stdlib</td>
+			<td>
+				Installed binaries first look next to the executable, preferring
+				<code>../share/pyrs/stdlib/3.14.3/Lib</code> and then older binary-relative layouts used by
+				Homebrew/dev packaging.
+			</td>
+		</tr>
+		<tr>
+			<td>GitHub installer data root</td>
+			<td>
+				The shell installer stages bundled stdlib content under
+				<code>${"{XDG_DATA_HOME:-~/.local/share}"}/pyrs/stdlib/3.14.3/Lib</code>. The legacy
+				<code>~/.local/share/pyrs/...</code> location is still recognized for older installs.
+			</td>
+		</tr>
+		<tr>
+			<td>Repo-local dev fallback</td>
+			<td><code>.local/Python-3.14.3/Lib</code> is accepted for local contributor/development workflows.</td>
+		</tr>
+		<tr>
+			<td><code>PYTHONHOME</code></td>
+			<td>Falls back to <code>PYTHONHOME/lib/python3.14</code> when no managed or explicit root is selected.</td>
+		</tr>
+		<tr>
+			<td>Host CPython 3.14 roots</td>
+			<td>Framework/system CPython 3.14 locations on macOS and Linux are used as the final stdlib fallback.</td>
 		</tr>
 		<tr>
 			<td>Host <code>lib-dynload</code> fallback</td>
-			<td>
-				Used only when the configured stdlib root does not contain its own dynamic-loader directory.
-			</td>
-		</tr>
-		<tr>
-			<td>Script directory</td>
-			<td>
-				In script mode, the script’s directory participates in import resolution similar to CPython.
-			</td>
+			<td>Used only when the selected stdlib root does not contain its own dynamic-loader directory.</td>
 		</tr>
 	</DataTable>
+</DocSection>
+
+<DocSection title="Extra Import Entries">
+	<DataTable headers={["Source", "Behavior"]}>
+		<tr>
+			<td>Script mode</td>
+			<td>The executed script's parent directory is prepended to import resolution.</td>
+		</tr>
+		<tr>
+			<td><code>-m</code> mode</td>
+			<td>The current working directory is prepended before resolving the target module.</td>
+		</tr>
+		<tr>
+			<td><code>PYTHONPATH</code></td>
+			<td>Additional search entries are appended during startup path setup.</td>
+		</tr>
+		<tr>
+			<td><code>VIRTUAL_ENV</code></td>
+			<td>Detected <code>site-packages</code> paths under the active virtualenv are appended when present.</td>
+		</tr>
+	</DataTable>
+	<Callout title="Compatibility Flag Detail">
+		Accepted <code>-I</code> and <code>-E</code> flags currently suppress <code>PYTHONWARNINGS</code> ingest,
+		but they do not yet disable <code>PYTHONPATH</code>, <code>PYTHONHOME</code>, <code>VIRTUAL_ENV</code>, or
+		managed-stdlib discovery.
+	</Callout>
 </DocSection>
 
 <DocSection title="Common Local Workflow">
@@ -50,6 +98,8 @@ import Callout from "../../components/docs/Callout.astro";
 <DocSection title="Troubleshooting Imports">
 	<ul class="docs-list">
 		<li>If a stdlib module is missing, verify `PYRS_CPYTHON_LIB` points to a valid CPython 3.14 `Lib` tree.</li>
+		<li>For GitHub-installer setups, verify the managed bundle exists under `${XDG_DATA_HOME:-~/.local/share}/pyrs/stdlib/3.14.3/Lib`.</li>
+		<li>For Cargo or direct-archive installs, provide CPython 3.14 yourself or set `PYRS_CPYTHON_LIB` explicitly.</li>
 		<li>For environment-specific issues, test with `pyrs -S -c ...` to isolate startup import effects.</li>
 		<li>Keep virtualenv activation separate from parity harness runs if you need stable baseline behavior.</li>
 	</ul>

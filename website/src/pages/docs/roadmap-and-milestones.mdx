@@ -1,8 +1,8 @@
 ---
 layout: ../../layouts/DocsLayout.astro
-title: PYRS Docs | Roadmap and Milestones
-description: Milestone status and release-readiness framing for PYRS.
-pageTitle: Roadmap and Milestones
+title: PYRS Docs | Roadmap and Workstreams
+description: Current workstreams and closure gates for PYRS.
+pageTitle: Roadmap and Workstreams
 ---
 
 import DocSection from "../../components/docs/DocSection.astro";
@@ -10,52 +10,68 @@ import DataTable from "../../components/docs/DataTable.astro";
 import Callout from "../../components/docs/Callout.astro";
 
 <DocSection>
-	PYRS roadmap is milestone-driven with CPython parity and engineering gates as closure criteria.
+	The original numbered milestone plan is now historical context rather than the authoritative day-to-day
+	tracker. Current planning is workstream-based and closes against explicit parity, readiness, and probe gates.
 </DocSection>
 
-<DocSection title="Milestone Status Snapshot">
-	<DataTable headers={["Milestone", "Status"]}>
-		<tr><td><code>0-12</code></td><td>Complete</td></tr>
-		<tr><td><code>13</code></td><td>In progress (long-tail parity and stdlib usability closure)</td></tr>
-		<tr><td><code>14</code></td><td>Pending (performance and architecture hardening)</td></tr>
-		<tr><td><code>15</code></td><td>In progress (active execution lock: native extension ecosystem)</td></tr>
-		<tr><td><code>16</code></td><td>Pending (release hardening and certification)</td></tr>
+<DocSection title="Current Workstreams">
+	<DataTable headers={["Workstream", "Current focus"]}>
+		<tr>
+			<td>Release readiness</td>
+			<td>Installation polish, public docs accuracy, supported-platform packaging, and remaining pre-release hardening.</td>
+		</tr>
+		<tr>
+			<td>Runtime + stdlib long tail</td>
+			<td>CPython 3.14 parity closure across remaining stdlib/runtime edge behavior and mapped test gaps.</td>
+		</tr>
+		<tr>
+			<td>Native extensions + scientific stack</td>
+			<td>C-API lifetime-model closure, NumPy bring-up blockers, and broader extension compatibility for real workloads.</td>
+		</tr>
+		<tr>
+			<td>Performance + architecture</td>
+			<td>Observability, benchmark discipline, and deeper VM/runtime cleanup without regressing semantics.</td>
+		</tr>
 	</DataTable>
 </DocSection>
 
-<DocSection title="Current Active Execution Lock">
+<DocSection title="How Closure Is Tracked">
 	<DataTable headers={["Workstream", "Current focus"]}>
 		<tr>
-			<td>Milestone 15</td>
-			<td>C-API substrate closure and scientific-stack direct-mode bring-up.</td>
+			<td>Release blockers</td>
+			<td><code>docs/PRODUCTION_READINESS.md</code> and <code>docs/STUB_ACCOUNTING.md</code>.</td>
 		</tr>
 		<tr>
-			<td>Lane A</td>
-			<td>CPython 3.14 Stable ABI surface closure and conformance maintenance.</td>
+			<td>Stdlib/runtime baselines</td>
+			<td><code>docs/STDLIB_FULL_BASELINE.md</code> and <code>perf/stdlib_full_probe_latest.json</code>.</td>
 		</tr>
 		<tr>
-			<td>Lane B</td>
-			<td>Non-abi3 surfaces required by NumPy/scientific stack in real workloads.</td>
+			<td>Language parity</td>
+			<td><code>docs/LANGUAGE_FEATURE_MANIFEST.json</code> and the latest language coverage artifacts.</td>
+		</tr>
+		<tr>
+			<td>Native extensions/scientific stack</td>
+			<td><code>docs/CAPI_PLAN.md</code>, <code>docs/CAPI_LIFETIME_MODEL.md</code>, and <code>docs/NUMPY_BRINGUP_GATE.md</code>.</td>
 		</tr>
 	</DataTable>
 	<Callout title="Policy">
-		Closure is gate-driven: milestones do not close on partial behavior or temporary workaround accumulation.
+		Closure is gate-driven: workstreams do not close on partial behavior or temporary workaround accumulation.
 	</Callout>
 </DocSection>
 
-<DocSection title="Release Readiness Framing">
+<DocSection title="Legacy Milestone Note">
 	<DataTable headers={["Area", "Rule"]}>
 		<tr>
-			<td>Milestone 13 closure</td>
-			<td>All P0 readiness blockers and stub-accounting P0 rows must be closed.</td>
+			<td>Historical numbering</td>
+			<td>The old 0-16 milestone map is still useful as rough historical scope, but it is no longer the primary status source.</td>
 		</tr>
 		<tr>
-			<td>Milestone 15 closure</td>
-			<td>Extension capability matrix P0 rows and NumPy bring-up gate criteria must be green.</td>
+			<td>Current practice</td>
+			<td>Use the linked readiness/probe docs for current status instead of assuming milestone labels are current.</td>
 		</tr>
 		<tr>
-			<td>Milestone 16</td>
-			<td>Release certification gates across supported platforms and artifact policy.</td>
+			<td>Why keep this page</td>
+			<td>It gives high-level direction and points at the trackers that actually determine launch readiness.</td>
 		</tr>
 	</DataTable>
 </DocSection>

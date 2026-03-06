@@ -18,12 +18,12 @@ import { withBasePath } from "../../lib/paths";
 
 <DocSection>
 	PYRS is a Python interpreter in Rust targeting CPython 3.14 compatibility. This page covers the
-	fastest way to install, verify, and run code.
+	fastest way to install, verify, and run code on supported native targets.
 </DocSection>
 
 <DocSection title="Prerequisites" toc={false}>
 	<ul class="docs-list">
-		<li>macOS or Linux</li>
+		<li>macOS (<code>x86_64</code> or <code>aarch64</code>) or Linux (<code>x86_64</code>)</li>
 		<li><code>curl</code> and <code>tar</code> for the one-command installer</li>
 		<li>Homebrew (optional, macOS only) for <code>brew install --HEAD ...</code></li>
 		<li>Rust stable toolchain only for Cargo/source-build paths</li>

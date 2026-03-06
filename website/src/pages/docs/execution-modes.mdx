@@ -1,7 +1,7 @@
 ---
 layout: ../../layouts/DocsLayout.astro
 title: PYRS Docs | Execution Modes
-description: How PYRS runs code in REPL, script, command, stdin, and bytecode modes.
+description: How PYRS runs code in REPL, stdin, module, script, command, and bytecode modes.
 pageTitle: Execution Modes
 ---
 
@@ -12,7 +12,7 @@ import Callout from "../../components/docs/Callout.astro";
 
 <DocSection>
 	PYRS supports CPython-style execution entry points for interactive use, one-shot commands,
-	script execution, and <code>.pyc</code> execution.
+	module mode, script execution, stdin, and <code>.pyc</code> execution.
 </DocSection>
 
 <DocSection title="Mode Overview">
@@ -34,6 +34,10 @@ import Callout from "../../components/docs/Callout.astro";
 			<td>Executes CPython bytecode file through the VM bytecode path.</td>
 		</tr>
 		<tr>
+			<td><code>pyrs -m package.module</code></td>
+			<td>Resolves a library module from the current working directory/import path and runs it as a script.</td>
+		</tr>
+		<tr>
 			<td><code>pyrs -c "..."</code></td>
 			<td>Executes inline command string with CPython-shaped command mode semantics.</td>
 		</tr>
@@ -51,10 +55,18 @@ import Callout from "../../components/docs/Callout.astro";
 			<td><code>["-c", ...args]</code></td>
 		</tr>
 		<tr>
+			<td><code>-m</code> mode</td>
+			<td><code>[resolved_module_origin, ...module_args]</code></td>
+		</tr>
+		<tr>
 			<td>REPL/stdin mode</td>
 			<td><code>[""]</code></td>
 		</tr>
 	</DataTable>
+	<Callout title="Module Mode Detail">
+		In <code>-m</code> mode, <code>sys.argv[0]</code> is rewritten to the resolved module file path,
+		not the module import name.
+	</Callout>
 </DocSection>
 
 <DocSection title="Startup Controls">
@@ -65,7 +77,7 @@ import Callout from "../../components/docs/Callout.astro";
 		</tr>
 		<tr>
 			<td><code>-I</code>, <code>-E</code></td>
-			<td>Accepted CPython compatibility flags; disables environment-driven warning option ingest.</td>
+			<td>Accepted CPython compatibility flags; currently suppress only <code>PYTHONWARNINGS</code> ingest.</td>
 		</tr>
 		<tr>
 			<td><code>PYRS_CPYTHON_LIB</code></td>
@@ -86,6 +98,7 @@ import Callout from "../../components/docs/Callout.astro";
 	<CommandBlock
 		commands={[
 			'pyrs -c "import sys; print(sys.argv)" one two',
+			"pyrs -m http.server 8000",
 			"pyrs path/to/script.py arg1 arg2",
 			"pyrs -S path/to/script.py",
 			"echo 'print(40 + 2)' | pyrs",

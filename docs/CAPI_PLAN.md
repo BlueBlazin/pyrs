@@ -1,6 +1,6 @@
 # CPython C-API Plan (ABI-First, NumPy-Focused)
 
-Status: active (Milestone 15 execution strategy).
+Status: active execution lock for extension compatibility and scientific-stack bring-up.
 
 ## Execution Lock (Do Not Derail)
 

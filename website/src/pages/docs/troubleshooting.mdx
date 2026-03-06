@@ -19,11 +19,18 @@ import { withBasePath } from "../../lib/paths";
 	<DataTable headers={["Symptom", "Checks"]}>
 		<tr>
 			<td>Stdlib import fails unexpectedly</td>
-			<td>Verify <code>PYRS_CPYTHON_LIB</code> points to a valid CPython 3.14 <code>Lib/</code> tree.</td>
+			<td>
+				Verify <code>PYRS_CPYTHON_LIB</code> points to a valid CPython 3.14 <code>Lib/</code> tree, or
+				check the managed bundle under <code>${"{XDG_DATA_HOME:-~/.local/share}"}/pyrs/stdlib/3.14.3/Lib</code>.
+			</td>
 		</tr>
 		<tr>
 			<td>Startup fails on <code>site</code> import</td>
 			<td>Run with <code>-S</code> to isolate startup behavior, then validate stdlib root contents.</td>
+		</tr>
+		<tr>
+			<td><code>-I</code> or <code>-E</code> did not ignore path-related env vars</td>
+			<td>Those flags are currently compatibility no-ops except for suppressing <code>PYTHONWARNINGS</code> ingest.</td>
 		</tr>
 		<tr>
 			<td>Different imports in virtualenv vs non-virtualenv runs</td>

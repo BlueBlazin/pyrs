@@ -1,6 +1,6 @@
 # NumPy Bring-Up Gate
 
-Status: active (Milestone 15).
+Status: active extension-compatibility bring-up lane.
 
 Purpose: track direct native-extension execution gates for NumPy and scientific-stack bring-up.
 

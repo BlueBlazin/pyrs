@@ -4,38 +4,45 @@
 This is the canonical forward plan for delivering a production-grade CPython 3.14-compatible interpreter.
 It is intentionally state-oriented, not a historical changelog.
 
+## Status Note
+
+The original numbered milestone plan is now historical context rather than the authoritative day-to-day
+tracker. Current planning is workstream-based and closes against the explicit gates in:
+- `docs/PRODUCTION_READINESS.md`
+- `docs/STUB_ACCOUNTING.md`
+- `docs/CAPI_PLAN.md`
+- `docs/CAPI_LIFETIME_MODEL.md`
+- `docs/NUMPY_BRINGUP_GATE.md`
+- latest `perf/*_latest.json` probe artifacts
+
 ## Project Direction
 - Correctness first, then performance.
 - CPython behavior fidelity over local convenience APIs.
 - Minimal, justified dependencies.
 - Clean boundaries between parser, compiler, VM, runtime, and stdlib substrate.
-- Milestones close only when parity gates are satisfied (not "basic compat").
+- Workstreams close only when parity gates are satisfied (not "basic compat").
 
-## Milestone State
-| Milestone | Scope | Status |
-|---|---|---|
-| 0 | Parser/AST bootstrap | Complete |
-| 1 | Runtime identity + GC foundations | Complete |
-| 2 | CPython bytecode intake foundations | Complete |
-| 3 | Closures + frames + traceback foundations | Complete |
-| 4 | Generator/iteration parity core | Complete |
-| 5 | Opcode hardening + supported `.pyc` read/write | Complete |
-| 6 | Import-system parity foundations | Complete |
-| 7 | Language surface expansion (core modern syntax) | Complete |
-| 8 | Data-model semantics foundations | Complete |
-| 9 | Core runtime types + stdlib bootstrap | Complete |
-| 10 | Async/concurrency foundations | Complete |
-| 11 | Test/parity gate infrastructure | Complete |
-| 12 | Curated language/import harness closure | Complete |
-| 13 | Long-tail parity + stdlib usability closure | In Progress (background) |
-| 14 | Performance + observability + architecture hardening | Pending |
-| 15 | Native extension ecosystem compatibility | In Progress (active) |
-| 16 | Release hardening/certification | Pending |
+## Current Workstreams
 
-## Active Execution Lock: Milestone 15
+- Release readiness:
+  - install/release packaging polish
+  - supported-platform hardening
+  - public docs accuracy
+- Runtime + stdlib long tail:
+  - remaining CPython parity gaps across stdlib/runtime edge cases
+  - mapped test-lane closure and regression containment
+- Native extensions + scientific stack:
+  - C-API lifetime/ownership closure
+  - NumPy/scientific-stack direct-mode blockers
+  - broader extension compatibility work
+- Performance + architecture:
+  - benchmark/observability discipline
+  - deeper runtime cleanup without semantic regressions
+
+## Active Execution Lock: Extension Compatibility
 
 ### Exit Criteria
-Milestone 15 is complete only when all are true:
+This execution lock is complete only when all are true:
 1. Extension capability matrix P0 rows are closed (`docs/EXTENSION_CAPABILITY_MATRIX.md`).
 2. `docs/NUMPY_BRINGUP_GATE.md` base gates are green and scientific-stack blockers are either closed or explicitly downgraded with accepted scope.
 3. C-API lifetime-model closure criteria are satisfied (`docs/CAPI_LIFETIME_MODEL.md`).
@@ -60,22 +67,24 @@ Milestone 15 is complete only when all are true:
   - probe artifacts in `perf/numpy_gate_direct_latest.json`
   - CI gate integration and stability lanes
 
-## Milestone 13 (Still Open)
+## Legacy Milestone Map
 
-Milestone 13 remains open and is tracked in parallel for stdlib/runtime long-tail parity.
-Its closure criteria remain in:
+The old milestone numbering remains useful as rough historical scope. For current status, use the linked
+gate docs instead of treating those milestone labels as authoritative.
+
+Long-tail stdlib/runtime closure is tracked in:
 - `docs/PRODUCTION_READINESS.md`
 - `docs/STUB_ACCOUNTING.md`
 - `docs/ENGINEERING_GATES.md`
 
-## Milestone 14 (Performance and Architecture)
+## Legacy Milestone 14 (Performance and Architecture)
 Deliverables:
 - close remaining throughput backlog in `docs/OPTIMIZATION_BACKLOG.md`
 - enforce clone/allocation discipline on hot paths
 - continue VM/runtime decomposition for maintainability
 - keep benchmark and observability gates integrated into CI
 
-## Milestone 15 (Extension Ecosystem)
+## Legacy Milestone 15 (Extension Ecosystem)
 Deliverables:
 - limited C-API/abi3 execution path for supported surfaces
 - extension capability matrix and packaging/build contract:
@@ -89,7 +98,7 @@ Deliverables:
 - NumPy bring-up gate scaffold (`import numpy` + first ndarray smoke)
 - architecture and delivery gates follow `docs/EXTENSION_ECOSYSTEM_DESIGN.md`
 
-## Milestone 16 (Release Hardening)
+## Legacy Milestone 16 (Release Hardening)
 Deliverables:
 - security/reliability release gates
 - Linux/macOS/Windows qualification matrix

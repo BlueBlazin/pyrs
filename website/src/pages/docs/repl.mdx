@@ -12,15 +12,17 @@ import ReplTranscript from "../../components/docs/ReplTranscript.astro";
 import { withBasePath } from "../../lib/paths";
 
 <DocSection>
-	PYRS gives you three execution paths: interactive REPL, inline command mode, and script-file mode.
-	This page focuses on high-signal REPL usage and when to switch to non-interactive runs.
+	PYRS supports interactive REPL, stdin, inline command mode, module mode, script-file mode, and
+	<code>.pyc</code> execution. This page focuses on high-signal REPL usage and when to switch to
+	non-interactive runs.
 </DocSection>
 
 <DocSection title="Start in REPL First">
 	<p>Use REPL for rapid iteration and exploratory debugging:</p>
 	<CommandBlock commands={["pyrs"]} />
 	<Callout title="When Not to Use REPL">
-		For deterministic one-shot commands and CI, prefer `pyrs -c "..."` or `pyrs path/to/script.py`.
+		For deterministic one-shot commands and CI, prefer <code>pyrs -c "..."</code>,
+		<code>pyrs -m module</code>, or <code>pyrs path/to/script.py</code>.
 	</Callout>
 </DocSection>
 
@@ -161,11 +163,12 @@ import { withBasePath } from "../../lib/paths";
 	<ul class="docs-list">
 		<li><code>Ctrl+D</code> exits the REPL on macOS/Linux terminals.</li>
 		<li><code>Ctrl+C</code> interrupts the running statement where supported.</li>
-		<li>Use `-c` or script mode for reproducible automation and CI checks.</li>
+		<li>Use <code>-c</code>, <code>-m</code>, or script mode for reproducible automation and CI checks.</li>
 	</ul>
 	<CommandBlock
 		commands={[
 			'pyrs -c "import platform; print(platform.python_version())"',
+			"pyrs -m http.server 8000",
 			"pyrs path/to/script.py",
 		]}
 	/>

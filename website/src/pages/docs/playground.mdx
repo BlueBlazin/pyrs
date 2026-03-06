@@ -13,9 +13,9 @@ import { withBasePath } from "../../lib/paths";
 
 <DocSection>
 	The browser playground lives at <a href={withBasePath("/playground/")}><code>/playground</code></a>.
-	It auto-loads the wasm runtime and provides a minimal REPL-focused interface.
-	Runtime execution is handled in a dedicated Web Worker so command execution
-	does not run on the page UI thread.
+	It auto-loads the website's <code>wasm-vm-probe</code> bundle, pre-registers a curated stdlib subset
+	from <code>/wasm/stdlib_subset_v1.json</code>, and provides a minimal REPL-focused interface. Runtime
+	execution is handled in a dedicated Web Worker so command execution does not run on the page UI thread.
 </DocSection>
 
 <DocSection title="Quick Start">
@@ -32,6 +32,27 @@ pnpm --dir website dev
 	<Callout title="Input model" tone="note">
 		Press <code>Enter</code> to execute. Use <code>Shift</code> + <code>Enter</code> for multiline input.
 	</Callout>
+	<Callout title="Scope">
+		The playground is for fast exploration, not a full native install. It ships a curated stdlib subset
+		and reports unsupported modules/capabilities explicitly instead of silently falling back.
+	</Callout>
+</DocSection>
+
+<DocSection title="What The Playground Loads">
+	<DataTable headers={["Component", "Behavior"]}>
+		<tr>
+			<td>Wasm runtime</td>
+			<td>The website bundle is built with <code>wasm-vm-probe</code>, so runtime execution is enabled in the worker.</td>
+		</tr>
+		<tr>
+			<td>Stdlib content</td>
+			<td>A curated virtual stdlib subset is registered before the REPL session starts; full CPython stdlib is not shipped in-browser.</td>
+		</tr>
+		<tr>
+			<td>Unsupported surfaces</td>
+			<td>Snippets that need missing modules or unsupported runtime capabilities return explicit stderr/blocker output.</td>
+		</tr>
+	</DataTable>
 </DocSection>
 
 <DocSection title="Runtime Status Signals">
@@ -47,7 +68,7 @@ pnpm --dir website dev
 		</tr>
 		<tr>
 			<td><code>ready</code></td>
-			<td>Runtime loaded and REPL execution is available for this build mode.</td>
+			<td>Runtime loaded, worker ready, and the curated stdlib subset has been registered.</td>
 			<td>Run snippets normally.</td>
 		</tr>
 		<tr>
@@ -73,7 +94,7 @@ pnpm --dir website dev
 		</tr>
 		<tr>
 			<td>stderr</td>
-			<td>Runtime errors, compile/syntax failures, or unsupported capability messages.</td>
+			<td>Runtime errors, compile/syntax failures, missing-module messages, or unsupported capability messages.</td>
 		</tr>
 	</DataTable>
 </DocSection>

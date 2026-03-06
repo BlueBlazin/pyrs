@@ -11,8 +11,9 @@ import CommandBlock from "../../components/docs/CommandBlock.astro";
 import Callout from "../../components/docs/Callout.astro";
 
 <DocSection>
-	Native extension support is an active Milestone 15 workstream. PYRS targets a disciplined,
-	CPython-semantics-first extension substrate rather than ad-hoc compatibility shims.
+	Native extension support is an active workstream focused on C-API closure and scientific-stack
+	bring-up. PYRS targets a disciplined, CPython-semantics-first extension substrate rather than ad-hoc
+	compatibility shims.
 </DocSection>
 
 <DocSection title="Compatibility Modes">
@@ -73,7 +74,7 @@ import Callout from "../../components/docs/Callout.astro";
 		</tr>
 	</DataTable>
 	<Callout title="Execution Lock">
-		C-API lifetime-model closure and scientific-stack bring-up are currently the primary execution lock.
+		C-API lifetime-model closure and scientific-stack bring-up are currently the primary extension-compatibility execution lock.
 	</Callout>
 </DocSection>
 

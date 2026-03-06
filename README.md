@@ -29,7 +29,7 @@
 | Area | Current State |
 | --- | --- |
 | Compatibility target | CPython 3.14 |
-| Core execution paths | Source (`.py`), bytecode (`.pyc`), interactive REPL |
+| Core execution paths | REPL/stdin, module (`-m`), source (`.py`), and bytecode (`.pyc`) |
 | Platform priority | Linux (`x86_64`) and macOS (`x86_64`, `aarch64`) |
 | C-extension support | In progress (scientific stack bring-up underway) |
 | Local test runner | `cargo nextest run` |
@@ -40,7 +40,7 @@
 
 ## Quick Start
 
-Install from GitHub Releases (binary + bundled CPython 3.14.3 stdlib). Default channel is nightly:
+Install from GitHub Releases (binary, plus bundled CPython 3.14.3 stdlib only when needed). Default channel is nightly:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash
@@ -75,7 +75,7 @@ pyrs path/to/script.py
 curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash
 ```
 
-Stable tagged channel:
+Published release channel:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash -s -- --stable
@@ -118,6 +118,9 @@ cargo build --release
 brew install --HEAD blueblazin/tap/pyrs
 ```
 
+Homebrew keeps the bundled stdlib inside the keg under `share/pyrs/stdlib/3.14.3/Lib`, so it does not
+reuse or overwrite a system CPython install and is removed by `brew uninstall`.
+
 Uninstall with:
 
 ```bash
@@ -145,6 +148,7 @@ These archives are binary-only. Use them when CPython 3.14 is already available 
 
 ```bash
 pyrs                         # REPL (or stdin when piped)
+pyrs -m package.module       # library module as a script
 pyrs path/to/script.py       # source file
 pyrs path/to/module.pyc      # CPython bytecode file
 pyrs -c "print('hello')"     # inline source
@@ -170,8 +174,10 @@ pyrs --bytecode path/to/script.py
 
 ```text
 PYRS_CPYTHON_LIB   explicit CPython stdlib root
+XDG_DATA_HOME      managed stdlib install root for the GitHub installer
 PYRS_REPL_THEME    auto | dark | light
 PYTHONPATH         additional import search paths
+VIRTUAL_ENV        detected venv site-packages roots
 ```
 
 ## Status

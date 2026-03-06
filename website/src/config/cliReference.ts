@@ -20,6 +20,10 @@ export const invocationModeRows: ReferenceRow[] = [
 		left: "pyrs -c \"code\"",
 		right: "Execute inline source passed on the command line.",
 	},
+	{
+		left: "pyrs -m package.module",
+		right: "Resolve and run a library module as a script.",
+	},
 ];
 
 export const cliFlagRows: ReferenceRow[] = [
@@ -44,6 +48,10 @@ export const cliFlagRows: ReferenceRow[] = [
 		right: "Disable automatic site import at startup.",
 	},
 	{
+		left: "-m <module>",
+		right: "Run a library module as a script using CPython-shaped module mode.",
+	},
+	{
 		left: "-W option, -Woption",
 		right: "Configure warning filters.",
 	},
@@ -57,14 +65,18 @@ export const cliFlagRows: ReferenceRow[] = [
 	},
 	{
 		left: "-I, -E, -u, -B",
-		right: "Accepted CPython compatibility flags (-I and -E disable env-based startup configuration).",
+		right: "Accepted CPython compatibility flags; currently no-op except that -I and -E suppress PYTHONWARNINGS ingest.",
 	},
 ];
 
 export const envVarRows: ReferenceRow[] = [
 	{
 		left: "PYRS_CPYTHON_LIB",
-		right: "Set explicit CPython stdlib root used for imports.",
+		right: "Set explicit CPython stdlib root; PYRS keeps stdlib imports isolated to that tree and borrows host lib-dynload only when needed.",
+	},
+	{
+		left: "XDG_DATA_HOME",
+		right: "Changes where installer-managed stdlib bundles are discovered (${XDG_DATA_HOME}/pyrs/stdlib/3.14.3/Lib).",
 	},
 	{
 		left: "PYRS_REPL_THEME",
@@ -75,8 +87,16 @@ export const envVarRows: ReferenceRow[] = [
 		right: "Startup warning filters consumed by warning configuration.",
 	},
 	{
-		left: "PYTHONPATH, PYTHONHOME",
-		right: "Participate in module and stdlib path resolution.",
+		left: "PYTHONPATH",
+		right: "Additional module search entries appended during startup path setup.",
+	},
+	{
+		left: "PYTHONHOME",
+		right: "Fallback CPython stdlib root when no managed or explicit stdlib root is selected.",
+	},
+	{
+		left: "VIRTUAL_ENV",
+		right: "Detected virtualenv site-packages entries are appended when present.",
 	},
 	{
 		left: "COLORFGBG",
