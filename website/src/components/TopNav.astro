@@ -28,7 +28,14 @@ const navLinks =
 
 <header class="global-topbar" data-context={context}>
 	<a class="global-brand" href={withBase("")}>
-		<img src={withBase("images/pyrs-logo.webp")} alt="PYRS logo" width={intrinsicLogoSize} height={intrinsicLogoSize} />
+		<img
+			src={withBase("images/pyrs-logo-nav.webp")}
+			srcset={`${withBase("images/pyrs-logo-nav.webp")} 136w, ${withBase("images/pyrs-logo.webp")} 670w`}
+			sizes="68px"
+			alt="PYRS logo"
+			width={136}
+			height={136}
+		/>
 		<span>PYRS</span>
 	</a>
 	<nav class="global-topnav">
