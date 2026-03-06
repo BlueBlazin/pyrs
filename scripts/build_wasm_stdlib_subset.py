@@ -15,6 +15,9 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+TARGET_PYTHON_VERSION = (3, 14)
+TARGET_PYTHON_VERSION_LABEL = "3.14"
+
 DEFAULT_SEED_MODULES = [
     "functools",
     "random",
@@ -52,6 +55,15 @@ PACK_EXCLUDED_MODULES = {
 # Guardrail: these modules must never silently re-enter the curated wasm pack.
 REQUIRED_PACK_EXCLUDED_MODULES = {
     "os",
+}
+
+# Guardrail: these imports are expected in the CPython 3.14 stdlib closure for the
+# current seed set. Missing them usually means the pack was generated from the wrong
+# stdlib version (for example host Python 3.12 in CI).
+REQUIRED_CLOSURE_MODULES = {
+    "collections",
+    "functools",
+    "reprlib",
 }
 
 
@@ -100,6 +112,20 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def current_python_version_label() -> str:
+    return f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+
+
+def validate_builder_python_version() -> None:
+    if sys.version_info[:2] != TARGET_PYTHON_VERSION:
+        raise SystemExit(
+            "build_wasm_stdlib_subset.py must run under CPython "
+            f"{TARGET_PYTHON_VERSION_LABEL}.x because it computes the import closure by "
+            "executing stdlib imports.\n"
+            f"current interpreter: {current_python_version_label()}"
+        )
+
+
 def detect_cpython_lib(explicit: str | None) -> Path:
     candidates: list[Path] = []
     if explicit:
@@ -111,10 +137,6 @@ def detect_cpython_lib(explicit: str | None) -> Path:
 
     candidates.append(Path(".local/Python-3.14.3/Lib"))
 
-    stdlib = sysconfig.get_paths().get("stdlib")
-    if stdlib:
-        candidates.append(Path(stdlib))
-
     candidates.extend(
         [
             Path("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14"),
@@ -123,6 +145,10 @@ def detect_cpython_lib(explicit: str | None) -> Path:
             Path("/usr/local/lib/python3.14"),
         ]
     )
+
+    stdlib = sysconfig.get_paths().get("stdlib")
+    if stdlib:
+        candidates.append(Path(stdlib))
 
     for candidate in candidates:
         if candidate.is_dir():
@@ -285,6 +311,17 @@ def validate_closure_exclusions(closure: dict[str, ModuleSource]) -> None:
         )
 
 
+def validate_required_closure_modules(closure: dict[str, ModuleSource]) -> None:
+    missing = sorted(REQUIRED_CLOSURE_MODULES - set(closure))
+    if missing:
+        lines = "\n".join(f"- {name}" for name in missing)
+        raise SystemExit(
+            "wasm stdlib curated closure is missing required CPython 3.14 modules:\n"
+            f"{lines}\n"
+            "this usually means the pack was generated from the wrong stdlib root/version"
+        )
+
+
 def write_deterministic_zip(
     out_zip: Path,
     lib_root: Path,
@@ -397,6 +434,7 @@ def write_source_pack(
 
 def main() -> int:
     args = parse_args()
+    validate_builder_python_version()
     validate_exclusion_policy()
     lib_root = detect_cpython_lib(args.cpython_lib)
     out_zip = Path(args.out_zip)
@@ -405,6 +443,7 @@ def main() -> int:
     seed_modules = list(DEFAULT_SEED_MODULES)
     closure = collect_runtime_import_closure(lib_root, seed_modules)
     validate_closure_exclusions(closure)
+    validate_required_closure_modules(closure)
     if not closure:
         print("stdlib subset closure is empty", file=sys.stderr)
         return 1
