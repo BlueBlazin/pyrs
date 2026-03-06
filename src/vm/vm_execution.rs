@@ -29,7 +29,7 @@ use super::{
     value_to_int, value_to_optional_index,
 };
 use crate::bytecode::Location;
-use crate::runtime::{DictViewKind, ExceptionTracebackFrame, SliceValue};
+use crate::runtime::{DictViewKind, ExceptionTracebackFrame, SliceValue, builtin_type_name_info};
 
 unsafe extern "C" {
     fn PyErr_Clear();
@@ -14292,6 +14292,10 @@ impl Vm {
                 Object::Super(data) => Some(data.object_type.clone()),
                 _ => None,
             },
+            Value::Builtin(builtin) if builtin_type_name_info(*builtin).is_some() => {
+                self.default_type_metaclass()
+            }
+            Value::ExceptionType(_) => self.default_type_metaclass(),
             _ => None,
         }
     }

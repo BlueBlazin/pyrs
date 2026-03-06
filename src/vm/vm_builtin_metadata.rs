@@ -4621,8 +4621,32 @@ impl Vm {
         Ok(())
     }
 
+    fn value_is_type_object(&self, value: &Value) -> bool {
+        matches!(value, Value::Class(_) | Value::ExceptionType(_))
+            || matches!(value, Value::Builtin(builtin) if self.builtin_is_type_object(*builtin))
+    }
+
+    fn type_object_receiver_ref(&mut self, value: &Value) -> Option<ObjRef> {
+        match value {
+            Value::Class(class) => Some(class.clone()),
+            Value::Builtin(builtin) if self.builtin_is_type_object(*builtin) => {
+                self.class_from_base_value(Value::Builtin(*builtin)).ok()
+            }
+            Value::ExceptionType(name) => Some(self.alloc_synthetic_exception_class(name)),
+            _ => None,
+        }
+    }
+
+    fn bound_receiver_ref(&mut self, value: &Value) -> Result<ObjRef, RuntimeError> {
+        if let Some(receiver_ref) = self.type_object_receiver_ref(value) {
+            Ok(receiver_ref)
+        } else {
+            self.receiver_from_value(value)
+        }
+    }
+
     fn rebind_unbound_wrapper_bound_method(
-        &self,
+        &mut self,
         method: &ObjRef,
         receiver: &Value,
     ) -> Result<Option<Value>, RuntimeError> {
@@ -4639,7 +4663,7 @@ impl Vm {
         if !is_unbound_wrapper {
             return Ok(None);
         }
-        let receiver_ref = self.receiver_from_value(receiver)?;
+        let receiver_ref = self.bound_receiver_ref(receiver)?;
         Ok(Some(self.heap.alloc_bound_method(BoundMethod::new(
             method_data.function.clone(),
             receiver_ref,
@@ -4651,10 +4675,9 @@ impl Vm {
         method: Value,
         receiver: &Value,
     ) -> Result<Option<Value>, RuntimeError> {
-        let owner_class = match receiver {
-            Value::Class(class) => Some(class.clone()),
-            _ => self.class_of_value(receiver),
-        };
+        let owner_class = self
+            .type_object_receiver_ref(receiver)
+            .or_else(|| self.class_of_value(receiver));
         if let Some(owner_class) = owner_class {
             if let Some(bound) = self.bind_classmethod_attr(&owner_class, &method) {
                 return Ok(Some(bound));
@@ -4665,14 +4688,14 @@ impl Vm {
         }
         match method {
             Value::Function(func) => {
-                let receiver_ref = self.receiver_from_value(receiver)?;
+                let receiver_ref = self.bound_receiver_ref(receiver)?;
                 Ok(Some(
                     self.heap
                         .alloc_bound_method(BoundMethod::new(func, receiver_ref)),
                 ))
             }
             Value::Builtin(builtin) => {
-                let receiver_ref = self.receiver_from_value(receiver)?;
+                let receiver_ref = self.bound_receiver_ref(receiver)?;
                 Ok(Some(self.alloc_builtin_bound_method(builtin, receiver_ref)))
             }
             Value::BoundMethod(method_obj) => {
@@ -4718,7 +4741,8 @@ impl Vm {
         {
             return self.bind_descriptor_method(method, receiver);
         }
-        if !matches!(receiver, Value::Instance(_) | Value::Module(_) | Value::Class(_))
+        if !matches!(receiver, Value::Instance(_) | Value::Module(_))
+            && !self.value_is_type_object(receiver)
             && let Some(method) = self.optional_getattr_value(receiver.clone(), method_name)?
             && self.is_callable_value(&method)
         {

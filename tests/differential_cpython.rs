@@ -462,6 +462,17 @@ result = {
 }
 
 #[test]
+fn differential_builtin_type_objects_are_truthy() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"result = [bool(t) for t in [bool, complex, dict, float, int, list, object, set, str, tuple, type]]"#;
+    let py = run_cpython_json(source).expect("CPython should run");
+    let ours = run_pyrs_json(source).expect("pyrs should run");
+    assert_eq!(normalize_jsonish(&py), normalize_jsonish(&ours));
+}
+
+#[test]
 fn differential_template_literal_basic_shape_matches_cpython() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;

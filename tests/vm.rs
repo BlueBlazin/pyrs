@@ -9211,6 +9211,16 @@ ok = (_operator._compare_digest(b'abc', b'abc') and (not _operator._compare_dige
 }
 
 #[test]
+fn builtin_type_objects_are_truthy() {
+    let source = "types = [bool, complex, dict, float, int, list, object, set, str, tuple, type]\nok = all(types)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn cpython_enum_path_supports_member_value_and_name() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
