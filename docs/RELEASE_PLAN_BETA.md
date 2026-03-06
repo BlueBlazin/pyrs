@@ -10,7 +10,7 @@ Ship a first public beta while long-tail compatibility/performance work continue
 
 ## Locked Decisions
 
-- Channel: first public beta (`v0.4.0`)
+- Channel: first public beta (`v0.4.1`)
 - Distribution: GitHub Releases + crates.io
 - Platform matrix (required): Linux `x86_64-unknown-linux-gnu`, macOS `x86_64-apple-darwin`, macOS `aarch64-apple-darwin`
 - Integrity artifacts: `SHA256SUMS` + Sigstore cosign keyless signatures
@@ -44,7 +44,7 @@ Required green commands:
 
 ## 2. Packaging and Legal
 
-1. set package version (`0.4.0`) in `Cargo.toml`
+1. set package version (`0.4.1`) in `Cargo.toml`
 2. add/validate `license-file` for beta terms
 3. complete crate metadata required for publishability
 4. pass `cargo package` and `cargo publish --dry-run` in CI
@@ -67,10 +67,10 @@ Required green commands:
 ## 5. Tag and Verification
 
 1. cut release branch + freeze unrelated merges
-2. tag `v0.4.0`
+2. tag `v0.4.1`
 3. verify artifacts on each target (`--version`, source run, `.pyc` smoke)
 4. verify checksum + cosign signature flows
-5. verify `cargo install --locked pyrs --version 0.4.0`
+5. verify `cargo install --locked pyrs --version 0.4.1`
 
 ## Non-Goals for This Beta
 
