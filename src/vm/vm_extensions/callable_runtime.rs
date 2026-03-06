@@ -57,6 +57,8 @@ impl Vm {
             )));
         };
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, entry.module.clone());
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let api = self.capi_api_v1();
         let mut result_handle: PyrsObjectHandle = 0;
         let status = match entry.kind {
@@ -151,8 +153,6 @@ impl Vm {
                         function_id, module_name, method_def as *mut CpythonMethodDef
                     );
                 }
-                let _active_context_guard =
-                    ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
                 let self_obj =
                     call_ctx.alloc_cpython_ptr_for_value(Value::Module(entry.module.clone()));
                 let result_ptr = cpython_invoke_method_from_values(

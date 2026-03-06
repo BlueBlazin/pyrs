@@ -357,13 +357,14 @@ impl Vm {
         }
 
         let mut module_ctx = ModuleCapiContext::new(self as *mut Vm, module.clone());
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(module_ctx));
         let mut active_module = module.clone();
         let (resolved_symbol, resolved_init): (String, ResolvedInit) = {
             // Some extensions (notably pybind11-based modules) execute static initializers during
-            // `dlopen` that query CPython thread/interpreter state. Keep a live active context
-            // while resolving/loading dynamic symbols so those probes observe initialized state.
-            let _active_context_guard =
-                ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(module_ctx));
+            // `dlopen` that query thread/interpreter state. Keep the module C-API context active
+            // for the entire init flow so nested imports/calls observe the same synchronous
+            // extension semantics as CPython extension init.
             if symbol.starts_with("PyInit_") {
                 let (handle, init) =
                     load_dynamic_symbol::<CpythonExtensionInit>(library_path, symbol)
@@ -440,9 +441,6 @@ impl Vm {
                 std::ptr::null_mut()
             }
             ResolvedInit::Cpython { initializer } => {
-                // See comment above in the pyrs-v1 branch.
-                let _active_context_guard =
-                    ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(module_ctx));
                 // SAFETY: symbol was resolved with `unsafe extern "C" fn() -> *mut c_void`.
                 unsafe { initializer() }
             }
@@ -462,8 +460,6 @@ impl Vm {
             let returned = if let Some(value) = module_ctx.cpython_value_from_ptr(init_result) {
                 value
             } else {
-                let _active_context_guard =
-                    ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(module_ctx));
                 // CPython multi-phase extensions return `PyModuleDef*` from `PyInit_*`.
                 // Our import path already created the target module object, so use that
                 // module as the execution target and drive slot execution from `m_slots`.

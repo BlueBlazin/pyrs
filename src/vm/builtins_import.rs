@@ -371,9 +371,15 @@ impl Vm {
         // unless this is a genuine re-entrant cycle returning an already
         // registered in-progress module.
         if self.frames.len() > caller_depth {
+            let cpython_context_active = super::vm_extensions::cpython_active_context_is_set();
             match return_policy {
                 ImportReturnPolicy::Synchronous => self.run_pending_import_frames(caller_depth)?,
-                ImportReturnPolicy::DeferredWhenFramesQueued => return Ok(module),
+                ImportReturnPolicy::DeferredWhenFramesQueued if !cpython_context_active => {
+                    return Ok(module);
+                }
+                ImportReturnPolicy::DeferredWhenFramesQueued => {
+                    self.run_pending_import_frames(caller_depth)?
+                }
             }
         }
         let module_name = match &*module.kind() {
