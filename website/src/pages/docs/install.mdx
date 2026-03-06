@@ -43,9 +43,10 @@ import {
 	<CommandBlock commands={homebrewHeadCommands} />
 	<Callout title="Default Choice">
 		On macOS, this is the smoothest default path and tracks the nightly channel without compiling PYRS or
-		installing Homebrew's Rust toolchain. Homebrew keeps the bundled stdlib inside the keg at
-		<code>share/pyrs/stdlib/3.14.3/Lib</code>, so it does not reuse or overwrite a system CPython install. If
-		you want the latest tagged release instead of nightly, drop <code>--HEAD</code>.
+		installing Homebrew's Rust toolchain. Homebrew fetches both the binary and the bundled stdlib from PYRS
+		GitHub Releases, then keeps the stdlib inside the keg at <code>share/pyrs/stdlib/3.14.3/Lib</code>, so it
+		does not reuse or overwrite a system CPython install. If you want the latest tagged release instead of
+		nightly, drop <code>--HEAD</code>.
 	</Callout>
 </DocSection>
 

@@ -192,23 +192,31 @@ jobs:
         run: |
           macos_arm64_archive="homebrew-dist/pyrs-${GITHUB_REF_NAME}-aarch64-apple-darwin.tar.gz"
           macos_x86_64_archive="homebrew-dist/pyrs-${GITHUB_REF_NAME}-x86_64-apple-darwin.tar.gz"
+          stdlib_bundle_url="https://github.com/BlueBlazin/pyrs/releases/download/${GITHUB_REF_NAME}/pyrs-stdlib-cpython-${CPYTHON_STDLIB_VERSION}.tar.gz"
+          stdlib_bundle_archive="/tmp/pyrs-stdlib-cpython-${CPYTHON_STDLIB_VERSION}.tar.gz"
 
           test -f "$macos_arm64_archive"
           test -f "$macos_x86_64_archive"
+          curl -fsSL -o "$stdlib_bundle_archive" "$stdlib_bundle_url"
 
           macos_arm64_sha="$(shasum -a 256 "$macos_arm64_archive" | awk '{print $1}')"
           macos_x86_64_sha="$(shasum -a 256 "$macos_x86_64_archive" | awk '{print $1}')"
+          stdlib_bundle_sha="$(shasum -a 256 "$stdlib_bundle_archive" | awk '{print $1}')"
 
           echo "HOMEBREW_MACOS_ARM64_URL=https://github.com/BlueBlazin/pyrs/releases/download/${GITHUB_REF_NAME}/pyrs-${GITHUB_REF_NAME}-aarch64-apple-darwin.tar.gz" >> "$GITHUB_ENV"
           echo "HOMEBREW_MACOS_ARM64_SHA=${macos_arm64_sha}" >> "$GITHUB_ENV"
           echo "HOMEBREW_MACOS_X86_64_URL=https://github.com/BlueBlazin/pyrs/releases/download/${GITHUB_REF_NAME}/pyrs-${GITHUB_REF_NAME}-x86_64-apple-darwin.tar.gz" >> "$GITHUB_ENV"
           echo "HOMEBREW_MACOS_X86_64_SHA=${macos_x86_64_sha}" >> "$GITHUB_ENV"
+          echo "HOMEBREW_STDLIB_URL=${stdlib_bundle_url}" >> "$GITHUB_ENV"
+          echo "HOMEBREW_STDLIB_SHA=${stdlib_bundle_sha}" >> "$GITHUB_ENV"
 
       - name: Update Formula/pyrs.rb
         if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
         run: |
           mkdir -p tap/Formula
           cat > tap/Formula/pyrs.rb <<EOF
+          require "digest"
+
           class Pyrs < Formula
             desc "Python interpreter in Rust targeting CPython 3.14 compatibility"
             homepage "https://github.com/BlueBlazin/pyrs"
@@ -228,26 +236,68 @@ jobs:
 
             head "https://github.com/BlueBlazin/pyrs.git", branch: "master"
 
-            resource "cpython-stdlib-${CPYTHON_STDLIB_VERSION}" do
-              url "${CPYTHON_STDLIB_SOURCE_URL}"
-              sha256 "${CPYTHON_STDLIB_SOURCE_SHA256}"
+            resource "pyrs-stdlib-cpython-${CPYTHON_STDLIB_VERSION}" do
+              url "${HOMEBREW_STDLIB_URL}"
+              sha256 "${HOMEBREW_STDLIB_SHA}"
             end
 
             def install
               odie "pyrs Homebrew installs currently support macOS only" unless OS.mac?
 
               if build.head?
-                nightly_url = "https://github.com/BlueBlazin/pyrs/releases/download/nightly/#{nightly_archive_name}"
-                system "curl", "-fsSL", nightly_url, "-o", "pyrs-nightly.tar.gz"
-                system "tar", "-xzf", "pyrs-nightly.tar.gz"
+                nightly_checksums = fetch_nightly_checksums
+                download_and_verify_nightly_asset(nightly_archive_name, nightly_checksums)
+                system "tar", "-xzf", nightly_archive_name
+                download_and_verify_nightly_asset(nightly_stdlib_archive_name, nightly_checksums)
+                system "tar", "-xzf", nightly_stdlib_archive_name
               end
 
               bin.install "pyrs"
-              (share/"pyrs/stdlib/${CPYTHON_STDLIB_VERSION}").mkpath
-              resource("cpython-stdlib-${CPYTHON_STDLIB_VERSION}").stage do
-                cp_r "Lib", share/"pyrs/stdlib/${CPYTHON_STDLIB_VERSION}/Lib"
-                cp "LICENSE", share/"pyrs/stdlib/${CPYTHON_STDLIB_VERSION}/LICENSE"
+
+              if build.head?
+                install_stdlib_tree(buildpath/"pyrs-stdlib-cpython-${CPYTHON_STDLIB_VERSION}")
+              else
+                resource("pyrs-stdlib-cpython-${CPYTHON_STDLIB_VERSION}").stage do
+                  install_stdlib_tree(Pathname.pwd)
+                end
               end
+            end
+
+            def install_stdlib_tree(stdlib_root)
+              stdlib_prefix = share/"pyrs/stdlib/${CPYTHON_STDLIB_VERSION}"
+              stdlib_prefix.mkpath
+              cp_r stdlib_root/"Lib", stdlib_prefix/"Lib"
+              cp stdlib_root/"LICENSE", stdlib_prefix/"LICENSE"
+              metadata_path = stdlib_root/"METADATA.txt"
+              cp metadata_path, stdlib_prefix/"METADATA.txt" if metadata_path.exist?
+            end
+
+            def fetch_nightly_checksums
+              return @nightly_checksums if @nightly_checksums
+
+              checksum_path = buildpath/"SHA256SUMS"
+              system "curl", "-fsSL", "https://github.com/BlueBlazin/pyrs/releases/download/nightly/SHA256SUMS", "-o", checksum_path
+
+              @nightly_checksums = checksum_path.readlines(chomp: true).each_with_object({}) do |line, checksums|
+                sha, name = line.split(/\s+/, 2)
+                next unless sha && name
+                checksums[name] = sha
+              end
+            end
+
+            def download_and_verify_nightly_asset(archive_name, checksums)
+              expected_sha = checksums[archive_name]
+              odie "Missing SHA256 entry for #{archive_name} in nightly release" unless expected_sha
+
+              archive_path = buildpath/archive_name
+              nightly_url = "https://github.com/BlueBlazin/pyrs/releases/download/nightly/#{archive_name}"
+              system "curl", "-fsSL", nightly_url, "-o", archive_path
+              actual_sha = Digest::SHA256.file(archive_path).hexdigest
+              odie "Checksum mismatch for #{archive_name}: expected #{expected_sha}, got #{actual_sha}" unless actual_sha == expected_sha
+            end
+
+            def nightly_stdlib_archive_name
+              "pyrs-stdlib-cpython-${CPYTHON_STDLIB_VERSION}.tar.gz"
             end
 
             def nightly_archive_name

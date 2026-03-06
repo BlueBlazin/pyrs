@@ -118,7 +118,7 @@ cargo build --release
 brew install --HEAD blueblazin/tap/pyrs
 ```
 
-This installs the nightly channel as a prebuilt macOS binary rather than compiling PYRS or pulling a Homebrew Rust toolchain. If you want the latest tagged release instead of nightly, drop `--HEAD`.
+This installs the nightly channel as a prebuilt macOS binary rather than compiling PYRS or pulling a Homebrew Rust toolchain. The Homebrew path now fetches both the binary and the bundled stdlib from PYRS GitHub Releases, not directly from `python.org`. If you want the latest tagged release instead of nightly, drop `--HEAD`.
 
 Homebrew keeps the bundled stdlib inside the keg under `share/pyrs/stdlib/3.14.3/Lib`, so it does not reuse or overwrite a system CPython install and is removed by `brew uninstall`.
 
