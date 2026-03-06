@@ -18,7 +18,7 @@ const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 	macos: [
 		{
 			title: "Homebrew (--HEAD)",
-			description: "Install the tap's HEAD build via Homebrew with a keg-local bundled stdlib.",
+			description: "Install from tip of master via Homebrew (default channel for macOS).",
 			recommended: true,
 			lines: homebrewHeadCommands,
 		},
@@ -36,7 +36,7 @@ const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 	linux: [
 		{
 			title: "GitHub installer",
-			description: "One-command install from GitHub Releases for Linux x86_64 (defaults to nightly, bundles stdlib only when needed).",
+			description: "One command install from GitHub Releases (defaults to nightly, bundles stdlib only when needed).",
 			recommended: true,
 			lines: githubInstallerCommands,
 		},
@@ -52,11 +52,8 @@ const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 <section class="install" id="install">
 	<div class="install-head">
 		<p class="eyebrow">Install</p>
-		<h2>Install on supported macOS or Linux targets.</h2>
-		<p class="install-lede">
-			Native binaries currently ship for macOS (<code>x86_64</code>, <code>aarch64</code>) and Linux (<code>x86_64</code>).
-			Choose the installation path that matches your workflow.
-		</p>
+		<h2>Install on MacOS or Linux.</h2>
+		<p class="install-lede">Choose your platform, then pick the installation path that matches your workflow.</p>
 	</div>
 
 	<div class="install-tabs">
@@ -64,7 +61,7 @@ const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 		<input class="install-tab-input" type="radio" name="install-platform" id="install-tab-linux" />
 
 		<div class="install-tab-list" role="tablist" aria-label="Installation platform">
-			<label class="install-tab-btn" for="install-tab-macos" role="tab" tabindex="0">macOS</label>
+			<label class="install-tab-btn" for="install-tab-macos" role="tab" tabindex="0">MacOS</label>
 			<label class="install-tab-btn" for="install-tab-linux" role="tab" tabindex="0">Linux</label>
 		</div>
 
