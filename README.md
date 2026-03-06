@@ -4,7 +4,7 @@
 
 <h1 align="center">PYRS</h1>
 
-<p align="center"><strong>A Python interpreter in Rust targeting CPython 3.14 semantics.</strong></p>
+<p align="center"><strong>AI agent developed Python interpreter in Rust targeting CPython 3.14 semantics.</strong></p>
 
 <p align="center">
   <a href="#quick-start">Quick Start</a>
