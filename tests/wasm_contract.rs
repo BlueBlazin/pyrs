@@ -336,9 +336,6 @@ fn load_curated_stdlib_pack_into_runtime() -> usize {
             .ok()
             .and_then(|value| value.as_string())
             .unwrap_or_default();
-        if module_name.is_empty() || source.is_empty() {
-            continue;
-        }
         if module_name == "os" {
             panic!("curated stdlib pack must not include os");
         }
@@ -352,6 +349,9 @@ fn load_curated_stdlib_pack_into_runtime() -> usize {
             .ok()
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
+        if module_name.is_empty() || (!is_package && source.is_empty()) {
+            continue;
+        }
         let registered = wasm_virtual_stdlib_register(&module_name, &source, is_package);
         assert!(
             registered,
@@ -3161,6 +3161,28 @@ assert median_value == (5.1 + 7.8) / 2\n",
     assert!(show.error().is_none());
     assert!(show.stderr().is_empty());
     assert_eq!(show.stdout().trim(), "(6.275, 6.449999999999999)");
+}
+
+#[cfg(feature = "wasm-vm-probe")]
+#[wasm_bindgen_test]
+fn wasm_vm_probe_urllib_parse_import_resolves_empty_package_init() {
+    reset_top_level_worker_state_for_contract_tests();
+    load_curated_stdlib_pack_into_runtime();
+
+    let mut session = WasmReplSession::new();
+    let result = session.execute_input(
+        "import urllib.parse\n\
+parts = urllib.parse.urlsplit('https://example.com/path?query=1#frag')\n\
+assert parts.scheme == 'https'\n\
+assert parts.netloc == 'example.com'\n\
+assert parts.path == '/path'\n\
+assert parts.query == 'query=1'\n\
+assert parts.fragment == 'frag'\n",
+    );
+    assert_eq!(result.phase(), "ok".to_string());
+    assert!(result.success());
+    assert!(result.error().is_none());
+    assert!(result.stderr().is_empty());
 }
 
 #[cfg(feature = "wasm-vm-probe")]

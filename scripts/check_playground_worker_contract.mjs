@@ -54,6 +54,7 @@ const checks = [
       "await loadStdlibPack(stdlibPackPath);",
       "ensureReplSession();",
       "stdlibInfo: lastStdlibInfo,",
+      "(!isPackage && !sourceText)",
     ],
     ordered_patterns: [
       "await loadStdlibPack(stdlibPackPath);",

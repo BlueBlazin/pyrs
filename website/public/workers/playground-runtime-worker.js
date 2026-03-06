@@ -102,7 +102,7 @@ const loadStdlibPack = async (stdlibPackPath) => {
     const moduleName = typeof entry.module === "string" ? entry.module : "";
     const sourceText = typeof entry.source === "string" ? entry.source : "";
     const isPackage = Boolean(entry.is_package);
-    if (!moduleName || !sourceText) continue;
+    if (!moduleName || (!isPackage && !sourceText)) continue;
     const accepted = runtimeModule.wasm_virtual_stdlib_register(moduleName, sourceText, isPackage);
     if (accepted) {
       registered += 1;
