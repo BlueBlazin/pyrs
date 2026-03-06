@@ -266,6 +266,57 @@ impl Vm {
         descriptor
     }
 
+    fn alloc_slot_wrapper_receiver(
+        &self,
+        module_name: &str,
+        owner: Value,
+        value: Option<Value>,
+    ) -> ObjRef {
+        let receiver = match self
+            .heap
+            .alloc_module(ModuleObject::new(module_name.to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+            module_data
+                .globals
+                .insert("__slot_wrapper__".to_string(), Value::Bool(true));
+            module_data.globals.insert("owner".to_string(), owner);
+            if let Some(value) = value {
+                module_data.globals.insert("value".to_string(), value);
+            }
+        }
+        receiver
+    }
+
+    fn alloc_builtin_slot_wrapper_method(
+        &self,
+        owner: Value,
+        value: Option<Value>,
+        builtin: BuiltinFunction,
+    ) -> Value {
+        let module_name = if value.is_some() {
+            "__slot_wrapper_method__"
+        } else {
+            "__slot_wrapper_unbound_method__"
+        };
+        let receiver = self.alloc_slot_wrapper_receiver(module_name, owner, value);
+        self.alloc_builtin_bound_method(builtin, receiver)
+    }
+
+    fn alloc_native_slot_wrapper_method(
+        &self,
+        module_name: &str,
+        owner: Value,
+        value: Option<Value>,
+        kind: NativeMethodKind,
+    ) -> Value {
+        let receiver = self.alloc_slot_wrapper_receiver(module_name, owner, value);
+        self.alloc_native_bound_method(kind, receiver)
+    }
+
     pub(super) fn builtin_type_name(&self, builtin: BuiltinFunction) -> &'static str {
         builtin_type_name_info(builtin)
             .map(|info| info.name)
@@ -1236,9 +1287,16 @@ impl Vm {
             "__ne__" if builtin == BuiltinFunction::ObjectNew => {
                 Ok(Value::Builtin(BuiltinFunction::ObjectNe))
             }
-            "__lt__" if matches!(builtin, BuiltinFunction::ObjectNew | BuiltinFunction::Int) => {
+            "__lt__" if builtin == BuiltinFunction::ObjectNew => {
                 Ok(Value::Builtin(BuiltinFunction::OperatorLt))
             }
+            "__lt__" if matches!(builtin, BuiltinFunction::Int | BuiltinFunction::Bool) => Ok(
+                self.alloc_builtin_slot_wrapper_method(
+                    Value::Builtin(BuiltinFunction::Int),
+                    None,
+                    BuiltinFunction::OperatorLt,
+                ),
+            ),
             "__getformat__" if builtin == BuiltinFunction::Float => {
                 Ok(Value::Builtin(BuiltinFunction::FloatGetFormat))
             }
@@ -1280,74 +1338,38 @@ impl Vm {
             "hex" if builtin == BuiltinFunction::Float => {
                 Ok(Value::Builtin(BuiltinFunction::FloatHex))
             }
-            "__repr__" | "__str__" if builtin == BuiltinFunction::Dict => {
-                Ok(Value::Builtin(BuiltinFunction::DictTypeRepr))
+            "__repr__"
+                if matches!(
+                    builtin,
+                    BuiltinFunction::Dict
+                        | BuiltinFunction::List
+                        | BuiltinFunction::Tuple
+                        | BuiltinFunction::Set
+                        | BuiltinFunction::FrozenSet
+                        | BuiltinFunction::Str
+                        | BuiltinFunction::Bytes
+                        | BuiltinFunction::ByteArray
+                        | BuiltinFunction::TypesMappingProxy
+                        | BuiltinFunction::CollectionsDefaultDict
+                        | BuiltinFunction::CollectionsOrderedDict
+                        | BuiltinFunction::CollectionsCounter
+                        | BuiltinFunction::CollectionsDeque
+                        | BuiltinFunction::Float
+                ) =>
+            {
+                Ok(self.alloc_builtin_slot_wrapper_method(
+                    Value::Builtin(builtin),
+                    None,
+                    BuiltinFunction::Repr,
+                ))
             }
-            "__repr__" | "__str__" if builtin == BuiltinFunction::List => {
-                Ok(Value::Builtin(BuiltinFunction::ListTypeRepr))
-            }
-            "__repr__" | "__str__" if builtin == BuiltinFunction::Tuple => {
-                Ok(Value::Builtin(BuiltinFunction::TupleTypeRepr))
-            }
-            "__repr__" | "__str__" if builtin == BuiltinFunction::Set => {
-                Ok(Value::Builtin(BuiltinFunction::SetTypeRepr))
-            }
-            "__repr__" | "__str__" if builtin == BuiltinFunction::FrozenSet => {
-                Ok(Value::Builtin(BuiltinFunction::FrozenSetTypeRepr))
-            }
-            "__repr__" | "__str__" if builtin == BuiltinFunction::Str => {
-                Ok(Value::Builtin(BuiltinFunction::StrTypeRepr))
-            }
-            "__repr__" | "__str__" if builtin == BuiltinFunction::Bytes => {
-                Ok(Value::Builtin(BuiltinFunction::BytesTypeRepr))
-            }
-            "__repr__" | "__str__" if builtin == BuiltinFunction::ByteArray => {
-                Ok(Value::Builtin(BuiltinFunction::ByteArrayTypeRepr))
-            }
-            "__repr__" | "__str__" if builtin == BuiltinFunction::TypesMappingProxy => {
-                Ok(Value::Builtin(BuiltinFunction::MappingProxyTypeRepr))
-            }
-            "__repr__" | "__str__" if builtin == BuiltinFunction::CollectionsDefaultDict => Ok(
-                Value::Builtin(BuiltinFunction::CollectionsDefaultDictTypeRepr),
-            ),
-            "__repr__" | "__str__" if builtin == BuiltinFunction::CollectionsOrderedDict => Ok(
-                Value::Builtin(BuiltinFunction::CollectionsOrderedDictTypeRepr),
-            ),
-            "__repr__" | "__str__" if builtin == BuiltinFunction::CollectionsCounter => {
-                Ok(Value::Builtin(BuiltinFunction::CollectionsCounterTypeRepr))
-            }
-            "__repr__" | "__str__" if builtin == BuiltinFunction::CollectionsDeque => {
-                Ok(Value::Builtin(BuiltinFunction::CollectionsDequeTypeRepr))
-            }
-            "__repr__" | "__str__" if builtin == BuiltinFunction::Int => {
-                let receiver = match self
-                    .heap
-                    .alloc_module(ModuleObject::new("__int_unbound_method__".to_string()))
-                {
-                    Value::Module(obj) => obj,
-                    _ => unreachable!(),
-                };
-                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
-                    module_data
-                        .globals
-                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Int));
-                }
-                Ok(self.alloc_native_bound_method(NativeMethodKind::IntReprMethod, receiver))
-            }
-            "__repr__" | "__str__" if builtin == BuiltinFunction::Float => {
-                let receiver = match self
-                    .heap
-                    .alloc_module(ModuleObject::new("__float_unbound_method__".to_string()))
-                {
-                    Value::Module(obj) => obj,
-                    _ => unreachable!(),
-                };
-                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
-                    module_data
-                        .globals
-                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Float));
-                }
-                Ok(self.alloc_native_bound_method(NativeMethodKind::FloatReprMethod, receiver))
+            "__repr__" if matches!(builtin, BuiltinFunction::Int | BuiltinFunction::Bool) => {
+                Ok(self.alloc_native_slot_wrapper_method(
+                    "__int_unbound_method__",
+                    Value::Builtin(builtin),
+                    None,
+                    NativeMethodKind::IntReprMethod,
+                ))
             }
             "__format__" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::Format))
@@ -1367,9 +1389,13 @@ impl Vm {
             "bit_length" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::IntBitLength))
             }
-            "__add__" if builtin == BuiltinFunction::Int => {
-                Ok(Value::Builtin(BuiltinFunction::OperatorAdd))
-            }
+            "__add__" if matches!(builtin, BuiltinFunction::Int | BuiltinFunction::Bool) => Ok(
+                self.alloc_builtin_slot_wrapper_method(
+                    Value::Builtin(BuiltinFunction::Int),
+                    None,
+                    BuiltinFunction::OperatorAdd,
+                ),
+            ),
             "from_bytes" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::IntFromBytes))
             }
@@ -2200,6 +2226,13 @@ impl Vm {
         list: ObjRef,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "__repr__" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::List),
+                Some(Value::List(list)),
+                BuiltinFunction::Repr,
+            ));
+        }
         if attr_name == "__len__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, list));
         }
@@ -2248,6 +2281,13 @@ impl Vm {
         tuple: ObjRef,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "__repr__" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::Tuple),
+                Some(Value::Tuple(tuple)),
+                BuiltinFunction::Repr,
+            ));
+        }
         if attr_name == "__len__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, tuple));
         }
@@ -2329,18 +2369,32 @@ impl Vm {
             }
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Format, receiver));
         }
-        if attr_name == "__lt__" {
-            let receiver = match self
-                .heap
-                .alloc_module(ModuleObject::new("__int_method__".to_string()))
-            {
-                Value::Module(obj) => obj,
-                _ => unreachable!(),
+        if attr_name == "__repr__" {
+            let owner = if matches!(value, Value::Bool(_)) {
+                BuiltinFunction::Bool
+            } else {
+                BuiltinFunction::Int
             };
-            if let Object::Module(module_data) = &mut *receiver.kind_mut() {
-                module_data.globals.insert("value".to_string(), value);
-            }
-            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::OperatorLt, receiver));
+            return Ok(self.alloc_native_slot_wrapper_method(
+                "__int_method__",
+                Value::Builtin(owner),
+                Some(value),
+                NativeMethodKind::IntReprMethod,
+            ));
+        }
+        if attr_name == "__lt__" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::Int),
+                Some(value),
+                BuiltinFunction::OperatorLt,
+            ));
+        }
+        if attr_name == "__add__" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::Int),
+                Some(value),
+                BuiltinFunction::OperatorAdd,
+            ));
         }
         if attr_name == "__doc__" {
             return Ok(Value::None);
@@ -2374,6 +2428,13 @@ impl Vm {
         value: f64,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "__repr__" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::Float),
+                Some(Value::Float(value)),
+                BuiltinFunction::Repr,
+            ));
+        }
         let kind = match attr_name {
             "real" => return Ok(Value::Float(value)),
             "imag" => return Ok(Value::Float(0.0)),
@@ -2423,6 +2484,13 @@ impl Vm {
         text: String,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "__repr__" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::Str),
+                Some(Value::Str(text)),
+                BuiltinFunction::Repr,
+            ));
+        }
         if attr_name == "__doc__" {
             return Ok(Value::None);
         }
@@ -2510,6 +2578,18 @@ impl Vm {
         receiver_value: Value,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "__repr__" {
+            let owner = if matches!(receiver_value, Value::ByteArray(_)) {
+                BuiltinFunction::ByteArray
+            } else {
+                BuiltinFunction::Bytes
+            };
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                Value::Builtin(owner),
+                Some(receiver_value),
+                BuiltinFunction::Repr,
+            ));
+        }
         if attr_name == "__doc__" {
             return Ok(Value::None);
         }
@@ -2932,6 +3012,19 @@ impl Vm {
             }
         };
         match attr_name {
+            "__repr__" => Ok(self.alloc_builtin_slot_wrapper_method(
+                Value::Builtin(if is_frozenset {
+                    BuiltinFunction::FrozenSet
+                } else {
+                    BuiltinFunction::Set
+                }),
+                Some(if is_frozenset {
+                    Value::FrozenSet(set.clone())
+                } else {
+                    Value::Set(set.clone())
+                }),
+                BuiltinFunction::Repr,
+            )),
             "__reduce__" => {
                 Ok(self.alloc_builtin_bound_method(BuiltinFunction::SetReduce, set.clone()))
             }
@@ -3008,6 +3101,13 @@ impl Vm {
         }
         if attr_name == "__len__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, dict));
+        }
+        if attr_name == "__repr__" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                owner.unwrap_or(Value::Builtin(BuiltinFunction::Dict)),
+                Some(Value::Dict(dict)),
+                BuiltinFunction::Repr,
+            ));
         }
         if attr_name == "__contains__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::OperatorContains, dict));

@@ -2411,9 +2411,6 @@ fn builtin_callable_family(builtin: BuiltinFunction) -> Option<CallableFamily> {
         BuiltinFunction::DictFromKeys | BuiltinFunction::IntFromBytes => {
             Some(CallableFamily::ClassMethodDescriptor)
         }
-        BuiltinFunction::ObjectInit | BuiltinFunction::ObjectNew | BuiltinFunction::OperatorLt => {
-            Some(CallableFamily::WrapperDescriptor)
-        }
         _ => Some(CallableFamily::BuiltinFunctionOrMethod),
     }
 }
@@ -2427,27 +2424,50 @@ fn native_kind_is_slot_wrapper(kind: NativeMethodKind) -> bool {
                 | BuiltinFunction::ObjectInit
                 | BuiltinFunction::ObjectNew
                 | BuiltinFunction::OperatorLt
+                | BuiltinFunction::OperatorAdd
         )
+            | NativeMethodKind::IntReprMethod
+    )
+}
+
+fn module_is_slot_wrapper(receiver: &ObjRef) -> bool {
+    matches!(
+        &*receiver.kind(),
+        Object::Module(module_data)
+            if matches!(
+                module_data.globals.get("__slot_wrapper__"),
+                Some(Value::Bool(true))
+            )
+    )
+}
+
+fn module_has_wrapped_value(receiver: &ObjRef) -> bool {
+    matches!(
+        &*receiver.kind(),
+        Object::Module(module_data) if module_data.globals.contains_key("value")
     )
 }
 
 fn bound_method_is_unbound_descriptor(receiver: &ObjRef) -> bool {
     matches!(
         &*receiver.kind(),
-        Object::Module(module_data) if module_data.name.ends_with("_unbound_method__")
+        Object::Module(module_data)
+            if module_data.name.ends_with("_unbound_method__") && !module_is_slot_wrapper(receiver)
     )
 }
 
 fn bound_method_is_unbound_slot_wrapper(receiver: &ObjRef, kind: NativeMethodKind) -> bool {
-    matches!(&*receiver.kind(), Object::Class(_))
-        && matches!(
-            kind,
-            NativeMethodKind::Builtin(BuiltinFunction::Repr | BuiltinFunction::Str)
-        )
+    (module_is_slot_wrapper(receiver) && !module_has_wrapped_value(receiver) && native_kind_is_slot_wrapper(kind))
+        || (matches!(&*receiver.kind(), Object::Class(_))
+            && matches!(
+                kind,
+                NativeMethodKind::Builtin(BuiltinFunction::Repr | BuiltinFunction::Str)
+            ))
 }
 
 fn bound_method_is_slot_wrapper(receiver: &ObjRef, kind: NativeMethodKind) -> bool {
-    let receiver_is_slot_wrapper = matches!(&*receiver.kind(), Object::Instance(_))
+    let receiver_is_slot_wrapper = (module_is_slot_wrapper(receiver) && module_has_wrapped_value(receiver))
+        || matches!(&*receiver.kind(), Object::Instance(_))
         || matches!(
             &*receiver.kind(),
             Object::Module(module_data) if module_data.name == "__int_method__"
@@ -10455,6 +10475,7 @@ fn builtin_callable_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::Str => "__str__".to_string(),
         BuiltinFunction::ObjectInit => "__init__".to_string(),
         BuiltinFunction::ObjectNew => "__new__".to_string(),
+        BuiltinFunction::OperatorAdd => "__add__".to_string(),
         BuiltinFunction::OperatorLt => "__lt__".to_string(),
         BuiltinFunction::ListAppendDescriptor => "append".to_string(),
         BuiltinFunction::DictFromKeys => "fromkeys".to_string(),
@@ -10467,6 +10488,7 @@ fn builtin_callable_name(builtin: BuiltinFunction) -> String {
 fn native_method_name(kind: NativeMethodKind) -> Option<String> {
     match kind {
         NativeMethodKind::Builtin(builtin) => Some(builtin_callable_name(builtin)),
+        NativeMethodKind::IntReprMethod => Some("__repr__".to_string()),
         NativeMethodKind::DictKeys => Some("keys".to_string()),
         NativeMethodKind::DictValues => Some("values".to_string()),
         NativeMethodKind::DictItems => Some("items".to_string()),

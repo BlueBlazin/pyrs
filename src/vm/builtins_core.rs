@@ -8399,21 +8399,37 @@ impl Vm {
             return false;
         };
         module_data.name.ends_with("_unbound_method__")
+            && !matches!(
+                module_data.globals.get("__slot_wrapper__"),
+                Some(Value::Bool(true))
+            )
     }
 
     fn bound_method_is_builtin_unbound_slot_wrapper(&self, method: &ObjRef) -> bool {
         let Object::BoundMethod(method_data) = &*method.kind() else {
             return false;
         };
-        if !matches!(&*method_data.receiver.kind(), Object::Class(_)) {
-            return false;
-        }
         let Object::NativeMethod(native) = &*method_data.function.kind() else {
             return false;
         };
-        matches!(
+        let receiver_is_slot_wrapper = matches!(
+            &*method_data.receiver.kind(),
+            Object::Module(module_data)
+                if matches!(
+                    module_data.globals.get("__slot_wrapper__"),
+                    Some(Value::Bool(true))
+                ) && !module_data.globals.contains_key("value")
+        ) || matches!(&*method_data.receiver.kind(), Object::Class(_));
+        receiver_is_slot_wrapper
+            && matches!(
             native.kind,
-            NativeMethodKind::Builtin(BuiltinFunction::Repr | BuiltinFunction::Str)
+            NativeMethodKind::Builtin(
+                BuiltinFunction::Repr
+                    | BuiltinFunction::Str
+                    | BuiltinFunction::ObjectInit
+                    | BuiltinFunction::OperatorLt
+                    | BuiltinFunction::OperatorAdd
+            ) | NativeMethodKind::IntReprMethod
         )
     }
 
@@ -8421,7 +8437,14 @@ impl Vm {
         let Object::BoundMethod(method_data) = &*method.kind() else {
             return false;
         };
-        let receiver_is_slot_wrapper = matches!(&*method_data.receiver.kind(), Object::Instance(_))
+        let receiver_is_slot_wrapper = matches!(
+            &*method_data.receiver.kind(),
+            Object::Module(module_data)
+                if matches!(
+                    module_data.globals.get("__slot_wrapper__"),
+                    Some(Value::Bool(true))
+                ) && module_data.globals.contains_key("value")
+        ) || matches!(&*method_data.receiver.kind(), Object::Instance(_))
             || matches!(
                 &*method_data.receiver.kind(),
                 Object::Module(module_data) if module_data.name == "__int_method__"
@@ -8439,7 +8462,9 @@ impl Vm {
                     | BuiltinFunction::Str
                     | BuiltinFunction::ObjectInit
                     | BuiltinFunction::OperatorLt
+                    | BuiltinFunction::OperatorAdd
             )
+                | NativeMethodKind::IntReprMethod
         )
     }
 

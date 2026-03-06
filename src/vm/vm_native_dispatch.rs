@@ -25,7 +25,7 @@ use super::{
 };
 use crate::ast::{Constant, ExprKind};
 use crate::parser;
-use crate::runtime::{DictViewKind, iterator_type_info};
+use crate::runtime::{DictViewKind, builtin_type_name_info, iterator_type_info};
 
 unsafe extern "C" {
     fn PyErr_Clear();
@@ -199,9 +199,15 @@ impl Vm {
                 }
             }
             Object::Module(module_data) if module_data.name == "__int_unbound_method__" => {
+                let owner_name = module_data
+                    .globals
+                    .get("owner")
+                    .map(|owner| self.slot_wrapper_owner_name(owner))
+                    .unwrap_or_else(|| "int".to_string());
                 if args.is_empty() {
                     return Err(RuntimeError::type_error(format!(
-                        "unbound method int.{method_name}() needs an argument"
+                        "descriptor '{}' of '{}' object needs an argument",
+                        method_name, owner_name
                     )));
                 }
                 let receiver_value = args.remove(0);
@@ -226,8 +232,9 @@ impl Vm {
                 };
                 let Some(int_like) = int_like else {
                     return Err(RuntimeError::type_error(format!(
-                        "descriptor '{}' for 'int' objects doesn't apply to a '{}' object",
+                        "descriptor '{}' requires a '{}' object but received a '{}'",
                         method_name,
+                        owner_name,
                         self.value_type_name_for_error(&receiver_value)
                     )));
                 };
@@ -240,6 +247,88 @@ impl Vm {
             }
             _ => Err(RuntimeError::type_error("int receiver is invalid")),
         }
+    }
+
+    fn slot_wrapper_owner_name(&self, owner: &Value) -> String {
+        match owner {
+            Value::Builtin(builtin) => builtin_type_name_info(*builtin)
+                .map(|info| info.name.to_string())
+                .unwrap_or_else(|| self.value_type_name_for_error(owner)),
+            Value::Class(class) => match &*class.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => self.value_type_name_for_error(owner),
+            },
+            _ => self.value_type_name_for_error(owner),
+        }
+    }
+
+    fn slot_wrapper_method_name(&self, builtin: BuiltinFunction) -> &'static str {
+        match builtin {
+            BuiltinFunction::Repr => "__repr__",
+            BuiltinFunction::Str => "__str__",
+            BuiltinFunction::OperatorAdd => "__add__",
+            BuiltinFunction::OperatorLt => "__lt__",
+            _ => "method",
+        }
+    }
+
+    fn slot_wrapper_is_marked(&self, receiver: &ObjRef) -> bool {
+        matches!(
+            &*receiver.kind(),
+            Object::Module(module_data)
+                if matches!(
+                    module_data.globals.get("__slot_wrapper__"),
+                    Some(Value::Bool(true))
+                )
+        )
+    }
+
+    fn slot_wrapper_bound_value(&self, receiver: &ObjRef) -> Option<Value> {
+        let Object::Module(module_data) = &*receiver.kind() else {
+            return None;
+        };
+        module_data.globals.get("value").cloned()
+    }
+
+    fn slot_wrapper_owner(&self, receiver: &ObjRef) -> Option<Value> {
+        let Object::Module(module_data) = &*receiver.kind() else {
+            return None;
+        };
+        module_data.globals.get("owner").cloned()
+    }
+
+    fn extract_slot_wrapper_receiver_value(
+        &mut self,
+        receiver: &ObjRef,
+        args: &mut Vec<Value>,
+        method_name: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        if !self.slot_wrapper_is_marked(receiver) {
+            return Ok(None);
+        }
+        if let Some(bound_value) = self.slot_wrapper_bound_value(receiver) {
+            return Ok(Some(bound_value));
+        }
+        let Some(owner) = self.slot_wrapper_owner(receiver) else {
+            return Err(RuntimeError::type_error("slot wrapper owner is invalid"));
+        };
+        let owner_name = self.slot_wrapper_owner_name(&owner);
+        if args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "descriptor '{}' of '{}' object needs an argument",
+                method_name, owner_name
+            )));
+        }
+        let receiver_value = args.remove(0);
+        if !self.value_is_instance_of(&receiver_value, &owner)? {
+            return Err(RuntimeError::type_error(format!(
+                "descriptor '{}' requires a '{}' object but received a '{}'",
+                method_name,
+                owner_name,
+                self.value_type_name_for_error(&receiver_value)
+            )));
+        }
+        Ok(Some(receiver_value))
     }
 
     pub(super) fn stop_iteration_runtime_error(&mut self, value: Value) -> RuntimeError {
@@ -467,9 +556,20 @@ impl Vm {
                         | BuiltinFunction::BytesMakeTrans
                         | BuiltinFunction::StrMakeTrans
                 );
-                let mut call_args =
-                    Vec::with_capacity(args.len() + if prepend_receiver { 1 } else { 0 });
-                if prepend_receiver {
+                let mut call_args = if let Some(slot_receiver) =
+                    self.extract_slot_wrapper_receiver_value(
+                        &receiver,
+                        &mut args,
+                        self.slot_wrapper_method_name(builtin),
+                    )?
+                {
+                    let mut call_args = Vec::with_capacity(args.len() + 1);
+                    call_args.push(slot_receiver);
+                    call_args
+                } else {
+                    Vec::with_capacity(args.len() + if prepend_receiver { 1 } else { 0 })
+                };
+                if call_args.is_empty() && prepend_receiver {
                     call_args.push(self.bound_method_reduce_receiver_value(&receiver)?);
                 }
                 call_args.extend(args);
@@ -2587,11 +2687,21 @@ impl Vm {
             NativeMethodKind::IntReprMethod => {
                 let value = self
                     .extract_int_receiver_value_for_repr_call(&receiver, &mut args, "__repr__")?;
+                let bool_owner = matches!(
+                    self.slot_wrapper_owner(&receiver),
+                    Some(Value::Builtin(BuiltinFunction::Bool))
+                );
                 let rendered = match value {
                     Value::Int(number) => number.to_string(),
                     Value::BigInt(number) => number.to_string(),
                     Value::Bool(flag) => {
-                        if flag {
+                        if bool_owner {
+                            if flag {
+                                "True".to_string()
+                            } else {
+                                "False".to_string()
+                            }
+                        } else if flag {
                             "1".to_string()
                         } else {
                             "0".to_string()

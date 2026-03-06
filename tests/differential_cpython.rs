@@ -2928,6 +2928,65 @@ result = {
 }
 
 #[test]
+fn differential_builtin_slot_wrapper_repr_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+def normalize_repr(obj):
+    text = repr(obj)
+    start = text.find("0x")
+    if start == -1:
+        return text
+    end = start + 2
+    while end < len(text) and text[end] in "0123456789abcdefABCDEF":
+        end += 1
+    return text[:start] + "0xADDR" + text[end:]
+
+samples = {
+    "list_unbound_repr": list.__repr__,
+    "list_bound_repr": [].__repr__,
+    "dict_unbound_repr": dict.__repr__,
+    "dict_bound_repr": {}.__repr__,
+    "tuple_unbound_repr": tuple.__repr__,
+    "tuple_bound_repr": ().__repr__,
+    "bytes_unbound_repr": bytes.__repr__,
+    "bytes_bound_repr": b"".__repr__,
+    "bytearray_unbound_repr": bytearray.__repr__,
+    "bytearray_bound_repr": bytearray(b"").__repr__,
+    "set_unbound_repr": set.__repr__,
+    "set_bound_repr": set().__repr__,
+    "str_unbound_repr": str.__repr__,
+    "str_bound_repr": "x".__repr__,
+    "int_unbound_repr": int.__repr__,
+    "int_bound_repr": (1).__repr__,
+    "bool_unbound_repr": bool.__repr__,
+    "bool_bound_repr": True.__repr__,
+    "float_unbound_repr": float.__repr__,
+    "float_bound_repr": (1.5).__repr__,
+    "int_unbound_add": int.__add__,
+    "int_bound_add": (1).__add__,
+    "bool_unbound_add": bool.__add__,
+    "bool_bound_add": True.__add__,
+    "bool_unbound_lt": bool.__lt__,
+    "bool_bound_lt": True.__lt__,
+}
+result = {
+    name: {
+        "type_repr": repr(type(obj)),
+        "class_repr": repr(obj.__class__),
+        "type_matches_class": obj.__class__ is type(obj),
+        "repr": normalize_repr(obj),
+    }
+    for name, obj in samples.items()
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
 fn differential_runtime_itertools_iterator_helper_parity() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;

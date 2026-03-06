@@ -625,6 +625,48 @@ ok = (
 }
 
 #[test]
+fn builtin_slot_wrapper_reprs_match_cpython_shape() {
+    let source = r#"ok = (
+    repr(type(list.__repr__)) == "<class 'wrapper_descriptor'>"
+    and repr(list.__repr__) == "<slot wrapper '__repr__' of 'list' objects>"
+    and repr(type([].__repr__)) == "<class 'method-wrapper'>"
+    and repr([].__repr__).startswith("<method-wrapper '__repr__' of list object at 0x")
+    and repr(dict.__repr__) == "<slot wrapper '__repr__' of 'dict' objects>"
+    and repr({}.__repr__).startswith("<method-wrapper '__repr__' of dict object at 0x")
+    and repr(tuple.__repr__) == "<slot wrapper '__repr__' of 'tuple' objects>"
+    and repr((()).__repr__).startswith("<method-wrapper '__repr__' of tuple object at 0x")
+    and repr(bytes.__repr__) == "<slot wrapper '__repr__' of 'bytes' objects>"
+    and repr(b''.__repr__).startswith("<method-wrapper '__repr__' of bytes object at 0x")
+    and repr(bytearray.__repr__) == "<slot wrapper '__repr__' of 'bytearray' objects>"
+    and repr(bytearray(b'').__repr__).startswith("<method-wrapper '__repr__' of bytearray object at 0x")
+    and repr(set.__repr__) == "<slot wrapper '__repr__' of 'set' objects>"
+    and repr(set().__repr__).startswith("<method-wrapper '__repr__' of set object at 0x")
+    and repr(str.__repr__) == "<slot wrapper '__repr__' of 'str' objects>"
+    and repr('x'.__repr__).startswith("<method-wrapper '__repr__' of str object at 0x")
+    and repr(int.__repr__) == "<slot wrapper '__repr__' of 'int' objects>"
+    and repr((1).__repr__).startswith("<method-wrapper '__repr__' of int object at 0x")
+    and repr(bool.__repr__) == "<slot wrapper '__repr__' of 'bool' objects>"
+    and repr(True.__repr__).startswith("<method-wrapper '__repr__' of bool object at 0x")
+    and repr(float.__repr__) == "<slot wrapper '__repr__' of 'float' objects>"
+    and repr((1.5).__repr__).startswith("<method-wrapper '__repr__' of float object at 0x")
+    and repr(type(int.__add__)) == "<class 'wrapper_descriptor'>"
+    and repr(int.__add__) == "<slot wrapper '__add__' of 'int' objects>"
+    and repr(type((1).__add__)) == "<class 'method-wrapper'>"
+    and repr((1).__add__).startswith("<method-wrapper '__add__' of int object at 0x")
+    and repr(bool.__add__) == "<slot wrapper '__add__' of 'int' objects>"
+    and repr(True.__add__).startswith("<method-wrapper '__add__' of bool object at 0x")
+    and repr(bool.__lt__) == "<slot wrapper '__lt__' of 'int' objects>"
+    and repr(True.__lt__).startswith("<method-wrapper '__lt__' of bool object at 0x")
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn builtin_function_repr_and_str_match_cpython_shape() {
     let source = "ok = (\n    repr(len) == \"<built-in function len>\"\n    and str(len) == \"<built-in function len>\"\n    and repr(print) == \"<built-in function print>\"\n    and str(print) == \"<built-in function print>\"\n    and repr(isinstance) == \"<built-in function isinstance>\"\n    and repr(callable) == \"<built-in function callable>\"\n)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
