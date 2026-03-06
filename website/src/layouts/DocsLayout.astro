@@ -57,7 +57,7 @@ const copyScriptSrc = `${import.meta.env.BASE_URL}scripts/copy-buttons.js`;
 	<head>
 		<SiteHead title={title} description={description} url={Astro.url.toString()} noindex={noindex} />
 	</head>
-	<body>
+	<body class="no-grid-dots">
 		<div class="site-shell">
 			<a class="skip-link" href="#main-content">Skip to content</a>
 			<TopNav context="docs" />
@@ -99,6 +99,8 @@ const copyScriptSrc = `${import.meta.env.BASE_URL}scripts/copy-buttons.js`;
 	}
 
 	.site-shell {
+		position: relative;
+		z-index: 1;
 		width: min(1280px, calc(100% - 2.8rem));
 		margin: 0 auto;
 		padding-bottom: 4rem;
