@@ -1,15 +1,15 @@
 use super::{
-    BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome, HashMap, InstanceObject,
-    InternalCallOutcome, IteratorKind, IteratorObject, ModuleObject, NativeMethodKind, ObjRef,
-    Object, Ordering, RuntimeError, Value, Vm, builtin_exception_parent, class_attr_lookup,
-    class_name_for_instance, ensure_hashable, format_repr, memoryview_bounds,
-    memoryview_decode_element, memoryview_element_offset, memoryview_format_for_view,
-    memoryview_layout_1d, memoryview_logical_nbytes, memoryview_shape_and_strides_from_parts,
-    module_globals_version, runtime_error_matches_exception, slice_bounds_for_step_one,
-    slice_indices, value_from_bigint, value_to_bytes_payload, value_to_int,
-    with_bytes_like_source,
+    BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome, HashMap,
+    InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, ModuleObject,
+    NativeMethodKind, ObjRef, Object, Ordering, RuntimeError, Value, Vm,
+    builtin_exception_parent, class_attr_lookup, class_name_for_instance, ensure_hashable,
+    format_repr, memoryview_bounds, memoryview_decode_element, memoryview_element_offset,
+    memoryview_format_for_view, memoryview_layout_1d, memoryview_logical_nbytes,
+    memoryview_shape_and_strides_from_parts, module_globals_version,
+    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
+    value_from_bigint, value_to_bytes_payload, value_to_int, with_bytes_like_source,
 };
-use crate::runtime::SliceValue;
+use crate::runtime::{DictViewKind, SliceValue};
 
 impl Vm {
     fn warnings_increment_filters_version(module: &ObjRef) {
@@ -457,6 +457,47 @@ impl Vm {
                 current,
                 stop: reverse_stop,
                 step: reverse_step,
+            },
+            index: 0,
+        }))
+    }
+
+    pub(super) fn dict_view_iterator(
+        &self,
+        dict: ObjRef,
+        kind: DictViewKind,
+    ) -> Result<Value, RuntimeError> {
+        if !matches!(&*dict.kind(), Object::Dict(_)) {
+            return Err(RuntimeError::type_error("dict view iterator requires dict"));
+        }
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::DictView { dict, kind },
+            index: 0,
+        }))
+    }
+
+    pub(super) fn dict_view_reverse_iterator(
+        &self,
+        dict: ObjRef,
+        kind: DictViewKind,
+    ) -> Result<Value, RuntimeError> {
+        let next_index = match &*dict.kind() {
+            Object::Dict(values) => {
+                if values.is_empty() {
+                    -1
+                } else if values.len() - 1 > i64::MAX as usize {
+                    return Err(RuntimeError::new("dict reverse iterator index overflow"));
+                } else {
+                    (values.len() - 1) as i64
+                }
+            }
+            _ => return Err(RuntimeError::type_error("dict reverse iterator requires dict")),
+        };
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::DictReverse {
+                dict,
+                kind,
+                next_index,
             },
             index: 0,
         }))

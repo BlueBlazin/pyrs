@@ -281,6 +281,8 @@ impl Vm {
             Value::Tuple(_) => "tuple".to_string(),
             Value::Dict(_) => "dict".to_string(),
             Value::DictKeys(_) => "dict_keys".to_string(),
+            Value::DictValues(_) => "dict_values".to_string(),
+            Value::DictItems(_) => "dict_items".to_string(),
             Value::Set(_) => "set".to_string(),
             Value::FrozenSet(_) => "frozenset".to_string(),
             Value::Bytes(_) => "bytes".to_string(),
@@ -448,13 +450,15 @@ impl Vm {
                 Object::Dict(values) => Ok(!values.is_empty()),
                 _ => Ok(true),
             },
-            Value::DictKeys(obj) => match &*obj.kind() {
-                Object::DictKeysView(view) => match &*view.dict.kind() {
-                    Object::Dict(values) => Ok(!values.is_empty()),
+            Value::DictKeys(obj) | Value::DictValues(obj) | Value::DictItems(obj) => {
+                match &*obj.kind() {
+                    Object::DictView(view) => match &*view.dict.kind() {
+                        Object::Dict(values) => Ok(!values.is_empty()),
+                        _ => Ok(true),
+                    },
                     _ => Ok(true),
-                },
-                _ => Ok(true),
-            },
+                }
+            }
             Value::Set(obj) => match &*obj.kind() {
                 Object::Set(values) => Ok(!values.is_empty()),
                 _ => Ok(true),
@@ -3155,8 +3159,10 @@ impl Vm {
                 return Ok(Value::Int(values.len() as i64));
             }
         }
-        if let Value::DictKeys(keys_view) = &args[0]
-            && let Object::DictKeysView(view) = &*keys_view.kind()
+        if let Value::DictKeys(keys_view)
+        | Value::DictValues(keys_view)
+        | Value::DictItems(keys_view) = &args[0]
+            && let Object::DictView(view) = &*keys_view.kind()
             && let Object::Dict(values) = &*view.dict.kind()
         {
             return Ok(Value::Int(values.len() as i64));
@@ -4346,13 +4352,15 @@ impl Vm {
                 Object::Dict(values) => BASE + values.len() as i64 * (2 * PTR),
                 _ => BASE,
             },
-            Value::DictKeys(obj) => match &*obj.kind() {
-                Object::DictKeysView(view) => match &*view.dict.kind() {
-                    Object::Dict(values) => BASE + values.len() as i64 * PTR,
+            Value::DictKeys(obj) | Value::DictValues(obj) | Value::DictItems(obj) => {
+                match &*obj.kind() {
+                    Object::DictView(view) => match &*view.dict.kind() {
+                        Object::Dict(values) => BASE + values.len() as i64 * PTR,
+                        _ => BASE,
+                    },
                     _ => BASE,
-                },
-                _ => BASE,
-            },
+                }
+            }
             Value::Set(obj) => match &*obj.kind() {
                 Object::Set(values) => BASE + values.len() as i64 * PTR,
                 _ => BASE,
@@ -14374,7 +14382,7 @@ impl Vm {
                     _ => None,
                 },
                 Value::DictKeys(keys_view) => match &*keys_view.kind() {
-                    Object::DictKeysView(view) => match &*view.dict.kind() {
+                    Object::DictView(view) => match &*view.dict.kind() {
                         Object::Dict(entries) => {
                             Some(entries.iter().map(|(key, _)| key.clone()).collect())
                         }
@@ -17774,6 +17782,9 @@ functions outside a stub module should always be followed by an implementation t
             Value::Set(set) => self.load_attr_set_method(set, &name),
             Value::FrozenSet(set) => self.load_attr_set_method(set, &name),
             Value::Dict(dict) => self.load_attr_dict_method(dict, &name),
+            Value::DictKeys(view) | Value::DictValues(view) | Value::DictItems(view) => {
+                self.load_attr_dict_view(view, &name)
+            }
             Value::Cell(cell) => self.load_attr_cell(cell, &name),
             Value::Builtin(builtin) => self.load_attr_builtin(builtin, &name),
             Value::Function(func) => self.load_attr_function(&func, &name),

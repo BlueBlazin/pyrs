@@ -1,16 +1,18 @@
 use std::ffi::c_void;
 
-use crate::runtime::{BuiltinFunction, IteratorKind, Object, Value};
+use crate::runtime::{BuiltinFunction, DictViewKind, IteratorKind, Object, Value};
 
 use super::{
     ObjRef, PyBaseObject_Type, PyBool_Type, PyByteArray_Type, PyByteArrayIter_Type, PyBytes_Type,
-    PyBytesIter_Type, PyCallIter_Type, PyComplex_Type, PyCoro_Type, PyDict_Type,
-    PyDictIterKey_Type, PyDictProxy_Type, PyEnum_Type, PyFilter_Type, PyFloat_Type,
-    PyFrozenSet_Type, PyFunction_Type, PyGen_Type, PyListRevIter_Type, PyListIter_Type,
-    PyList_Type, PyLong_Type, PyMap_Type, PyMemoryView_Type, PyMethod_Type, PyModule_Type,
-    PyNone_Type, PyRange_Type, PyRangeIter_Type, PyReversed_Type, PySeqIter_Type, PySet_Type,
-    PySetIter_Type, PySlice_Type, PySuper_Type, PyTuple_Type, PyTupleIter_Type, PyType_Type,
-    PyUnicode_Type, PyUnicodeIter_Type, PyZip_Type, cpython_exception_ptr_for_name,
+    PyBytesIter_Type, PyCallIter_Type, PyComplex_Type, PyCoro_Type, PyDictItems_Type,
+    PyDictIterItem_Type, PyDictIterKey_Type, PyDictIterValue_Type, PyDictKeys_Type,
+    PyDictRevIterItem_Type, PyDictRevIterKey_Type, PyDictRevIterValue_Type, PyDict_Type,
+    PyDictValues_Type, PyEnum_Type, PyFilter_Type, PyFloat_Type, PyFrozenSet_Type,
+    PyFunction_Type, PyGen_Type, PyListRevIter_Type, PyListIter_Type, PyList_Type, PyLong_Type,
+    PyMap_Type, PyMemoryView_Type, PyMethod_Type, PyModule_Type, PyNone_Type, PyRange_Type,
+    PyRangeIter_Type, PyReversed_Type, PySeqIter_Type, PySet_Type, PySetIter_Type,
+    PySlice_Type, PySuper_Type, PyTuple_Type, PyTupleIter_Type, PyType_Type, PyUnicode_Type,
+    PyUnicodeIter_Type, PyZip_Type, cpython_exception_ptr_for_name,
 };
 
 pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
@@ -24,7 +26,9 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
         Value::List(_) => std::ptr::addr_of_mut!(PyList_Type).cast(),
         Value::Tuple(_) => std::ptr::addr_of_mut!(PyTuple_Type).cast(),
         Value::Dict(_) => std::ptr::addr_of_mut!(PyDict_Type).cast(),
-        Value::DictKeys(_) => std::ptr::addr_of_mut!(PyDictProxy_Type).cast(),
+        Value::DictKeys(_) => std::ptr::addr_of_mut!(PyDictKeys_Type).cast(),
+        Value::DictValues(_) => std::ptr::addr_of_mut!(PyDictValues_Type).cast(),
+        Value::DictItems(_) => std::ptr::addr_of_mut!(PyDictItems_Type).cast(),
         Value::Set(_) => std::ptr::addr_of_mut!(PySet_Type).cast(),
         Value::FrozenSet(_) => std::ptr::addr_of_mut!(PyFrozenSet_Type).cast(),
         Value::Bytes(_) => std::ptr::addr_of_mut!(PyBytes_Type).cast(),
@@ -38,7 +42,16 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
                 }
                 IteratorKind::Tuple(_) => std::ptr::addr_of_mut!(PyTupleIter_Type).cast(),
                 IteratorKind::Str(_) => std::ptr::addr_of_mut!(PyUnicodeIter_Type).cast(),
-                IteratorKind::Dict(_) => std::ptr::addr_of_mut!(PyDictIterKey_Type).cast(),
+                IteratorKind::DictView { kind, .. } => match kind {
+                    DictViewKind::Keys => std::ptr::addr_of_mut!(PyDictIterKey_Type).cast(),
+                    DictViewKind::Values => std::ptr::addr_of_mut!(PyDictIterValue_Type).cast(),
+                    DictViewKind::Items => std::ptr::addr_of_mut!(PyDictIterItem_Type).cast(),
+                },
+                IteratorKind::DictReverse { kind, .. } => match kind {
+                    DictViewKind::Keys => std::ptr::addr_of_mut!(PyDictRevIterKey_Type).cast(),
+                    DictViewKind::Values => std::ptr::addr_of_mut!(PyDictRevIterValue_Type).cast(),
+                    DictViewKind::Items => std::ptr::addr_of_mut!(PyDictRevIterItem_Type).cast(),
+                },
                 IteratorKind::Set(_) => std::ptr::addr_of_mut!(PySetIter_Type).cast(),
                 IteratorKind::Bytes(_) => std::ptr::addr_of_mut!(PyBytesIter_Type).cast(),
                 IteratorKind::ByteArray(_) => std::ptr::addr_of_mut!(PyByteArrayIter_Type).cast(),
@@ -108,6 +121,8 @@ pub(super) fn cpython_objref_from_value(value: Value) -> Option<ObjRef> {
         | Value::Tuple(obj)
         | Value::Dict(obj)
         | Value::DictKeys(obj)
+        | Value::DictValues(obj)
+        | Value::DictItems(obj)
         | Value::Set(obj)
         | Value::FrozenSet(obj)
         | Value::Bytes(obj)
@@ -233,6 +248,8 @@ pub(super) fn cpython_value_debug_tag(value: &Value) -> String {
         Value::Tuple(_) => "Tuple".to_string(),
         Value::Dict(_) => "Dict".to_string(),
         Value::DictKeys(_) => "DictKeys".to_string(),
+        Value::DictValues(_) => "DictValues".to_string(),
+        Value::DictItems(_) => "DictItems".to_string(),
         Value::Set(_) => "Set".to_string(),
         Value::FrozenSet(_) => "FrozenSet".to_string(),
         Value::Bytes(_) => "Bytes".to_string(),

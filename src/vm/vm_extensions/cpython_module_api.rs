@@ -304,6 +304,8 @@ pub unsafe extern "C" fn PyModule_NewObject(name: *mut c_void) -> *mut c_void {
                     Value::Tuple(_) => "Tuple",
                     Value::Dict(_) => "Dict",
                     Value::DictKeys(_) => "DictKeys",
+                    Value::DictValues(_) => "DictValues",
+                    Value::DictItems(_) => "DictItems",
                     Value::Set(_) => "Set",
                     Value::FrozenSet(_) => "FrozenSet",
                     Value::Slice(_) => "Slice",

@@ -141,6 +141,8 @@ fn debug_value_kind(value: &Value) -> &'static str {
         Value::ExceptionType(_) => "ExceptionType",
         Value::Super(_) => "Super",
         Value::DictKeys(_) => "DictKeys",
+        Value::DictValues(_) => "DictValues",
+        Value::DictItems(_) => "DictItems",
         Value::Cell(_) => "Cell",
     }
 }
@@ -1449,7 +1451,7 @@ fn as_set_values(value: &Value) -> Option<Vec<Value>> {
             _ => None,
         },
         Value::DictKeys(obj) => match &*obj.kind() {
-            Object::DictKeysView(view) => match &*view.dict.kind() {
+            Object::DictView(view) => match &*view.dict.kind() {
                 Object::Dict(values) => Some(values.iter().map(|(key, _)| key.clone()).collect()),
                 _ => None,
             },
@@ -1544,7 +1546,7 @@ pub(super) fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeErr
             _ => Err(RuntimeError::type_error("unsupported operand type for in")),
         },
         Value::DictKeys(obj) => match &*obj.kind() {
-            Object::DictKeysView(view) => match &*view.dict.kind() {
+            Object::DictView(view) => match &*view.dict.kind() {
                 Object::Dict(_) => dict_contains_key_checked(&view.dict, left),
                 _ => Err(RuntimeError::type_error("unsupported operand type for in")),
             },

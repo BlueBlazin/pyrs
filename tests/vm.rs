@@ -512,6 +512,46 @@ ok = (
 }
 
 #[test]
+fn dict_view_and_reverse_iterator_type_reprs_match_cpython_shape() {
+    let source = r#"d = {'a': 1, 'b': 2}
+ok = (
+    repr(type(d.keys())) == "<class 'dict_keys'>"
+    and repr(d.keys()) == "dict_keys(['a', 'b'])"
+    and d.keys().__class__ is type(d.keys())
+    and repr(type(d.items())) == "<class 'dict_items'>"
+    and repr(d.items()) == "dict_items([('a', 1), ('b', 2)])"
+    and d.items().__class__ is type(d.items())
+    and repr(type(d.values())) == "<class 'dict_values'>"
+    and repr(d.values()) == "dict_values([1, 2])"
+    and d.values().__class__ is type(d.values())
+    and repr(type(iter(d.keys()))) == "<class 'dict_keyiterator'>"
+    and repr(iter(d.keys())).startswith("<dict_keyiterator object at 0x")
+    and repr(type(iter(d.items()))) == "<class 'dict_itemiterator'>"
+    and repr(iter(d.items())).startswith("<dict_itemiterator object at 0x")
+    and repr(type(iter(d.values()))) == "<class 'dict_valueiterator'>"
+    and repr(iter(d.values())).startswith("<dict_valueiterator object at 0x")
+    and repr(type(reversed(d))) == "<class 'dict_reversekeyiterator'>"
+    and repr(reversed(d)).startswith("<dict_reversekeyiterator object at 0x")
+    and list(reversed(d)) == ['b', 'a']
+    and repr(type(reversed(d.keys()))) == "<class 'dict_reversekeyiterator'>"
+    and repr(reversed(d.keys())).startswith("<dict_reversekeyiterator object at 0x")
+    and list(reversed(d.keys())) == ['b', 'a']
+    and repr(type(reversed(d.items()))) == "<class 'dict_reverseitemiterator'>"
+    and repr(reversed(d.items())).startswith("<dict_reverseitemiterator object at 0x")
+    and list(reversed(d.items())) == [('b', 2), ('a', 1)]
+    and repr(type(reversed(d.values()))) == "<class 'dict_reversevalueiterator'>"
+    and repr(reversed(d.values())).startswith("<dict_reversevalueiterator object at 0x")
+    and list(reversed(d.values())) == [2, 1]
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn builtin_function_repr_and_str_match_cpython_shape() {
     let source = "ok = (\n    repr(len) == \"<built-in function len>\"\n    and str(len) == \"<built-in function len>\"\n    and repr(print) == \"<built-in function print>\"\n    and str(print) == \"<built-in function print>\"\n    and repr(isinstance) == \"<built-in function isinstance>\"\n    and repr(callable) == \"<built-in function callable>\"\n)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

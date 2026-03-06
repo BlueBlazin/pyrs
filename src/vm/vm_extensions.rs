@@ -26,8 +26,8 @@ use crate::extensions::{
     PyrsWritableBufferViewV1,
 };
 use crate::runtime::{
-    BigInt, BoundMethod, BuiltinFunction, ClassObject, InstanceObject, NativeMethodKind,
-    NativeMethodObject, Object, RuntimeError, Value, value_lookup_hash,
+    BigInt, BoundMethod, BuiltinFunction, ClassObject, DictViewKind, InstanceObject,
+    NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value, value_lookup_hash,
 };
 use crate::vm::ExtensionModuleStateEntry;
 
@@ -6545,7 +6545,11 @@ impl ModuleCapiContext {
             Object::BoundMethod(_) => Some(Value::BoundMethod(obj.clone())),
             Object::Function(_) => Some(Value::Function(obj.clone())),
             Object::Cell(_) => Some(Value::Cell(obj.clone())),
-            Object::DictKeysView(_) => Some(Value::DictKeys(obj.clone())),
+            Object::DictView(view) => Some(match view.kind {
+                DictViewKind::Keys => Value::DictKeys(obj.clone()),
+                DictViewKind::Values => Value::DictValues(obj.clone()),
+                DictViewKind::Items => Value::DictItems(obj.clone()),
+            }),
             Object::NativeMethod(_) => None,
         }
     }
@@ -7392,6 +7396,8 @@ impl ModuleCapiContext {
                         Value::Tuple(_) => "Tuple",
                         Value::Dict(_) => "Dict",
                         Value::DictKeys(_) => "DictKeys",
+                        Value::DictValues(_) => "DictValues",
+                        Value::DictItems(_) => "DictItems",
                         Value::Set(_) => "Set",
                         Value::FrozenSet(_) => "FrozenSet",
                         Value::Slice(_) => "Slice",
@@ -10401,6 +10407,8 @@ impl ModuleCapiContext {
             | Value::Tuple(obj)
             | Value::Dict(obj)
             | Value::DictKeys(obj)
+            | Value::DictValues(obj)
+            | Value::DictItems(obj)
             | Value::Set(obj)
             | Value::FrozenSet(obj)
             | Value::Bytes(obj)

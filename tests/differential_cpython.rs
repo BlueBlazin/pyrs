@@ -2825,6 +2825,53 @@ result = {
 }
 
 #[test]
+fn differential_dict_view_and_reverse_iterator_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+def normalize_repr(obj):
+    text = repr(obj)
+    start = text.find("0x")
+    if start == -1:
+        return text
+    end = start + 2
+    while end < len(text) and text[end] in "0123456789abcdefABCDEF":
+        end += 1
+    return text[:start] + "0xADDR" + text[end:]
+
+d = {"a": 1, "b": 2}
+samples = {
+    "keys": d.keys(),
+    "items": d.items(),
+    "values": d.values(),
+    "iter_keys": iter(d.keys()),
+    "iter_items": iter(d.items()),
+    "iter_values": iter(d.values()),
+    "reverse_dict": reversed(d),
+    "reverse_keys": reversed(d.keys()),
+    "reverse_items": reversed(d.items()),
+    "reverse_values": reversed(d.values()),
+}
+result = {
+    "samples": {
+        name: {
+            "type_repr": repr(type(obj)),
+            "class_repr": repr(obj.__class__),
+            "type_matches_class": (obj.__class__ is type(obj)),
+            "repr": normalize_repr(obj),
+            "values": list(obj),
+        }
+        for name, obj in samples.items()
+    }
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
 fn differential_runtime_itertools_iterator_helper_parity() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;

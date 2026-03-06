@@ -15,7 +15,7 @@ use super::{
     env_var_present_cached, format_repr, memoryview_bounds, runtime_error_matches_exception,
     value_from_bigint, value_from_object_ref, with_bytes_like_source,
 };
-use crate::runtime::builtin_type_name_info;
+use crate::runtime::{DictViewKind, builtin_type_name_info};
 
 thread_local! {
     static CALL_INTERNAL_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -2618,7 +2618,24 @@ impl Vm {
                     ),
                     IteratorKind::Tuple(_) => ("tuple_iterator", None, None, None, false, true, false),
                     IteratorKind::Str(_) => ("str_iterator", None, None, None, false, true, false),
-                    IteratorKind::Dict(_) => ("dict_keyiterator", None, None, None, false, true, false),
+                    IteratorKind::DictView { kind, .. } => (
+                        kind.iterator_type_name(false),
+                        None,
+                        None,
+                        None,
+                        false,
+                        true,
+                        false,
+                    ),
+                    IteratorKind::DictReverse { kind, .. } => (
+                        kind.iterator_type_name(true),
+                        None,
+                        None,
+                        None,
+                        false,
+                        true,
+                        false,
+                    ),
                     IteratorKind::Set(_) => ("set_iterator", None, None, None, false, true, false),
                     IteratorKind::Bytes(_) => ("bytes_iterator", None, None, None, false, true, false),
                     IteratorKind::ByteArray(_) => {
@@ -2989,6 +3006,9 @@ impl Vm {
         if attr_name == "__iter__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Iter, dict));
         }
+        if attr_name == "__reversed__" {
+            return Ok(self.alloc_native_bound_method(NativeMethodKind::DictDunderReversed, dict));
+        }
         if attr_name == "__reduce_ex__" || attr_name == "__reduce__" {
             return Ok(self.alloc_reduce_ex_bound_method(Value::Dict(dict)));
         }
@@ -3066,6 +3086,40 @@ impl Vm {
             Ok(self.alloc_native_bound_method(kind, receiver))
         } else {
             Ok(self.alloc_native_bound_method(kind, dict))
+        }
+    }
+
+    pub(super) fn load_attr_dict_view(
+        &self,
+        view: ObjRef,
+        attr_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        let view_kind = match &*view.kind() {
+            Object::DictView(view_data) => view_data.kind,
+            _ => {
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
+            }
+        };
+        match attr_name {
+            "__reversed__" => Ok(self.alloc_native_bound_method(
+                NativeMethodKind::DictViewDunderReversed(view_kind),
+                view,
+            )),
+            "__reduce_ex__" | "__reduce__" => {
+                let value = match view_kind {
+                    DictViewKind::Keys => Value::DictKeys(view),
+                    DictViewKind::Values => Value::DictValues(view),
+                    DictViewKind::Items => Value::DictItems(view),
+                };
+                Ok(self.alloc_reduce_ex_bound_method(value))
+            }
+            _ => Err(RuntimeError::attribute_error(format!(
+                "{} has no attribute '{}'",
+                view_kind.type_name(),
+                attr_name
+            ))),
         }
     }
 
@@ -4421,9 +4475,7 @@ impl Vm {
         receiver: &Value,
         method_name: &str,
     ) -> Result<Option<Value>, RuntimeError> {
-        let Some(class_ref) = self.class_of_value(receiver) else {
-            return Ok(None);
-        };
+        let class_ref = self.class_of_value(receiver);
         if let Value::Instance(instance) = receiver {
             let instance_special = match &*instance.kind() {
                 Object::Instance(instance_data) => {
@@ -4449,7 +4501,9 @@ impl Vm {
                 }
             }
         }
-        if let Some(method) = class_attr_lookup(&class_ref, method_name) {
+        if let Some(class_ref) = class_ref
+            && let Some(method) = class_attr_lookup(&class_ref, method_name)
+        {
             return self.bind_descriptor_method(method, receiver);
         }
         if !matches!(receiver, Value::Instance(_) | Value::Module(_) | Value::Class(_))

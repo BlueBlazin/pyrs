@@ -7,10 +7,11 @@
 use std::cell::Cell;
 
 use super::{
-    BigInt, BoundMethod, BuiltinFunction, CodeObject, ExceptionObject, FormatterFieldKey, Frame,
-    GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome, HashMap, InstanceObject,
-    Instruction, InternalCallOutcome, IteratorKind, IteratorObject, MAPPING_PROXY_STORAGE_ATTR,
-    ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object, Opcode, Ordering,
+    BigInt, BoundMethod, BuiltinFunction, CodeObject, ExceptionObject,
+    FormatterFieldKey, Frame, GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome,
+    HashMap, InstanceObject, Instruction, InternalCallOutcome, IteratorKind, IteratorObject,
+    MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object,
+    Opcode, Ordering,
     PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc, ReMode, RePatternValue, RuntimeError, Value, Vm,
     bigint_to_fixed_bytes, bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup,
     class_name_for_instance, decode_text_bytes, dict_get_value, dict_remove_value, dict_set_value,
@@ -24,7 +25,7 @@ use super::{
 };
 use crate::ast::{Constant, ExprKind};
 use crate::parser;
-use crate::runtime::iterator_type_info;
+use crate::runtime::{DictViewKind, iterator_type_info};
 
 unsafe extern "C" {
     fn PyErr_Clear();
@@ -718,11 +719,9 @@ impl Vm {
                         return Err(RuntimeError::new("dict.values() receiver must be dict"));
                     }
                 };
-                let Object::Dict(entries) = &*dict_receiver.kind() else {
-                    return Err(RuntimeError::new("dict.values() receiver must be dict"));
-                };
-                let values = entries.iter().map(|(_, value)| value.clone()).collect();
-                Ok(NativeCallResult::Value(self.heap.alloc_list(values)))
+                Ok(NativeCallResult::Value(
+                    self.heap.alloc_dict_values_view(dict_receiver),
+                ))
             }
             NativeMethodKind::DictItems => {
                 let dict_receiver = match &*receiver.kind() {
@@ -756,14 +755,9 @@ impl Vm {
                         return Err(RuntimeError::new("dict.items() receiver must be dict"));
                     }
                 };
-                let Object::Dict(entries) = &*dict_receiver.kind() else {
-                    return Err(RuntimeError::new("dict.items() receiver must be dict"));
-                };
-                let values = entries
-                    .iter()
-                    .map(|(key, value)| self.heap.alloc_tuple(vec![key.clone(), value.clone()]))
-                    .collect();
-                Ok(NativeCallResult::Value(self.heap.alloc_list(values)))
+                Ok(NativeCallResult::Value(
+                    self.heap.alloc_dict_items_view(dict_receiver),
+                ))
             }
             NativeMethodKind::DictCopy => {
                 if !kwargs.is_empty() {
@@ -2459,6 +2453,34 @@ impl Vm {
                     ));
                 }
                 Ok(NativeCallResult::Value(self.range_reverse_iterator(&receiver)?))
+            }
+            NativeMethodKind::DictDunderReversed => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error(
+                        "__reversed__() expects no arguments",
+                    ));
+                }
+                Ok(NativeCallResult::Value(
+                    self.dict_view_reverse_iterator(receiver, DictViewKind::Keys)?,
+                ))
+            }
+            NativeMethodKind::DictViewDunderReversed(kind) => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error(
+                        "__reversed__() expects no arguments",
+                    ));
+                }
+                let dict = match &*receiver.kind() {
+                    Object::DictView(view) => view.dict.clone(),
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "__reversed__() receiver must be a dict view",
+                        ));
+                    }
+                };
+                Ok(NativeCallResult::Value(
+                    self.dict_view_reverse_iterator(dict, kind)?,
+                ))
             }
             NativeMethodKind::IntToBytes => {
                 if args.len() > 3 {
@@ -9089,12 +9111,12 @@ impl Vm {
                 }
             }
             Value::Generator(_) => Ok(source),
-            Value::DictKeys(keys_view) => match &*keys_view.kind() {
-                Object::DictKeysView(view) => {
-                    self.to_iterator_value(Value::Dict(view.dict.clone()))
+            Value::DictKeys(view_obj) | Value::DictValues(view_obj) | Value::DictItems(view_obj) => {
+                match &*view_obj.kind() {
+                    Object::DictView(view) => self.dict_view_iterator(view.dict.clone(), view.kind),
+                    _ => Err(RuntimeError::type_error("yield from expects iterable")),
                 }
-                _ => Err(RuntimeError::type_error("yield from expects iterable")),
-            },
+            }
             Value::Instance(instance) => {
                 if let Some(values) = self.namedtuple_instance_values(&instance) {
                     return self.to_iterator_value(self.heap.alloc_tuple(values));
@@ -9228,10 +9250,7 @@ impl Vm {
             Value::Dict(obj) => {
                 let is_dict = matches!(&*obj.kind(), Object::Dict(_));
                 if is_dict {
-                    Ok(self.heap.alloc_iterator(IteratorObject {
-                        kind: IteratorKind::Dict(obj),
-                        index: 0,
-                    }))
+                    self.dict_view_iterator(obj, DictViewKind::Keys)
                 } else {
                     Err(RuntimeError::type_error("yield from expects iterable"))
                 }
@@ -9960,15 +9979,49 @@ impl Vm {
                         Some(Value::Str(ch.to_string()))
                     });
                 }
-                IteratorKind::Dict(dict) => {
+                IteratorKind::DictView { dict, kind } => {
                     return Ok(match &*dict.kind() {
                         Object::Dict(entries) => {
                             if state.index >= entries.len() {
                                 None
                             } else {
-                                let value = entries[state.index].0.clone();
+                                let (key, value) = &entries[state.index];
                                 state.index += 1;
-                                Some(value)
+                                Some(match kind {
+                                    DictViewKind::Keys => key.clone(),
+                                    DictViewKind::Values => value.clone(),
+                                    DictViewKind::Items => {
+                                        self.heap.alloc_tuple(vec![key.clone(), value.clone()])
+                                    }
+                                })
+                            }
+                        }
+                        _ => None,
+                    });
+                }
+                IteratorKind::DictReverse {
+                    dict,
+                    kind,
+                    next_index,
+                } => {
+                    return Ok(match &*dict.kind() {
+                        Object::Dict(entries) => {
+                            if *next_index < 0 {
+                                None
+                            } else if (*next_index as usize) >= entries.len() {
+                                *next_index = -1;
+                                None
+                            } else {
+                                let (key, value) = &entries[*next_index as usize];
+                                *next_index -= 1;
+                                state.index = state.index.saturating_add(1);
+                                Some(match kind {
+                                    DictViewKind::Keys => key.clone(),
+                                    DictViewKind::Values => value.clone(),
+                                    DictViewKind::Items => {
+                                        self.heap.alloc_tuple(vec![key.clone(), value.clone()])
+                                    }
+                                })
                             }
                         }
                         _ => None,

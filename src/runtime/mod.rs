@@ -284,14 +284,43 @@ impl GeneratorObject {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct DictKeysView {
-    pub dict: ObjRef,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DictViewKind {
+    Keys,
+    Values,
+    Items,
 }
 
-impl DictKeysView {
-    pub fn new(dict: ObjRef) -> Self {
-        Self { dict }
+impl DictViewKind {
+    pub fn type_name(self) -> &'static str {
+        match self {
+            Self::Keys => "dict_keys",
+            Self::Values => "dict_values",
+            Self::Items => "dict_items",
+        }
+    }
+
+    pub fn iterator_type_name(self, reverse: bool) -> &'static str {
+        match (self, reverse) {
+            (Self::Keys, false) => "dict_keyiterator",
+            (Self::Keys, true) => "dict_reversekeyiterator",
+            (Self::Values, false) => "dict_valueiterator",
+            (Self::Values, true) => "dict_reversevalueiterator",
+            (Self::Items, false) => "dict_itemiterator",
+            (Self::Items, true) => "dict_reverseitemiterator",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DictViewObject {
+    pub dict: ObjRef,
+    pub kind: DictViewKind,
+}
+
+impl DictViewObject {
+    pub fn new(dict: ObjRef, kind: DictViewKind) -> Self {
+        Self { dict, kind }
     }
 }
 
@@ -310,6 +339,8 @@ pub enum NativeMethodKind {
     DictKeys,
     DictValues,
     DictItems,
+    DictDunderReversed,
+    DictViewDunderReversed(DictViewKind),
     DictClear,
     DictUpdateMethod,
     DictSetDefault,
@@ -599,7 +630,7 @@ fn object_variant_name(object: &Object) -> &'static str {
         Object::NativeMethod(_) => "NativeMethod",
         Object::Function(_) => "Function",
         Object::Cell(_) => "Cell",
-        Object::DictKeysView(_) => "DictKeysView",
+        Object::DictView(_) => "DictView",
     }
 }
 
@@ -1395,6 +1426,8 @@ fn value_hash_key(value: &Value) -> Option<u64> {
         Value::List(_)
         | Value::Dict(_)
         | Value::DictKeys(_)
+        | Value::DictValues(_)
+        | Value::DictItems(_)
         | Value::Set(_)
         | Value::ByteArray(_)
         | Value::MemoryView(_)
@@ -1424,7 +1457,7 @@ pub enum Object {
     NativeMethod(NativeMethodObject),
     Function(FunctionObject),
     Cell(CellObject),
-    DictKeysView(DictKeysView),
+    DictView(DictViewObject),
 }
 
 impl fmt::Debug for Object {
@@ -1454,7 +1487,7 @@ impl fmt::Debug for Object {
             Object::NativeMethod(method) => f.debug_tuple("NativeMethod").field(method).finish(),
             Object::Function(function) => f.debug_tuple("Function").field(function).finish(),
             Object::Cell(cell) => f.debug_tuple("Cell").field(cell).finish(),
-            Object::DictKeysView(view) => f.debug_tuple("DictKeysView").field(view).finish(),
+            Object::DictView(view) => f.debug_tuple("DictView").field(view).finish(),
         }
     }
 }
@@ -1501,7 +1534,15 @@ pub enum IteratorKind {
     },
     Tuple(ObjRef),
     Str(String),
-    Dict(ObjRef),
+    DictView {
+        dict: ObjRef,
+        kind: DictViewKind,
+    },
+    DictReverse {
+        dict: ObjRef,
+        kind: DictViewKind,
+        next_index: i64,
+    },
     Set(ObjRef),
     Bytes(ObjRef),
     ByteArray(ObjRef),
@@ -1684,7 +1725,21 @@ impl fmt::Debug for IteratorKind {
                 .finish(),
             IteratorKind::Tuple(obj) => f.debug_tuple("Tuple").field(&obj.id()).finish(),
             IteratorKind::Str(value) => f.debug_tuple("Str").field(value).finish(),
-            IteratorKind::Dict(obj) => f.debug_tuple("Dict").field(&obj.id()).finish(),
+            IteratorKind::DictView { dict, kind } => f
+                .debug_struct("DictView")
+                .field("dict", &dict.id())
+                .field("kind", kind)
+                .finish(),
+            IteratorKind::DictReverse {
+                dict,
+                kind,
+                next_index,
+            } => f
+                .debug_struct("DictReverse")
+                .field("dict", &dict.id())
+                .field("kind", kind)
+                .field("next_index", next_index)
+                .finish(),
             IteratorKind::Set(obj) => f.debug_tuple("Set").field(&obj.id()).finish(),
             IteratorKind::Bytes(obj) => f.debug_tuple("Bytes").field(&obj.id()).finish(),
             IteratorKind::ByteArray(obj) => f.debug_tuple("ByteArray").field(&obj.id()).finish(),
@@ -2263,8 +2318,12 @@ pub fn iterator_type_info(kind: &IteratorKind) -> IteratorTypeInfo {
             type_name: RuntimeTypeNameInfo::builtins("str_iterator"),
             repr_kind: IteratorReprKind::Object,
         },
-        IteratorKind::Dict(_) => IteratorTypeInfo {
-            type_name: RuntimeTypeNameInfo::builtins("dict_keyiterator"),
+        IteratorKind::DictView { kind, .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins(kind.iterator_type_name(false)),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::DictReverse { kind, .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins(kind.iterator_type_name(true)),
             repr_kind: IteratorReprKind::Object,
         },
         IteratorKind::Set(_) => IteratorTypeInfo {
@@ -2591,8 +2650,25 @@ impl Heap {
         Value::Dict(self.alloc(Object::Dict(DictObject::new_readonly(values))))
     }
 
+    pub fn alloc_dict_view(&self, dict: ObjRef, kind: DictViewKind) -> Value {
+        let view = self.alloc(Object::DictView(DictViewObject::new(dict, kind)));
+        match kind {
+            DictViewKind::Keys => Value::DictKeys(view),
+            DictViewKind::Values => Value::DictValues(view),
+            DictViewKind::Items => Value::DictItems(view),
+        }
+    }
+
     pub fn alloc_dict_keys_view(&self, dict: ObjRef) -> Value {
-        Value::DictKeys(self.alloc(Object::DictKeysView(DictKeysView::new(dict))))
+        self.alloc_dict_view(dict, DictViewKind::Keys)
+    }
+
+    pub fn alloc_dict_values_view(&self, dict: ObjRef) -> Value {
+        self.alloc_dict_view(dict, DictViewKind::Values)
+    }
+
+    pub fn alloc_dict_items_view(&self, dict: ObjRef) -> Value {
+        self.alloc_dict_view(dict, DictViewKind::Items)
     }
 
     pub fn ellipsis_singleton(&self) -> Value {
@@ -2893,6 +2969,8 @@ impl Heap {
             | Value::Tuple(obj)
             | Value::Dict(obj)
             | Value::DictKeys(obj)
+            | Value::DictValues(obj)
+            | Value::DictItems(obj)
             | Value::Set(obj)
             | Value::FrozenSet(obj)
             | Value::Bytes(obj)
@@ -3041,6 +3119,8 @@ fn trace_value(value: &Value, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
         | Value::Tuple(obj)
         | Value::Dict(obj)
         | Value::DictKeys(obj)
+        | Value::DictValues(obj)
+        | Value::DictItems(obj)
         | Value::Set(obj)
         | Value::FrozenSet(obj)
         | Value::Bytes(obj)
@@ -3092,7 +3172,7 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                 }
             }
         }
-        Object::DictKeysView(view) => {
+        Object::DictView(view) => {
             stack.push(view.dict.clone());
         }
         Object::Set(values) | Object::FrozenSet(values) => {
@@ -3108,11 +3188,13 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             IteratorKind::List(list)
             | IteratorKind::ListReverse { list, .. }
             | IteratorKind::Tuple(list)
-            | IteratorKind::Dict(list)
             | IteratorKind::Set(list)
             | IteratorKind::Bytes(list)
             | IteratorKind::ByteArray(list)
             | IteratorKind::MemoryView(list) => stack.push(list.clone()),
+            IteratorKind::DictView { dict, .. } | IteratorKind::DictReverse { dict, .. } => {
+                stack.push(dict.clone());
+            }
             IteratorKind::Cycle { source, values, .. } => {
                 trace_value(source, stack, marked);
                 for value in values {
@@ -3385,7 +3467,7 @@ fn clear_object_refs(obj: &ObjRef) {
             entries.clear();
             None
         }
-        Object::DictKeysView(_) => Some(Object::Bytes(Vec::new())),
+        Object::DictView(_) => Some(Object::Bytes(Vec::new())),
         Object::Set(values) | Object::FrozenSet(values) => {
             values.clear();
             None
@@ -3400,11 +3482,14 @@ fn clear_object_refs(obj: &ObjRef) {
                 IteratorKind::List(_)
                 | IteratorKind::ListReverse { .. }
                 | IteratorKind::Tuple(_)
-                | IteratorKind::Dict(_)
                 | IteratorKind::Set(_)
                 | IteratorKind::Bytes(_)
                 | IteratorKind::ByteArray(_)
                 | IteratorKind::MemoryView(_) => {
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::DictView { .. } | IteratorKind::DictReverse { .. } => {
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -3754,6 +3839,8 @@ pub enum Value {
     Tuple(ObjRef),
     Dict(ObjRef),
     DictKeys(ObjRef),
+    DictValues(ObjRef),
+    DictItems(ObjRef),
     Set(ObjRef),
     FrozenSet(ObjRef),
     Bytes(ObjRef),
@@ -3793,6 +3880,8 @@ impl fmt::Debug for Value {
             Value::Tuple(value) => f.debug_tuple("Tuple").field(value).finish(),
             Value::Dict(value) => f.debug_tuple("Dict").field(value).finish(),
             Value::DictKeys(value) => f.debug_tuple("DictKeys").field(value).finish(),
+            Value::DictValues(value) => f.debug_tuple("DictValues").field(value).finish(),
+            Value::DictItems(value) => f.debug_tuple("DictItems").field(value).finish(),
             Value::Set(value) => f.debug_tuple("Set").field(value).finish(),
             Value::FrozenSet(value) => f.debug_tuple("FrozenSet").field(value).finish(),
             Value::Bytes(value) => f.debug_tuple("Bytes").field(value).finish(),
@@ -5673,13 +5762,15 @@ impl BuiltinFunction {
                         Object::Dict(values) => Ok(Value::Int(values.len() as i64)),
                         _ => Err(RuntimeError::type_error("len() unsupported type")),
                     },
-                    Value::DictKeys(obj) => match &*obj.kind() {
-                        Object::DictKeysView(view) => match &*view.dict.kind() {
-                            Object::Dict(values) => Ok(Value::Int(values.len() as i64)),
+                    Value::DictKeys(obj) | Value::DictValues(obj) | Value::DictItems(obj) => {
+                        match &*obj.kind() {
+                            Object::DictView(view) => match &*view.dict.kind() {
+                                Object::Dict(values) => Ok(Value::Int(values.len() as i64)),
+                                _ => Err(RuntimeError::type_error("len() unsupported type")),
+                            },
                             _ => Err(RuntimeError::type_error("len() unsupported type")),
-                        },
-                        _ => Err(RuntimeError::type_error("len() unsupported type")),
-                    },
+                        }
+                    }
                     Value::Set(obj) => match &*obj.kind() {
                         Object::Set(values) => Ok(Value::Int(values.len() as i64)),
                         _ => Err(RuntimeError::type_error("len() unsupported type")),
@@ -9115,9 +9206,18 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
             Object::Dict(values) => Ok(values.iter().map(|(key, _)| key.clone()).collect()),
             _ => Err(RuntimeError::type_error("expected iterable")),
         },
-        Value::DictKeys(obj) => match &*obj.kind() {
-            Object::DictKeysView(view) => match &*view.dict.kind() {
-                Object::Dict(values) => Ok(values.iter().map(|(key, _)| key.clone()).collect()),
+        Value::DictKeys(obj) | Value::DictValues(obj) | Value::DictItems(obj) => match &*obj.kind()
+        {
+            Object::DictView(view) => match &*view.dict.kind() {
+                Object::Dict(values) => match view.kind {
+                    DictViewKind::Keys => Ok(values.iter().map(|(key, _)| key.clone()).collect()),
+                    DictViewKind::Values => {
+                        Ok(values.iter().map(|(_, value)| value.clone()).collect())
+                    }
+                    DictViewKind::Items => {
+                        Err(RuntimeError::type_error("expected iterable"))
+                    }
+                },
                 _ => Err(RuntimeError::type_error("expected iterable")),
             },
             _ => Err(RuntimeError::type_error("expected iterable")),
@@ -9192,14 +9292,49 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     iterator.index = chars.len();
                     Ok(out)
                 }
-                IteratorKind::Dict(dict_obj) => match &*dict_obj.kind() {
+                IteratorKind::DictView { dict, kind } => match &*dict.kind() {
                     Object::Dict(values) => {
                         let start = iterator.index.min(values.len());
-                        let out = values
-                            .iter()
-                            .skip(start)
-                            .map(|(key, _)| key.clone())
-                            .collect::<Vec<_>>();
+                        let out = match kind {
+                            DictViewKind::Keys => values
+                                .iter()
+                                .skip(start)
+                                .map(|(key, _)| key.clone())
+                                .collect::<Vec<_>>(),
+                            DictViewKind::Values => values
+                                .iter()
+                                .skip(start)
+                                .map(|(_, value)| value.clone())
+                                .collect::<Vec<_>>(),
+                            DictViewKind::Items => {
+                                return Err(RuntimeError::type_error("expected iterable"));
+                            }
+                        };
+                        iterator.index = values.len();
+                        Ok(out)
+                    }
+                    _ => Err(RuntimeError::type_error("expected iterable")),
+                },
+                IteratorKind::DictReverse {
+                    dict,
+                    kind,
+                    next_index,
+                } => match &*dict.kind() {
+                    Object::Dict(values) => {
+                        let mut out = Vec::new();
+                        let mut index = (*next_index).min(values.len() as i64 - 1);
+                        while index >= 0 {
+                            let (key, value) = &values[index as usize];
+                            out.push(match kind {
+                                DictViewKind::Keys => key.clone(),
+                                DictViewKind::Values => value.clone(),
+                                DictViewKind::Items => {
+                                    return Err(RuntimeError::type_error("expected iterable"));
+                                }
+                            });
+                            index -= 1;
+                        }
+                        *next_index = -1;
                         iterator.index = values.len();
                         Ok(out)
                     }
@@ -9379,6 +9514,34 @@ fn ensure_hashable_key(value: &Value) -> Result<(), RuntimeError> {
     }
 }
 
+fn dict_view_kind_for_value(value: &Value) -> Option<DictViewKind> {
+    match value {
+        Value::DictKeys(_) => Some(DictViewKind::Keys),
+        Value::DictValues(_) => Some(DictViewKind::Values),
+        Value::DictItems(_) => Some(DictViewKind::Items),
+        _ => None,
+    }
+}
+
+fn format_dict_view_repr(view: &DictViewObject) -> String {
+    match &*view.dict.kind() {
+        Object::Dict(values) => {
+            let parts = values
+                .iter()
+                .map(|(key, value)| match view.kind {
+                    DictViewKind::Keys => format_repr(key),
+                    DictViewKind::Values => format_repr(value),
+                    DictViewKind::Items => {
+                        format!("({}, {})", format_repr(key), format_repr(value))
+                    }
+                })
+                .collect::<Vec<_>>();
+            format!("{}([{}])", view.kind.type_name(), parts.join(", "))
+        }
+        _ => format!("{}([])", view.kind.type_name()),
+    }
+}
+
 fn value_type_name(value: &Value) -> &'static str {
     match value {
         Value::None => "NoneType",
@@ -9392,6 +9555,8 @@ fn value_type_name(value: &Value) -> &'static str {
         Value::Tuple(_) => "tuple",
         Value::Dict(_) => "dict",
         Value::DictKeys(_) => "dict_keys",
+        Value::DictValues(_) => "dict_values",
+        Value::DictItems(_) => "dict_items",
         Value::Set(_) => "set",
         Value::FrozenSet(_) => "frozenset",
         Value::Bytes(_) => "bytes",
@@ -9778,6 +9943,8 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
         Value::Tuple(_) => Value::Builtin(BuiltinFunction::Tuple),
         Value::Dict(_) => Value::Builtin(BuiltinFunction::Dict),
         Value::DictKeys(_) => Value::Str("dict_keys".to_string()),
+        Value::DictValues(_) => Value::Str("dict_values".to_string()),
+        Value::DictItems(_) => Value::Str("dict_items".to_string()),
         Value::Set(_) => Value::Builtin(BuiltinFunction::Set),
         Value::FrozenSet(_) => Value::Builtin(BuiltinFunction::FrozenSet),
         Value::Bytes(_) => Value::Builtin(BuiltinFunction::Bytes),
@@ -10286,19 +10453,17 @@ pub fn format_value(value: &Value) -> String {
             }
             _ => "<dict>".to_string(),
         },
-        Value::DictKeys(obj) => match &*obj.kind() {
-            Object::DictKeysView(view) => match &*view.dict.kind() {
-                Object::Dict(values) => {
-                    let mut parts = Vec::new();
-                    for (key, _) in values {
-                        parts.push(format_repr(key));
-                    }
-                    format!("dict_keys([{}])", parts.join(", "))
-                }
-                _ => "dict_keys([])".to_string(),
-            },
-            _ => "<dict_keys>".to_string(),
-        },
+        Value::DictKeys(obj) | Value::DictValues(obj) | Value::DictItems(obj) => {
+            match &*obj.kind() {
+                Object::DictView(view) => format_dict_view_repr(view),
+                _ => format!(
+                    "<{}>",
+                    dict_view_kind_for_value(value)
+                        .expect("dict view kind present")
+                        .type_name()
+                ),
+            }
+        }
         Value::Set(obj) => match &*obj.kind() {
             Object::Set(values) => {
                 if values.is_empty() {
@@ -10424,6 +10589,12 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::DictKeys => "<bound method dict.keys>".to_string(),
                     NativeMethodKind::DictValues => "<bound method dict.values>".to_string(),
                     NativeMethodKind::DictItems => "<bound method dict.items>".to_string(),
+                    NativeMethodKind::DictDunderReversed => {
+                        "<bound method dict.__reversed__>".to_string()
+                    }
+                    NativeMethodKind::DictViewDunderReversed(kind) => {
+                        format!("<bound method {}.__reversed__>", kind.type_name())
+                    }
                     NativeMethodKind::DictClear => "<bound method dict.clear>".to_string(),
                     NativeMethodKind::DictUpdateMethod => "<bound method dict.update>".to_string(),
                     NativeMethodKind::DictSetDefault => {
@@ -10972,18 +11143,16 @@ pub fn format_repr(value: &Value) -> String {
             }
             _ => "<dict>".to_string(),
         },
-        Value::DictKeys(obj) => match &*obj.kind() {
-            Object::DictKeysView(view) => match &*view.dict.kind() {
-                Object::Dict(values) => {
-                    let mut parts = Vec::new();
-                    for (key, _) in values {
-                        parts.push(format_repr(key));
-                    }
-                    format!("dict_keys([{}])", parts.join(", "))
-                }
-                _ => "dict_keys([])".to_string(),
-            },
-            _ => "<dict_keys>".to_string(),
+        Value::DictKeys(obj) | Value::DictValues(obj) | Value::DictItems(obj) => {
+            match &*obj.kind() {
+                Object::DictView(view) => format_dict_view_repr(view),
+                _ => format!(
+                    "<{}>",
+                    dict_view_kind_for_value(value)
+                        .expect("dict view kind present")
+                        .type_name()
+                ),
+            }
         },
         Value::Set(obj) => match &*obj.kind() {
             Object::Set(values) => {
@@ -11159,13 +11328,15 @@ fn is_truthy_value(value: &Value) -> bool {
             Object::Dict(values) => !values.is_empty(),
             _ => true,
         },
-        Value::DictKeys(obj) => match &*obj.kind() {
-            Object::DictKeysView(view) => match &*view.dict.kind() {
-                Object::Dict(values) => !values.is_empty(),
+        Value::DictKeys(obj) | Value::DictValues(obj) | Value::DictItems(obj) => {
+            match &*obj.kind() {
+                Object::DictView(view) => match &*view.dict.kind() {
+                    Object::Dict(values) => !values.is_empty(),
+                    _ => true,
+                },
                 _ => true,
-            },
-            _ => true,
-        },
+            }
+        }
         Value::Set(obj) => match &*obj.kind() {
             Object::Set(values) => !values.is_empty(),
             _ => true,
@@ -12072,9 +12243,9 @@ fn classify_runtime_error_message(message: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        BoundMethod, ClassObject, DictKeysView, DictObject, Heap, IndexBucket, InstanceObject,
-        MemoryViewObject, Object, RuntimeError, SetObject, SuperObject, Value, format_repr,
-        is_truthy_value,
+        BoundMethod, ClassObject, DictObject, DictViewKind, DictViewObject, Heap, IndexBucket,
+        InstanceObject, MemoryViewObject, Object, RuntimeError, SetObject, SuperObject, Value,
+        format_repr, is_truthy_value,
     };
 
     #[test]
@@ -12108,10 +12279,11 @@ mod tests {
     #[test]
     fn gc_collects_self_referential_dict_keys_view() {
         let heap = Heap::new();
-        let view = heap.alloc(Object::DictKeysView(DictKeysView::new(
+        let view = heap.alloc(Object::DictView(DictViewObject::new(
             heap.alloc(Object::List(Vec::new())),
+            DictViewKind::Keys,
         )));
-        if let Object::DictKeysView(data) = &mut *view.kind_mut() {
+        if let Object::DictView(data) = &mut *view.kind_mut() {
             data.dict = view.clone();
         }
         drop(view);

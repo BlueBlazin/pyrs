@@ -29,7 +29,7 @@ use super::{
     value_to_int, value_to_optional_index,
 };
 use crate::bytecode::Location;
-use crate::runtime::{ExceptionTracebackFrame, SliceValue};
+use crate::runtime::{DictViewKind, ExceptionTracebackFrame, SliceValue};
 
 unsafe extern "C" {
     fn PyErr_Clear();
@@ -2346,6 +2346,9 @@ impl Vm {
                         Value::Set(set) => self.load_attr_set_method(set, &attr_name)?,
                         Value::FrozenSet(set) => self.load_attr_set_method(set, &attr_name)?,
                         Value::Dict(dict) => self.load_attr_dict_method(dict, &attr_name)?,
+                        Value::DictKeys(view)
+                        | Value::DictValues(view)
+                        | Value::DictItems(view) => self.load_attr_dict_view(view, &attr_name)?,
                         Value::Cell(cell) => self.load_attr_cell(cell, &attr_name)?,
                         Value::None => match attr_name.as_str() {
                             "__doc__" => Value::Str("None".to_string()),
@@ -12115,6 +12118,8 @@ impl Vm {
             | Value::Tuple(_)
             | Value::Dict(_)
             | Value::DictKeys(_)
+            | Value::DictValues(_)
+            | Value::DictItems(_)
             | Value::Set(_)
             | Value::FrozenSet(_)
             | Value::Bytes(_)
@@ -12845,8 +12850,8 @@ impl Vm {
                 Object::ByteArray(values) => Some(Value::Int(values.len() as i64)),
                 _ => None,
             },
-            Value::DictKeys(keys_view) => {
-                if let Object::DictKeysView(view) = &*keys_view.kind()
+            Value::DictKeys(view_obj) | Value::DictValues(view_obj) | Value::DictItems(view_obj) => {
+                if let Object::DictView(view) = &*view_obj.kind()
                     && let Object::Dict(values) = &*view.dict.kind()
                 {
                     return Ok(Some(Value::Int(values.len() as i64)));
@@ -14208,7 +14213,11 @@ impl Vm {
             Object::ByteArray(_) => Ok(Value::ByteArray(receiver.clone())),
             Object::MemoryView(_) => Ok(Value::MemoryView(receiver.clone())),
             Object::Iterator(_) => Ok(Value::Iterator(receiver.clone())),
-            Object::DictKeysView(_) => Ok(Value::DictKeys(receiver.clone())),
+            Object::DictView(view) => Ok(match view.kind {
+                DictViewKind::Keys => Value::DictKeys(receiver.clone()),
+                DictViewKind::Values => Value::DictValues(receiver.clone()),
+                DictViewKind::Items => Value::DictItems(receiver.clone()),
+            }),
             _ => Err(RuntimeError::new("unsupported bound method receiver")),
         }
     }
@@ -14263,7 +14272,9 @@ impl Vm {
             | Value::ByteArray(obj)
             | Value::MemoryView(obj)
             | Value::Iterator(obj)
-            | Value::DictKeys(obj) => Ok(obj.clone()),
+            | Value::DictKeys(obj)
+            | Value::DictValues(obj)
+            | Value::DictItems(obj) => Ok(obj.clone()),
             _ => Err(RuntimeError::new("unsupported bound-method receiver value")),
         }
     }

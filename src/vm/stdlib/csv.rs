@@ -1430,6 +1430,8 @@ fn csv_type_name(value: &Value) -> &'static str {
         Value::Tuple(_) => "tuple",
         Value::Dict(_) => "dict",
         Value::DictKeys(_) => "dict_keys",
+        Value::DictValues(_) => "dict_values",
+        Value::DictItems(_) => "dict_items",
         Value::Set(_) => "set",
         Value::FrozenSet(_) => "frozenset",
         Value::BigInt(_) => "int",

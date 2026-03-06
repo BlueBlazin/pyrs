@@ -74,10 +74,10 @@ use crate::extensions::{
 use crate::host::{HostCapability, NativeHost, VmHost};
 use crate::parser;
 use crate::runtime::{
-    BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
-    GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject, MemoryViewObject,
-    ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError,
-    SuperObject, Value, format_repr, format_value, runtime_get_int_max_str_digits,
+    BigInt, BoundMethod, BuiltinFunction, ClassObject, DictViewKind, ExceptionObject,
+    FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject,
+    MemoryViewObject, ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object,
+    RuntimeError, SuperObject, Value, format_repr, format_value, runtime_get_int_max_str_digits,
 };
 use crate::unicode::{internal_char_from_codepoint, surrogate_codepoint_from_internal_char};
 
@@ -6092,6 +6092,8 @@ fn weakref_target_id(target: &Value) -> Option<u64> {
         | Value::Tuple(obj)
         | Value::Dict(obj)
         | Value::DictKeys(obj)
+        | Value::DictValues(obj)
+        | Value::DictItems(obj)
         | Value::Set(obj)
         | Value::FrozenSet(obj)
         | Value::Bytes(obj)
@@ -6116,6 +6118,8 @@ fn weakref_target_object(target: &Value) -> Option<ObjRef> {
         | Value::Tuple(obj)
         | Value::Dict(obj)
         | Value::DictKeys(obj)
+        | Value::DictValues(obj)
+        | Value::DictItems(obj)
         | Value::Set(obj)
         | Value::FrozenSet(obj)
         | Value::Bytes(obj)
@@ -6139,7 +6143,11 @@ fn value_from_object_ref(obj: ObjRef) -> Option<Value> {
         Object::List(_) => Some(Value::List(obj.clone())),
         Object::Tuple(_) => Some(Value::Tuple(obj.clone())),
         Object::Dict(_) => Some(Value::Dict(obj.clone())),
-        Object::DictKeysView(_) => Some(Value::DictKeys(obj.clone())),
+        Object::DictView(view) => Some(match view.kind {
+            DictViewKind::Keys => Value::DictKeys(obj.clone()),
+            DictViewKind::Values => Value::DictValues(obj.clone()),
+            DictViewKind::Items => Value::DictItems(obj.clone()),
+        }),
         Object::Set(_) => Some(Value::Set(obj.clone())),
         Object::FrozenSet(_) => Some(Value::FrozenSet(obj.clone())),
         Object::Bytes(_) => Some(Value::Bytes(obj.clone())),
@@ -8015,19 +8023,9 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                 IteratorKind::ReversedCpythonSequence { .. } => {
                     return Err(RuntimeError::type_error("expected bytes-like payload"));
                 }
-                IteratorKind::Dict(dict_obj) => match &*dict_obj.kind() {
-                    Object::Dict(items) => {
-                        let start = iterator.index.min(items.len());
-                        let out = items
-                            .iter()
-                            .skip(start)
-                            .map(|(key, _)| key.clone())
-                            .collect::<Vec<_>>();
-                        iterator.index = items.len();
-                        out
-                    }
-                    _ => return Err(RuntimeError::type_error("expected bytes-like payload")),
-                },
+                IteratorKind::DictView { .. } | IteratorKind::DictReverse { .. } => {
+                    return Err(RuntimeError::type_error("expected bytes-like payload"));
+                }
                 IteratorKind::Set(set_obj) => match &*set_obj.kind() {
                     Object::Set(items) | Object::FrozenSet(items) => {
                         let all = items.to_vec();
@@ -11407,13 +11405,15 @@ fn is_truthy(value: &Value) -> bool {
             Object::Dict(values) => !values.is_empty(),
             _ => true,
         },
-        Value::DictKeys(obj) => match &*obj.kind() {
-            Object::DictKeysView(view) => match &*view.dict.kind() {
-                Object::Dict(values) => !values.is_empty(),
+        Value::DictKeys(obj) | Value::DictValues(obj) | Value::DictItems(obj) => {
+            match &*obj.kind() {
+                Object::DictView(view) => match &*view.dict.kind() {
+                    Object::Dict(values) => !values.is_empty(),
+                    _ => true,
+                },
                 _ => true,
-            },
-            _ => true,
-        },
+            }
+        }
         Value::Set(obj) => match &*obj.kind() {
             Object::Set(values) => !values.is_empty(),
             _ => true,

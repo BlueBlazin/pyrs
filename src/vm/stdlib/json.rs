@@ -865,6 +865,8 @@ fn json_type_name(value: &Value) -> &'static str {
         Value::Cell(_) => "cell",
         Value::Slice { .. } => "slice",
         Value::DictKeys(_) => "dict_keys",
+        Value::DictValues(_) => "dict_values",
+        Value::DictItems(_) => "dict_items",
     }
 }
 
