@@ -1,0 +1,430 @@
+{
+  "excluded_modules": [
+    "os"
+  ],
+  "files": [
+    {
+      "is_package": false,
+      "module": "_collections_abc",
+      "path": "_collections_abc.py",
+      "size_bytes": 32089
+    },
+    {
+      "is_package": false,
+      "module": "_opcode_metadata",
+      "path": "_opcode_metadata.py",
+      "size_bytes": 10115
+    },
+    {
+      "is_package": false,
+      "module": "_py_warnings",
+      "path": "_py_warnings.py",
+      "size_bytes": 30651
+    },
+    {
+      "is_package": false,
+      "module": "_pydecimal",
+      "path": "_pydecimal.py",
+      "size_bytes": 229278
+    },
+    {
+      "is_package": false,
+      "module": "_weakrefset",
+      "path": "_weakrefset.py",
+      "size_bytes": 3962
+    },
+    {
+      "is_package": false,
+      "module": "abc",
+      "path": "abc.py",
+      "size_bytes": 6538
+    },
+    {
+      "is_package": false,
+      "module": "annotationlib",
+      "path": "annotationlib.py",
+      "size_bytes": 42522
+    },
+    {
+      "is_package": false,
+      "module": "argparse",
+      "path": "argparse.py",
+      "size_bytes": 106655
+    },
+    {
+      "is_package": false,
+      "module": "ast",
+      "path": "ast.py",
+      "size_bytes": 25479
+    },
+    {
+      "is_package": false,
+      "module": "bisect",
+      "path": "bisect.py",
+      "size_bytes": 3423
+    },
+    {
+      "is_package": false,
+      "module": "codecs",
+      "path": "codecs.py",
+      "size_bytes": 36840
+    },
+    {
+      "is_package": true,
+      "module": "collections",
+      "path": "collections/__init__.py",
+      "size_bytes": 52903
+    },
+    {
+      "is_package": false,
+      "module": "contextlib",
+      "path": "contextlib.py",
+      "size_bytes": 27801
+    },
+    {
+      "is_package": false,
+      "module": "contextvars",
+      "path": "contextvars.py",
+      "size_bytes": 198
+    },
+    {
+      "is_package": false,
+      "module": "copy",
+      "path": "copy.py",
+      "size_bytes": 8582
+    },
+    {
+      "is_package": false,
+      "module": "copyreg",
+      "path": "copyreg.py",
+      "size_bytes": 7716
+    },
+    {
+      "is_package": false,
+      "module": "dataclasses",
+      "path": "dataclasses.py",
+      "size_bytes": 71358
+    },
+    {
+      "is_package": false,
+      "module": "datetime",
+      "path": "datetime.py",
+      "size_bytes": 331
+    },
+    {
+      "is_package": false,
+      "module": "decimal",
+      "path": "decimal.py",
+      "size_bytes": 2826
+    },
+    {
+      "is_package": false,
+      "module": "difflib",
+      "path": "difflib.py",
+      "size_bytes": 83976
+    },
+    {
+      "is_package": false,
+      "module": "dis",
+      "path": "dis.py",
+      "size_bytes": 45533
+    },
+    {
+      "is_package": true,
+      "module": "encodings",
+      "path": "encodings/__init__.py",
+      "size_bytes": 5809
+    },
+    {
+      "is_package": false,
+      "module": "encodings.aliases",
+      "path": "encodings/aliases.py",
+      "size_bytes": 15957
+    },
+    {
+      "is_package": false,
+      "module": "enum",
+      "path": "enum.py",
+      "size_bytes": 85442
+    },
+    {
+      "is_package": false,
+      "module": "fractions",
+      "path": "fractions.py",
+      "size_bytes": 41453
+    },
+    {
+      "is_package": false,
+      "module": "functools",
+      "path": "functools.py",
+      "size_bytes": 43561
+    },
+    {
+      "is_package": false,
+      "module": "gettext",
+      "path": "gettext.py",
+      "size_bytes": 21595
+    },
+    {
+      "is_package": false,
+      "module": "heapq",
+      "path": "heapq.py",
+      "size_bytes": 23440
+    },
+    {
+      "is_package": true,
+      "module": "importlib",
+      "path": "importlib/__init__.py",
+      "size_bytes": 4767
+    },
+    {
+      "is_package": false,
+      "module": "importlib._bootstrap",
+      "path": "importlib/_bootstrap.py",
+      "size_bytes": 57459
+    },
+    {
+      "is_package": false,
+      "module": "importlib._bootstrap_external",
+      "path": "importlib/_bootstrap_external.py",
+      "size_bytes": 57663
+    },
+    {
+      "is_package": false,
+      "module": "importlib.machinery",
+      "path": "importlib/machinery.py",
+      "size_bytes": 2166
+    },
+    {
+      "is_package": false,
+      "module": "inspect",
+      "path": "inspect.py",
+      "size_bytes": 127285
+    },
+    {
+      "is_package": false,
+      "module": "io",
+      "path": "io.py",
+      "size_bytes": 4736
+    },
+    {
+      "is_package": false,
+      "module": "ipaddress",
+      "path": "ipaddress.py",
+      "size_bytes": 81162
+    },
+    {
+      "is_package": true,
+      "module": "json",
+      "path": "json/__init__.py",
+      "size_bytes": 14066
+    },
+    {
+      "is_package": false,
+      "module": "json.decoder",
+      "path": "json/decoder.py",
+      "size_bytes": 12873
+    },
+    {
+      "is_package": false,
+      "module": "json.encoder",
+      "path": "json/encoder.py",
+      "size_bytes": 16990
+    },
+    {
+      "is_package": false,
+      "module": "json.scanner",
+      "path": "json/scanner.py",
+      "size_bytes": 2434
+    },
+    {
+      "is_package": false,
+      "module": "keyword",
+      "path": "keyword.py",
+      "size_bytes": 1073
+    },
+    {
+      "is_package": false,
+      "module": "linecache",
+      "path": "linecache.py",
+      "size_bytes": 8044
+    },
+    {
+      "is_package": false,
+      "module": "locale",
+      "path": "locale.py",
+      "size_bytes": 79129
+    },
+    {
+      "is_package": false,
+      "module": "numbers",
+      "path": "numbers.py",
+      "size_bytes": 11769
+    },
+    {
+      "is_package": false,
+      "module": "opcode",
+      "path": "opcode.py",
+      "size_bytes": 3152
+    },
+    {
+      "is_package": false,
+      "module": "operator",
+      "path": "operator.py",
+      "size_bytes": 11158
+    },
+    {
+      "is_package": false,
+      "module": "pprint",
+      "path": "pprint.py",
+      "size_bytes": 24412
+    },
+    {
+      "is_package": false,
+      "module": "random",
+      "path": "random.py",
+      "size_bytes": 37259
+    },
+    {
+      "is_package": true,
+      "module": "re",
+      "path": "re/__init__.py",
+      "size_bytes": 17876
+    },
+    {
+      "is_package": false,
+      "module": "re._casefix",
+      "path": "re/_casefix.py",
+      "size_bytes": 5444
+    },
+    {
+      "is_package": false,
+      "module": "re._compiler",
+      "path": "re/_compiler.py",
+      "size_bytes": 26855
+    },
+    {
+      "is_package": false,
+      "module": "re._constants",
+      "path": "re/_constants.py",
+      "size_bytes": 6036
+    },
+    {
+      "is_package": false,
+      "module": "re._parser",
+      "path": "re/_parser.py",
+      "size_bytes": 40353
+    },
+    {
+      "is_package": false,
+      "module": "reprlib",
+      "path": "reprlib.py",
+      "size_bytes": 8064
+    },
+    {
+      "is_package": false,
+      "module": "statistics",
+      "path": "statistics.py",
+      "size_bytes": 62246
+    },
+    {
+      "is_package": true,
+      "module": "string",
+      "path": "string/__init__.py",
+      "size_bytes": 12355
+    },
+    {
+      "is_package": false,
+      "module": "textwrap",
+      "path": "textwrap.py",
+      "size_bytes": 19382
+    },
+    {
+      "is_package": false,
+      "module": "token",
+      "path": "token.py",
+      "size_bytes": 2584
+    },
+    {
+      "is_package": false,
+      "module": "tokenize",
+      "path": "tokenize.py",
+      "size_bytes": 21849
+    },
+    {
+      "is_package": false,
+      "module": "types",
+      "path": "types.py",
+      "size_bytes": 11459
+    },
+    {
+      "is_package": false,
+      "module": "typing",
+      "path": "typing.py",
+      "size_bytes": 135278
+    },
+    {
+      "is_package": true,
+      "module": "urllib",
+      "path": "urllib/__init__.py",
+      "size_bytes": 0
+    },
+    {
+      "is_package": false,
+      "module": "urllib.parse",
+      "path": "urllib/parse.py",
+      "size_bytes": 46894
+    },
+    {
+      "is_package": false,
+      "module": "warnings",
+      "path": "warnings.py",
+      "size_bytes": 1966
+    },
+    {
+      "is_package": false,
+      "module": "weakref",
+      "path": "weakref.py",
+      "size_bytes": 17771
+    }
+  ],
+  "module_count": 64,
+  "pack_version": "v1",
+  "python_version_target": "3.14",
+  "seed_modules": [
+    "functools",
+    "random",
+    "collections",
+    "abc",
+    "types",
+    "operator",
+    "dataclasses",
+    "typing",
+    "statistics",
+    "enum",
+    "copy",
+    "contextlib",
+    "re",
+    "string",
+    "textwrap",
+    "pprint",
+    "json",
+    "fractions",
+    "decimal",
+    "heapq",
+    "bisect",
+    "urllib.parse",
+    "numbers",
+    "difflib",
+    "datetime",
+    "argparse"
+  ],
+  "source_lib_root": "/tmp/Python-3.14.3/Lib",
+  "totals": {
+    "pack_bytes": 2138000,
+    "pack_sha256": "d3a5aaba90e89447d7d98b95819d0615eced5764a62583d59fa64e53f7f5f691",
+    "raw_bytes": 2060042,
+    "zip_bytes": 517035,
+    "zip_sha256": "037942259019a1a9741a427a6fee60243a35fa9f57ef06c38cdf2fac7010189e"
+  }
+}

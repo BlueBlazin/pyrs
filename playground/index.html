@@ -1,0 +1,698 @@
+<!DOCTYPE html><html lang="en" data-astro-cid-gjphf53z> <head><meta charset="utf-8"><link rel="icon" type="image/webp" href="/pyrs/images/pyrs-logo.webp"><link rel="manifest" href="/pyrs/site.webmanifest"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="generator" content="Astro v5.18.0"><title>PYRS Playground | Browser REPL</title><meta name="description" content="Run PYRS in a browser REPL powered by wasm."><meta name="robots" content="noindex, nofollow"><meta property="og:type" content="website"><meta property="og:title" content="PYRS Playground | Browser REPL"><meta property="og:description" content="Run PYRS in a browser REPL powered by wasm."><meta property="og:image" content="https://blueblazin.github.io/pyrs/images/pyrs-logo.webp"><meta property="og:url" content="https://blueblazin.github.io/pyrs/playground/"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="PYRS Playground | Browser REPL"><meta name="twitter:description" content="Run PYRS in a browser REPL powered by wasm."><meta name="twitter:image" content="https://blueblazin.github.io/pyrs/images/pyrs-logo.webp"><link rel="canonical" href="https://blueblazin.github.io/pyrs/playground/"><meta name="theme-color" content="#090b11"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" onload="this.rel='stylesheet'"><noscript><link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet"></noscript><style>.playground-page[data-astro-cid-5wq3ak55]{--shell-bg: #050302;--shell-chrome-bg: linear-gradient(180deg, #18100c 0%, #100a08 100%);--shell-chrome-border: #432d22;--shell-border: #54372a;--shell-shadow: rgba(0, 0, 0, .62);--transcript-bg: linear-gradient(180deg, #090605 0%, #060403 100%);--tl-close: #ff5f57;--tl-minimize: #febc2e;--tl-maximize: #28c840;--tl-inactive: #4a352b;--status-loading: #d89563;--status-ready: #9ac190;--status-error: #f0a086;--text-primary: #e9ded7;--text-secondary: #c2aca0;--text-chrome: #a58576;--prompt-color: #e8a06d;--tok-keyword: #cba6f7;--tok-string: #a6e3a1;--tok-number: #fab387;--tok-function: #89b4fa;--tok-class: #f9e2af;--tok-decorator: #74c7ec;--tok-type: #f9e2af;--tok-comment: #6c7086;--stdout-color: #e9ded7;--stderr-color: #f0a086;--banner-color: #8e7162;--scrollbar-thumb: rgba(162, 116, 89, .46);--scrollbar-thumb-hover: rgba(180, 130, 100, .64);--action-bg: transparent;--action-hover-bg: rgba(165, 109, 78, .16);--action-text: #a08274;--action-hover-text: #e5c9b8;--mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace}.site-shell:has(.playground-page){display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}.site-shell:has(.playground-page)>.home-main{flex:1;display:flex;flex-direction:column}.site-shell:has(.playground-page)>.site-footer{margin-top:0;flex-shrink:0}.playground-page[data-astro-cid-5wq3ak55]{flex:1;display:flex;flex-direction:column;padding-top:.5rem;padding-bottom:.5rem;min-height:0}.playground-shell[data-astro-cid-5wq3ak55]{display:flex;flex-direction:column;flex:0 0 auto;width:100%;min-height:0;block-size:clamp(400px,calc(100dvh - 10rem),820px);border-radius:10px;border:1px solid var(--shell-border);background:var(--shell-bg);overflow:hidden;box-shadow:0 0 0 1px #0000004d,0 8px 32px var(--shell-shadow),0 2px 8px #0003}.shell-chrome[data-astro-cid-5wq3ak55]{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;height:38px;padding:0 12px;background:var(--shell-chrome-bg);border-bottom:1px solid var(--shell-chrome-border);user-select:none;-webkit-user-select:none;flex-shrink:0}.shell-chrome-left[data-astro-cid-5wq3ak55]{display:flex;align-items:center}.shell-chrome-center[data-astro-cid-5wq3ak55]{display:flex;align-items:center;justify-content:center;gap:8px}.shell-chrome-right[data-astro-cid-5wq3ak55]{display:flex;align-items:center;justify-content:flex-end;gap:2px}.shell-traffic-lights[data-astro-cid-5wq3ak55]{display:flex;align-items:center;gap:8px}.tl[data-astro-cid-5wq3ak55]{width:12px;height:12px;border-radius:50%;display:block;box-shadow:inset 0 -.5px .5px #00000026;transition:background-color .15s ease}.tl-close[data-astro-cid-5wq3ak55]{background:var(--tl-close)}.tl-minimize[data-astro-cid-5wq3ak55]{background:var(--tl-minimize)}.tl-maximize[data-astro-cid-5wq3ak55]{background:var(--tl-maximize)}.playground-shell[data-astro-cid-5wq3ak55]:not(:hover) .tl[data-astro-cid-5wq3ak55]{background:var(--tl-inactive);box-shadow:none}.shell-title[data-astro-cid-5wq3ak55]{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--text-chrome);letter-spacing:.02em}.shell-status[data-astro-cid-5wq3ak55]{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11px;color:var(--text-chrome);letter-spacing:.01em}.status-dot[data-astro-cid-5wq3ak55]{width:6px;height:6px;border-radius:50%;background:var(--tl-inactive);flex-shrink:0}.shell-status[data-astro-cid-5wq3ak55][data-state=loading] .status-dot[data-astro-cid-5wq3ak55]{background:var(--status-loading);animation:pulse 1.2s ease-in-out infinite}.shell-status[data-astro-cid-5wq3ak55][data-state=ready] .status-dot[data-astro-cid-5wq3ak55]{background:var(--status-ready)}.shell-status[data-astro-cid-5wq3ak55][data-state=error] .status-dot[data-astro-cid-5wq3ak55]{background:var(--status-error)}.shell-action[data-astro-cid-5wq3ak55]{appearance:none;display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border:none;border-radius:4px;background:var(--action-bg);color:var(--action-text);font-family:var(--mono);font-size:11px;font-weight:500;cursor:pointer;transition:background-color .12s ease,color .12s ease}.shell-action[data-astro-cid-5wq3ak55]:hover{background:var(--action-hover-bg);color:var(--action-hover-text)}.shell-action[data-astro-cid-5wq3ak55]:focus-visible{outline:2px solid var(--prompt-color);outline-offset:1px;border-radius:4px}.shell-action[data-astro-cid-5wq3ak55]:disabled{opacity:.4;cursor:not-allowed}.shell-action[data-astro-cid-5wq3ak55] svg[data-astro-cid-5wq3ak55]{flex-shrink:0}.playground-transcript[data-astro-cid-5wq3ak55]{position:relative;flex:1 1 auto;display:flex;flex-direction:column;min-height:0;gap:2px;padding:16px;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-gutter:stable;font-family:var(--mono);font-size:14px;line-height:1.6;word-break:break-word;background:var(--transcript-bg);scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb) transparent}.playground-transcript[data-astro-cid-5wq3ak55]::-webkit-scrollbar{width:6px}.playground-transcript[data-astro-cid-5wq3ak55]::-webkit-scrollbar-track{background:transparent}.playground-transcript[data-astro-cid-5wq3ak55]::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb);border-radius:3px}.playground-transcript[data-astro-cid-5wq3ak55]::-webkit-scrollbar-thumb:hover{background:var(--scrollbar-thumb-hover)}.transcript-line{white-space:pre-wrap;animation:line-in .1s ease}.transcript-line-input{display:grid;grid-template-columns:4ch minmax(0,1fr);align-items:start;min-height:1.6em;color:var(--text-primary)}.transcript-prompt{display:inline-block;color:var(--prompt-color);font-weight:500;user-select:none}.transcript-input-text{display:block;color:var(--text-primary);min-width:0}.transcript-line-banner{color:var(--banner-color)}.transcript-line-stdout{color:var(--stdout-color)}.transcript-line-stderr{color:var(--stderr-color)}.playground-inline-entry[data-astro-cid-5wq3ak55]{display:grid;grid-template-columns:4ch minmax(0,1fr);align-items:start;min-height:1.6em;margin:0;padding:0;border:0}.playground-editor-stack[data-astro-cid-5wq3ak55]{position:relative;flex:1;min-width:0}.playground-editor-highlight[data-astro-cid-5wq3ak55],.playground-editor-input[data-astro-cid-5wq3ak55]{margin:0;padding:0;font-family:inherit;font-size:inherit;line-height:inherit;letter-spacing:inherit;white-space:pre-wrap;word-break:break-word;tab-size:4}.playground-editor-highlight[data-astro-cid-5wq3ak55]{color:var(--text-primary);pointer-events:none;min-height:1.6em}.playground-editor-input[data-astro-cid-5wq3ak55]{position:absolute;inset:0;width:100%;border:none;outline:none;resize:none;overflow:hidden;background:transparent;color:transparent;caret-color:var(--text-primary);-webkit-text-fill-color:transparent}.tok-keyword{color:var(--tok-keyword, #cba6f7);font-weight:500}.tok-class-name{color:var(--tok-class, #f9e2af);font-weight:500}.tok-function-name{color:var(--tok-function, #89b4fa);font-weight:500}.tok-decorator{color:var(--tok-decorator, #74c7ec)}.tok-type-name{color:var(--tok-type, #f9e2af)}.tok-number{color:var(--tok-number, #fab387)}.tok-string{color:var(--tok-string, #a6e3a1)}.tok-comment{color:var(--tok-comment, #6c7086);font-style:italic}.playground-shell[data-astro-cid-5wq3ak55].is-loading .playground-transcript[data-astro-cid-5wq3ak55]:before{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 30%,rgba(193,130,93,.05) 50%,transparent 70%);background-size:200% 100%;animation:shimmer 2s ease-in-out infinite;pointer-events:none;z-index:1}.sr-only[data-astro-cid-5wq3ak55]{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}@keyframes pulse{0%{opacity:1}50%{opacity:.3}to{opacity:1}}@keyframes line-in{0%{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}@keyframes shimmer{0%{background-position:200% 0}to{background-position:-200% 0}}@media(max-width:760px){.playground-shell[data-astro-cid-5wq3ak55]{block-size:clamp(300px,calc(100dvh - 8rem),620px);border-radius:8px}.shell-chrome[data-astro-cid-5wq3ak55]{height:34px;padding:0 10px}.shell-traffic-lights[data-astro-cid-5wq3ak55]{gap:6px}.tl[data-astro-cid-5wq3ak55]{width:10px;height:10px}.playground-transcript[data-astro-cid-5wq3ak55]{padding:12px;font-size:13px}.shell-action-label[data-astro-cid-5wq3ak55]{display:none}.transcript-line-input,.playground-inline-entry[data-astro-cid-5wq3ak55]{grid-template-columns:2rem minmax(0,1fr);column-gap:.4rem}}@media(max-width:480px){.shell-title[data-astro-cid-5wq3ak55]{display:none}}@media(prefers-reduced-motion:reduce){.tl[data-astro-cid-5wq3ak55]{transition:none}.transcript-line[data-astro-cid-5wq3ak55]{animation:none}.playground-shell[data-astro-cid-5wq3ak55].is-loading .playground-transcript[data-astro-cid-5wq3ak55]:before{animation:none}.shell-status[data-astro-cid-5wq3ak55][data-state=loading] .status-dot[data-astro-cid-5wq3ak55]{animation:none}}
+.global-topbar[data-astro-cid-ugcunkw7]{--logo-size: 68px;--brand-gap: .86rem;display:flex;justify-content:space-between;align-items:center;padding:1.4rem 0}.global-brand[data-astro-cid-ugcunkw7]{display:inline-flex;align-items:center;gap:var(--brand-gap);text-decoration:none;color:#f7eee8;font-size:1.15rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;transition:gap .18s ease}.global-brand[data-astro-cid-ugcunkw7] img[data-astro-cid-ugcunkw7]{width:var(--logo-size);height:var(--logo-size);border-radius:.52rem;border:1px solid rgba(255,255,255,.14);box-shadow:0 0 22px #e97d4652;transition:width .18s ease,height .18s ease,box-shadow .18s ease}.global-topbar[data-astro-cid-ugcunkw7][data-context=docs] .global-brand[data-astro-cid-ugcunkw7] img[data-astro-cid-ugcunkw7]{box-shadow:0 0 22px #89a0d252}.global-brand[data-astro-cid-ugcunkw7]:focus-visible{outline:2px solid rgba(255,186,137,.92);outline-offset:3px;border-radius:.52rem}.global-topnav[data-astro-cid-ugcunkw7]{display:inline-flex;gap:.95rem}.global-topnav[data-astro-cid-ugcunkw7] a[data-astro-cid-ugcunkw7]{text-decoration:none;font-size:.92rem;color:#beaa9f;transition:color .13s ease}.global-topnav[data-astro-cid-ugcunkw7] a[data-astro-cid-ugcunkw7]:hover{color:#f7eee8}.global-topnav[data-astro-cid-ugcunkw7] a[data-astro-cid-ugcunkw7]:focus-visible{outline:2px solid rgba(255,186,137,.92);outline-offset:2px;border-radius:.36rem}@media(max-width:760px){.global-topbar[data-astro-cid-ugcunkw7]{--logo-size: 58px}}.site-footer[data-astro-cid-sz7xmlte]{margin-top:5.2rem;padding:1.3rem 0 .8rem;border-top:1px solid;display:flex;align-items:center;justify-content:space-between;gap:.9rem}.site-footer[data-astro-cid-sz7xmlte] p[data-astro-cid-sz7xmlte]{margin:0;font-size:.82rem;letter-spacing:.02em}.site-footer[data-astro-cid-sz7xmlte] nav[data-astro-cid-sz7xmlte]{display:inline-flex;align-items:center;gap:.9rem}.site-footer[data-astro-cid-sz7xmlte] a[data-astro-cid-sz7xmlte]{text-decoration:none;font-size:.82rem;transition:color .13s ease}.site-footer[data-astro-cid-sz7xmlte] a[data-astro-cid-sz7xmlte]:focus-visible{outline:2px solid;outline-offset:2px;border-radius:.32rem}.site-footer[data-astro-cid-sz7xmlte].home{border-color:#6a4632b8}.site-footer[data-astro-cid-sz7xmlte].home p[data-astro-cid-sz7xmlte]{color:#beaa9f}.site-footer[data-astro-cid-sz7xmlte].home a[data-astro-cid-sz7xmlte]{color:#c9ab95}.site-footer[data-astro-cid-sz7xmlte].home a[data-astro-cid-sz7xmlte]:hover{color:#f7eee8}.site-footer[data-astro-cid-sz7xmlte].home a[data-astro-cid-sz7xmlte]:focus-visible{outline-color:#ffba89e6}.site-footer[data-astro-cid-sz7xmlte].docs{border-color:#30384ac7}.site-footer[data-astro-cid-sz7xmlte].docs p[data-astro-cid-sz7xmlte]{color:#a5aec0}.site-footer[data-astro-cid-sz7xmlte].docs a[data-astro-cid-sz7xmlte]{color:#afbdd8}.site-footer[data-astro-cid-sz7xmlte].docs a[data-astro-cid-sz7xmlte]:hover{color:#f3f6fb}.site-footer[data-astro-cid-sz7xmlte].docs a[data-astro-cid-sz7xmlte]:focus-visible{outline-color:#b0c7f1e6}/*! tailwindcss v4.2.1 | MIT License | https://tailwindcss.com */@layer properties{@supports (((-webkit-hyphens:none)) and (not (margin-trim:inline))) or ((-moz-orient:inline) and (not (color:rgb(from red r g b)))){*,:before,:after,::backdrop{--tw-rotate-x:initial;--tw-rotate-y:initial;--tw-rotate-z:initial;--tw-skew-x:initial;--tw-skew-y:initial;--tw-border-style:solid;--tw-leading:initial;--tw-font-weight:initial;--tw-tracking:initial;--tw-ordinal:initial;--tw-slashed-zero:initial;--tw-numeric-figure:initial;--tw-numeric-spacing:initial;--tw-numeric-fraction:initial;--tw-shadow:0 0 #0000;--tw-shadow-color:initial;--tw-shadow-alpha:100%;--tw-inset-shadow:0 0 #0000;--tw-inset-shadow-color:initial;--tw-inset-shadow-alpha:100%;--tw-ring-color:initial;--tw-ring-shadow:0 0 #0000;--tw-inset-ring-color:initial;--tw-inset-ring-shadow:0 0 #0000;--tw-ring-inset:initial;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-offset-shadow:0 0 #0000;--tw-outline-style:solid;--tw-blur:initial;--tw-brightness:initial;--tw-contrast:initial;--tw-grayscale:initial;--tw-hue-rotate:initial;--tw-invert:initial;--tw-opacity:initial;--tw-saturate:initial;--tw-sepia:initial;--tw-drop-shadow:initial;--tw-drop-shadow-color:initial;--tw-drop-shadow-alpha:100%;--tw-drop-shadow-size:initial;--tw-ease:initial}}}@layer theme{:root,:host{--font-sans:ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";--font-mono:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;--spacing:.25rem;--font-weight-semibold:600;--radius-xl:.75rem;--ease-in-out:cubic-bezier(.4, 0, .2, 1);--default-transition-duration:.15s;--default-transition-timing-function:cubic-bezier(.4, 0, .2, 1);--default-font-family:var(--font-sans);--default-mono-font-family:var(--font-mono);--color-docs-text:#f3f6fb;--color-docs-muted:#a5aec0}}@layer base{*,:after,:before,::backdrop{box-sizing:border-box;border:0 solid;margin:0;padding:0}::file-selector-button{box-sizing:border-box;border:0 solid;margin:0;padding:0}html,:host{-webkit-text-size-adjust:100%;tab-size:4;line-height:1.5;font-family:var(--default-font-family,ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji");font-feature-settings:var(--default-font-feature-settings,normal);font-variation-settings:var(--default-font-variation-settings,normal);-webkit-tap-highlight-color:transparent}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;-webkit-text-decoration:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,samp,pre{font-family:var(--default-mono-font-family,ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);font-feature-settings:var(--default-mono-font-feature-settings,normal);font-variation-settings:var(--default-mono-font-variation-settings,normal);font-size:1em}small{font-size:80%}sub,sup{vertical-align:baseline;font-size:75%;line-height:0;position:relative}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}:-moz-focusring{outline:auto}progress{vertical-align:baseline}summary{display:list-item}ol,ul,menu{list-style:none}img,svg,video,canvas,audio,iframe,embed,object{vertical-align:middle;display:block}img,video{max-width:100%;height:auto}button,input,select,optgroup,textarea{font:inherit;font-feature-settings:inherit;font-variation-settings:inherit;letter-spacing:inherit;color:inherit;opacity:1;background-color:#0000;border-radius:0}::file-selector-button{font:inherit;font-feature-settings:inherit;font-variation-settings:inherit;letter-spacing:inherit;color:inherit;opacity:1;background-color:#0000;border-radius:0}:where(select:is([multiple],[size])) optgroup{font-weight:bolder}:where(select:is([multiple],[size])) optgroup option{padding-inline-start:20px}::file-selector-button{margin-inline-end:4px}::placeholder{opacity:1}@supports (not ((-webkit-appearance:-apple-pay-button))) or (contain-intrinsic-size:1px){::placeholder{color:currentColor}@supports (color:color-mix(in lab,red,red)){::placeholder{color:color-mix(in oklab,currentcolor 50%,transparent)}}}textarea{resize:vertical}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-date-and-time-value{min-height:1lh;text-align:inherit}::-webkit-datetime-edit{display:inline-flex}::-webkit-datetime-edit-fields-wrapper{padding:0}::-webkit-datetime-edit{padding-block:0}::-webkit-datetime-edit-year-field{padding-block:0}::-webkit-datetime-edit-month-field{padding-block:0}::-webkit-datetime-edit-day-field{padding-block:0}::-webkit-datetime-edit-hour-field{padding-block:0}::-webkit-datetime-edit-minute-field{padding-block:0}::-webkit-datetime-edit-second-field{padding-block:0}::-webkit-datetime-edit-millisecond-field{padding-block:0}::-webkit-datetime-edit-meridiem-field{padding-block:0}::-webkit-calendar-picker-indicator{line-height:1}:-moz-ui-invalid{box-shadow:none}button,input:where([type=button],[type=reset],[type=submit]){appearance:button}::file-selector-button{appearance:button}::-webkit-inner-spin-button{height:auto}::-webkit-outer-spin-button{height:auto}[hidden]:where(:not([hidden=until-found])){display:none!important}html{overflow-y:scroll}body:before{content:"";z-index:0;pointer-events:none;opacity:.15;background-image:url(/pyrs/images/grid_dot.svg);background-repeat:repeat;background-size:50px 50px;position:fixed;inset:0;-webkit-mask-image:radial-gradient(120% 90% at 50% 40%,#000 0%,#0000 70%);mask-image:radial-gradient(120% 90% at 50% 40%,#000,#0000 70%)}body.no-grid-dots:before{display:none}*,:before,:after{box-sizing:border-box}.skip-link{z-index:999;color:#2b1207;background:#fff2e9;border:1px solid #d37d4f;border-radius:.45rem;padding:.42rem .62rem;font-size:.82rem;font-weight:600;text-decoration:none;transition:top .12s;position:absolute;top:-3rem;left:.9rem}.skip-link:focus{outline-offset:2px;outline:2px solid #f4b38d;top:.75rem}}@layer components{button.copy-control{border:1px solid var(--copy-border,#5f3d2d);background:var(--copy-bg,#21140f);color:var(--copy-text,#e9d0c2);cursor:pointer;border-radius:.42rem;justify-content:center;align-items:center;margin-left:auto;padding:.2rem .52rem;font-family:Sora,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;font-size:.72rem;font-weight:600;line-height:1;transition:background-color .12s,border-color .12s,color .12s;display:inline-flex}button.copy-control:hover{background:var(--copy-hover-bg,#2d1b14);border-color:var(--copy-hover-border,#714735)}button.copy-control:focus-visible{outline:2px solid var(--copy-focus,#df9664e0);outline-offset:2px}button.copy-control.is-copied{background:var(--copy-success-bg,#1d3a2d);border-color:var(--copy-success-border,#2b6e51);color:var(--copy-success-text,#e9fff3)}button.copy-control.is-copy-failed{background:var(--copy-fail-bg,#47201a);border-color:var(--copy-fail-border,#8a3d2e);color:var(--copy-fail-text,#ffe6df)}.docs-content :where(h2,h3){scroll-margin-top:4.2rem}.docs-content :where(h2){letter-spacing:-.01em;color:var(--color-docs-text);margin:0;font-size:1.17rem}.docs-content :where(h3){letter-spacing:-.01em;color:#e4ebfb;margin:0;font-size:1.02rem}.docs-content :where(p){max-width:74ch;color:var(--color-docs-muted);margin:0;line-height:1.62}.docs-content :where(ul.docs-list,ol.docs-list){max-width:74ch;color:var(--color-docs-muted);margin:0;padding-left:1.28rem;line-height:1.58}.docs-content :where(ul.docs-list){list-style:outside}.docs-content :where(ol.docs-list){list-style:decimal}.docs-content :where(.docs-list li+li){margin-top:.52rem}.docs-content :where(.docs-list li)::marker{color:#98abcf}.docs-content :where(code){color:#d8def0;font-family:IBM Plex Mono,ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86em}.docs-content :where(strong){color:#edf3ff;font-weight:600}.docs-content :where(pre){margin:0}.docs-content :where(a){color:#b7c8eb;font-weight:500;text-decoration:none;transition:color .12s}.docs-content :where(a:hover){color:#d8e1f6}.docs-content :where(a:focus-visible){outline-offset:2px;border-radius:.35rem;outline:2px solid #ffba89eb}.docs-content .doc-section-body>*{margin:0}.docs-content .doc-section-body>*+*{margin-top:1.35rem}.docs-content .doc-section-body>:is(p,ul,ol)+.docs-block,.docs-content .doc-section-body>.docs-block+:is(p,ul,ol){margin-top:1.85rem}.docs-content .doc-section-body>.docs-block+.docs-block{margin-top:1.6rem}.docs-content .doc-section-body>:is(h3,h4)+*{margin-top:.86rem}}@layer utilities{.visible{visibility:visible}.sr-only{clip-path:inset(50%);white-space:nowrap;border-width:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden}.absolute{position:absolute}.static{position:static}.start{inset-inline-start:var(--spacing)}.end{inset-inline-end:var(--spacing)}.isolate{isolation:isolate}.container{width:100%}@media(min-width:40rem){.container{max-width:40rem}}@media(min-width:48rem){.container{max-width:48rem}}@media(min-width:64rem){.container{max-width:64rem}}@media(min-width:80rem){.container{max-width:80rem}}@media(min-width:96rem){.container{max-width:96rem}}.m-0{margin:calc(var(--spacing) * 0)}.prose{color:var(--tw-prose-body);max-width:65ch}.prose :where(p):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:1.25em;margin-bottom:1.25em}.prose :where([class~=lead]):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-lead);margin-top:1.2em;margin-bottom:1.2em;font-size:1.25em;line-height:1.6}.prose :where(a):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-links);font-weight:500;text-decoration:underline}.prose :where(strong):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-bold);font-weight:600}.prose :where(a strong):not(:where([class~=not-prose],[class~=not-prose] *)),.prose :where(blockquote strong):not(:where([class~=not-prose],[class~=not-prose] *)),.prose :where(thead th strong):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit}.prose :where(ol):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:1.25em;margin-bottom:1.25em;padding-inline-start:1.625em;list-style-type:decimal}.prose :where(ol[type=A]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:upper-alpha}.prose :where(ol[type=a]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:lower-alpha}.prose :where(ol[type=A s]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:upper-alpha}.prose :where(ol[type=a s]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:lower-alpha}.prose :where(ol[type=I]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:upper-roman}.prose :where(ol[type=i]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:lower-roman}.prose :where(ol[type=I s]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:upper-roman}.prose :where(ol[type=i s]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:lower-roman}.prose :where(ol[type="1"]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:decimal}.prose :where(ul):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:1.25em;margin-bottom:1.25em;padding-inline-start:1.625em;list-style-type:disc}.prose :where(ol>li):not(:where([class~=not-prose],[class~=not-prose] *))::marker{color:var(--tw-prose-counters);font-weight:400}.prose :where(ul>li):not(:where([class~=not-prose],[class~=not-prose] *))::marker{color:var(--tw-prose-bullets)}.prose :where(dt):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-headings);margin-top:1.25em;font-weight:600}.prose :where(hr):not(:where([class~=not-prose],[class~=not-prose] *)){border-color:var(--tw-prose-hr);border-top-width:1px;margin-top:3em;margin-bottom:3em}.prose :where(blockquote):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-quotes);border-inline-start-width:.25rem;border-inline-start-color:var(--tw-prose-quote-borders);quotes:"“""”""‘""’";margin-top:1.6em;margin-bottom:1.6em;padding-inline-start:1em;font-style:italic;font-weight:500}.prose :where(blockquote p:first-of-type):not(:where([class~=not-prose],[class~=not-prose] *)):before{content:open-quote}.prose :where(blockquote p:last-of-type):not(:where([class~=not-prose],[class~=not-prose] *)):after{content:close-quote}.prose :where(h1):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-headings);margin-top:0;margin-bottom:.888889em;font-size:2.25em;font-weight:800;line-height:1.11111}.prose :where(h1 strong):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit;font-weight:900}.prose :where(h2):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-headings);margin-top:2em;margin-bottom:1em;font-size:1.5em;font-weight:700;line-height:1.33333}.prose :where(h2 strong):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit;font-weight:800}.prose :where(h3):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-headings);margin-top:1.6em;margin-bottom:.6em;font-size:1.25em;font-weight:600;line-height:1.6}.prose :where(h3 strong):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit;font-weight:700}.prose :where(h4):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-headings);margin-top:1.5em;margin-bottom:.5em;font-weight:600;line-height:1.5}.prose :where(h4 strong):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit;font-weight:700}.prose :where(img):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:2em;margin-bottom:2em}.prose :where(picture):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:2em;margin-bottom:2em;display:block}.prose :where(video):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:2em;margin-bottom:2em}.prose :where(kbd):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-kbd);box-shadow:0 0 0 1px var(--tw-prose-kbd-shadows),0 3px 0 var(--tw-prose-kbd-shadows);padding-top:.1875em;padding-inline-end:.375em;padding-bottom:.1875em;border-radius:.3125rem;padding-inline-start:.375em;font-family:inherit;font-size:.875em;font-weight:500}.prose :where(code):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-code);font-size:.875em;font-weight:600}.prose :where(code):not(:where([class~=not-prose],[class~=not-prose] *)):before,.prose :where(code):not(:where([class~=not-prose],[class~=not-prose] *)):after{content:"`"}.prose :where(a code):not(:where([class~=not-prose],[class~=not-prose] *)),.prose :where(h1 code):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit}.prose :where(h2 code):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit;font-size:.875em}.prose :where(h3 code):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit;font-size:.9em}.prose :where(h4 code):not(:where([class~=not-prose],[class~=not-prose] *)),.prose :where(blockquote code):not(:where([class~=not-prose],[class~=not-prose] *)),.prose :where(thead th code):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit}.prose :where(pre):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-pre-code);background-color:var(--tw-prose-pre-bg);padding-top:.857143em;padding-inline-end:1.14286em;padding-bottom:.857143em;border-radius:.375rem;margin-top:1.71429em;margin-bottom:1.71429em;padding-inline-start:1.14286em;font-size:.875em;font-weight:400;line-height:1.71429;overflow-x:auto}.prose :where(pre code):not(:where([class~=not-prose],[class~=not-prose] *)){font-weight:inherit;color:inherit;font-size:inherit;font-family:inherit;line-height:inherit;background-color:#0000;border-width:0;border-radius:0;padding:0}.prose :where(pre code):not(:where([class~=not-prose],[class~=not-prose] *)):before,.prose :where(pre code):not(:where([class~=not-prose],[class~=not-prose] *)):after{content:none}.prose :where(table):not(:where([class~=not-prose],[class~=not-prose] *)){table-layout:auto;width:100%;margin-top:2em;margin-bottom:2em;font-size:.875em;line-height:1.71429}.prose :where(thead):not(:where([class~=not-prose],[class~=not-prose] *)){border-bottom-width:1px;border-bottom-color:var(--tw-prose-th-borders)}.prose :where(thead th):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-headings);vertical-align:bottom;padding-inline-end:.571429em;padding-bottom:.571429em;padding-inline-start:.571429em;font-weight:600}.prose :where(tbody tr):not(:where([class~=not-prose],[class~=not-prose] *)){border-bottom-width:1px;border-bottom-color:var(--tw-prose-td-borders)}.prose :where(tbody tr:last-child):not(:where([class~=not-prose],[class~=not-prose] *)){border-bottom-width:0}.prose :where(tbody td):not(:where([class~=not-prose],[class~=not-prose] *)){vertical-align:baseline}.prose :where(tfoot):not(:where([class~=not-prose],[class~=not-prose] *)){border-top-width:1px;border-top-color:var(--tw-prose-th-borders)}.prose :where(tfoot td):not(:where([class~=not-prose],[class~=not-prose] *)){vertical-align:top}.prose :where(th,td):not(:where([class~=not-prose],[class~=not-prose] *)){text-align:start}.prose :where(figure>*):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:0;margin-bottom:0}.prose :where(figcaption):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-captions);margin-top:.857143em;font-size:.875em;line-height:1.42857}.prose{--tw-prose-body:oklch(37.3% .034 259.733);--tw-prose-headings:oklch(21% .034 264.665);--tw-prose-lead:oklch(44.6% .03 256.802);--tw-prose-links:oklch(21% .034 264.665);--tw-prose-bold:oklch(21% .034 264.665);--tw-prose-counters:oklch(55.1% .027 264.364);--tw-prose-bullets:oklch(87.2% .01 258.338);--tw-prose-hr:oklch(92.8% .006 264.531);--tw-prose-quotes:oklch(21% .034 264.665);--tw-prose-quote-borders:oklch(92.8% .006 264.531);--tw-prose-captions:oklch(55.1% .027 264.364);--tw-prose-kbd:oklch(21% .034 264.665);--tw-prose-kbd-shadows:oklab(21% -.00316127 -.0338527/.1);--tw-prose-code:oklch(21% .034 264.665);--tw-prose-pre-code:oklch(92.8% .006 264.531);--tw-prose-pre-bg:oklch(27.8% .033 256.848);--tw-prose-th-borders:oklch(87.2% .01 258.338);--tw-prose-td-borders:oklch(92.8% .006 264.531);--tw-prose-invert-body:oklch(87.2% .01 258.338);--tw-prose-invert-headings:#fff;--tw-prose-invert-lead:oklch(70.7% .022 261.325);--tw-prose-invert-links:#fff;--tw-prose-invert-bold:#fff;--tw-prose-invert-counters:oklch(70.7% .022 261.325);--tw-prose-invert-bullets:oklch(44.6% .03 256.802);--tw-prose-invert-hr:oklch(37.3% .034 259.733);--tw-prose-invert-quotes:oklch(96.7% .003 264.542);--tw-prose-invert-quote-borders:oklch(37.3% .034 259.733);--tw-prose-invert-captions:oklch(70.7% .022 261.325);--tw-prose-invert-kbd:#fff;--tw-prose-invert-kbd-shadows:#ffffff1a;--tw-prose-invert-code:#fff;--tw-prose-invert-pre-code:oklch(87.2% .01 258.338);--tw-prose-invert-pre-bg:#00000080;--tw-prose-invert-th-borders:oklch(44.6% .03 256.802);--tw-prose-invert-td-borders:oklch(37.3% .034 259.733);font-size:1rem;line-height:1.75}.prose :where(picture>img):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:0;margin-bottom:0}.prose :where(li):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:.5em;margin-bottom:.5em}.prose :where(ol>li):not(:where([class~=not-prose],[class~=not-prose] *)),.prose :where(ul>li):not(:where([class~=not-prose],[class~=not-prose] *)){padding-inline-start:.375em}.prose :where(.prose>ul>li p):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:.75em;margin-bottom:.75em}.prose :where(.prose>ul>li>p:first-child):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:1.25em}.prose :where(.prose>ul>li>p:last-child):not(:where([class~=not-prose],[class~=not-prose] *)){margin-bottom:1.25em}.prose :where(.prose>ol>li>p:first-child):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:1.25em}.prose :where(.prose>ol>li>p:last-child):not(:where([class~=not-prose],[class~=not-prose] *)){margin-bottom:1.25em}.prose :where(ul ul,ul ol,ol ul,ol ol):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:.75em;margin-bottom:.75em}.prose :where(dl):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:1.25em;margin-bottom:1.25em}.prose :where(dd):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:.5em;padding-inline-start:1.625em}.prose :where(hr+*):not(:where([class~=not-prose],[class~=not-prose] *)),.prose :where(h2+*):not(:where([class~=not-prose],[class~=not-prose] *)),.prose :where(h3+*):not(:where([class~=not-prose],[class~=not-prose] *)),.prose :where(h4+*):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:0}.prose :where(thead th:first-child):not(:where([class~=not-prose],[class~=not-prose] *)){padding-inline-start:0}.prose :where(thead th:last-child):not(:where([class~=not-prose],[class~=not-prose] *)){padding-inline-end:0}.prose :where(tbody td,tfoot td):not(:where([class~=not-prose],[class~=not-prose] *)){padding-top:.571429em;padding-inline-end:.571429em;padding-bottom:.571429em;padding-inline-start:.571429em}.prose :where(tbody td:first-child,tfoot td:first-child):not(:where([class~=not-prose],[class~=not-prose] *)){padding-inline-start:0}.prose :where(tbody td:last-child,tfoot td:last-child):not(:where([class~=not-prose],[class~=not-prose] *)){padding-inline-end:0}.prose :where(figure):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:2em;margin-bottom:2em}.prose :where(.prose>:first-child):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:0}.prose :where(.prose>:last-child):not(:where([class~=not-prose],[class~=not-prose] *)){margin-bottom:0}.mt-1\.5{margin-top:calc(var(--spacing) * 1.5)}.mt-4{margin-top:calc(var(--spacing) * 4)}.mt-10{margin-top:calc(var(--spacing) * 10)}.block{display:block}.flex{display:flex}.grid{display:grid}.hidden{display:none}.inline{display:inline}.inline-flex{display:inline-flex}.table{display:table}.size-2\.5{width:calc(var(--spacing) * 2.5);height:calc(var(--spacing) * 2.5)}.min-w-0{min-width:calc(var(--spacing) * 0)}.min-w-full{min-width:100%}.flex-shrink{flex-shrink:1}.border-collapse{border-collapse:collapse}.transform{transform:var(--tw-rotate-x,) var(--tw-rotate-y,) var(--tw-rotate-z,) var(--tw-skew-x,) var(--tw-skew-y,)}.resize{resize:both}.flex-wrap{flex-wrap:wrap}.items-center{align-items:center}.justify-between{justify-content:space-between}.gap-1\.5{gap:calc(var(--spacing) * 1.5)}.gap-2\.5{gap:calc(var(--spacing) * 2.5)}.gap-3{gap:calc(var(--spacing) * 3)}.truncate{text-overflow:ellipsis;white-space:nowrap;overflow:hidden}.overflow-hidden{overflow:hidden}.overflow-x-auto{overflow-x:auto}.rounded-full{border-radius:3.40282e38px}.rounded-xl{border-radius:var(--radius-xl)}.border{border-style:var(--tw-border-style);border-width:1px}.border-b{border-bottom-style:var(--tw-border-style);border-bottom-width:1px}.border-\[\#1f293a\]{border-color:#1f293a}.border-\[\#2a3345\]{border-color:#2a3345}.border-\[\#2f4260\]{border-color:#2f4260}.border-\[\#273143\]{border-color:#273143}.border-\[\#725521\]{border-color:#725521}.bg-\[\#0b1019\]{background-color:#0b1019}.bg-\[\#0d121c\]{background-color:#0d121c}.bg-\[\#35cd67\]{background-color:#35cd67}.bg-\[\#101827\]{background-color:#101827}.bg-\[\#191205\]{background-color:#191205}.bg-\[\#fcbf4e\]{background-color:#fcbf4e}.bg-\[\#ff6b57\]{background-color:#ff6b57}.bg-\[linear-gradient\(180deg\,\#111b2e_0\%\,\#0b1423_100\%\)\]{background-image:linear-gradient(#111b2e,#0b1423)}.px-3\.5{padding-inline:calc(var(--spacing) * 3.5)}.px-4{padding-inline:calc(var(--spacing) * 4)}.py-1\.5{padding-block:calc(var(--spacing) * 1.5)}.py-2\.5{padding-block:calc(var(--spacing) * 2.5)}.py-3\.5{padding-block:calc(var(--spacing) * 3.5)}.pt-2{padding-top:calc(var(--spacing) * 2)}.pr-3{padding-right:calc(var(--spacing) * 3)}.text-left{text-align:left}.font-\[\'IBM_Plex_Mono\'\,ui-monospace\,SFMono-Regular\,Menlo\,monospace\]{font-family:IBM Plex Mono,ui-monospace,SFMono-Regular,Menlo,monospace}.text-\[0\.8rem\]{font-size:.8rem}.text-\[0\.63rem\]{font-size:.63rem}.text-\[0\.78rem\]{font-size:.78rem}.text-\[0\.92rem\]{font-size:.92rem}.text-\[0\.97rem\]{font-size:.97rem}.text-\[1\.02rem\]{font-size:1.02rem}.text-\[1\.15rem\]{font-size:1.15rem}.leading-6{--tw-leading:calc(var(--spacing) * 6);line-height:calc(var(--spacing) * 6)}.leading-7{--tw-leading:calc(var(--spacing) * 7);line-height:calc(var(--spacing) * 7)}.font-semibold{--tw-font-weight:var(--font-weight-semibold);font-weight:var(--font-weight-semibold)}.tracking-\[-0\.01em\]{--tw-tracking:-.01em;letter-spacing:-.01em}.tracking-\[0\.11em\]{--tw-tracking:.11em;letter-spacing:.11em}.tracking-\[0\.16em\]{--tw-tracking:.16em;letter-spacing:.16em}.text-wrap{text-wrap:wrap}.break-words{overflow-wrap:break-word}.text-\[\#b6c5e2\]{color:#b6c5e2}.text-\[\#c1d2f2\]{color:#c1d2f2}.text-\[\#e4e9f6\]{color:#e4e9f6}.text-\[\#efb087\]{color:#efb087}.text-\[\#f4daa3\]{color:#f4daa3}.text-docs-muted{color:var(--color-docs-muted)}.text-docs-text{color:var(--color-docs-text)}.uppercase{text-transform:uppercase}.tabular-nums{--tw-numeric-spacing:tabular-nums;font-variant-numeric:var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,)}.shadow-\[inset_0_0_0_1px_rgba\(83\,114\,163\,0\.18\)\]{--tw-shadow:inset 0 0 0 1px var(--tw-shadow-color,#5372a32e);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.shadow-\[inset_0_0_0_1px_rgba\(175\,136\,52\,0\.18\)\]{--tw-shadow:inset 0 0 0 1px var(--tw-shadow-color,#af88342e);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.outline{outline-style:var(--tw-outline-style);outline-width:1px}.blur{--tw-blur:blur(8px);filter:var(--tw-blur,) var(--tw-brightness,) var(--tw-contrast,) var(--tw-grayscale,) var(--tw-hue-rotate,) var(--tw-invert,) var(--tw-saturate,) var(--tw-sepia,) var(--tw-drop-shadow,)}.transition{transition-property:color,background-color,border-color,outline-color,text-decoration-color,fill,stroke,--tw-gradient-from,--tw-gradient-via,--tw-gradient-to,opacity,box-shadow,transform,translate,scale,rotate,filter,-webkit-backdrop-filter,backdrop-filter,display,content-visibility,overlay,pointer-events;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.ease-in-out{--tw-ease:var(--ease-in-out);transition-timing-function:var(--ease-in-out)}.select-none{-webkit-user-select:none;user-select:none}.first\:mt-0:first-child{margin-top:calc(var(--spacing) * 0)}}@property --tw-rotate-x{syntax:"*";inherits:false}@property --tw-rotate-y{syntax:"*";inherits:false}@property --tw-rotate-z{syntax:"*";inherits:false}@property --tw-skew-x{syntax:"*";inherits:false}@property --tw-skew-y{syntax:"*";inherits:false}@property --tw-border-style{syntax:"*";inherits:false;initial-value:solid}@property --tw-leading{syntax:"*";inherits:false}@property --tw-font-weight{syntax:"*";inherits:false}@property --tw-tracking{syntax:"*";inherits:false}@property --tw-ordinal{syntax:"*";inherits:false}@property --tw-slashed-zero{syntax:"*";inherits:false}@property --tw-numeric-figure{syntax:"*";inherits:false}@property --tw-numeric-spacing{syntax:"*";inherits:false}@property --tw-numeric-fraction{syntax:"*";inherits:false}@property --tw-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-shadow-color{syntax:"*";inherits:false}@property --tw-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-inset-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-inset-shadow-color{syntax:"*";inherits:false}@property --tw-inset-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-ring-color{syntax:"*";inherits:false}@property --tw-ring-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-inset-ring-color{syntax:"*";inherits:false}@property --tw-inset-ring-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-ring-inset{syntax:"*";inherits:false}@property --tw-ring-offset-width{syntax:"<length>";inherits:false;initial-value:0}@property --tw-ring-offset-color{syntax:"*";inherits:false;initial-value:#fff}@property --tw-ring-offset-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-outline-style{syntax:"*";inherits:false;initial-value:solid}@property --tw-blur{syntax:"*";inherits:false}@property --tw-brightness{syntax:"*";inherits:false}@property --tw-contrast{syntax:"*";inherits:false}@property --tw-grayscale{syntax:"*";inherits:false}@property --tw-hue-rotate{syntax:"*";inherits:false}@property --tw-invert{syntax:"*";inherits:false}@property --tw-opacity{syntax:"*";inherits:false}@property --tw-saturate{syntax:"*";inherits:false}@property --tw-sepia{syntax:"*";inherits:false}@property --tw-drop-shadow{syntax:"*";inherits:false}@property --tw-drop-shadow-color{syntax:"*";inherits:false}@property --tw-drop-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-drop-shadow-size{syntax:"*";inherits:false}@property --tw-ease{syntax:"*";inherits:false}
+:root{--bg: #0f0907;--bg-card: #17100e;--line: #432d22;--text: #f7eee8;--text-muted: #beaa9f;--accent: #e97d46;--accent-2: #d89563}html{scroll-behavior:smooth}body{margin:0;min-height:100vh;font-family:Sora,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;color:var(--text);background:radial-gradient(70rem 38rem at 88% -10%,rgba(233,125,70,.14),transparent),radial-gradient(68rem 36rem at -5% 10%,rgba(216,149,99,.09),transparent),linear-gradient(180deg,#090504 0%,var(--bg) 36%,#060404 100%)}.site-shell[data-astro-cid-gjphf53z]{position:relative;z-index:1;width:min(1280px,calc(100% - 2.8rem));margin:0 auto;padding-bottom:4rem}.home-main[data-astro-cid-gjphf53z]{display:flex;flex-direction:column;gap:2.25rem}@media(max-width:760px){.site-shell[data-astro-cid-gjphf53z]{width:min(1160px,calc(100% - 1.2rem))}}
+</style></head> <body data-astro-cid-gjphf53z> <div class="site-shell" data-astro-cid-gjphf53z> <a class="skip-link" href="#main-content" data-astro-cid-gjphf53z>Skip to content</a> <header class="global-topbar" data-context="playground" data-astro-cid-ugcunkw7> <a class="global-brand" href="/pyrs/" data-astro-cid-ugcunkw7> <img src="/pyrs/images/pyrs-logo-nav.webp" srcset="/pyrs/images/pyrs-logo-nav.webp 136w, /pyrs/images/pyrs-logo.webp 670w" sizes="68px" alt="PYRS logo" width="136" height="136" data-astro-cid-ugcunkw7> <span data-astro-cid-ugcunkw7>PYRS</span> </a> <nav class="global-topnav" data-astro-cid-ugcunkw7> <a href="/pyrs/" data-astro-cid-ugcunkw7>Home</a><a href="/pyrs/docs/" data-astro-cid-ugcunkw7>Docs</a><a href="https://github.com/BlueBlazin/pyrs" data-astro-cid-ugcunkw7>GitHub</a> </nav> </header>  <main class="home-main" id="main-content" data-astro-cid-gjphf53z>  <section class="playground-page" data-wasm-entrypoint="/pyrs/wasm/pyrs.js" data-worker-entrypoint="/pyrs/workers/playground-runtime-worker.js" data-stdlib-pack="/pyrs/wasm/stdlib_subset_v1.json" data-astro-cid-5wq3ak55> <section class="playground-shell is-loading" aria-label="Browser REPL" data-astro-cid-5wq3ak55> <div class="shell-chrome" data-astro-cid-5wq3ak55> <div class="shell-chrome-left" data-astro-cid-5wq3ak55> <div class="shell-traffic-lights" aria-hidden="true" data-astro-cid-5wq3ak55> <span class="tl tl-close" data-astro-cid-5wq3ak55></span> <span class="tl tl-minimize" data-astro-cid-5wq3ak55></span> <span class="tl tl-maximize" data-astro-cid-5wq3ak55></span> </div> </div> <div class="shell-chrome-center" data-astro-cid-5wq3ak55> <span class="shell-title" data-astro-cid-5wq3ak55>PYRS REPL (EXPERIMENTAL)</span> <span class="shell-status" id="playground-status-shell" data-state="idle" aria-live="polite" data-astro-cid-5wq3ak55> <span class="status-dot" aria-hidden="true" data-astro-cid-5wq3ak55></span> <span id="playground-status-text" data-astro-cid-5wq3ak55>Loading runtime&hellip;</span> </span> </div> <div class="shell-chrome-right" data-astro-cid-5wq3ak55> <button type="button" id="playground-clear" class="shell-action" title="Clear transcript (Ctrl+L)" data-astro-cid-5wq3ak55> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-astro-cid-5wq3ak55><path d="M3 6h18" data-astro-cid-5wq3ak55></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" data-astro-cid-5wq3ak55></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" data-astro-cid-5wq3ak55></path><line x1="10" y1="11" x2="10" y2="17" data-astro-cid-5wq3ak55></line><line x1="14" y1="11" x2="14" y2="17" data-astro-cid-5wq3ak55></line></svg> <span class="shell-action-label" data-astro-cid-5wq3ak55>Clear</span> </button> <button type="button" id="playground-reset" class="shell-action" title="Reset session" data-astro-cid-5wq3ak55> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-astro-cid-5wq3ak55><polyline points="1 4 1 10 7 10" data-astro-cid-5wq3ak55></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" data-astro-cid-5wq3ak55></path></svg> <span class="shell-action-label" data-astro-cid-5wq3ak55>Reset</span> </button> </div> </div> <div class="playground-transcript" id="playground-transcript" data-astro-cid-5wq3ak55> <form class="playground-inline-entry" id="playground-form" autocomplete="off" data-astro-cid-5wq3ak55> <label for="playground-input" class="sr-only" data-astro-cid-5wq3ak55>Python REPL input</label> <span class="transcript-prompt transcript-prompt-active" id="playground-active-prompt" data-astro-cid-5wq3ak55>&gt;&gt;&gt; </span> <div class="playground-editor-stack" data-astro-cid-5wq3ak55> <pre id="playground-highlight" class="playground-editor-highlight" aria-hidden="true" data-astro-cid-5wq3ak55></pre> <textarea id="playground-input" class="playground-editor-input" name="source" spellcheck="false" autocapitalize="off" autocorrect="off" rows="1" data-astro-cid-5wq3ak55></textarea> </div> </form> </div> </section> </section> <script>
+		const statusShell = document.getElementById("playground-status-shell");
+		const statusText = document.getElementById("playground-status-text");
+		const transcriptEl = document.getElementById("playground-transcript");
+		const formEl = document.getElementById("playground-form");
+		const inputEl = document.getElementById("playground-input");
+		const highlightEl = document.getElementById("playground-highlight");
+		const activePromptEl = document.getElementById("playground-active-prompt");
+		const clearButton = document.getElementById("playground-clear");
+		const resetButton = document.getElementById("playground-reset");
+		const shellEl = document.querySelector(".playground-shell");
+
+		const pageRoot = document.querySelector(".playground-page");
+		const wasmEntrypoint =
+			pageRoot instanceof HTMLElement && pageRoot.dataset.wasmEntrypoint
+				? pageRoot.dataset.wasmEntrypoint
+				: "/wasm/pyrs.js";
+		const workerEntrypoint =
+			pageRoot instanceof HTMLElement && pageRoot.dataset.workerEntrypoint
+				? pageRoot.dataset.workerEntrypoint
+				: "/workers/playground-runtime-worker.js";
+		const stdlibPackPath =
+			pageRoot instanceof HTMLElement && pageRoot.dataset.stdlibPack
+				? pageRoot.dataset.stdlibPack
+				: "/wasm/stdlib_subset_v1.json";
+
+		let runtimeWorker = null;
+		let runtimeWorkerReady = false;
+		let runtimeLoadPromise = null;
+		let nextWorkerRequestId = 1;
+		const workerPendingRequests = new Map();
+		let lastRuntimeInfo = null;
+		let bannerRendered = false;
+		let continuationPrompt = false;
+		const commandHistory = [];
+		let historyIndex = -1;
+		const runtimeLoadRetryDelaysMs = [1000, 2000];
+
+		const PY_KEYWORDS = new Set([
+			"False",
+			"None",
+			"True",
+			"and",
+			"as",
+			"assert",
+			"async",
+			"await",
+			"break",
+			"class",
+			"continue",
+			"def",
+			"del",
+			"elif",
+			"else",
+			"except",
+			"finally",
+			"for",
+			"from",
+			"global",
+			"if",
+			"import",
+			"in",
+			"is",
+			"lambda",
+			"nonlocal",
+			"not",
+			"or",
+			"pass",
+			"raise",
+			"return",
+			"try",
+			"while",
+			"with",
+			"yield",
+		]);
+		const PY_BUILTIN_TYPES = new Set([
+			"int",
+			"float",
+			"bool",
+			"complex",
+			"str",
+			"bytes",
+			"bytearray",
+			"list",
+			"tuple",
+			"dict",
+			"set",
+			"frozenset",
+			"object",
+			"type",
+		]);
+		const PY_TOKEN_REGEX =
+			/(@[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)|([rRuUbBfF]{0,2}(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'))|(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?j?\b)|([A-Za-z_][A-Za-z0-9_]*)|(#.*$)/gm;
+
+		const escapeHtml = (value) =>
+			value
+				.replaceAll("&", "&amp;")
+				.replaceAll("<", "&lt;")
+				.replaceAll(">", "&gt;");
+
+		const readField = (object, key) => {
+			if (!object) return undefined;
+			const value = object[key];
+			if (typeof value === "function") {
+				try {
+					return value.call(object);
+				} catch {
+					return undefined;
+				}
+			}
+			return value;
+		};
+
+		const scrollTranscriptToEnd = () => {
+			if (!(transcriptEl instanceof HTMLElement)) return;
+			requestAnimationFrame(() => {
+				transcriptEl.scrollTop = transcriptEl.scrollHeight;
+			});
+		};
+
+		const appendBeforeInlineEntry = (node) => {
+			if (!(transcriptEl instanceof HTMLElement)) return;
+			if (formEl instanceof HTMLElement && formEl.parentElement === transcriptEl) {
+				transcriptEl.insertBefore(node, formEl);
+			} else {
+				transcriptEl.appendChild(node);
+			}
+			scrollTranscriptToEnd();
+		};
+
+		const tokenizePython = (source) => {
+			const input = source.replace(/\r/g, "");
+			if (input.length === 0) {
+				return [];
+			}
+
+			const segments = [];
+			let cursor = 0;
+			let expectNameKind = null;
+			PY_TOKEN_REGEX.lastIndex = 0;
+
+			for (const match of input.matchAll(PY_TOKEN_REGEX)) {
+				const matchText = match[0];
+				const start = match.index ?? 0;
+
+				if (start > cursor) {
+					segments.push({ text: input.slice(cursor, start), kind: null });
+				}
+
+				let kind = null;
+				if (match[1]) {
+					kind = "tok-decorator";
+					expectNameKind = null;
+				} else if (match[2]) {
+					kind = "tok-string";
+					expectNameKind = null;
+				} else if (match[3]) {
+					kind = "tok-number";
+					expectNameKind = null;
+				} else if (match[4]) {
+					const word = matchText;
+					if (expectNameKind === "class") {
+						kind = "tok-class-name";
+						expectNameKind = null;
+					} else if (expectNameKind === "def") {
+						kind = "tok-function-name";
+						expectNameKind = null;
+					} else if (PY_KEYWORDS.has(word)) {
+						kind = "tok-keyword";
+						if (word === "class") {
+							expectNameKind = "class";
+						} else if (word === "def") {
+							expectNameKind = "def";
+						} else {
+							expectNameKind = null;
+						}
+					} else if (PY_BUILTIN_TYPES.has(word)) {
+						kind = "tok-type-name";
+						expectNameKind = null;
+					} else {
+						expectNameKind = null;
+					}
+				} else if (match[5]) {
+					kind = "tok-comment";
+					expectNameKind = null;
+				}
+
+				segments.push({ text: matchText, kind });
+				cursor = start + matchText.length;
+				if (matchText.includes("\n")) {
+					expectNameKind = null;
+				}
+			}
+
+			if (cursor < input.length) {
+				segments.push({ text: input.slice(cursor), kind: null });
+			}
+			return segments;
+		};
+
+		const renderToken = (text, kind) => {
+			const escaped = escapeHtml(text);
+			if (!kind) return escaped;
+			return `<span class="${kind}">${escaped}</span>`;
+		};
+
+		const highlightPython = (source) => {
+			const segments = tokenizePython(source.replace(/\r/g, ""));
+			if (segments.length === 0) {
+				return "";
+			}
+			return segments.map((segment) => renderToken(segment.text, segment.kind)).join("");
+		};
+
+		const updateEditorHighlight = () => {
+			if (!(highlightEl instanceof HTMLElement) || !(inputEl instanceof HTMLTextAreaElement)) return;
+			highlightEl.innerHTML = highlightPython(inputEl.value) || "\u00a0";
+		};
+
+		const setStatus = (state, message) => {
+			if (statusShell instanceof HTMLElement) {
+				statusShell.dataset.state = state;
+			}
+			if (statusText instanceof HTMLElement) {
+				statusText.textContent = message;
+			}
+		};
+
+		const setBusy = (busy) => {
+			if (inputEl instanceof HTMLTextAreaElement) {
+				inputEl.disabled = busy;
+			}
+			if (clearButton instanceof HTMLButtonElement) {
+				clearButton.disabled = busy;
+			}
+			if (resetButton instanceof HTMLButtonElement) {
+				resetButton.disabled = busy;
+			}
+		};
+
+		const setActivePrompt = (continuation) => {
+			if (!(activePromptEl instanceof HTMLElement)) return;
+			activePromptEl.textContent = continuation ? "... " : ">>> ";
+		};
+
+		const applyContinuationPrompt = (continuation) => {
+			continuationPrompt = Boolean(continuation);
+			setActivePrompt(continuationPrompt);
+		};
+
+		const setInputValue = (value) => {
+			if (!(inputEl instanceof HTMLTextAreaElement)) return;
+			inputEl.value = value;
+			refreshEditorState();
+			const end = value.length;
+			inputEl.setSelectionRange(end, end);
+		};
+
+		const focusInputAtEnd = () => {
+			if (!(inputEl instanceof HTMLTextAreaElement) || inputEl.disabled) return;
+			inputEl.focus();
+			const end = inputEl.value.length;
+			inputEl.setSelectionRange(end, end);
+			refreshEditorState();
+		};
+
+		const resizeInput = () => {
+			if (!(inputEl instanceof HTMLTextAreaElement)) return;
+			inputEl.style.height = "0px";
+			const nextHeight = Math.min(Math.max(inputEl.scrollHeight, 24), 220);
+			inputEl.style.height = `${nextHeight}px`;
+			if (highlightEl instanceof HTMLElement) {
+				highlightEl.style.minHeight = `${nextHeight}px`;
+			}
+		};
+
+		const syncEditorScroll = () => {
+			if (!(highlightEl instanceof HTMLElement) || !(inputEl instanceof HTMLTextAreaElement)) return;
+			highlightEl.scrollTop = inputEl.scrollTop;
+			highlightEl.scrollLeft = inputEl.scrollLeft;
+		};
+
+		const refreshEditorState = () => {
+			if (!(inputEl instanceof HTMLTextAreaElement)) return;
+			resizeInput();
+			updateEditorHighlight();
+			setActivePrompt(continuationPrompt);
+			syncEditorScroll();
+		};
+
+		const appendTranscriptLine = (text, kind = "stdout") => {
+			const line = document.createElement("div");
+			line.className = `transcript-line transcript-line-${kind}`;
+			line.textContent = text;
+			appendBeforeInlineEntry(line);
+		};
+
+		const appendPromptLine = (prompt, text) => {
+			const line = document.createElement("div");
+			line.className = "transcript-line transcript-line-input";
+
+			const promptSpan = document.createElement("span");
+			promptSpan.className = "transcript-prompt";
+			promptSpan.textContent = prompt;
+
+			const codeSpan = document.createElement("span");
+			codeSpan.className = "transcript-input-text";
+			const highlighted = highlightPython(text);
+			if (highlighted.length > 0) {
+				codeSpan.innerHTML = highlighted;
+			} else {
+				codeSpan.textContent = "";
+			}
+
+			line.appendChild(promptSpan);
+			line.appendChild(codeSpan);
+			appendBeforeInlineEntry(line);
+		};
+
+		const appendPromptInput = (source, startsContinuation) => {
+			const lines = source.split("\n");
+			lines.forEach((line, index) => {
+				appendPromptLine(index === 0 && !startsContinuation ? ">>> " : "... ", line);
+			});
+		};
+
+		const appendMultilineOutput = (text, kind) => {
+			const lines = text.replace(/\r/g, "").split("\n");
+			while (lines.length > 0 && lines[lines.length - 1] === "") {
+				lines.pop();
+			}
+			lines.forEach((line) => appendTranscriptLine(line, kind));
+		};
+
+		const summarizeExecutionResult = (result) => {
+			const success = Boolean(readField(result, "success"));
+			const stdout = readField(result, "stdout") || "";
+			const stderr = readField(result, "stderr") || "";
+			const error = readField(result, "error") || "";
+			return { success, stdout, stderr, error };
+		};
+
+		const renderExecutionResult = (result) => {
+			const summary = summarizeExecutionResult(result);
+			if (summary.stdout.trim().length > 0) {
+				appendMultilineOutput(summary.stdout, "stdout");
+			}
+			if (summary.stderr.trim().length > 0) {
+				appendMultilineOutput(summary.stderr, "stderr");
+			}
+			if (!summary.success && summary.error && summary.stderr.trim().length === 0) {
+				appendTranscriptLine(summary.error, "stderr");
+			}
+		};
+
+		const renderStartupBanner = (force = false) => {
+			if (!runtimeWorkerReady) return;
+			if (bannerRendered && !force) return;
+			const version = String(readField(lastRuntimeInfo, "pyrs_version") || "dev");
+			const compatVersion = String(
+				readField(lastRuntimeInfo, "cpython_compat_version") || "3.14",
+			);
+			appendTranscriptLine(
+				`PYRS ${version} (CPython ${compatVersion} compatible)`,
+				"banner",
+			);
+			appendTranscriptLine("Type :help for REPL commands.", "banner");
+			bannerRendered = true;
+		};
+
+		const clearTranscript = (preserveBanner = true) => {
+			if (!(transcriptEl instanceof HTMLElement)) return;
+			for (const child of [...transcriptEl.children]) {
+				if (child !== formEl) {
+					child.remove();
+				}
+			}
+			bannerRendered = false;
+			if (preserveBanner && runtimeWorkerReady) {
+				renderStartupBanner(true);
+			}
+			scrollTranscriptToEnd();
+		};
+
+		const rejectAllWorkerRequests = (message) => {
+			for (const pending of workerPendingRequests.values()) {
+				pending.reject(new Error(message));
+			}
+			workerPendingRequests.clear();
+		};
+
+		const ensureRuntimeWorker = () => {
+			if (runtimeWorker) return runtimeWorker;
+			if (typeof Worker !== "function") {
+				setStatus("error", "Web Worker is not supported in this browser");
+				appendTranscriptLine("Web Worker is unavailable in this browser.", "stderr");
+				return null;
+			}
+
+			const worker = new Worker(workerEntrypoint, { type: "module" });
+			worker.addEventListener("message", (event) => {
+				const payload = event.data;
+				if (!payload || typeof payload !== "object") {
+					return;
+				}
+				const requestId = Number(payload.requestId);
+				if (!Number.isFinite(requestId)) {
+					return;
+				}
+				const pending = workerPendingRequests.get(requestId);
+				if (!pending) {
+					return;
+				}
+				workerPendingRequests.delete(requestId);
+				pending.resolve(payload);
+			});
+			worker.addEventListener("error", (event) => {
+				const message = event.message || "runtime worker crashed";
+				runtimeWorkerReady = false;
+				rejectAllWorkerRequests(message);
+				setStatus("error", "Runtime worker failed");
+				appendTranscriptLine(`Runtime worker error: ${message}`, "stderr");
+			});
+			worker.addEventListener("messageerror", () => {
+				runtimeWorkerReady = false;
+				rejectAllWorkerRequests("runtime worker returned an invalid response");
+				setStatus("error", "Runtime worker response decoding failed");
+				appendTranscriptLine("Runtime worker response decoding failed.", "stderr");
+			});
+			runtimeWorker = worker;
+			return worker;
+		};
+
+		const sendWorkerRequest = (action, payload = {}) => {
+			const worker = ensureRuntimeWorker();
+			if (!worker) {
+				return Promise.reject(new Error("runtime worker is unavailable"));
+			}
+			const requestId = nextWorkerRequestId++;
+			return new Promise((resolve, reject) => {
+				workerPendingRequests.set(requestId, { resolve, reject });
+				try {
+					worker.postMessage({ requestId, action, ...payload });
+				} catch (error) {
+					workerPendingRequests.delete(requestId);
+					reject(error instanceof Error ? error : new Error(String(error)));
+				}
+			});
+		};
+
+		const setShellLoading = (loading) => {
+			if (shellEl instanceof HTMLElement) {
+				shellEl.classList.toggle("is-loading", loading);
+			}
+		};
+
+		const waitMs = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+		const ensureRuntimeLoaded = async () => {
+			if (runtimeWorkerReady) return true;
+			if (runtimeLoadPromise) return runtimeLoadPromise;
+
+			runtimeLoadPromise = (async () => {
+				setStatus("loading", "Loading runtime\u2026");
+				setShellLoading(true);
+				let lastLoadError = "runtime failed to load";
+				for (let attempt = 0; attempt <= runtimeLoadRetryDelaysMs.length; attempt += 1) {
+					try {
+						const response = await sendWorkerRequest("load", {
+							wasmEntrypoint,
+							stdlibPackPath,
+						});
+						if (response.ok) {
+							runtimeWorkerReady = true;
+							lastRuntimeInfo = response.runtimeInfo || null;
+							const executionEnabled = Boolean(readField(lastRuntimeInfo, "supports_execution"));
+							setStatus(
+								"ready",
+								executionEnabled ? "Runtime ready" : "Runtime compile-only",
+							);
+							renderStartupBanner();
+							applyContinuationPrompt(response.prompt_continuation);
+							return true;
+						}
+						lastLoadError =
+							typeof response.error === "string" && response.error.length > 0
+								? response.error
+								: "runtime failed to load";
+					} catch (error) {
+						lastLoadError = error instanceof Error ? error.message : String(error);
+						runtimeWorkerReady = false;
+					}
+
+					const hasRetry = attempt < runtimeLoadRetryDelaysMs.length;
+					if (!hasRetry) {
+						break;
+					}
+					const wait = runtimeLoadRetryDelaysMs[attempt];
+					setStatus("loading", `Loading runtime\u2026 retrying in ${wait / 1000}s`);
+					await waitMs(wait);
+				}
+
+				setStatus("error", "Runtime failed to load");
+				appendTranscriptLine(`Runtime load error: ${lastLoadError}`, "stderr");
+				return false;
+			})()
+				.finally(() => {
+					runtimeLoadPromise = null;
+					setShellLoading(false);
+				});
+
+			return runtimeLoadPromise;
+		};
+
+		const runSource = async (source) => {
+			const normalized = source.replace(/\r/g, "").trimEnd();
+			const isBlankSubmission = normalized.trim().length === 0;
+			if (isBlankSubmission && !continuationPrompt) {
+				historyIndex = commandHistory.length;
+				appendPromptInput("", false);
+				applyContinuationPrompt(false);
+				return;
+			}
+
+			const sourceForRuntime = isBlankSubmission ? "" : normalized;
+			if (!isBlankSubmission && commandHistory.at(-1) !== sourceForRuntime) {
+				commandHistory.push(sourceForRuntime);
+			}
+			historyIndex = commandHistory.length;
+			appendPromptInput(sourceForRuntime, continuationPrompt);
+
+			setBusy(true);
+			const loaded = await ensureRuntimeLoaded();
+			if (!loaded) {
+				setBusy(false);
+				return;
+			}
+
+			try {
+				const response = await sendWorkerRequest("execute", { source: sourceForRuntime });
+				if (response.ok && response.result) {
+					renderExecutionResult(response.result);
+					applyContinuationPrompt(response.prompt_continuation);
+				} else {
+					const message =
+						typeof response.error === "string" && response.error.length > 0
+							? response.error
+							: "Runtime execute entrypoint is unavailable.";
+					appendTranscriptLine(message, "stderr");
+					applyContinuationPrompt(false);
+				}
+			} catch (error) {
+				runtimeWorkerReady = false;
+				const message = error instanceof Error ? error.message : String(error);
+				appendTranscriptLine(message, "stderr");
+				applyContinuationPrompt(false);
+			} finally {
+				setBusy(false);
+			}
+		};
+
+		if (inputEl instanceof HTMLTextAreaElement) {
+			inputEl.addEventListener("keydown", (event) => {
+				if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "l") {
+					event.preventDefault();
+					clearTranscript(true);
+					return;
+				}
+				if (event.key === "Tab" && !event.altKey && !event.ctrlKey && !event.metaKey) {
+					event.preventDefault();
+					const tabSpaces = "    ";
+					const start = inputEl.selectionStart;
+					const end = inputEl.selectionEnd;
+					const before = inputEl.value.slice(0, start);
+					const after = inputEl.value.slice(end);
+					inputEl.value = `${before}${tabSpaces}${after}`;
+					const nextCursor = start + tabSpaces.length;
+					inputEl.setSelectionRange(nextCursor, nextCursor);
+					refreshEditorState();
+					return;
+				}
+				if (event.key === "Enter" && !event.shiftKey) {
+					event.preventDefault();
+					if (formEl instanceof HTMLFormElement) {
+						formEl.requestSubmit();
+					}
+					return;
+				}
+				if (event.key === "ArrowUp") {
+					const atStart = inputEl.selectionStart === 0 && inputEl.selectionEnd === 0;
+					if (atStart && commandHistory.length > 0) {
+						event.preventDefault();
+						historyIndex = Math.max(0, historyIndex - 1);
+						setInputValue(commandHistory[historyIndex] || "");
+					}
+					return;
+				}
+				if (event.key === "ArrowDown") {
+					const atEnd =
+						inputEl.selectionStart === inputEl.value.length &&
+						inputEl.selectionEnd === inputEl.value.length;
+					if (atEnd && commandHistory.length > 0) {
+						event.preventDefault();
+						historyIndex = Math.min(commandHistory.length, historyIndex + 1);
+						if (historyIndex >= commandHistory.length) {
+							setInputValue("");
+						} else {
+							setInputValue(commandHistory[historyIndex] || "");
+						}
+					}
+				}
+			});
+			inputEl.addEventListener("input", refreshEditorState);
+			inputEl.addEventListener("scroll", syncEditorScroll);
+			inputEl.addEventListener("focus", updateEditorHighlight);
+			inputEl.addEventListener("blur", updateEditorHighlight);
+			refreshEditorState();
+		}
+
+		if (shellEl instanceof HTMLElement) {
+			shellEl.addEventListener("pointerdown", (event) => {
+				const target = event.target;
+				if (!(target instanceof HTMLElement)) return;
+				if (target.closest("button") || target.closest(".playground-editor-stack")) {
+					return;
+				}
+				event.preventDefault();
+				focusInputAtEnd();
+			});
+		}
+
+		if (formEl instanceof HTMLFormElement && inputEl instanceof HTMLTextAreaElement) {
+			formEl.addEventListener("submit", async (event) => {
+				event.preventDefault();
+				const source = inputEl.value;
+				inputEl.value = "";
+				refreshEditorState();
+				await runSource(source);
+				focusInputAtEnd();
+			});
+		}
+
+		if (clearButton instanceof HTMLButtonElement) {
+			clearButton.addEventListener("click", () => {
+				clearTranscript(true);
+				applyContinuationPrompt(false);
+				focusInputAtEnd();
+			});
+		}
+
+		if (resetButton instanceof HTMLButtonElement) {
+			resetButton.addEventListener("click", async () => {
+				setBusy(true);
+				const loaded = await ensureRuntimeLoaded();
+				if (!loaded) {
+					setBusy(false);
+					focusInputAtEnd();
+					return;
+				}
+				try {
+					const response = await sendWorkerRequest("reset");
+					if (!response.ok) {
+						const message =
+							typeof response.error === "string" && response.error.length > 0
+								? response.error
+								: "Runtime session reset failed.";
+						appendTranscriptLine(message, "stderr");
+					}
+					applyContinuationPrompt(response.prompt_continuation);
+				} catch (error) {
+					runtimeWorkerReady = false;
+					const message = error instanceof Error ? error.message : String(error);
+					appendTranscriptLine(message, "stderr");
+					applyContinuationPrompt(false);
+				}
+				clearTranscript(true);
+				setStatus("ready", "Runtime ready");
+				setBusy(false);
+				focusInputAtEnd();
+			});
+		}
+
+		window.addEventListener("beforeunload", () => {
+			if (runtimeWorker) {
+				rejectAllWorkerRequests("runtime worker terminated");
+				runtimeWorker.terminate();
+				runtimeWorker = null;
+				runtimeWorkerReady = false;
+			}
+		});
+
+		ensureRuntimeLoaded().then(() => {
+			focusInputAtEnd();
+		});
+	</script>  </main> <footer class="site-footer home" data-astro-cid-sz7xmlte> <p data-astro-cid-sz7xmlte>© 2026 PYRS</p> <nav aria-label="Footer links" data-astro-cid-sz7xmlte> <a href="/pyrs/docs/" data-astro-cid-sz7xmlte>Docs</a> <a href="https://github.com/BlueBlazin/pyrs" data-astro-cid-sz7xmlte>GitHub</a> </nav> </footer>  </div> <script defer src="/pyrs/scripts/copy-buttons.js"></script> </body> </html>  
