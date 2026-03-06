@@ -217,8 +217,9 @@ jobs:
             end
 
             test do
+              stdlib = share/"pyrs/stdlib/${CPYTHON_STDLIB_VERSION}/Lib"
               assert_match "pyrs", shell_output("#{bin}/pyrs --version")
-              assert_equal "ok\n", shell_output("#{bin}/pyrs -c 'import json; print(\"ok\")'")
+              assert_equal "ok\n", shell_output("#{bin}/pyrs -c 'import json, os; bundle = os.path.normpath(#{stdlib.to_s.inspect}); jf = os.path.normpath(getattr(json, \"__file__\", \"\")); assert jf.startswith(bundle), (bundle, jf); print(\"ok\")'")
             end
           end
           EOF
