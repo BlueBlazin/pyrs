@@ -8,6 +8,7 @@ pageTitle: Browser Playground
 import DocSection from "../../components/docs/DocSection.astro";
 import DataTable from "../../components/docs/DataTable.astro";
 import CodeBlock from "../../components/docs/CodeBlock.astro";
+import CodeTagList from "../../components/docs/CodeTagList.astro";
 import Callout from "../../components/docs/Callout.astro";
 import { withBasePath } from "../../lib/paths";
 
@@ -55,37 +56,30 @@ pnpm --dir website dev
 	</DataTable>
 </DocSection>
 
-<DocSection title="Supported Modules">
-	<Callout title="Two sources of support" tone="note">
-		The older 26-module wasm stdlib plan is only the seed list. The current playground supports modules from
-		two sources: a curated CPython source pack published with the website, and native/bootstrap modules
-		compiled into the Rust VM. For example, <code>urllib.parse</code> comes from the curated pack, while
-		<code>itertools</code> is available from the VM bootstrap without adding extra stdlib pack bytes.
+<DocSection title="Available Modules">
+	<Callout title="Merged public surface" tone="note">
+		The list below merges the public wasm REPL import surface into one inventory. Internally, those modules
+		come from two places: the curated CPython source pack published with the website and native/bootstrap
+		modules compiled into the Rust VM. For example, <code>urllib.parse</code> comes from the curated pack,
+		while <code>itertools</code> is provided directly by the VM bootstrap.
 	</Callout>
 	<Callout title="Public modules only" tone="note">
-		The lists below intentionally omit private and internal helper modules such as <code>_collections_abc</code>
+		The inventory intentionally omits private and internal helper modules such as <code>_collections_abc</code>
 		and <code>re._casefix</code>. Those helpers may still exist behind the scenes, but this page only lists the
 		public-facing import surface that users should rely on.
 	</Callout>
-	<DataTable headers={["Bucket", "Current scope", "Notes"]}>
+	<DataTable headers={["Surface", "Current scope", "Notes"]}>
 		<tr>
-			<td>Curated stdlib source pack</td>
-			<td>53 public modules</td>
+			<td>Available modules</td>
+			<td>83 public modules</td>
 			<td>
-				Loaded from <a href={withBasePath("/wasm/stdlib_subset_manifest_v1.json")}><code>/wasm/stdlib_subset_manifest_v1.json</code></a>
-				and pre-registered before the REPL becomes ready.
+				Merged from the curated website pack at
+				<a href={withBasePath("/wasm/stdlib_subset_manifest_v1.json")}><code>/wasm/stdlib_subset_manifest_v1.json</code></a>
+				and native/bootstrap modules exposed by <code>src/vm/vm_bootstrap_import.rs</code>.
 			</td>
 		</tr>
 		<tr>
-			<td>Native/bootstrap modules</td>
-			<td>30 additional public modules</td>
-			<td>
-				Exposed by the VM bootstrap/runtime layer in <code>src/vm/vm_bootstrap_import.rs</code>. These are
-				importable in browser mode even when they are not part of the curated source pack.
-			</td>
-		</tr>
-		<tr>
-			<td>Capability-blocked modules</td>
+			<td>Blocked modules</td>
 			<td>7 public modules</td>
 			<td>
 				These are rejected by the browser capability policy instead of partially working.
@@ -97,22 +91,16 @@ pnpm --dir website dev
 		every API inside it has native parity: browser mode still blocks sockets, subprocesses, dynamic library
 		loading, and terminal-only behavior at call time.
 	</Callout>
-	<CodeBlock
-		label="Curated stdlib source pack (53 public modules)"
-		code={`abc, annotationlib, argparse, ast, bisect, codecs, collections, contextlib
-contextvars, copy, copyreg, dataclasses, datetime, decimal, difflib, dis, encodings
-encodings.aliases, enum, fractions, functools, gettext, heapq, importlib
-importlib.machinery, inspect, io, ipaddress, json, json.decoder, json.encoder
-json.scanner, keyword, linecache, locale, numbers, opcode, operator, pprint, random, re
-reprlib, statistics, string, textwrap, token, tokenize, types, typing, urllib
-urllib.parse, warnings, weakref`}
-	/>
-	<CodeBlock
-		label="Additional native/bootstrap modules available in wasm today (30 public modules)"
-		code={`__future__, array, asyncio, atexit, binascii, collections.abc, errno
-faulthandler, gc, itertools, marshal, math, mmap, os, os.path, pathlib, platform
-posix, pwd, pyexpat, resource, select, signal, ssl, sysconfig, threading, time
-unicodedata, uuid, zlib`}
+	<CodeTagList
+		items={`__future__, abc, annotationlib, argparse, array, ast, asyncio, atexit, binascii,
+bisect, codecs, collections, collections.abc, contextlib, contextvars, copy, copyreg,
+dataclasses, datetime, decimal, difflib, dis, encodings, encodings.aliases, enum, errno,
+faulthandler, fractions, functools, gc, gettext, heapq, importlib, importlib.machinery,
+inspect, io, ipaddress, itertools, json, json.decoder, json.encoder, json.scanner, keyword,
+linecache, locale, marshal, math, mmap, numbers, opcode, operator, os, os.path, pathlib,
+platform, posix, pprint, pwd, pyexpat, random, re, reprlib, resource, select, signal, ssl,
+statistics, string, sysconfig, textwrap, threading, time, token, tokenize, types, typing,
+unicodedata, urllib, urllib.parse, uuid, warnings, weakref, zlib`}
 	/>
 	<DataTable headers={["Blocked public modules", "Blocker key", "Why blocked in browser mode"]}>
 		<tr>
