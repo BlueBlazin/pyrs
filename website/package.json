@@ -5,12 +5,13 @@
   "scripts": {
     "dev": "astro dev",
     "dev:playground": "pnpm run wasm:build && astro dev",
-    "build": "astro build",
-    "build:playground": "pnpm run wasm:build && astro build",
+    "build": "node scripts/clean-dist.mjs && astro build",
+    "build:playground": "pnpm run wasm:build && pnpm run build",
     "wasm:build": "../scripts/build_wasm_website_bundle.sh",
     "check:links": "node scripts/check-internal-links.mjs",
+    "check:release": "node scripts/check-release-artifacts.mjs",
     "report:size": "node scripts/report-build-size.mjs",
-    "build:check": "pnpm run build && pnpm run check:links",
+    "build:check": "pnpm run build && pnpm run check:links && pnpm run check:release",
     "preview": "astro preview",
     "astro": "astro"
   },

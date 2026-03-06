@@ -34,6 +34,8 @@ wasm-bindgen \
   --out-name pyrs \
   --typescript
 
+rm -f website/public/wasm/*.d.ts
+
 python3 scripts/generate_wasm_env_shim.py \
   --wasm "${WASM_INPUT}" \
   --bindgen-js website/public/wasm/pyrs.js \
