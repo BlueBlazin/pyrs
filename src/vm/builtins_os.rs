@@ -7153,6 +7153,7 @@ impl Vm {
         Ok(Value::None)
     }
 
+    #[cfg(unix)]
     fn select_fd_from_value(&mut self, value: &Value) -> Result<i32, RuntimeError> {
         let fd = if let Value::Int(fd) = value {
             *fd
@@ -7187,6 +7188,7 @@ impl Vm {
         })
     }
 
+    #[cfg(unix)]
     fn select_timeout_to_poll_ms(timeout: Option<Value>) -> Result<i32, RuntimeError> {
         let Some(timeout_value) = timeout else {
             return Ok(-1);
