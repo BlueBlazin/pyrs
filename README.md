@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="website/public/images/pyrs-logo.png" alt="PYRS logo" width="124" />
+  <img src="website/public/images/pyrs-logo.webp" alt="PYRS logo" width="124" />
 </p>
 
 <h1 align="center">PYRS</h1>
@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img src="website/public/images/repl/repl1.png" alt="PYRS REPL screenshot 1" width="92%" />
+  <img src="website/public/images/repl/repl1.webp" alt="PYRS REPL screenshot 1" width="92%" />
 </p>
 
 ## At a Glance
@@ -35,7 +35,7 @@
 | Local test runner | `cargo nextest run` |
 
 <p align="center">
-  <img src="website/public/images/repl/repl2.png" alt="PYRS REPL screenshot 2" width="92%" />
+  <img src="website/public/images/repl/repl2.webp" alt="PYRS REPL screenshot 2" width="92%" />
 </p>
 
 ## Quick Start
