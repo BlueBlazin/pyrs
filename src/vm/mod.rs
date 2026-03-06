@@ -4198,7 +4198,9 @@ impl Vm {
             if self.host.path_is_dir(&candidate) {
                 return Some(candidate);
             }
-        } else if let Some(home) = self.host.env_var_os("HOME") {
+        }
+
+        if let Some(home) = self.host.env_var_os("HOME") {
             let candidate = PathBuf::from(home)
                 .join(".local")
                 .join("share")

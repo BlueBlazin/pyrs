@@ -1352,7 +1352,8 @@ fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
                     .join("pyrs")
                     .join(&stdlib_suffix),
             );
-        } else if let Some(home) = env::var_os("HOME") {
+        }
+        if let Some(home) = env::var_os("HOME") {
             roots.push(
                 PathBuf::from(home)
                     .join(".local")

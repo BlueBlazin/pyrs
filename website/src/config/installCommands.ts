@@ -10,12 +10,20 @@ export const githubInstallerStableCommands = [
 	"pyrs --version",
 ];
 
+export const githubInstallerUninstallCommands = [
+	"curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash -s -- --uninstall",
+];
+
 export const homebrewHeadCommands = ["brew install --HEAD blueblazin/tap/pyrs", "pyrs --version"];
+
+export const homebrewUninstallCommands = ["brew uninstall pyrs"];
 
 export const cargoInstallGitHubCommands = [
 	"cargo install --locked --git https://github.com/BlueBlazin/pyrs --bin pyrs",
 	"pyrs --version",
 ];
+
+export const cargoUninstallCommands = ["cargo uninstall pyrs"];
 
 export const cargoInstallRepoPathCommands = [
 	"git clone https://github.com/BlueBlazin/pyrs.git",
@@ -42,6 +50,8 @@ export const dockerNightlyCommands = [
 	"docker pull ghcr.io/blueblazin/pyrs:nightly",
 	"docker run --rm -it ghcr.io/blueblazin/pyrs:nightly",
 ];
+
+export const dockerUninstallCommands = ["docker image rm ghcr.io/blueblazin/pyrs:nightly"];
 
 export const nightlyArchiveMacosCommands = [
 	"ARCH=\"$(uname -m)\"",

@@ -418,3 +418,62 @@ fn cli_pyrs_cpython_lib_uses_host_dynload_fallback_without_host_stdlib_root() {
     );
     assert_eq!(code, 0, "stderr:\n{stderr}");
 }
+
+#[test]
+fn cli_detects_install_managed_stdlib_under_xdg_data_home() {
+    let root = temp_root("cli_xdg_managed_stdlib");
+    let home = root.join("home");
+    let xdg = root.join("xdg");
+    let stdlib = xdg.join("pyrs/stdlib/3.14.3/Lib");
+    fs::create_dir_all(&stdlib).expect("create xdg stdlib");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
+
+    let expected_suffix = PathBuf::from("xdg/pyrs/stdlib/3.14.3/Lib/site.py");
+    let mut cmd = Command::new(pyrs_bin());
+    cmd.current_dir(&root);
+    cmd.arg("-c");
+    cmd.arg(format!(
+        "import os, site\nexpected = {:?}.replace('\\\\', '/')\nactual = getattr(site, '__file__', '').replace('\\\\', '/')\nassert actual.endswith(expected), (expected, actual)\n",
+        expected_suffix.to_string_lossy()
+    ));
+    cmd.env_remove("PYRS_CPYTHON_LIB");
+    cmd.env_remove("PYTHONHOME");
+    cmd.env_remove("PYTHONPATH");
+    cmd.env_remove("VIRTUAL_ENV");
+    cmd.env("HOME", &home);
+    cmd.env("XDG_DATA_HOME", &xdg);
+    let output = cmd.output().expect("run pyrs");
+    let code = output.status.code().unwrap_or(1);
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+}
+
+#[test]
+fn cli_legacy_local_share_stdlib_fallback_still_works_when_xdg_data_home_is_set() {
+    let root = temp_root("cli_legacy_local_share_stdlib");
+    let home = root.join("home");
+    let xdg = root.join("xdg");
+    let stdlib = home.join(".local/share/pyrs/stdlib/3.14.3/Lib");
+    fs::create_dir_all(&stdlib).expect("create legacy stdlib");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
+    fs::create_dir_all(&xdg).expect("create xdg root");
+
+    let expected_suffix = PathBuf::from(".local/share/pyrs/stdlib/3.14.3/Lib/site.py");
+    let mut cmd = Command::new(pyrs_bin());
+    cmd.current_dir(&root);
+    cmd.arg("-c");
+    cmd.arg(format!(
+        "import os, site\nexpected = {:?}.replace('\\\\', '/')\nactual = getattr(site, '__file__', '').replace('\\\\', '/')\nassert actual.endswith(expected), (expected, actual)\n",
+        expected_suffix.to_string_lossy()
+    ));
+    cmd.env_remove("PYRS_CPYTHON_LIB");
+    cmd.env_remove("PYTHONHOME");
+    cmd.env_remove("PYTHONPATH");
+    cmd.env_remove("VIRTUAL_ENV");
+    cmd.env("HOME", &home);
+    cmd.env("XDG_DATA_HOME", &xdg);
+    let output = cmd.output().expect("run pyrs");
+    let code = output.status.code().unwrap_or(1);
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+}

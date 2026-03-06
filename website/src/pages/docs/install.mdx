@@ -12,12 +12,16 @@ import Callout from "../../components/docs/Callout.astro";
 import { withBasePath } from "../../lib/paths";
 import {
 	homebrewHeadCommands,
+	homebrewUninstallCommands,
 	githubInstallerCommands,
 	githubInstallerStableCommands,
+	githubInstallerUninstallCommands,
 	cargoInstallGitHubCommands,
+	cargoUninstallCommands,
 	cargoInstallRepoPathCommands,
 	cargoSourceBuildCommands,
 	dockerNightlyCommands,
+	dockerUninstallCommands,
 	nightlyArchiveLinuxCommands,
 	nightlyArchiveMacosCommands,
 } from "../../config/installCommands";
@@ -38,6 +42,12 @@ import {
 <DocSection title="Recommended on Linux: GitHub Installer (nightly default)">
 	<p>Install from GitHub Releases (default channel is nightly):</p>
 	<CommandBlock commands={githubInstallerCommands} />
+	<Callout title="Bundled Stdlib Policy">
+		The installer puts <code>pyrs</code> in <code>~/.local/bin</code> and only stages the bundled CPython
+		3.14.3 <code>Lib/</code> under <code>${"{XDG_DATA_HOME:-~/.local/share}"}/pyrs/stdlib/3.14.3/Lib</code> when
+		no usable local CPython 3.14 stdlib is already present. If Python 3.14 is already installed, PYRS reuses it
+		instead of dropping a second stdlib tree onto the machine.
+	</Callout>
 </DocSection>
 
 <DocSection title="Optional: GitHub Installer (stable channel)">
@@ -101,8 +111,12 @@ import {
 	<CommandBlock commands={dockerNightlyCommands} />
 </DocSection>
 
-<DocSection title="Alternative: Direct Nightly Archives">
-	<p>Use release archives when you want direct binaries without install scripts.</p>
+<DocSection title="Alternative: Direct Nightly Binary Archives (Advanced)">
+	<p>
+		These archives are binary-only. Use them when CPython 3.14 is already on the machine or when you plan to place
+		the separate <code>pyrs-stdlib-cpython-3.14.3.tar.gz</code> bundle yourself. If you want stdlib placement handled
+		for you, use the GitHub installer or Homebrew instead.
+	</p>
 
 	<h3 class="text-[1.02rem] font-semibold tracking-[-0.01em] text-docs-text">macOS</h3>
 	<CommandBlock commands={nightlyArchiveMacosCommands} />
@@ -122,4 +136,24 @@ import {
 		After install succeeds, continue with <a href={withBasePath("/docs/repl/")}>REPL and Execution</a> or open
 		<a href={withBasePath("/docs/reference/")}> CLI and Environment Reference</a>.
 	</Callout>
+</DocSection>
+
+<DocSection title="Uninstall">
+	<p>Removal is path-specific:</p>
+
+	<h3 class="text-[1.02rem] font-semibold tracking-[-0.01em] text-docs-text">GitHub installer</h3>
+	<CommandBlock commands={githubInstallerUninstallCommands} />
+	<p>
+		If you installed to custom locations, pass the same <code>--bin-dir</code> and <code>--data-dir</code> values to
+		the uninstall command.
+	</p>
+
+	<h3 class="pt-2 text-[1.02rem] font-semibold tracking-[-0.01em] text-docs-text">Homebrew</h3>
+	<CommandBlock commands={homebrewUninstallCommands} />
+
+	<h3 class="pt-2 text-[1.02rem] font-semibold tracking-[-0.01em] text-docs-text">Cargo</h3>
+	<CommandBlock commands={cargoUninstallCommands} />
+
+	<h3 class="pt-2 text-[1.02rem] font-semibold tracking-[-0.01em] text-docs-text">Docker</h3>
+	<CommandBlock commands={dockerUninstallCommands} />
 </DocSection>

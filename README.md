@@ -47,6 +47,8 @@ curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/inst
 pyrs --version
 ```
 
+The installer writes `pyrs` to `~/.local/bin`. If a usable local CPython 3.14 stdlib is not already present, it also stages the official `Lib/` under `${XDG_DATA_HOME:-~/.local/share}/pyrs/stdlib/3.14.3/Lib`. When Python 3.14 is already installed, the installer skips the bundled stdlib and reuses the host stdlib instead.
+
 Run interactive REPL:
 
 ```bash
@@ -77,6 +79,12 @@ Stable tagged channel:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash -s -- --stable
+```
+
+Uninstall:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BlueBlazin/pyrs/master/scripts/install.sh | bash -s -- --uninstall
 ```
 
 ### Cargo install (bring your own CPython stdlib)
@@ -110,6 +118,12 @@ cargo build --release
 brew install --HEAD blueblazin/tap/pyrs
 ```
 
+Uninstall with:
+
+```bash
+brew uninstall pyrs
+```
+
 ### Docker nightly
 
 ```bash
@@ -117,11 +131,13 @@ docker pull ghcr.io/blueblazin/pyrs:nightly
 docker run --rm -it ghcr.io/blueblazin/pyrs:nightly
 ```
 
-### Nightly archives
+### Nightly binary archives (advanced)
 
 Nightly binary archives are published at:
 
 - [GitHub Releases (nightly tag)](https://github.com/BlueBlazin/pyrs/releases/tag/nightly)
+
+These archives are binary-only. Use them when CPython 3.14 is already available locally, or when you plan to place the separate `pyrs-stdlib-cpython-3.14.3.tar.gz` bundle yourself. If you want stdlib placement handled automatically, use the GitHub installer or Homebrew.
 
 ## Usage
 

@@ -24,7 +24,7 @@ const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 		},
 		{
 			title: "GitHub installer",
-			description: "One command install from GitHub Releases (defaults to nightly).",
+			description: "One command install from GitHub Releases (defaults to nightly, bundles stdlib only when needed).",
 			lines: githubInstallerCommands,
 		},
 		{
@@ -36,7 +36,7 @@ const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 	linux: [
 		{
 			title: "GitHub installer",
-			description: "One command install from GitHub Releases (defaults to nightly).",
+			description: "One command install from GitHub Releases (defaults to nightly, bundles stdlib only when needed).",
 			recommended: true,
 			lines: githubInstallerCommands,
 		},
