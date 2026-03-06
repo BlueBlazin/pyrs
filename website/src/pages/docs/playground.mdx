@@ -8,7 +8,6 @@ pageTitle: Browser Playground
 import DocSection from "../../components/docs/DocSection.astro";
 import DataTable from "../../components/docs/DataTable.astro";
 import CodeBlock from "../../components/docs/CodeBlock.astro";
-import CodeTagList from "../../components/docs/CodeTagList.astro";
 import Callout from "../../components/docs/Callout.astro";
 import { withBasePath } from "../../lib/paths";
 
@@ -57,11 +56,12 @@ pnpm --dir website dev
 </DocSection>
 
 <DocSection title="Available Modules">
-	<Callout title="Merged public surface" tone="note">
-		The list below merges the public wasm REPL import surface into one inventory. Internally, those modules
-		come from two places: the curated CPython source pack published with the website and native/bootstrap
-		modules compiled into the Rust VM. For example, <code>urllib.parse</code> comes from the curated pack,
-		while <code>itertools</code> is provided directly by the VM bootstrap.
+	<Callout title="Two sources of support" tone="note">
+		The older 26-module wasm stdlib plan is only the seed list. The current playground supports modules from
+		two sources: a curated CPython source pack published with the website and native/bootstrap modules
+		compiled into the Rust VM. The list below merges those public-facing modules into one inventory. For
+		example, <code>urllib.parse</code> comes from the curated pack, while <code>itertools</code> is available
+		from the VM bootstrap without adding extra stdlib pack bytes.
 	</Callout>
 	<Callout title="Public modules only" tone="note">
 		The inventory intentionally omits private and internal helper modules such as <code>_collections_abc</code>
@@ -91,15 +91,16 @@ pnpm --dir website dev
 		every API inside it has native parity: browser mode still blocks sockets, subprocesses, dynamic library
 		loading, and terminal-only behavior at call time.
 	</Callout>
-	<CodeTagList
-		items={`__future__, abc, annotationlib, argparse, array, ast, asyncio, atexit, binascii,
-bisect, codecs, collections, collections.abc, contextlib, contextvars, copy, copyreg,
-dataclasses, datetime, decimal, difflib, dis, encodings, encodings.aliases, enum, errno,
-faulthandler, fractions, functools, gc, gettext, heapq, importlib, importlib.machinery,
-inspect, io, ipaddress, itertools, json, json.decoder, json.encoder, json.scanner, keyword,
-linecache, locale, marshal, math, mmap, numbers, opcode, operator, os, os.path, pathlib,
-platform, posix, pprint, pwd, pyexpat, random, re, reprlib, resource, select, signal, ssl,
-statistics, string, sysconfig, textwrap, threading, time, token, tokenize, types, typing,
+	<CodeBlock
+		label="Available modules (83 public modules)"
+		code={`__future__, abc, annotationlib, argparse, array, ast, asyncio, atexit, binascii
+bisect, codecs, collections, collections.abc, contextlib, contextvars, copy, copyreg
+dataclasses, datetime, decimal, difflib, dis, encodings, encodings.aliases, enum, errno
+faulthandler, fractions, functools, gc, gettext, heapq, importlib, importlib.machinery
+inspect, io, ipaddress, itertools, json, json.decoder, json.encoder, json.scanner, keyword
+linecache, locale, marshal, math, mmap, numbers, opcode, operator, os, os.path, pathlib
+platform, posix, pprint, pwd, pyexpat, random, re, reprlib, resource, select, signal, ssl
+statistics, string, sysconfig, textwrap, threading, time, token, tokenize, types, typing
 unicodedata, urllib, urllib.parse, uuid, warnings, weakref, zlib`}
 	/>
 	<DataTable headers={["Blocked public modules", "Blocker key", "Why blocked in browser mode"]}>
