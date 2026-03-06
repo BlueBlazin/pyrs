@@ -14709,6 +14709,13 @@ impl Vm {
         Ok(Value::Bool(result))
     }
 
+    fn reversed_not_reversible_error(&self, value: &Value) -> RuntimeError {
+        RuntimeError::type_error(format!(
+            "'{}' object is not reversible",
+            self.value_type_name_for_error(value)
+        ))
+    }
+
     pub(super) fn builtin_reversed(
         &mut self,
         mut args: Vec<Value>,
@@ -14718,10 +14725,32 @@ impl Vm {
             return Err(RuntimeError::new("reversed() expects one argument"));
         }
         let source = args.remove(0);
-        let mut values = self.collect_iterable_values(source)?;
-        values.reverse();
-        let reversed_list = self.heap.alloc_list(values);
-        self.to_iterator_value(reversed_list)
+        if let Value::List(list) = &source {
+            return self.list_reverse_iterator(list.clone());
+        }
+        if let Value::Iterator(range_obj) = &source
+            && matches!(
+                &*range_obj.kind(),
+                Object::Iterator(IteratorObject {
+                    kind: IteratorKind::RangeObject { .. },
+                    ..
+                })
+            )
+        {
+            return self.range_reverse_iterator(range_obj);
+        }
+        if let Some(reversed_method) = self.lookup_bound_special_method(&source, "__reversed__")? {
+            return match self.call_internal(reversed_method, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(value) => Ok(value),
+                InternalCallOutcome::CallerExceptionHandled => {
+                    Err(self.runtime_error_from_active_exception("__reversed__() failed"))
+                }
+            };
+        }
+        if let Some(iterator) = self.reversed_sequence_iterator_via_getitem(source.clone())? {
+            return Ok(iterator);
+        }
+        Err(self.reversed_not_reversible_error(&source))
     }
 
     pub(super) fn builtin_zip(

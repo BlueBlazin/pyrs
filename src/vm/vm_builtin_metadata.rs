@@ -2110,8 +2110,7 @@ impl Vm {
         {
             return Some(Value::Builtin(BuiltinFunction::ObjectReduceEx));
         }
-        if (self.class_has_builtin_list_base(class) || self.class_has_builtin_tuple_base(class))
-            && attr_name == "__reversed__"
+        if self.class_has_builtin_list_base(class) && attr_name == "__reversed__"
         {
             return Some(Value::Builtin(BuiltinFunction::Reversed));
         }
@@ -2205,7 +2204,10 @@ impl Vm {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Iter, list));
         }
         if attr_name == "__reversed__" {
-            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Reversed, list));
+            return Ok(self.alloc_native_bound_method(
+                NativeMethodKind::ListDunderReversed,
+                list,
+            ));
         }
         let kind = match attr_name {
             "__init__" => NativeMethodKind::ListInit,
@@ -2248,9 +2250,6 @@ impl Vm {
         }
         if attr_name == "__iter__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Iter, tuple));
-        }
-        if attr_name == "__reversed__" {
-            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Reversed, tuple));
         }
         let kind = match attr_name {
             "__eq__" => NativeMethodKind::TupleEq,
@@ -2582,7 +2581,15 @@ impl Vm {
         iterator: ObjRef,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
-        let (type_name, range_start, range_stop, range_step, allow_reduce, allow_next) =
+        let (
+            type_name,
+            range_start,
+            range_stop,
+            range_step,
+            allow_reduce,
+            allow_next,
+            allow_reversed,
+        ) =
             match &*iterator.kind() {
                 Object::Iterator(state) => match &state.kind {
                     IteratorKind::RangeObject { start, stop, step } => (
@@ -2592,33 +2599,47 @@ impl Vm {
                         Some(step.clone()),
                         true,
                         false,
+                        true,
                     ),
-                    IteratorKind::Map { .. } => ("map", None, None, None, true, true),
-                    IteratorKind::Zip { .. } => ("zip", None, None, None, true, true),
-                    IteratorKind::Range { .. } => ("range_iterator", None, None, None, false, true),
-                    IteratorKind::List(_) => ("list_iterator", None, None, None, false, true),
-                    IteratorKind::Tuple(_) => ("tuple_iterator", None, None, None, false, true),
-                    IteratorKind::Str(_) => ("str_iterator", None, None, None, false, true),
-                    IteratorKind::Dict(_) => ("dict_keyiterator", None, None, None, false, true),
-                    IteratorKind::Set(_) => ("set_iterator", None, None, None, false, true),
-                    IteratorKind::Bytes(_) => ("bytes_iterator", None, None, None, false, true),
+                    IteratorKind::Map { .. } => ("map", None, None, None, true, true, false),
+                    IteratorKind::Zip { .. } => ("zip", None, None, None, true, true, false),
+                    IteratorKind::Range { .. } => {
+                        ("range_iterator", None, None, None, false, true, false)
+                    }
+                    IteratorKind::List(_) => ("list_iterator", None, None, None, false, true, false),
+                    IteratorKind::ListReverse { .. } => (
+                        "list_reverseiterator",
+                        None,
+                        None,
+                        None,
+                        false,
+                        true,
+                        false,
+                    ),
+                    IteratorKind::Tuple(_) => ("tuple_iterator", None, None, None, false, true, false),
+                    IteratorKind::Str(_) => ("str_iterator", None, None, None, false, true, false),
+                    IteratorKind::Dict(_) => ("dict_keyiterator", None, None, None, false, true, false),
+                    IteratorKind::Set(_) => ("set_iterator", None, None, None, false, true, false),
+                    IteratorKind::Bytes(_) => ("bytes_iterator", None, None, None, false, true, false),
                     IteratorKind::ByteArray(_) => {
-                        ("bytearray_iterator", None, None, None, false, true)
+                        ("bytearray_iterator", None, None, None, false, true, false)
                     }
                     IteratorKind::MemoryView(_) => {
-                        ("memory_iterator", None, None, None, false, true)
+                        ("memory_iterator", None, None, None, false, true, false)
                     }
-                    IteratorKind::Cycle { .. } => ("cycle", None, None, None, false, true),
-                    IteratorKind::Count { .. } => ("count", None, None, None, false, true),
-                    IteratorKind::Enumerate { .. } => ("enumerate", None, None, None, false, true),
+                    IteratorKind::Cycle { .. } => ("cycle", None, None, None, false, true, false),
+                    IteratorKind::Count { .. } => ("count", None, None, None, false, true, false),
+                    IteratorKind::Enumerate { .. } => {
+                        ("enumerate", None, None, None, false, true, false)
+                    }
                     IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => {
-                        ("chain", None, None, None, false, true)
+                        ("chain", None, None, None, false, true, false)
                     }
                     IteratorKind::Accumulate { .. } => {
-                        ("accumulate", None, None, None, false, true)
+                        ("accumulate", None, None, None, false, true, false)
                     }
                     IteratorKind::Combinations { .. } => {
-                        ("combinations", None, None, None, false, true)
+                        ("combinations", None, None, None, false, true, false)
                     }
                     IteratorKind::CombinationsWithReplacement { .. } => (
                         "combinations_with_replacement",
@@ -2627,39 +2648,56 @@ impl Vm {
                         None,
                         false,
                         true,
+                        false,
                     ),
                     IteratorKind::Permutations { .. } => {
-                        ("permutations", None, None, None, false, true)
+                        ("permutations", None, None, None, false, true, false)
                     }
-                    IteratorKind::Product { .. } => ("product", None, None, None, false, true),
-                    IteratorKind::Compress { .. } => ("compress", None, None, None, false, true),
-                    IteratorKind::DropWhile { .. } => ("dropwhile", None, None, None, false, true),
-                    IteratorKind::Filter { .. } => ("filter", None, None, None, false, true),
+                    IteratorKind::Product { .. } => ("product", None, None, None, false, true, false),
+                    IteratorKind::Compress { .. } => {
+                        ("compress", None, None, None, false, true, false)
+                    }
+                    IteratorKind::DropWhile { .. } => {
+                        ("dropwhile", None, None, None, false, true, false)
+                    }
+                    IteratorKind::Filter { .. } => ("filter", None, None, None, false, true, false),
                     IteratorKind::FilterFalse { .. } => {
-                        ("filterfalse", None, None, None, false, true)
+                        ("filterfalse", None, None, None, false, true, false)
                     }
-                    IteratorKind::Islice { .. } => ("islice", None, None, None, false, true),
-                    IteratorKind::Pairwise { .. } => ("pairwise", None, None, None, false, true),
-                    IteratorKind::StarMap { .. } => ("starmap", None, None, None, false, true),
-                    IteratorKind::TakeWhile { .. } => ("takewhile", None, None, None, false, true),
+                    IteratorKind::Islice { .. } => ("islice", None, None, None, false, true, false),
+                    IteratorKind::Pairwise { .. } => {
+                        ("pairwise", None, None, None, false, true, false)
+                    }
+                    IteratorKind::StarMap { .. } => {
+                        ("starmap", None, None, None, false, true, false)
+                    }
+                    IteratorKind::TakeWhile { .. } => {
+                        ("takewhile", None, None, None, false, true, false)
+                    }
                     IteratorKind::ZipLongest { .. } => {
-                        ("zip_longest", None, None, None, false, true)
+                        ("zip_longest", None, None, None, false, true, false)
                     }
-                    IteratorKind::Tee { .. } => ("_tee", None, None, None, false, true),
-                    IteratorKind::Repeat { .. } => ("repeat", None, None, None, false, true),
-                    IteratorKind::Batched { .. } => ("batched", None, None, None, false, true),
-                    IteratorKind::GroupBy { .. } => ("groupby", None, None, None, false, true),
+                    IteratorKind::Tee { .. } => ("_tee", None, None, None, false, true, false),
+                    IteratorKind::Repeat { .. } => ("repeat", None, None, None, false, true, false),
+                    IteratorKind::Batched { .. } => ("batched", None, None, None, false, true, false),
+                    IteratorKind::GroupBy { .. } => ("groupby", None, None, None, false, true, false),
                     IteratorKind::GroupByGrouper { .. } => {
-                        ("_grouper", None, None, None, false, true)
+                        ("_grouper", None, None, None, false, true, false)
+                    }
+                    IteratorKind::ReversedSequenceGetItem { .. } => {
+                        ("reversed", None, None, None, false, true, false)
+                    }
+                    IteratorKind::ReversedCpythonSequence { .. } => {
+                        ("reversed", None, None, None, false, true, false)
                     }
                     IteratorKind::SequenceGetItem { .. } => {
-                        ("iterator", None, None, None, false, true)
+                        ("iterator", None, None, None, false, true, false)
                     }
                     IteratorKind::CpythonSequence { .. } => {
-                        ("iterator", None, None, None, false, true)
+                        ("iterator", None, None, None, false, true, false)
                     }
                     IteratorKind::CallIter { .. } => {
-                        ("callable_iterator", None, None, None, false, true)
+                        ("callable_iterator", None, None, None, false, true, false)
                     }
                 },
                 _ => {
@@ -2675,6 +2713,10 @@ impl Vm {
             "__next__" if allow_next => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::IteratorNext, iterator))
             }
+            "__reversed__" if allow_reversed => Ok(self.alloc_native_bound_method(
+                NativeMethodKind::RangeDunderReversed,
+                iterator,
+            )),
             "__reduce_ex__" | "__reduce__" if allow_reduce => {
                 Ok(self.alloc_reduce_ex_bound_method(Value::Iterator(iterator)))
             }
@@ -4409,6 +4451,12 @@ impl Vm {
         }
         if let Some(method) = class_attr_lookup(&class_ref, method_name) {
             return self.bind_descriptor_method(method, receiver);
+        }
+        if !matches!(receiver, Value::Instance(_) | Value::Module(_) | Value::Class(_))
+            && let Some(method) = self.optional_getattr_value(receiver.clone(), method_name)?
+            && self.is_callable_value(&method)
+        {
+            return Ok(Some(method));
         }
         Ok(None)
     }

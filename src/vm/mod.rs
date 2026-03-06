@@ -7892,6 +7892,20 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                     }
                     _ => return Err(RuntimeError::type_error("expected bytes-like payload")),
                 },
+                IteratorKind::ListReverse { list, next_index } => match &*list.kind() {
+                    Object::List(items) => {
+                        if *next_index < 0 {
+                            Vec::new()
+                        } else {
+                            let end = (*next_index as usize).min(items.len().saturating_sub(1));
+                            let out = items[..=end].iter().rev().cloned().collect::<Vec<_>>();
+                            *next_index = -1;
+                            iterator.index = iterator.index.saturating_add(out.len());
+                            out
+                        }
+                    }
+                    _ => return Err(RuntimeError::type_error("expected bytes-like payload")),
+                },
                 IteratorKind::Tuple(tuple_obj) => match &*tuple_obj.kind() {
                     Object::Tuple(items) => {
                         let start = iterator.index.min(items.len());
@@ -7994,6 +8008,12 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                     }
                     iterator.index = iterator.index.saturating_add(out.len());
                     out
+                }
+                IteratorKind::ReversedSequenceGetItem { .. } => {
+                    return Err(RuntimeError::type_error("expected bytes-like payload"));
+                }
+                IteratorKind::ReversedCpythonSequence { .. } => {
+                    return Err(RuntimeError::type_error("expected bytes-like payload"));
                 }
                 IteratorKind::Dict(dict_obj) => match &*dict_obj.kind() {
                     Object::Dict(items) => {

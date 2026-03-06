@@ -2394,6 +2394,14 @@ impl Vm {
                 values.reverse();
                 Ok(NativeCallResult::Value(Value::None))
             }
+            NativeMethodKind::ListDunderReversed => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error(
+                        "__reversed__() expects no arguments",
+                    ));
+                }
+                Ok(NativeCallResult::Value(self.list_reverse_iterator(receiver)?))
+            }
             NativeMethodKind::ListSort => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new(
@@ -2443,6 +2451,14 @@ impl Vm {
                     return Err(RuntimeError::new("list modified during sort"));
                 }
                 Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::RangeDunderReversed => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error(
+                        "__reversed__() expects no arguments",
+                    ));
+                }
+                Ok(NativeCallResult::Value(self.range_reverse_iterator(&receiver)?))
             }
             NativeMethodKind::IntToBytes => {
                 if args.len() > 3 {
@@ -8028,6 +8044,51 @@ impl Vm {
         })))
     }
 
+    pub(super) fn reversed_sequence_iterator_via_getitem(
+        &mut self,
+        target: Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        if matches!(target, Value::Dict(_)) {
+            return Ok(None);
+        }
+        let len_method = self
+            .lookup_bound_special_method(&target, "__len__")?
+            .or(if matches!(target, Value::Instance(_) | Value::Module(_) | Value::Class(_)) {
+                None
+            } else {
+                self.optional_getattr_value(target.clone(), "__len__")?
+            });
+        let Some(_len_method) = len_method else {
+            return Ok(None);
+        };
+        let getitem = self
+            .lookup_bound_special_method(&target, "__getitem__")?
+            .or(if matches!(target, Value::Instance(_) | Value::Module(_) | Value::Class(_)) {
+                None
+            } else {
+                self.optional_getattr_value(target.clone(), "__getitem__")?
+            });
+        let Some(getitem) = getitem else {
+            return Ok(None);
+        };
+        let length = value_to_int(self.call_builtin(
+            BuiltinFunction::Len,
+            vec![target.clone()],
+            HashMap::new(),
+        )?)?;
+        if length < 0 {
+            return Err(RuntimeError::value_error("__len__() should return >= 0"));
+        }
+        Ok(Some(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::ReversedSequenceGetItem {
+                target,
+                getitem,
+                next_index: length.saturating_sub(1),
+            },
+            index: 0,
+        })))
+    }
+
     fn origin_is_tuple_alias_target(origin: &Value) -> bool {
         match origin {
             Value::Builtin(BuiltinFunction::Tuple) => true,
@@ -9744,6 +9805,15 @@ impl Vm {
                 target: Value,
                 index: i64,
             },
+            ReversedSequenceGetItem {
+                target: Value,
+                getitem: Value,
+                index: i64,
+            },
+            ReversedCpythonSequence {
+                target: Value,
+                index: i64,
+            },
             CallIter {
                 callable: Value,
                 sentinel: Value,
@@ -9842,6 +9912,24 @@ impl Vm {
                             } else {
                                 let value = values[state.index].clone();
                                 state.index += 1;
+                                Some(value)
+                            }
+                        }
+                        _ => None,
+                    });
+                }
+                IteratorKind::ListReverse { list, next_index } => {
+                    return Ok(match &*list.kind() {
+                        Object::List(values) => {
+                            if *next_index < 0 {
+                                None
+                            } else if (*next_index as usize) >= values.len() {
+                                *next_index = -1;
+                                None
+                            } else {
+                                let value = values[*next_index as usize].clone();
+                                *next_index -= 1;
+                                state.index = state.index.saturating_add(1);
                                 Some(value)
                             }
                         }
@@ -10522,6 +10610,29 @@ impl Vm {
                     pending_step = PendingIteratorStep::CpythonSequence {
                         target: target.clone(),
                         index: state.index as i64,
+                    };
+                }
+                IteratorKind::ReversedSequenceGetItem {
+                    target,
+                    getitem,
+                    next_index,
+                } => {
+                    if *next_index < 0 {
+                        return Ok(None);
+                    }
+                    pending_step = PendingIteratorStep::ReversedSequenceGetItem {
+                        target: target.clone(),
+                        getitem: getitem.clone(),
+                        index: *next_index,
+                    };
+                }
+                IteratorKind::ReversedCpythonSequence { target, next_index } => {
+                    if *next_index < 0 {
+                        return Ok(None);
+                    }
+                    pending_step = PendingIteratorStep::ReversedCpythonSequence {
+                        target: target.clone(),
+                        index: *next_index,
                     };
                 }
                 IteratorKind::CallIter { callable, sentinel } => {
@@ -11565,6 +11676,113 @@ impl Vm {
                         Err(err)
                     }
                 }
+            }
+            PendingIteratorStep::ReversedSequenceGetItem {
+                target,
+                getitem,
+                index,
+            } => {
+                let index_value = Value::Int(index);
+                let call_result = self.call_internal(getitem, vec![index_value], HashMap::new());
+                match call_result {
+                    Ok(InternalCallOutcome::Value(value)) => {
+                        {
+                            let mut iter = iterator_ref.kind_mut();
+                            if let Object::Iterator(state) = &mut *iter
+                                && let IteratorKind::ReversedSequenceGetItem {
+                                    next_index, ..
+                                } = &mut state.kind
+                            {
+                                *next_index = index.saturating_sub(1);
+                                state.index = state.index.saturating_add(1);
+                            }
+                        }
+                        Ok(Some(value))
+                    }
+                    Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                        let treat_as_end = self.active_exception_is("IndexError")
+                            || self.active_exception_is("StopIteration");
+                        if treat_as_end {
+                            self.clear_active_exception();
+                            unsafe { PyErr_Clear() };
+                            let mut iter = iterator_ref.kind_mut();
+                            if let Object::Iterator(state) = &mut *iter
+                                && let IteratorKind::ReversedSequenceGetItem {
+                                    next_index, ..
+                                } = &mut state.kind
+                            {
+                                *next_index = -1;
+                            }
+                            return Ok(None);
+                        }
+                        let _ = target;
+                        Err(self.runtime_error_from_active_exception("__getitem__() failed"))
+                    }
+                    Err(err) => {
+                        let treat_as_end = runtime_error_matches_exception(&err, "IndexError")
+                            || runtime_error_matches_exception(&err, "StopIteration")
+                            || err.message.contains("index out of range")
+                            || err.message.contains("out of bounds for axis");
+                        if treat_as_end {
+                            self.clear_active_exception();
+                            unsafe { PyErr_Clear() };
+                            let mut iter = iterator_ref.kind_mut();
+                            if let Object::Iterator(state) = &mut *iter
+                                && let IteratorKind::ReversedSequenceGetItem {
+                                    next_index, ..
+                                } = &mut state.kind
+                            {
+                                *next_index = -1;
+                            }
+                            return Ok(None);
+                        }
+                        Err(err)
+                    }
+                }
+            }
+            PendingIteratorStep::ReversedCpythonSequence { target, index } => {
+                let index_value = Value::Int(index);
+                if let Some(proxy_result) =
+                    self.cpython_proxy_get_item(&target, index_value.clone())
+                {
+                    match proxy_result {
+                        Ok(value) => {
+                            {
+                                let mut iter = iterator_ref.kind_mut();
+                                if let Object::Iterator(state) = &mut *iter
+                                    && let IteratorKind::ReversedCpythonSequence {
+                                        next_index, ..
+                                    } = &mut state.kind
+                                {
+                                    *next_index = index.saturating_sub(1);
+                                    state.index = state.index.saturating_add(1);
+                                }
+                            }
+                            return Ok(Some(value));
+                        }
+                        Err(err) => {
+                            let treat_as_end = runtime_error_matches_exception(&err, "IndexError")
+                                || runtime_error_matches_exception(&err, "StopIteration")
+                                || err.message.contains("index out of range")
+                                || err.message.contains("out of bounds for axis");
+                            if treat_as_end {
+                                self.clear_active_exception();
+                                unsafe { PyErr_Clear() };
+                                let mut iter = iterator_ref.kind_mut();
+                                if let Object::Iterator(state) = &mut *iter
+                                    && let IteratorKind::ReversedCpythonSequence {
+                                        next_index, ..
+                                    } = &mut state.kind
+                                {
+                                    *next_index = -1;
+                                }
+                                return Ok(None);
+                            }
+                            return Err(err);
+                        }
+                    }
+                }
+                Ok(None)
             }
             PendingIteratorStep::CallIter { callable, sentinel } => {
                 let produced = match self.call_internal(callable, Vec::new(), HashMap::new()) {

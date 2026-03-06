@@ -2764,6 +2764,67 @@ result = {
 }
 
 #[test]
+fn differential_reversed_protocol_and_type_identity_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+class Seq:
+    def __len__(self):
+        return 3
+    def __getitem__(self, index):
+        if 0 <= index < 3:
+            return index + 10
+        raise IndexError(index)
+
+def normalize_repr(obj):
+    text = repr(obj)
+    start = text.find("0x")
+    if start == -1:
+        return text
+    end = start + 2
+    while end < len(text) and text[end] in "0123456789abcdefABCDEF":
+        end += 1
+    return text[:start] + "0xADDR" + text[end:]
+
+samples = {
+    "list": reversed([1, 2]),
+    "tuple": reversed((1, 2)),
+    "range": reversed(range(3)),
+    "seq": reversed(Seq()),
+    "list_dunder": [].__reversed__(),
+    "range_dunder": range(3).__reversed__(),
+}
+bad = {}
+try:
+    reversed(iter([1]))
+except Exception as exc:
+    bad = {"kind": type(exc).__name__, "text": str(exc)}
+
+result = {
+    "samples": {
+        name: {
+            "type_repr": repr(type(obj)),
+            "class_repr": repr(obj.__class__),
+            "repr": normalize_repr(obj),
+            "values": list(obj),
+        }
+        for name, obj in samples.items()
+    },
+    "attrs": {
+        "list": hasattr([], "__reversed__"),
+        "tuple": hasattr((), "__reversed__"),
+        "range": hasattr(range(3), "__reversed__"),
+    },
+    "bad": bad,
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
 fn differential_runtime_itertools_iterator_helper_parity() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;

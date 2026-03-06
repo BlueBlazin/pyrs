@@ -1,12 +1,13 @@
 use super::{
     BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome, HashMap, InstanceObject,
-    InternalCallOutcome, IteratorKind, ModuleObject, NativeMethodKind, ObjRef, Object, Ordering,
-    RuntimeError, Value, Vm, builtin_exception_parent, class_attr_lookup, class_name_for_instance,
-    ensure_hashable, format_repr, memoryview_bounds, memoryview_decode_element,
-    memoryview_element_offset, memoryview_format_for_view, memoryview_layout_1d,
-    memoryview_logical_nbytes, memoryview_shape_and_strides_from_parts, module_globals_version,
-    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices, value_from_bigint,
-    value_to_bytes_payload, value_to_int, with_bytes_like_source,
+    InternalCallOutcome, IteratorKind, IteratorObject, ModuleObject, NativeMethodKind, ObjRef,
+    Object, Ordering, RuntimeError, Value, Vm, builtin_exception_parent, class_attr_lookup,
+    class_name_for_instance, ensure_hashable, format_repr, memoryview_bounds,
+    memoryview_decode_element, memoryview_element_offset, memoryview_format_for_view,
+    memoryview_layout_1d, memoryview_logical_nbytes, memoryview_shape_and_strides_from_parts,
+    module_globals_version, runtime_error_matches_exception, slice_bounds_for_step_one,
+    slice_indices, value_from_bigint, value_to_bytes_payload, value_to_int,
+    with_bytes_like_source,
 };
 use crate::runtime::SliceValue;
 
@@ -413,6 +414,52 @@ impl Vm {
     ) -> Value {
         let offset = step.mul(&BigInt::from_i64(index));
         value_from_bigint(start.add(&offset))
+    }
+
+    pub(super) fn list_reverse_iterator(&self, list: ObjRef) -> Result<Value, RuntimeError> {
+        let next_index = match &*list.kind() {
+            Object::List(values) => {
+                if values.is_empty() {
+                    -1
+                } else if values.len() - 1 > i64::MAX as usize {
+                    return Err(RuntimeError::new("list reverse iterator index overflow"));
+                } else {
+                    (values.len() - 1) as i64
+                }
+            }
+            _ => return Err(RuntimeError::type_error("list.__reversed__ receiver must be list")),
+        };
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::ListReverse { list, next_index },
+            index: 0,
+        }))
+    }
+
+    pub(super) fn range_reverse_iterator(&self, range: &ObjRef) -> Result<Value, RuntimeError> {
+        let Some((start, stop, step)) = self.range_object_parts(range) else {
+            return Err(RuntimeError::type_error(
+                "range.__reversed__ receiver must be range",
+            ));
+        };
+        let len = self.range_object_len_bigint(&start, &stop, &step);
+        let (current, reverse_stop, reverse_step) = if len.is_zero() {
+            (start.clone(), start, BigInt::one())
+        } else {
+            let last_offset = len.sub(&BigInt::one());
+            (
+                start.add(&step.mul(&last_offset)),
+                start.sub(&step),
+                step.negated(),
+            )
+        };
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Range {
+                current,
+                stop: reverse_stop,
+                step: reverse_step,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn getitem_value(

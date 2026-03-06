@@ -346,7 +346,9 @@ pub enum NativeMethodKind {
     TupleNe,
     ListIndex,
     ListReverse,
+    ListDunderReversed,
     ListSort,
+    RangeDunderReversed,
     IntToBytes,
     IntBitLengthMethod,
     IntIndexMethod,
@@ -1493,6 +1495,10 @@ impl fmt::Debug for IteratorObject {
 #[derive(Clone)]
 pub enum IteratorKind {
     List(ObjRef),
+    ListReverse {
+        list: ObjRef,
+        next_index: i64,
+    },
     Tuple(ObjRef),
     Str(String),
     Dict(ObjRef),
@@ -1645,6 +1651,15 @@ pub enum IteratorKind {
         stop: BigInt,
         step: BigInt,
     },
+    ReversedSequenceGetItem {
+        target: Value,
+        getitem: Value,
+        next_index: i64,
+    },
+    ReversedCpythonSequence {
+        target: Value,
+        next_index: i64,
+    },
     SequenceGetItem {
         target: Value,
         getitem: Value,
@@ -1662,6 +1677,11 @@ impl fmt::Debug for IteratorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             IteratorKind::List(obj) => f.debug_tuple("List").field(&obj.id()).finish(),
+            IteratorKind::ListReverse { list, next_index } => f
+                .debug_struct("ListReverse")
+                .field("list", &list.id())
+                .field("next_index", next_index)
+                .finish(),
             IteratorKind::Tuple(obj) => f.debug_tuple("Tuple").field(&obj.id()).finish(),
             IteratorKind::Str(value) => f.debug_tuple("Str").field(value).finish(),
             IteratorKind::Dict(obj) => f.debug_tuple("Dict").field(&obj.id()).finish(),
@@ -1938,6 +1958,21 @@ impl fmt::Debug for IteratorKind {
                 .field("stop", stop)
                 .field("step", step)
                 .finish(),
+            IteratorKind::ReversedSequenceGetItem {
+                target,
+                getitem,
+                next_index,
+            } => f
+                .debug_struct("ReversedSequenceGetItem")
+                .field("target", target)
+                .field("getitem", getitem)
+                .field("next_index", next_index)
+                .finish(),
+            IteratorKind::ReversedCpythonSequence { target, next_index } => f
+                .debug_struct("ReversedCpythonSequence")
+                .field("target", target)
+                .field("next_index", next_index)
+                .finish(),
             IteratorKind::SequenceGetItem { target, getitem } => f
                 .debug_struct("SequenceGetItem")
                 .field("target", target)
@@ -2212,6 +2247,10 @@ pub fn iterator_type_info(kind: &IteratorKind) -> IteratorTypeInfo {
             type_name: RuntimeTypeNameInfo::builtins("list_iterator"),
             repr_kind: IteratorReprKind::Object,
         },
+        IteratorKind::ListReverse { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("list_reverseiterator"),
+            repr_kind: IteratorReprKind::Object,
+        },
         IteratorKind::Tuple(_) => IteratorTypeInfo {
             type_name: RuntimeTypeNameInfo::builtins("tuple_iterator"),
             repr_kind: IteratorReprKind::Object,
@@ -2374,6 +2413,11 @@ pub fn iterator_type_info(kind: &IteratorKind) -> IteratorTypeInfo {
         },
         IteratorKind::Range { .. } => IteratorTypeInfo {
             type_name: RuntimeTypeNameInfo::builtins("range_iterator"),
+            repr_kind: IteratorReprKind::Object,
+        },
+        IteratorKind::ReversedSequenceGetItem { .. }
+        | IteratorKind::ReversedCpythonSequence { .. } => IteratorTypeInfo {
+            type_name: RuntimeTypeNameInfo::builtins("reversed"),
             repr_kind: IteratorReprKind::Object,
         },
         IteratorKind::SequenceGetItem { .. } | IteratorKind::CpythonSequence { .. } => {
@@ -3062,6 +3106,7 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
         }
         Object::Iterator(iterator) => match &iterator.kind {
             IteratorKind::List(list)
+            | IteratorKind::ListReverse { list, .. }
             | IteratorKind::Tuple(list)
             | IteratorKind::Dict(list)
             | IteratorKind::Set(list)
@@ -3239,7 +3284,16 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                 trace_value(target, stack, marked);
                 trace_value(getitem, stack, marked);
             }
+            IteratorKind::ReversedSequenceGetItem {
+                target, getitem, ..
+            } => {
+                trace_value(target, stack, marked);
+                trace_value(getitem, stack, marked);
+            }
             IteratorKind::CpythonSequence { target } => {
+                trace_value(target, stack, marked);
+            }
+            IteratorKind::ReversedCpythonSequence { target, .. } => {
                 trace_value(target, stack, marked);
             }
             IteratorKind::CallIter { callable, sentinel } => {
@@ -3344,6 +3398,7 @@ fn clear_object_refs(obj: &ObjRef) {
         Object::Iterator(iterator) => {
             match &mut iterator.kind {
                 IteratorKind::List(_)
+                | IteratorKind::ListReverse { .. }
                 | IteratorKind::Tuple(_)
                 | IteratorKind::Dict(_)
                 | IteratorKind::Set(_)
@@ -3611,6 +3666,14 @@ fn clear_object_refs(obj: &ObjRef) {
                     iterator.index = 0;
                 }
                 IteratorKind::RangeObject { .. } | IteratorKind::Range { .. } => {
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::ReversedSequenceGetItem { .. } => {
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::ReversedCpythonSequence { .. } => {
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -9097,6 +9160,19 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     }
                     _ => Err(RuntimeError::type_error("expected iterable")),
                 },
+                IteratorKind::ListReverse { list, next_index } => match &*list.kind() {
+                    Object::List(values) => {
+                        if *next_index < 0 {
+                            return Ok(Vec::new());
+                        }
+                        let end = (*next_index as usize).min(values.len().saturating_sub(1));
+                        let out = values[..=end].iter().rev().cloned().collect::<Vec<_>>();
+                        *next_index = -1;
+                        iterator.index = iterator.index.saturating_add(out.len());
+                        Ok(out)
+                    }
+                    _ => Err(RuntimeError::type_error("expected iterable")),
+                },
                 IteratorKind::Tuple(tuple_obj) => match &*tuple_obj.kind() {
                     Object::Tuple(values) => {
                         let start = iterator.index.min(values.len());
@@ -9244,6 +9320,12 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     }
                     iterator.index = iterator.index.saturating_add(out.len());
                     Ok(out)
+                }
+                IteratorKind::ReversedSequenceGetItem { .. } => {
+                    Err(RuntimeError::type_error("expected iterable"))
+                }
+                IteratorKind::ReversedCpythonSequence { .. } => {
+                    Err(RuntimeError::type_error("expected iterable"))
                 }
                 IteratorKind::SequenceGetItem { .. } => {
                     Err(RuntimeError::type_error("expected iterable"))
@@ -10396,7 +10478,13 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::TupleNe => "<bound method tuple.__ne__>".to_string(),
                     NativeMethodKind::ListIndex => "<bound method list.index>".to_string(),
                     NativeMethodKind::ListReverse => "<bound method list.reverse>".to_string(),
+                    NativeMethodKind::ListDunderReversed => {
+                        "<bound method list.__reversed__>".to_string()
+                    }
                     NativeMethodKind::ListSort => "<bound method list.sort>".to_string(),
+                    NativeMethodKind::RangeDunderReversed => {
+                        "<bound method range.__reversed__>".to_string()
+                    }
                     NativeMethodKind::IntToBytes => "<bound method int.to_bytes>".to_string(),
                     NativeMethodKind::IntBitLengthMethod => {
                         "<bound method int.bit_length>".to_string()

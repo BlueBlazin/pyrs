@@ -461,6 +461,57 @@ ok = (
 }
 
 #[test]
+fn reversed_protocol_and_type_reprs_match_cpython_shape() {
+    let source = r#"class Seq:
+    def __len__(self):
+        return 3
+    def __getitem__(self, index):
+        if 0 <= index < 3:
+            return index + 10
+        raise IndexError(index)
+
+list_rev = reversed([1, 2])
+tuple_rev = reversed((1, 2))
+range_rev = reversed(range(3))
+seq_rev = reversed(Seq())
+bad_kind = ""
+bad_text = ""
+try:
+    reversed(iter([1]))
+except Exception as exc:
+    bad_kind = type(exc).__name__
+    bad_text = str(exc)
+
+ok = (
+    repr(type(list_rev)) == "<class 'list_reverseiterator'>"
+    and repr(list_rev).startswith("<list_reverseiterator object at 0x")
+    and list(list_rev) == [2, 1]
+    and repr(type(tuple_rev)) == "<class 'reversed'>"
+    and repr(tuple_rev).startswith("<reversed object at 0x")
+    and list(tuple_rev) == [2, 1]
+    and repr(type(range_rev)) == "<class 'range_iterator'>"
+    and repr(range_rev).startswith("<range_iterator object at 0x")
+    and list(range_rev) == [2, 1, 0]
+    and repr(type(seq_rev)) == "<class 'reversed'>"
+    and repr(seq_rev).startswith("<reversed object at 0x")
+    and list(seq_rev) == [12, 11, 10]
+    and hasattr([], "__reversed__")
+    and not hasattr((), "__reversed__")
+    and hasattr(range(3), "__reversed__")
+    and type([].__reversed__()) is type(reversed([]))
+    and type(range(3).__reversed__()) is type(reversed(range(3)))
+    and bad_kind == "TypeError"
+    and bad_text == "'list_iterator' object is not reversible"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn builtin_function_repr_and_str_match_cpython_shape() {
     let source = "ok = (\n    repr(len) == \"<built-in function len>\"\n    and str(len) == \"<built-in function len>\"\n    and repr(print) == \"<built-in function print>\"\n    and str(print) == \"<built-in function print>\"\n    and repr(isinstance) == \"<built-in function isinstance>\"\n    and repr(callable) == \"<built-in function callable>\"\n)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

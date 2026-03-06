@@ -6,11 +6,11 @@ use super::{
     ObjRef, PyBaseObject_Type, PyBool_Type, PyByteArray_Type, PyByteArrayIter_Type, PyBytes_Type,
     PyBytesIter_Type, PyCallIter_Type, PyComplex_Type, PyCoro_Type, PyDict_Type,
     PyDictIterKey_Type, PyDictProxy_Type, PyEnum_Type, PyFilter_Type, PyFloat_Type,
-    PyFrozenSet_Type, PyFunction_Type, PyGen_Type, PyList_Type, PyListIter_Type, PyLong_Type,
-    PyMap_Type, PyMemoryView_Type, PyMethod_Type, PyModule_Type, PyNone_Type, PyRange_Type,
-    PyRangeIter_Type, PySeqIter_Type, PySet_Type, PySetIter_Type, PySlice_Type, PySuper_Type,
-    PyTuple_Type, PyTupleIter_Type, PyType_Type, PyUnicode_Type, PyUnicodeIter_Type, PyZip_Type,
-    cpython_exception_ptr_for_name,
+    PyFrozenSet_Type, PyFunction_Type, PyGen_Type, PyListRevIter_Type, PyListIter_Type,
+    PyList_Type, PyLong_Type, PyMap_Type, PyMemoryView_Type, PyMethod_Type, PyModule_Type,
+    PyNone_Type, PyRange_Type, PyRangeIter_Type, PyReversed_Type, PySeqIter_Type, PySet_Type,
+    PySetIter_Type, PySlice_Type, PySuper_Type, PyTuple_Type, PyTupleIter_Type, PyType_Type,
+    PyUnicode_Type, PyUnicodeIter_Type, PyZip_Type, cpython_exception_ptr_for_name,
 };
 
 pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
@@ -33,6 +33,9 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
         Value::Iterator(obj) => match &*obj.kind() {
             Object::Iterator(state) => match &state.kind {
                 IteratorKind::List(_) => std::ptr::addr_of_mut!(PyListIter_Type).cast(),
+                IteratorKind::ListReverse { .. } => {
+                    std::ptr::addr_of_mut!(PyListRevIter_Type).cast()
+                }
                 IteratorKind::Tuple(_) => std::ptr::addr_of_mut!(PyTupleIter_Type).cast(),
                 IteratorKind::Str(_) => std::ptr::addr_of_mut!(PyUnicodeIter_Type).cast(),
                 IteratorKind::Dict(_) => std::ptr::addr_of_mut!(PyDictIterKey_Type).cast(),
@@ -46,6 +49,10 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
                 IteratorKind::Range { .. } => std::ptr::addr_of_mut!(PyRangeIter_Type).cast(),
                 IteratorKind::Enumerate { .. } => std::ptr::addr_of_mut!(PyEnum_Type).cast(),
                 IteratorKind::CallIter { .. } => std::ptr::addr_of_mut!(PyCallIter_Type).cast(),
+                IteratorKind::ReversedSequenceGetItem { .. }
+                | IteratorKind::ReversedCpythonSequence { .. } => {
+                    std::ptr::addr_of_mut!(PyReversed_Type).cast()
+                }
                 IteratorKind::SequenceGetItem { .. }
                 | IteratorKind::CpythonSequence { .. }
                 | IteratorKind::MemoryView(_)
