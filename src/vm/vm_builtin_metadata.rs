@@ -306,6 +306,13 @@ impl Vm {
         self.alloc_builtin_bound_method(builtin, receiver)
     }
 
+    fn slot_wrapper_object_owner(&self) -> Value {
+        self.builtins
+            .get("object")
+            .cloned()
+            .unwrap_or(Value::Builtin(BuiltinFunction::ObjectNew))
+    }
+
     fn alloc_native_slot_wrapper_method(
         &self,
         module_name: &str,
@@ -1371,6 +1378,39 @@ impl Vm {
                     NativeMethodKind::IntReprMethod,
                 ))
             }
+            "__str__"
+                if matches!(
+                    builtin,
+                    BuiltinFunction::Dict
+                        | BuiltinFunction::List
+                        | BuiltinFunction::Tuple
+                        | BuiltinFunction::Set
+                        | BuiltinFunction::FrozenSet
+                        | BuiltinFunction::Int
+                        | BuiltinFunction::Bool
+                        | BuiltinFunction::Float
+                ) =>
+            {
+                Ok(self.alloc_builtin_slot_wrapper_method(
+                    self.slot_wrapper_object_owner(),
+                    None,
+                    BuiltinFunction::Str,
+                ))
+            }
+            "__str__" if builtin == BuiltinFunction::Str => Ok(self.alloc_builtin_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::Str),
+                None,
+                BuiltinFunction::Str,
+            )),
+            "__str__"
+                if matches!(builtin, BuiltinFunction::Bytes | BuiltinFunction::ByteArray) =>
+            {
+                Ok(self.alloc_builtin_slot_wrapper_method(
+                    Value::Builtin(builtin),
+                    None,
+                    BuiltinFunction::Str,
+                ))
+            }
             "__format__" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::Format))
             }
@@ -2226,6 +2266,13 @@ impl Vm {
         list: ObjRef,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "__str__" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                self.slot_wrapper_object_owner(),
+                Some(Value::List(list)),
+                BuiltinFunction::Str,
+            ));
+        }
         if attr_name == "__repr__" {
             return Ok(self.alloc_builtin_slot_wrapper_method(
                 Value::Builtin(BuiltinFunction::List),
@@ -2281,6 +2328,13 @@ impl Vm {
         tuple: ObjRef,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "__str__" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                self.slot_wrapper_object_owner(),
+                Some(Value::Tuple(tuple)),
+                BuiltinFunction::Str,
+            ));
+        }
         if attr_name == "__repr__" {
             return Ok(self.alloc_builtin_slot_wrapper_method(
                 Value::Builtin(BuiltinFunction::Tuple),
@@ -2382,6 +2436,13 @@ impl Vm {
                 NativeMethodKind::IntReprMethod,
             ));
         }
+        if attr_name == "__str__" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                self.slot_wrapper_object_owner(),
+                Some(value),
+                BuiltinFunction::Str,
+            ));
+        }
         if attr_name == "__lt__" {
             return Ok(self.alloc_builtin_slot_wrapper_method(
                 Value::Builtin(BuiltinFunction::Int),
@@ -2428,6 +2489,13 @@ impl Vm {
         value: f64,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "__str__" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                self.slot_wrapper_object_owner(),
+                Some(Value::Float(value)),
+                BuiltinFunction::Str,
+            ));
+        }
         if attr_name == "__repr__" {
             return Ok(self.alloc_builtin_slot_wrapper_method(
                 Value::Builtin(BuiltinFunction::Float),
@@ -2484,6 +2552,13 @@ impl Vm {
         text: String,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "__str__" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::Str),
+                Some(Value::Str(text)),
+                BuiltinFunction::Str,
+            ));
+        }
         if attr_name == "__repr__" {
             return Ok(self.alloc_builtin_slot_wrapper_method(
                 Value::Builtin(BuiltinFunction::Str),
@@ -2578,6 +2653,18 @@ impl Vm {
         receiver_value: Value,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "__str__" {
+            let owner = if matches!(receiver_value, Value::ByteArray(_)) {
+                BuiltinFunction::ByteArray
+            } else {
+                BuiltinFunction::Bytes
+            };
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                Value::Builtin(owner),
+                Some(receiver_value),
+                BuiltinFunction::Str,
+            ));
+        }
         if attr_name == "__repr__" {
             let owner = if matches!(receiver_value, Value::ByteArray(_)) {
                 BuiltinFunction::ByteArray
@@ -3012,6 +3099,15 @@ impl Vm {
             }
         };
         match attr_name {
+            "__str__" => Ok(self.alloc_builtin_slot_wrapper_method(
+                self.slot_wrapper_object_owner(),
+                Some(if is_frozenset {
+                    Value::FrozenSet(set.clone())
+                } else {
+                    Value::Set(set.clone())
+                }),
+                BuiltinFunction::Str,
+            )),
             "__repr__" => Ok(self.alloc_builtin_slot_wrapper_method(
                 Value::Builtin(if is_frozenset {
                     BuiltinFunction::FrozenSet
@@ -3107,6 +3203,13 @@ impl Vm {
                 owner.unwrap_or(Value::Builtin(BuiltinFunction::Dict)),
                 Some(Value::Dict(dict)),
                 BuiltinFunction::Repr,
+            ));
+        }
+        if attr_name == "__str__" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                self.slot_wrapper_object_owner(),
+                Some(Value::Dict(dict)),
+                BuiltinFunction::Str,
             ));
         }
         if attr_name == "__contains__" {
