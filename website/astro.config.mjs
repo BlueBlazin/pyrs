@@ -10,5 +10,8 @@ export default defineConfig({
 	site: astroSite,
 	base: astroBase,
 	output: 'static',
+	build: {
+		inlineStylesheets: 'always',
+	},
 	integrations: [mdx()],
 });

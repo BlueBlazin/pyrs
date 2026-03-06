@@ -37,14 +37,23 @@ const playgroundHref = withBase("playground/");
 		<div class="shot-stack" role="img" aria-label="PYRS REPL screenshots">
 			<img
 				class="shot shot-base"
-				src={withBase("images/repl/repl1.png")}
+				src={withBase("images/repl/repl1-1x.webp")}
+				srcset={`${withBase("images/repl/repl1-1x.webp")} 649w, ${withBase("images/repl/repl1.webp")} 1298w`}
+				sizes="(max-width: 760px) 100vw, 50vw"
+				width={1298}
+				height={1048}
 				alt="PYRS REPL screenshot showing syntax highlighting and dataclass usage"
 				loading="eager"
 				decoding="async"
+				fetchpriority="high"
 			/>
 			<img
 				class="shot shot-overlay"
-				src={withBase("images/repl/repl2.png")}
+				src={withBase("images/repl/repl2-1x.webp")}
+				srcset={`${withBase("images/repl/repl2-1x.webp")} 649w, ${withBase("images/repl/repl2.webp")} 1298w`}
+				sizes="(max-width: 760px) 100vw, 50vw"
+				width={1298}
+				height={1048}
 				alt="PYRS REPL screenshot showing refined syntax highlighting and output"
 				loading="eager"
 				decoding="async"

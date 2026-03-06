@@ -8,7 +8,7 @@ interface Props {
 }
 
 const withBase = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, "")}`;
-const { title, description, image = "images/pyrs-logo.png", url, noindex = false } = Astro.props;
+const { title, description, image = "images/pyrs-logo.webp", url, noindex = false } = Astro.props;
 const normalizedImage = image.startsWith("http://") || image.startsWith("https://") ? image : withBase(image);
 const absoluteImage = (() => {
 	if (!url) {
@@ -23,7 +23,7 @@ const absoluteImage = (() => {
 ---
 
 <meta charset="utf-8" />
-<link rel="icon" type="image/png" href={withBase("images/pyrs-logo.png")} />
+<link rel="icon" type="image/webp" href={withBase("images/pyrs-logo.webp")} />
 <link rel="manifest" href={withBase("site.webmanifest")} />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="generator" content={Astro.generator} />
@@ -44,6 +44,14 @@ const absoluteImage = (() => {
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link
+	rel="preload"
+	as="style"
 	href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
-	rel="stylesheet"
+	onload="this.rel='stylesheet'"
 />
+<noscript>
+	<link
+		href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+		rel="stylesheet"
+	/>
+</noscript>
