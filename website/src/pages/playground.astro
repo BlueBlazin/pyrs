@@ -864,9 +864,10 @@ const stdlibPackPath = `${baseUrl.replace(/\/?$/, "/")}wasm/stdlib_subset_v1.jso
 	.playground-shell {
 		display: flex;
 		flex-direction: column;
-		flex: 1;
+		flex: 0 0 auto;
 		width: 100%;
-		min-height: 400px;
+		min-height: 0;
+		block-size: clamp(400px, calc(100dvh - 10rem), 820px);
 		border-radius: 10px;
 		border: 1px solid var(--shell-border);
 		background: var(--shell-bg);
@@ -1035,13 +1036,15 @@ const stdlibPackPath = `${baseUrl.replace(/\/?$/, "/")}wasm/stdlib_subset_v1.jso
 	   =========================================== */
 	.playground-transcript {
 		position: relative;
-		flex: 1;
+		flex: 1 1 auto;
 		display: flex;
 		flex-direction: column;
+		min-height: 0;
 		gap: 2px;
 		padding: 16px;
 		overflow-y: auto;
 		overscroll-behavior-y: contain;
+		scrollbar-gutter: stable;
 		font-family: var(--mono);
 		font-size: 14px;
 		line-height: 1.6;
@@ -1261,7 +1264,7 @@ const stdlibPackPath = `${baseUrl.replace(/\/?$/, "/")}wasm/stdlib_subset_v1.jso
 	   =========================================== */
 	@media (max-width: 760px) {
 		.playground-shell {
-			min-height: 300px;
+			block-size: clamp(300px, calc(100dvh - 8rem), 620px);
 			border-radius: 8px;
 		}
 
