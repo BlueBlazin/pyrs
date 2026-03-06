@@ -324,6 +324,29 @@ pub(super) fn cpython_current_thread_ident_u64() -> u64 {
     }
 }
 
+fn cpython_main_thread_ident_u64() -> u64 {
+    static CPYTHON_MAIN_THREAD_IDENT: OnceLock<u64> = OnceLock::new();
+    *CPYTHON_MAIN_THREAD_IDENT.get_or_init(cpython_current_thread_ident_u64)
+}
+
+pub(super) fn cpython_gilstate_visible_thread_state_ptr() -> usize {
+    let current = cpython_current_thread_state_ptr_unchecked();
+    if current != 0 {
+        return current;
+    }
+    if CPYTHON_IS_INITIALIZED.load(Ordering::Relaxed) == 0 {
+        return 0;
+    }
+    if cpython_current_thread_ident_u64() != cpython_main_thread_ident_u64() {
+        return 0;
+    }
+    let main_ptr = cpython_main_thread_state_ptr();
+    CURRENT_THREAD_STATE_PTR
+        .compare_exchange(0, main_ptr, Ordering::Relaxed, Ordering::Relaxed)
+        .ok();
+    CURRENT_THREAD_STATE_PTR.load(Ordering::Relaxed)
+}
+
 fn cpython_gil_runtime() -> &'static CpythonGilRuntime {
     CPYTHON_GIL_RUNTIME.get_or_init(|| CpythonGilRuntime {
         state: Mutex::new(CpythonGilRuntimeState {

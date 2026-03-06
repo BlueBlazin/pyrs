@@ -11,6 +11,7 @@ use super::{
     Py_DecRef, PyEval_GetFrameGlobals, PyEval_GetFrameLocals, PyExc_KeyboardInterrupt,
     PyExc_SystemError, PyExc_ValueError, PyFrame_GetCode, PyObject_Call, PyThreadState_Get,
     cpython_current_thread_state_ptr, cpython_current_thread_state_ptr_unchecked,
+    cpython_gilstate_visible_thread_state_ptr,
     cpython_gil_acquire_for_current_thread, cpython_gil_current_thread_holds,
     cpython_gil_release_for_current_thread, cpython_is_known_thread_state_ptr,
     cpython_main_interpreter_state_ptr, cpython_mark_thread_runtime_initialized,
@@ -435,7 +436,7 @@ pub unsafe extern "C" fn PyGILState_Ensure() -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyGILState_GetThisThreadState() -> *mut c_void {
-    cpython_current_thread_state_ptr_unchecked() as *mut c_void
+    cpython_gilstate_visible_thread_state_ptr() as *mut c_void
 }
 
 #[unsafe(no_mangle)]
