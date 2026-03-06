@@ -15,7 +15,7 @@ use super::{
     env_var_present_cached, format_repr, memoryview_bounds, runtime_error_matches_exception,
     value_from_bigint, value_from_object_ref, with_bytes_like_source,
 };
-use crate::runtime::{DictViewKind, builtin_type_name_info};
+use crate::runtime::{DictViewKind, builtin_type_name_info, canonical_static_class_name_info};
 
 thread_local! {
     static CALL_INTERNAL_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -212,7 +212,11 @@ impl Vm {
         None
     }
 
-    fn slot_member_descriptor_value(&mut self, owner_class: &ObjRef, slot_name: &str) -> Value {
+    pub(super) fn slot_member_descriptor_value(
+        &mut self,
+        owner_class: &ObjRef,
+        slot_name: &str,
+    ) -> Value {
         let descriptor_class = self
             .types_module_or_private_class("MemberDescriptorType")
             .unwrap_or_else(|| self.alloc_synthetic_class("member_descriptor"));
@@ -233,7 +237,7 @@ impl Vm {
         descriptor
     }
 
-    fn getset_descriptor_value(&self, owner_class: Value, descriptor_name: &str) -> Value {
+    pub(super) fn getset_descriptor_value(&self, owner_class: Value, descriptor_name: &str) -> Value {
         let descriptor_class = self
             .types_module_or_private_class("GetSetDescriptorType")
             .unwrap_or_else(|| {
@@ -1072,7 +1076,11 @@ impl Vm {
             _ => "builtins",
         }
         .to_string();
-        if builtin_module_name == "builtins" {
+        if self.builtin_is_type_object(builtin)
+            && let Some(info) = builtin_type_name_info(builtin)
+        {
+            builtin_module_name = info.module.to_string();
+        } else if builtin_module_name == "builtins" {
             let in_builtins = self
                 .builtins
                 .values()
@@ -1350,7 +1358,8 @@ impl Vm {
             "__format__" if builtin == BuiltinFunction::Str => {
                 Ok(Value::Builtin(BuiltinFunction::Format))
             }
-            "__repr__" | "__str__" => Ok(Value::Builtin(BuiltinFunction::Repr)),
+            "__repr__" => Ok(Value::Builtin(BuiltinFunction::Repr)),
+            "__str__" => Ok(Value::Builtin(BuiltinFunction::Str)),
             "__format__" => Ok(Value::Builtin(BuiltinFunction::ObjectFormat)),
             "__reduce_ex__" | "__reduce__" => {
                 Ok(self.alloc_reduce_ex_bound_method(Value::Builtin(builtin)))
@@ -5976,6 +5985,7 @@ impl Vm {
         class: &ObjRef,
         attr_name: &str,
     ) -> Result<AttrAccessOutcome, RuntimeError> {
+        let canonical_type_info = canonical_static_class_name_info(class);
         let (class_name, class_metaclass, is_cpython_proxy_class) = match &*class.kind() {
             Object::Class(class_data) => (
                 class_data.name.clone(),
@@ -6064,7 +6074,10 @@ impl Vm {
         } else if let Some(attr) = proxy_base_attr {
             attr
         } else if attr_name == "__name__" || attr_name == "__qualname__" {
-            Value::Str(class_name.clone())
+            let name = canonical_type_info
+                .map(|info| info.name.to_string())
+                .unwrap_or_else(|| class_name.clone());
+            Value::Str(name)
         } else if attr_name == "__base__" {
             let class_kind = class.kind();
             let Object::Class(class_data) = &*class_kind else {
@@ -6096,17 +6109,19 @@ impl Vm {
                 class.clone(),
             )));
         } else if attr_name == "__module__" {
-            let class_kind = class.kind();
-            let Object::Class(class_data) = &*class_kind else {
-                return Err(RuntimeError::attribute_error(
-                    "attribute access unsupported type",
-                ));
-            };
-            class_data
-                .attrs
-                .get("__module__")
-                .cloned()
-                .unwrap_or(Value::None)
+            canonical_type_info
+                .map(|info| Value::Str(info.module.to_string()))
+                .unwrap_or_else(|| {
+                    let class_kind = class.kind();
+                    let Object::Class(class_data) = &*class_kind else {
+                        return Value::None;
+                    };
+                    class_data
+                        .attrs
+                        .get("__module__")
+                        .cloned()
+                        .unwrap_or(Value::None)
+                })
         } else if attr_name == "__annotations__" {
             return Ok(AttrAccessOutcome::Value(
                 self.builtin_type_annotations_get(

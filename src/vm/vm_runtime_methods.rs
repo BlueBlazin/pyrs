@@ -3134,7 +3134,7 @@ impl Vm {
             );
             class_data
                 .attrs
-                .insert("__str__".to_string(), Value::Builtin(BuiltinFunction::Repr));
+                .insert("__str__".to_string(), Value::Builtin(BuiltinFunction::Str));
             class_data.attrs.insert(
                 "__format__".to_string(),
                 Value::Builtin(BuiltinFunction::ObjectFormat),

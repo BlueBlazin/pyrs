@@ -2296,6 +2296,195 @@ pub fn builtin_type_from_name_info(module: &str, name: &str) -> Option<BuiltinFu
     }
 }
 
+pub fn types_export_name_info(export_name: &str) -> Option<RuntimeTypeNameInfo> {
+    match export_name {
+        "FunctionType" | "LambdaType" => Some(RuntimeTypeNameInfo::builtins("function")),
+        "BuiltinFunctionType" | "BuiltinMethodType" => {
+            Some(RuntimeTypeNameInfo::builtins("builtin_function_or_method"))
+        }
+        "CodeType" => Some(RuntimeTypeNameInfo::builtins("code")),
+        "NoneType" => Some(RuntimeTypeNameInfo::builtins("NoneType")),
+        "EllipsisType" => Some(RuntimeTypeNameInfo::builtins("ellipsis")),
+        "NotImplementedType" => Some(RuntimeTypeNameInfo::builtins("NotImplementedType")),
+        "MemberDescriptorType" => Some(RuntimeTypeNameInfo::builtins("member_descriptor")),
+        "CellType" => Some(RuntimeTypeNameInfo::builtins("cell")),
+        "GeneratorType" => Some(RuntimeTypeNameInfo::builtins("generator")),
+        "CoroutineType" => Some(RuntimeTypeNameInfo::builtins("coroutine")),
+        "AsyncGeneratorType" => Some(RuntimeTypeNameInfo::builtins("async_generator")),
+        "WrapperDescriptorType" => Some(RuntimeTypeNameInfo::builtins("wrapper_descriptor")),
+        "MethodWrapperType" => Some(RuntimeTypeNameInfo::builtins("method-wrapper")),
+        "MethodDescriptorType" => Some(RuntimeTypeNameInfo::builtins("method_descriptor")),
+        "ClassMethodDescriptorType" => {
+            Some(RuntimeTypeNameInfo::builtins("classmethod_descriptor"))
+        }
+        "TracebackType" => Some(RuntimeTypeNameInfo::builtins("traceback")),
+        "FrameType" => Some(RuntimeTypeNameInfo::builtins("frame")),
+        "GetSetDescriptorType" => Some(RuntimeTypeNameInfo::builtins("getset_descriptor")),
+        "CapsuleType" => Some(RuntimeTypeNameInfo::builtins("PyCapsule")),
+        "ModuleType" => Some(RuntimeTypeNameInfo::builtins("module")),
+        "MethodType" => Some(RuntimeTypeNameInfo::builtins("method")),
+        "MappingProxyType" => Some(RuntimeTypeNameInfo::builtins("mappingproxy")),
+        _ => None,
+    }
+}
+
+pub fn canonical_static_class_name_info(class: &ObjRef) -> Option<RuntimeTypeNameInfo> {
+    let Object::Class(class_data) = &*class.kind() else {
+        return None;
+    };
+    match class_data.name.as_str() {
+        "function" => Some(RuntimeTypeNameInfo::builtins("function")),
+        "builtin_function_or_method" => {
+            Some(RuntimeTypeNameInfo::builtins("builtin_function_or_method"))
+        }
+        "method" => Some(RuntimeTypeNameInfo::builtins("method")),
+        "method_descriptor" => Some(RuntimeTypeNameInfo::builtins("method_descriptor")),
+        "wrapper_descriptor" => Some(RuntimeTypeNameInfo::builtins("wrapper_descriptor")),
+        "method-wrapper" => Some(RuntimeTypeNameInfo::builtins("method-wrapper")),
+        "classmethod_descriptor" => {
+            Some(RuntimeTypeNameInfo::builtins("classmethod_descriptor"))
+        }
+        "getset_descriptor" => Some(RuntimeTypeNameInfo::builtins("getset_descriptor")),
+        "member_descriptor" => Some(RuntimeTypeNameInfo::builtins("member_descriptor")),
+        "code" => Some(RuntimeTypeNameInfo::builtins("code")),
+        "module" => Some(RuntimeTypeNameInfo::builtins("module")),
+        "generator" => Some(RuntimeTypeNameInfo::builtins("generator")),
+        "coroutine" => Some(RuntimeTypeNameInfo::builtins("coroutine")),
+        "async_generator" => Some(RuntimeTypeNameInfo::builtins("async_generator")),
+        "traceback" => Some(RuntimeTypeNameInfo::builtins("traceback")),
+        "frame" => Some(RuntimeTypeNameInfo::builtins("frame")),
+        "NoneType" => Some(RuntimeTypeNameInfo::builtins("NoneType")),
+        "ellipsis" => Some(RuntimeTypeNameInfo::builtins("ellipsis")),
+        "NotImplementedType" => Some(RuntimeTypeNameInfo::builtins("NotImplementedType")),
+        "mappingproxy" => Some(RuntimeTypeNameInfo::builtins("mappingproxy")),
+        "cell" => Some(RuntimeTypeNameInfo::builtins("cell")),
+        "capsule" | "PyCapsule" => Some(RuntimeTypeNameInfo::builtins("PyCapsule")),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallableFamily {
+    Function,
+    Method,
+    BuiltinFunctionOrMethod,
+    MethodDescriptor,
+    WrapperDescriptor,
+    MethodWrapper,
+    ClassMethodDescriptor,
+}
+
+pub fn callable_family_type_name_info(family: CallableFamily) -> RuntimeTypeNameInfo {
+    match family {
+        CallableFamily::Function => RuntimeTypeNameInfo::builtins("function"),
+        CallableFamily::Method => RuntimeTypeNameInfo::builtins("method"),
+        CallableFamily::BuiltinFunctionOrMethod => {
+            RuntimeTypeNameInfo::builtins("builtin_function_or_method")
+        }
+        CallableFamily::MethodDescriptor => RuntimeTypeNameInfo::builtins("method_descriptor"),
+        CallableFamily::WrapperDescriptor => RuntimeTypeNameInfo::builtins("wrapper_descriptor"),
+        CallableFamily::MethodWrapper => RuntimeTypeNameInfo::builtins("method-wrapper"),
+        CallableFamily::ClassMethodDescriptor => {
+            RuntimeTypeNameInfo::builtins("classmethod_descriptor")
+        }
+    }
+}
+
+pub fn callable_family_types_export_name(family: CallableFamily) -> &'static str {
+    match family {
+        CallableFamily::Function => "FunctionType",
+        CallableFamily::Method => "MethodType",
+        CallableFamily::BuiltinFunctionOrMethod => "BuiltinFunctionType",
+        CallableFamily::MethodDescriptor => "MethodDescriptorType",
+        CallableFamily::WrapperDescriptor => "WrapperDescriptorType",
+        CallableFamily::MethodWrapper => "MethodWrapperType",
+        CallableFamily::ClassMethodDescriptor => "ClassMethodDescriptorType",
+    }
+}
+
+fn builtin_callable_family(builtin: BuiltinFunction) -> Option<CallableFamily> {
+    if builtin_type_name_info(builtin).is_some() {
+        return None;
+    }
+    match builtin {
+        BuiltinFunction::ListAppendDescriptor => Some(CallableFamily::MethodDescriptor),
+        BuiltinFunction::DictFromKeys | BuiltinFunction::IntFromBytes => {
+            Some(CallableFamily::ClassMethodDescriptor)
+        }
+        BuiltinFunction::ObjectInit | BuiltinFunction::ObjectNew | BuiltinFunction::OperatorLt => {
+            Some(CallableFamily::WrapperDescriptor)
+        }
+        _ => Some(CallableFamily::BuiltinFunctionOrMethod),
+    }
+}
+
+fn native_kind_is_slot_wrapper(kind: NativeMethodKind) -> bool {
+    matches!(
+        kind,
+        NativeMethodKind::Builtin(
+            BuiltinFunction::Repr
+                | BuiltinFunction::Str
+                | BuiltinFunction::ObjectInit
+                | BuiltinFunction::ObjectNew
+                | BuiltinFunction::OperatorLt
+        )
+    )
+}
+
+fn bound_method_is_unbound_descriptor(receiver: &ObjRef) -> bool {
+    matches!(
+        &*receiver.kind(),
+        Object::Module(module_data) if module_data.name.ends_with("_unbound_method__")
+    )
+}
+
+fn bound_method_is_unbound_slot_wrapper(receiver: &ObjRef, kind: NativeMethodKind) -> bool {
+    matches!(&*receiver.kind(), Object::Class(_))
+        && matches!(
+            kind,
+            NativeMethodKind::Builtin(BuiltinFunction::Repr | BuiltinFunction::Str)
+        )
+}
+
+fn bound_method_is_slot_wrapper(receiver: &ObjRef, kind: NativeMethodKind) -> bool {
+    let receiver_is_slot_wrapper = matches!(&*receiver.kind(), Object::Instance(_))
+        || matches!(
+            &*receiver.kind(),
+            Object::Module(module_data) if module_data.name == "__int_method__"
+        );
+    receiver_is_slot_wrapper && native_kind_is_slot_wrapper(kind)
+}
+
+fn bound_method_callable_family(method: &BoundMethod) -> Option<CallableFamily> {
+    match &*method.function.kind() {
+        Object::Function(_) => Some(CallableFamily::Method),
+        Object::NativeMethod(native) => {
+            if bound_method_is_unbound_slot_wrapper(&method.receiver, native.kind) {
+                Some(CallableFamily::WrapperDescriptor)
+            } else if bound_method_is_unbound_descriptor(&method.receiver) {
+                Some(CallableFamily::MethodDescriptor)
+            } else if bound_method_is_slot_wrapper(&method.receiver, native.kind) {
+                Some(CallableFamily::MethodWrapper)
+            } else {
+                Some(CallableFamily::BuiltinFunctionOrMethod)
+            }
+        }
+        _ => None,
+    }
+}
+
+pub fn callable_family_for_value(value: &Value) -> Option<CallableFamily> {
+    match value {
+        Value::Function(_) => Some(CallableFamily::Function),
+        Value::BoundMethod(method) => match &*method.kind() {
+            Object::BoundMethod(bound) => bound_method_callable_family(bound),
+            _ => None,
+        },
+        Value::Builtin(builtin) => builtin_callable_family(*builtin),
+        _ => None,
+    }
+}
+
 pub fn iterator_type_info(kind: &IteratorKind) -> IteratorTypeInfo {
     match kind {
         IteratorKind::List(_) => IteratorTypeInfo {
@@ -10131,6 +10320,303 @@ fn bound_method_fallback_name(function: &ObjRef) -> Option<String> {
     }
 }
 
+fn function_qualname(function: &FunctionObject) -> String {
+    if let Some(dict) = &function.dict
+        && let Object::Dict(entries) = &*dict.kind()
+    {
+        for (key, value) in entries.iter() {
+            if matches!(key, Value::Str(name) if name == "__qualname__")
+                && let Value::Str(qualname) = value
+            {
+                return qualname.clone();
+            }
+        }
+    }
+    if let Some(owner_class) = &function.owner_class
+        && let Object::Class(class_data) = &*owner_class.kind()
+    {
+        let owner_qualname = class_data
+            .attrs
+            .get("__qualname__")
+            .and_then(|value| match value {
+                Value::Str(qualname) => Some(qualname.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| class_data.name.clone());
+        return format!("{owner_qualname}.{}", function.code.name);
+    }
+    function.code.name.clone()
+}
+
+fn value_from_objref(obj: &ObjRef) -> Option<Value> {
+    match &*obj.kind() {
+        Object::List(_) => Some(Value::List(obj.clone())),
+        Object::Tuple(_) => Some(Value::Tuple(obj.clone())),
+        Object::Dict(_) => Some(Value::Dict(obj.clone())),
+        Object::DictView(view) => Some(match view.kind {
+            DictViewKind::Keys => Value::DictKeys(obj.clone()),
+            DictViewKind::Values => Value::DictValues(obj.clone()),
+            DictViewKind::Items => Value::DictItems(obj.clone()),
+        }),
+        Object::Set(_) => Some(Value::Set(obj.clone())),
+        Object::FrozenSet(_) => Some(Value::FrozenSet(obj.clone())),
+        Object::Bytes(_) => Some(Value::Bytes(obj.clone())),
+        Object::ByteArray(_) => Some(Value::ByteArray(obj.clone())),
+        Object::MemoryView(_) => Some(Value::MemoryView(obj.clone())),
+        Object::Iterator(_) => Some(Value::Iterator(obj.clone())),
+        Object::Generator(_) => Some(Value::Generator(obj.clone())),
+        Object::Module(_) => Some(Value::Module(obj.clone())),
+        Object::Class(_) => Some(Value::Class(obj.clone())),
+        Object::Instance(_) => Some(Value::Instance(obj.clone())),
+        Object::Super(_) => Some(Value::Super(obj.clone())),
+        Object::BoundMethod(_) => Some(Value::BoundMethod(obj.clone())),
+        Object::Function(_) => Some(Value::Function(obj.clone())),
+        Object::Cell(_) => Some(Value::Cell(obj.clone())),
+        Object::NativeMethod(_) => None,
+    }
+}
+
+fn module_wrapped_value(receiver: &ObjRef, key: &str) -> Option<Value> {
+    let Object::Module(module_data) = &*receiver.kind() else {
+        return None;
+    };
+    module_data.globals.get(key).cloned()
+}
+
+fn bound_method_receiver_value(receiver: &ObjRef) -> Option<Value> {
+    module_wrapped_value(receiver, "value").or_else(|| value_from_objref(receiver))
+}
+
+fn descriptor_owner_value(receiver: &ObjRef) -> Option<Value> {
+    module_wrapped_value(receiver, "owner").or_else(|| value_from_objref(receiver))
+}
+
+fn owner_type_name(value: &Value) -> Option<String> {
+    match value {
+        Value::Builtin(builtin) => builtin_type_name_info(*builtin).map(|info| info.name.to_string()),
+        Value::Class(class) => match &*class.kind() {
+            Object::Class(class_data) => Some(class_data.name.clone()),
+            _ => None,
+        },
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                Object::Class(class_data) => Some(class_data.name.clone()),
+                _ => None,
+            },
+            _ => None,
+        },
+        other => Some(value_type_name(other).to_string()),
+    }
+}
+
+fn receiver_instance_type_name(value: &Value) -> Option<String> {
+    match value {
+        Value::Class(_) => Some("type".to_string()),
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                Object::Class(class_data) => Some(class_data.name.clone()),
+                _ => None,
+            },
+            _ => None,
+        },
+        other => Some(value_type_name(other).to_string()),
+    }
+}
+
+fn value_object_id(value: &Value) -> Option<u64> {
+    match value {
+        Value::List(obj)
+        | Value::Tuple(obj)
+        | Value::Dict(obj)
+        | Value::DictKeys(obj)
+        | Value::DictValues(obj)
+        | Value::DictItems(obj)
+        | Value::Set(obj)
+        | Value::FrozenSet(obj)
+        | Value::Bytes(obj)
+        | Value::ByteArray(obj)
+        | Value::MemoryView(obj)
+        | Value::Iterator(obj)
+        | Value::Generator(obj)
+        | Value::Module(obj)
+        | Value::Class(obj)
+        | Value::Instance(obj)
+        | Value::Super(obj)
+        | Value::BoundMethod(obj)
+        | Value::Function(obj)
+        | Value::Cell(obj) => Some(obj.id()),
+        _ => None,
+    }
+}
+
+fn builtin_callable_name(builtin: BuiltinFunction) -> String {
+    match builtin {
+        BuiltinFunction::Repr => "__repr__".to_string(),
+        BuiltinFunction::Str => "__str__".to_string(),
+        BuiltinFunction::ObjectInit => "__init__".to_string(),
+        BuiltinFunction::ObjectNew => "__new__".to_string(),
+        BuiltinFunction::OperatorLt => "__lt__".to_string(),
+        BuiltinFunction::ListAppendDescriptor => "append".to_string(),
+        BuiltinFunction::DictFromKeys => "fromkeys".to_string(),
+        BuiltinFunction::IntFromBytes => "from_bytes".to_string(),
+        BuiltinFunction::BytesMakeTrans | BuiltinFunction::StrMakeTrans => "maketrans".to_string(),
+        _ => builtin_function_display_name(builtin),
+    }
+}
+
+fn native_method_name(kind: NativeMethodKind) -> Option<String> {
+    match kind {
+        NativeMethodKind::Builtin(builtin) => Some(builtin_callable_name(builtin)),
+        NativeMethodKind::DictKeys => Some("keys".to_string()),
+        NativeMethodKind::DictValues => Some("values".to_string()),
+        NativeMethodKind::DictItems => Some("items".to_string()),
+        NativeMethodKind::DictDunderReversed => Some("__reversed__".to_string()),
+        NativeMethodKind::DictClear => Some("clear".to_string()),
+        NativeMethodKind::DictUpdateMethod => Some("update".to_string()),
+        NativeMethodKind::DictSetDefault => Some("setdefault".to_string()),
+        NativeMethodKind::DictGet => Some("get".to_string()),
+        NativeMethodKind::DictGetItem => Some("__getitem__".to_string()),
+        NativeMethodKind::DictSetItem => Some("__setitem__".to_string()),
+        NativeMethodKind::DictDelItem => Some("__delitem__".to_string()),
+        NativeMethodKind::DictPop => Some("pop".to_string()),
+        NativeMethodKind::DictPopItem => Some("popitem".to_string()),
+        NativeMethodKind::DictMoveToEnd => Some("move_to_end".to_string()),
+        NativeMethodKind::DictCopy => Some("copy".to_string()),
+        NativeMethodKind::DictInit => Some("__init__".to_string()),
+        NativeMethodKind::ListInit => Some("__init__".to_string()),
+        NativeMethodKind::ListAppend => Some("append".to_string()),
+        NativeMethodKind::ListExtend => Some("extend".to_string()),
+        NativeMethodKind::ListInsert => Some("insert".to_string()),
+        NativeMethodKind::ListRemove => Some("remove".to_string()),
+        NativeMethodKind::ListPop => Some("pop".to_string()),
+        NativeMethodKind::ListCount => Some("count".to_string()),
+        NativeMethodKind::ListCopy => Some("copy".to_string()),
+        NativeMethodKind::ListClear => Some("clear".to_string()),
+        NativeMethodKind::ListEq => Some("__eq__".to_string()),
+        NativeMethodKind::ListNe => Some("__ne__".to_string()),
+        NativeMethodKind::TupleCount => Some("count".to_string()),
+        NativeMethodKind::TupleIndex => Some("index".to_string()),
+        NativeMethodKind::TupleEq => Some("__eq__".to_string()),
+        NativeMethodKind::TupleNe => Some("__ne__".to_string()),
+        NativeMethodKind::ListIndex => Some("index".to_string()),
+        NativeMethodKind::ListReverse => Some("reverse".to_string()),
+        NativeMethodKind::ListDunderReversed => Some("__reversed__".to_string()),
+        NativeMethodKind::ListSort => Some("sort".to_string()),
+        NativeMethodKind::RangeDunderReversed => Some("__reversed__".to_string()),
+        NativeMethodKind::StrJoin => Some("join".to_string()),
+        NativeMethodKind::BoundMethodDescriptorGet
+        | NativeMethodKind::FunctionDescriptorGet
+        | NativeMethodKind::GetSetDescriptorGet
+        | NativeMethodKind::ClassMethodDescriptorGet
+        | NativeMethodKind::StaticMethodDescriptorGet => Some("__get__".to_string()),
+        _ => None,
+    }
+}
+
+fn function_or_method_name(function: &ObjRef) -> Option<String> {
+    match &*function.kind() {
+        Object::Function(func) => Some(function_qualname(func)),
+        Object::NativeMethod(native) => native_method_name(native.kind),
+        _ => bound_method_fallback_name(function),
+    }
+}
+
+fn format_builtin_descriptor_repr(builtin: BuiltinFunction) -> Option<String> {
+    match builtin {
+        BuiltinFunction::ListAppendDescriptor => {
+            Some("<method 'append' of 'list' objects>".to_string())
+        }
+        BuiltinFunction::DictFromKeys => {
+            Some("<method 'fromkeys' of 'dict' objects>".to_string())
+        }
+        BuiltinFunction::IntFromBytes => {
+            Some("<method 'from_bytes' of 'int' objects>".to_string())
+        }
+        _ => None,
+    }
+}
+
+fn format_descriptor_instance_repr(obj: &ObjRef, instance: &InstanceObject) -> Option<String> {
+    let Object::Class(class_data) = &*instance.class.kind() else {
+        return None;
+    };
+    match class_data.name.as_str() {
+        "property" => Some(format!("<property object at 0x{:x}>", obj.id())),
+        "getset_descriptor" => {
+            let name = match instance.attrs.get("__name__") {
+                Some(Value::Str(name)) => name,
+                _ => return None,
+            };
+            let owner = instance.attrs.get("__objclass__")?;
+            let owner_name = owner_type_name(owner)?;
+            Some(format!("<attribute '{}' of '{}' objects>", name, owner_name))
+        }
+        "member_descriptor" => {
+            let name = match instance.attrs.get("__name__") {
+                Some(Value::Str(name)) => name,
+                _ => return None,
+            };
+            let owner = instance.attrs.get("__objclass__")?;
+            let owner_name = owner_type_name(owner)?;
+            Some(format!("<member '{}' of '{}' objects>", name, owner_name))
+        }
+        _ => None,
+    }
+}
+
+fn format_bound_method_repr(obj: &ObjRef) -> Option<String> {
+    let Object::BoundMethod(method) = &*obj.kind() else {
+        return None;
+    };
+    let family = bound_method_callable_family(method)?;
+    match family {
+        CallableFamily::Method => {
+            let Object::Function(function) = &*method.function.kind() else {
+                return None;
+            };
+            let receiver = bound_method_receiver_value(&method.receiver)?;
+            Some(format!(
+                "<bound method {} of {}>",
+                function_qualname(function),
+                format_value(&receiver)
+            ))
+        }
+        CallableFamily::BuiltinFunctionOrMethod => {
+            let name = function_or_method_name(&method.function)?;
+            let receiver = bound_method_receiver_value(&method.receiver)?;
+            let receiver_type = receiver_instance_type_name(&receiver)?;
+            let address = value_object_id(&receiver).unwrap_or(method.receiver.id());
+            Some(format!(
+                "<built-in method {} of {} object at 0x{:x}>",
+                name, receiver_type, address
+            ))
+        }
+        CallableFamily::MethodDescriptor => {
+            let name = function_or_method_name(&method.function)?;
+            let owner = descriptor_owner_value(&method.receiver)?;
+            let owner_name = owner_type_name(&owner)?;
+            Some(format!("<method '{}' of '{}' objects>", name, owner_name))
+        }
+        CallableFamily::WrapperDescriptor => {
+            let name = function_or_method_name(&method.function)?;
+            let owner = descriptor_owner_value(&method.receiver)?;
+            let owner_name = owner_type_name(&owner)?;
+            Some(format!("<slot wrapper '{}' of '{}' objects>", name, owner_name))
+        }
+        CallableFamily::MethodWrapper => {
+            let name = function_or_method_name(&method.function)?;
+            let receiver = bound_method_receiver_value(&method.receiver)?;
+            let receiver_type = receiver_instance_type_name(&receiver)?;
+            let address = value_object_id(&receiver).unwrap_or(method.receiver.id());
+            Some(format!(
+                "<method-wrapper '{}' of {} object at 0x{:x}>",
+                name, receiver_type, address
+            ))
+        }
+        CallableFamily::Function | CallableFamily::ClassMethodDescriptor => None,
+    }
+}
+
 fn class_mro_has_name(class: &ObjRef, needle: &str) -> bool {
     let class_kind = class.kind();
     let Object::Class(class_data) = &*class_kind else {
@@ -10146,6 +10632,13 @@ fn class_mro_has_name(class: &ObjRef, needle: &str) -> bool {
 }
 
 fn class_display_name_for_type_expr(class: &ObjRef) -> String {
+    if let Some(info) = canonical_static_class_name_info(class) {
+        return if info.module == "builtins" {
+            info.name.to_string()
+        } else {
+            info.qualified_name.to_string()
+        };
+    }
     let class_kind = class.kind();
     let Object::Class(class_data) = &*class_kind else {
         return "<class ?>".to_string();
@@ -10518,6 +11011,14 @@ pub fn format_value(value: &Value) -> String {
         },
         Value::Class(obj) => match &*obj.kind() {
             Object::Class(class) => {
+                if let Some(info) = canonical_static_class_name_info(obj) {
+                    let full_name = if info.module == "builtins" {
+                        info.name.to_string()
+                    } else {
+                        info.qualified_name.to_string()
+                    };
+                    return format!("<class '{full_name}'>");
+                }
                 let module = class
                     .attrs
                     .get("__module__")
@@ -10546,6 +11047,9 @@ pub fn format_value(value: &Value) -> String {
         Value::Instance(obj) => match &*obj.kind() {
             Object::Instance(instance) => match &*instance.class.kind() {
                 Object::Class(class) => {
+                    if let Some(rendered) = format_descriptor_instance_repr(obj, instance) {
+                        return rendered;
+                    }
                     if let Some(rendered) = format_union_type_expr_from_instance(instance) {
                         return rendered;
                     }
@@ -10571,7 +11075,11 @@ pub fn format_value(value: &Value) -> String {
         },
         Value::Super(_) => "<super>".to_string(),
         Value::BoundMethod(obj) => match &*obj.kind() {
-            Object::BoundMethod(method) => match &*method.function.kind() {
+            Object::BoundMethod(method) => {
+                if let Some(rendered) = format_bound_method_repr(obj) {
+                    return rendered;
+                }
+                match &*method.function.kind() {
                 Object::Function(func) => format!("<bound method {}>", func.code.name),
                 Object::NativeMethod(native) => match native.kind {
                     NativeMethodKind::GeneratorIter => "<bound method __iter__>".to_string(),
@@ -11012,7 +11520,8 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method ?>".to_string()
                     }
                 }
-            },
+            }
+            }
             _ => "<bound method ?>".to_string(),
         },
         Value::Cell(_) => "<cell>".to_string(),
@@ -11031,15 +11540,25 @@ pub fn format_value(value: &Value) -> String {
             format!("slice({lower}, {upper}, {step})")
         }
         Value::Code(_) => "<code>".to_string(),
-        Value::Function(_) => "<function>".to_string(),
-        Value::Builtin(builtin) => builtin_type_object_name(*builtin)
-            .map(|name| format!("<class '{name}'>"))
-            .unwrap_or_else(|| {
-                format!(
-                    "<built-in function {}>",
-                    builtin_function_display_name(*builtin)
-                )
-            }),
+        Value::Function(obj) => match &*obj.kind() {
+            Object::Function(function) => {
+                format!("<function {} at 0x{:x}>", function_qualname(function), obj.id())
+            }
+            _ => "<function>".to_string(),
+        },
+        Value::Builtin(builtin) => {
+            if let Some(rendered) = format_builtin_descriptor_repr(*builtin) {
+                return rendered;
+            }
+            builtin_type_object_name(*builtin)
+                .map(|name| format!("<class '{name}'>"))
+                .unwrap_or_else(|| {
+                    format!(
+                        "<built-in function {}>",
+                        builtin_function_display_name(*builtin)
+                    )
+                })
+        }
     }
 }
 

@@ -2872,6 +2872,62 @@ result = {
 }
 
 #[test]
+fn differential_callable_and_descriptor_repr_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import types
+
+def normalize_repr(obj):
+    text = repr(obj)
+    start = text.find("0x")
+    if start == -1:
+        return text
+    end = start + 2
+    while end < len(text) and text[end] in "0123456789abcdefABCDEF":
+        end += 1
+    return text[:start] + "0xADDR" + text[end:]
+
+class C:
+    p = property(lambda self: 1)
+    def f(self):
+        return 1
+
+samples = {
+    "py_unbound": C.f,
+    "py_bound": C().f,
+    "builtin_bound_list": [].append,
+    "builtin_unbound_list": list.append,
+    "builtin_bound_dict": {"a": 1}.keys,
+    "builtin_unbound_dict": dict.keys,
+    "builtin_bound_str": "-".join,
+    "builtin_unbound_str": str.join,
+    "wrapper_descriptor": object.__str__,
+    "method_wrapper": object().__str__,
+    "classmethod_descriptor": dict.__dict__["fromkeys"],
+    "property_obj": C.__dict__["p"],
+    "code_descriptor": types.FunctionType.__code__,
+    "globals_descriptor": types.FunctionType.__globals__,
+}
+result = {
+    "samples": {
+        name: {
+            "type_repr": repr(type(obj)),
+            "class_repr": repr(obj.__class__),
+            "type_matches_class": (obj.__class__ is type(obj)),
+            "repr": normalize_repr(obj),
+        }
+        for name, obj in samples.items()
+    }
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
 fn differential_runtime_itertools_iterator_helper_parity() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;

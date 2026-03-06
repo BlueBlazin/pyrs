@@ -552,6 +552,79 @@ ok = (
 }
 
 #[test]
+fn builtin_method_and_descriptor_reprs_match_cpython_shape() {
+    let source = r#"d = {'a': 1}
+list_bound = [].append
+list_unbound = list.append
+dict_bound = d.keys
+dict_unbound = dict.keys
+str_bound = '-'.join
+str_unbound = str.join
+ok = (
+    repr(type(list_bound)) == "<class 'builtin_function_or_method'>"
+    and repr(list_bound).startswith("<built-in method append of list object at 0x")
+    and repr(type(list_unbound)) == "<class 'method_descriptor'>"
+    and repr(list_unbound) == "<method 'append' of 'list' objects>"
+    and repr(type(dict_bound)) == "<class 'builtin_function_or_method'>"
+    and repr(dict_bound).startswith("<built-in method keys of dict object at 0x")
+    and repr(type(dict_unbound)) == "<class 'method_descriptor'>"
+    and repr(dict_unbound) == "<method 'keys' of 'dict' objects>"
+    and repr(type(str_bound)) == "<class 'builtin_function_or_method'>"
+    and repr(str_bound).startswith("<built-in method join of str object at 0x")
+    and repr(type(str_unbound)) == "<class 'method_descriptor'>"
+    and repr(str_unbound) == "<method 'join' of 'str' objects>"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn function_and_descriptor_object_reprs_match_cpython_shape() {
+    let source = r#"import types
+class C:
+    p = property(lambda self: 1)
+    def f(self):
+        return 1
+
+py_unbound = C.f
+py_bound = C().f
+wrapper_descriptor = object.__str__
+method_wrapper = object().__str__
+classmethod_descriptor = dict.__dict__['fromkeys']
+property_obj = C.__dict__['p']
+code_descriptor = types.FunctionType.__code__
+globals_descriptor = types.FunctionType.__globals__
+ok = (
+    repr(type(py_unbound)) == "<class 'function'>"
+    and repr(py_unbound).startswith("<function C.f at 0x")
+    and repr(type(py_bound)) == "<class 'method'>"
+    and repr(py_bound).startswith("<bound method C.f of <__main__.C object at 0x")
+    and repr(type(wrapper_descriptor)) == "<class 'wrapper_descriptor'>"
+    and repr(wrapper_descriptor) == "<slot wrapper '__str__' of 'object' objects>"
+    and repr(type(method_wrapper)) == "<class 'method-wrapper'>"
+    and repr(method_wrapper).startswith("<method-wrapper '__str__' of object object at 0x")
+    and repr(type(classmethod_descriptor)) == "<class 'classmethod_descriptor'>"
+    and repr(classmethod_descriptor) == "<method 'fromkeys' of 'dict' objects>"
+    and repr(type(property_obj)) == "<class 'property'>"
+    and repr(property_obj).startswith("<property object at 0x")
+    and repr(type(code_descriptor)) == "<class 'getset_descriptor'>"
+    and repr(code_descriptor) == "<attribute '__code__' of 'function' objects>"
+    and repr(type(globals_descriptor)) == "<class 'member_descriptor'>"
+    and repr(globals_descriptor) == "<member '__globals__' of 'function' objects>"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn builtin_function_repr_and_str_match_cpython_shape() {
     let source = "ok = (\n    repr(len) == \"<built-in function len>\"\n    and str(len) == \"<built-in function len>\"\n    and repr(print) == \"<built-in function print>\"\n    and str(print) == \"<built-in function print>\"\n    and repr(isinstance) == \"<built-in function isinstance>\"\n    and repr(callable) == \"<built-in function callable>\"\n)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

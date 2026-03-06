@@ -14396,21 +14396,8 @@ impl Vm {
         if let Some(runtime_type) = self.iterator_runtime_type_value(value) {
             return Ok(runtime_type);
         }
-        if let Value::Function(_) = value
-            && let Some(class) = self.types_module_or_private_class("FunctionType")
-        {
-            return Ok(Value::Class(class));
-        }
-        if let Value::Builtin(builtin) = value {
-            if self.builtin_is_type_object(*builtin) {
-                return Ok(Value::Builtin(BuiltinFunction::Type));
-            }
-            if let Some(class) = self.types_module_or_private_class("BuiltinFunctionType") {
-                return Ok(Value::Class(class));
-            }
-        }
-        if matches!(value, Value::BoundMethod(_)) {
-            return Ok(Value::Builtin(BuiltinFunction::TypesMethodType));
+        if let Some(runtime_type) = self.callable_runtime_type_value(value) {
+            return Ok(runtime_type);
         }
         if let Value::Code(_) = value
             && let Some(class) = self.types_module_or_private_class("CodeType")

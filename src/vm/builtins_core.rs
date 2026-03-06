@@ -36,8 +36,8 @@ use crate::ast::{
 };
 use crate::runtime::{
     MIN_INT_MAX_STR_DIGITS, builtin_type_from_name_info, builtin_type_name_info,
-    iterator_type_info, runtime_get_int_max_str_digits, runtime_set_int_max_str_digits,
-    value_lookup_hash,
+    callable_family_for_value, callable_family_types_export_name, iterator_type_info,
+    runtime_get_int_max_str_digits, runtime_set_int_max_str_digits, value_lookup_hash,
 };
 use crate::unicode::internal_char_from_codepoint;
 use std::collections::hash_map::DefaultHasher;
@@ -8450,6 +8450,32 @@ impl Vm {
         )
     }
 
+    pub(super) fn callable_runtime_type_value(&mut self, value: &Value) -> Option<Value> {
+        match value {
+            Value::Builtin(builtin) if self.builtin_is_type_object(*builtin) => {
+                Some(Value::Builtin(BuiltinFunction::Type))
+            }
+            _ => {
+                let family = callable_family_for_value(value)?;
+                let export_name = callable_family_types_export_name(family);
+                let class = self.types_module_or_private_class(export_name).or_else(|| {
+                    if export_name == "FunctionType" {
+                        Some(self.fallback_function_type_class())
+                    } else {
+                        None
+                    }
+                });
+                class.map(Value::Class).or_else(|| {
+                    if export_name == "MethodType" {
+                        Some(Value::Builtin(BuiltinFunction::TypesMethodType))
+                    } else {
+                        None
+                    }
+                })
+            }
+        }
+    }
+
     pub(super) fn builtin_is_type_object(&self, builtin: BuiltinFunction) -> bool {
         builtin_type_name_info(builtin).is_some()
     }
@@ -8485,61 +8511,8 @@ impl Vm {
                         }
                     })
                 }
-                Value::Function(_) => Some(Value::Class(
-                    self.types_module_or_private_class("FunctionType")
-                        .unwrap_or_else(|| self.fallback_function_type_class()),
-                )),
-                Value::BoundMethod(method) => {
-                    if self.bound_method_is_python_method(method) {
-                        Some(
-                            self.types_module_or_private_class("MethodType")
-                                .map(Value::Class)
-                                .unwrap_or(Value::Builtin(BuiltinFunction::TypesMethodType)),
-                        )
-                    } else if self.bound_method_is_builtin_unbound_slot_wrapper(method) {
-                        self.types_module_or_private_class("WrapperDescriptorType")
-                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
-                            .map(Value::Class)
-                    } else if self.bound_method_is_builtin_unbound_descriptor(method) {
-                        self.types_module_or_private_class("MethodDescriptorType")
-                            .or_else(|| self.types_module_or_private_class("BuiltinMethodType"))
-                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
-                            .map(Value::Class)
-                    } else if self.bound_method_is_builtin_slot_wrapper(method) {
-                        self.types_module_or_private_class("MethodWrapperType")
-                            .or_else(|| self.types_module_or_private_class("BuiltinMethodType"))
-                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
-                            .map(Value::Class)
-                    } else {
-                        self.types_module_or_private_class("BuiltinMethodType")
-                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
-                            .map(Value::Class)
-                    }
-                }
-                Value::Builtin(builtin) => {
-                    if self.builtin_is_type_object(*builtin) {
-                        Some(Value::Builtin(BuiltinFunction::Type))
-                    } else if matches!(builtin, BuiltinFunction::ListAppendDescriptor) {
-                        self.types_module_or_private_class("MethodDescriptorType")
-                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
-                            .map(Value::Class)
-                    } else if self.builtin_is_classmethod_descriptor(*builtin) {
-                        self.types_module_or_private_class("ClassMethodDescriptorType")
-                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
-                            .map(Value::Class)
-                    } else if matches!(
-                        builtin,
-                        BuiltinFunction::ObjectInit
-                            | BuiltinFunction::ObjectNew
-                            | BuiltinFunction::OperatorLt
-                    ) {
-                        self.types_module_or_private_class("WrapperDescriptorType")
-                            .or_else(|| self.types_module_or_private_class("BuiltinFunctionType"))
-                            .map(Value::Class)
-                    } else {
-                        self.types_module_or_private_class("BuiltinFunctionType")
-                            .map(Value::Class)
-                    }
+                Value::Function(_) | Value::BoundMethod(_) | Value::Builtin(_) => {
+                    self.callable_runtime_type_value(value)
                 }
                 Value::Dict(dict) if self.defaultdict_factories.contains_key(&dict.id()) => {
                     Some(Value::Builtin(BuiltinFunction::CollectionsDefaultDict))

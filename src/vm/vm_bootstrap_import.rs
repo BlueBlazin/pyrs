@@ -21,6 +21,7 @@ use super::{
 use crate::extensions::{
     PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
 };
+use crate::runtime::types_export_name_info;
 
 const PYRS_MODULE_INITIALIZING_FLAG: &str = "__pyrs_module_initializing__";
 const UNSUPPORTED_EXTENSION_IMPORT_MODULES: &[&str] = &[
@@ -4424,20 +4425,14 @@ impl Vm {
                 "__new__".to_string(),
                 Value::Builtin(BuiltinFunction::TypesFunctionType),
             );
-            if let Value::Class(getset_descriptor_class) = &getset_descriptor_type_class {
-                class_data.attrs.insert(
-                    "__code__".to_string(),
-                    self.heap
-                        .alloc_instance(InstanceObject::new(getset_descriptor_class.clone())),
-                );
-            }
-            if let Value::Class(member_descriptor_class) = &member_descriptor_type_class {
-                class_data.attrs.insert(
-                    "__globals__".to_string(),
-                    self.heap
-                        .alloc_instance(InstanceObject::new(member_descriptor_class.clone())),
-                );
-            }
+            class_data.attrs.insert(
+                "__code__".to_string(),
+                self.getset_descriptor_value(Value::Class(class_obj.clone()), "__code__"),
+            );
+            class_data.attrs.insert(
+                "__globals__".to_string(),
+                self.slot_member_descriptor_value(class_obj, "__globals__"),
+            );
         }
         if let Value::Class(class_obj) = &getset_descriptor_type_class
             && let Object::Class(class_data) = &mut *class_obj.kind_mut()
@@ -4778,6 +4773,24 @@ impl Vm {
             } else {
                 Vec::new()
             };
+            for (name, class) in &type_class_exports {
+                let Some(type_info) = types_export_name_info(name) else {
+                    continue;
+                };
+                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                    class_data
+                        .attrs
+                        .insert("__name__".to_string(), Value::Str(type_info.name.to_string()));
+                    class_data.attrs.insert(
+                        "__qualname__".to_string(),
+                        Value::Str(type_info.name.to_string()),
+                    );
+                    class_data.attrs.insert(
+                        "__module__".to_string(),
+                        Value::Str(type_info.module.to_string()),
+                    );
+                }
+            }
             if let Object::Module(builtins_data) = &mut *builtins_module.kind_mut() {
                 for (name, class) in type_class_exports {
                     builtins_data
