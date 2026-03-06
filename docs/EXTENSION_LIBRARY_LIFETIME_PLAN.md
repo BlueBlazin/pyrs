@@ -65,6 +65,8 @@ Primary code paths to update or re-check:
 - `src/extensions/mod.rs`
 - `src/vm/mod.rs`
 - `src/vm/vm_extensions/loader_runtime.rs`
+- `src/vm/vm_extensions/module_context_state.rs`
+- `src/vm/vm_extensions/callable_runtime.rs`
 - `src/vm/vm_extensions/cpython_sys_thread_api.rs`
 - `tests/extension_smoke.rs`
 
@@ -87,6 +89,8 @@ Design requirements:
 - keep the underlying shared-library handle alive until process exit.
 - allow multiple VMs to reuse the same already-loaded handle without duplicate unload behavior.
 - do not expose ownership patterns that can drop the underlying handle during `Vm::drop`.
+- retain the handle before invoking extension init code, not only after a successful init
+  status, so unwind-time callbacks on failed init still execute from mapped code.
 
 Acceptable implementation strategies:
 
@@ -107,6 +111,12 @@ Non-goal for this change:
 - pointer/free bookkeeping
 
 But it must no longer be the place that unloads extension code.
+
+The same lifetime rule also applies to mid-lifecycle callback sites:
+
+- module-state replacement
+- module-state pruning for stale modules
+- capsule replacement / release paths
 
 ### 3. Keep Detached Thread Semantics
 
@@ -148,10 +158,14 @@ from obscuring extension-surface regressions in CI.
 - [ ] Introduce a process-global extension-library keepalive registry.
 - [ ] Define canonical library-identity logic for registry keys.
 - [ ] Update successful dynamic-load paths to register handles in the process-global registry.
+- [ ] Ensure the handle is retained before initializer execution so init-failure unwind cannot
+      observe unloaded code.
 - [ ] Remove VM-lifetime ownership of successful extension library handles.
 - [ ] Preserve current symbol-resolution error behavior for failed loads.
 - [ ] Verify module-state callbacks still run during `Vm::drop`.
+- [ ] Verify module-state callbacks still run during replacement/prune paths.
 - [ ] Verify capsule destructors still run during `Vm::drop`.
+- [ ] Verify capsule destructors still run during replacement/release paths.
 - [ ] Verify stored extension callable entries cannot outlive mapped code.
 - [ ] Keep `PyThread_start_new_thread()` detached; do not add teardown joins.
 - [ ] Add a targeted regression test for detached thread entrypoints surviving VM teardown.
@@ -166,12 +180,17 @@ from obscuring extension-surface regressions in CI.
 - [ ] Confirm resolved function pointers are never used after library unload.
 - [ ] Confirm module-state finalizer/free function pointers remain valid for the full
       duration of teardown callbacks.
+- [ ] Confirm module-state finalizer/free function pointers remain valid for replacement
+      and prune callbacks, not only `Vm::drop`.
 - [ ] Confirm capsule destructor pointers remain valid for the full duration of teardown.
+- [ ] Confirm capsule destructor pointers remain valid for replacement/release callbacks,
+      not only `Vm::drop`.
 - [ ] Confirm detached native thread entrypoints remain mapped after the originating VM drops.
 - [ ] Confirm the new process-global registry does not create double-close or double-drop
       behavior for the same raw handle.
+- [ ] Confirm init-failure unwind preserves mapped code for cleanup callbacks.
 - [ ] Confirm failure paths do not retain partially initialized libraries in a way that
-      leaks callback state or invalid handles.
+      leaves invalid registry state behind.
 - [ ] Confirm no new mutable-global unsafety is introduced by the keepalive registry.
 - [ ] Confirm any path canonicalizing library names does not accidentally alias distinct
       libraries onto one handle entry.
@@ -184,6 +203,7 @@ Unsafe blocks that must be re-reviewed as part of implementation:
 - `dlopen` / `dlsym` / `dlclose` FFI in `src/extensions/mod.rs`
 - transmute-based symbol conversion in `SharedLibraryHandle::symbol`
 - teardown callback invocation in `Vm::drop`
+- callback invocation during module-state prune/replace and capsule replacement paths
 - detached thread entrypoint invocation in `PyThread_start_new_thread`
 - any new process-global registry handling raw library handles
 
