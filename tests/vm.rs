@@ -132,11 +132,18 @@ fn run_with_large_stack<F>(name: &str, f: F)
 where
     F: FnOnce() + Send + 'static,
 {
+    run_with_stack(name, 32 * 1024 * 1024, f);
+}
+
+fn run_with_stack<F>(name: &str, stack_size: usize, f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
     let join = std::thread::Builder::new()
         .name(name.to_string())
-        .stack_size(32 * 1024 * 1024)
+        .stack_size(stack_size)
         .spawn(f)
-        .expect("failed to spawn large-stack test thread");
+        .expect("failed to spawn test thread");
     match join.join() {
         Ok(()) => {}
         Err(payload) => std::panic::resume_unwind(payload),
@@ -1018,6 +1025,25 @@ fn executes_assignment_statement() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("x"), Some(Value::Int(5)));
+}
+
+#[test]
+fn source_import_executes_on_small_stack_without_recursive_vm_reentry() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    run_with_stack("small-stack-import-os", 2 * 1024 * 1024, move || {
+        let source = "\
+os_mod = __import__('os')\n\
+import os\n\
+ok = os_mod.path.join('a', 'b') == 'a/b' and os.path.join('a', 'b') == 'a/b'\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]

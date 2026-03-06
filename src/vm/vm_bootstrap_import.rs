@@ -1,9 +1,9 @@
 use super::{
     AtomicOrdering, BUILTIN_MODULE_LOADER, BuiltinFunction, ClassObject, DEFAULT_META_PATH_FINDER,
     DEFAULT_PATH_HOOK, DefaultHasher, EXTENSION_FILE_LOADER, Frame, Hash, HashMap, HashSet, Hasher,
-    INSTANCE_DICT_STORAGE_ATTR, ImportDirCacheEntry, InstanceObject, InternalCallOutcome,
-    LOCAL_SHIM_MODULES, LOCAL_SHIM_PRECEDENCE_MODULES, ModuleObject, ModuleSourceInfo,
-    NAMESPACE_LOADER, NativeMethodKind, NativeMethodObject, ObjRef, Object,
+    INSTANCE_DICT_STORAGE_ATTR, ImportDirCacheEntry, ImportReturnPolicy, InstanceObject,
+    InternalCallOutcome, LOCAL_SHIM_MODULES, LOCAL_SHIM_PRECEDENCE_MODULES, ModuleObject,
+    ModuleSourceInfo, NAMESPACE_LOADER, NativeMethodKind, NativeMethodObject, ObjRef, Object,
     PURE_STDLIB_ABC_MODULES, PURE_STDLIB_CODECS_MODULES, PURE_STDLIB_COLLECTIONS_MODULES,
     PURE_STDLIB_COLORIZE_MODULES, PURE_STDLIB_DECIMAL_MODULES, PURE_STDLIB_FUNCTOOLS_MODULES,
     PURE_STDLIB_FUTURE_MODULES, PURE_STDLIB_INSPECT_MODULES, PURE_STDLIB_IO_MODULES,
@@ -4778,9 +4778,10 @@ impl Vm {
                     continue;
                 };
                 if let Object::Class(class_data) = &mut *class.kind_mut() {
-                    class_data
-                        .attrs
-                        .insert("__name__".to_string(), Value::Str(type_info.name.to_string()));
+                    class_data.attrs.insert(
+                        "__name__".to_string(),
+                        Value::Str(type_info.name.to_string()),
+                    );
                     class_data.attrs.insert(
                         "__qualname__".to_string(),
                         Value::Str(type_info.name.to_string()),
@@ -11157,6 +11158,14 @@ impl Vm {
     }
 
     pub(super) fn import_module_object(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
+        self.import_module_object_with_policy(name, ImportReturnPolicy::Synchronous)
+    }
+
+    pub(super) fn import_module_object_with_policy(
+        &mut self,
+        name: &str,
+        return_policy: ImportReturnPolicy,
+    ) -> Result<ObjRef, RuntimeError> {
         self.sync_module_paths_from_sys();
         let caller_depth = self.frames.len();
         let existing_modules: HashSet<String> = self.modules.keys().cloned().collect();
@@ -11173,7 +11182,11 @@ impl Vm {
                         let _ = dict_remove_value(&modules_dict, &key);
                     } else {
                         self.modules.insert(name.to_string(), module.clone());
-                        return self.return_imported_module(module, caller_depth);
+                        return self.return_imported_module_with_policy(
+                            module,
+                            caller_depth,
+                            return_policy,
+                        );
                     }
                 }
                 Some(Value::None) => {
@@ -11191,7 +11204,11 @@ impl Vm {
                         self.coerce_sys_modules_entry_to_module(name, &value, &modules_dict)
                     {
                         self.modules.insert(name.to_string(), module.clone());
-                        return self.return_imported_module(module, caller_depth);
+                        return self.return_imported_module_with_policy(
+                            module,
+                            caller_depth,
+                            return_policy,
+                        );
                     }
                 }
                 None => {}
@@ -11234,23 +11251,29 @@ impl Vm {
                         Value::Module(module.clone()),
                     );
                 }
-                return self.return_imported_module(module, caller_depth);
+                return self.return_imported_module_with_policy(
+                    module,
+                    caller_depth,
+                    return_policy,
+                );
             }
         }
         if let Some(module) = self.import_module_via_meta_path(name, caller_depth)? {
-            return self.return_imported_module(module, caller_depth);
+            return self.return_imported_module_with_policy(module, caller_depth, return_policy);
         }
         match self.load_module(name) {
-            Ok(module) => match self.return_imported_module(module, caller_depth) {
-                Ok(module) => Ok(module),
-                Err(err) => {
-                    self.cleanup_failed_import(name, &existing_modules);
-                    Err(err)
+            Ok(module) => {
+                match self.return_imported_module_with_policy(module, caller_depth, return_policy) {
+                    Ok(module) => Ok(module),
+                    Err(err) => {
+                        self.cleanup_failed_import(name, &existing_modules);
+                        Err(err)
+                    }
                 }
-            },
+            }
             Err(load_err) => {
                 if let Some((parent, _)) = name.rsplit_once('.') {
-                    let _ = self.import_module_object(parent)?;
+                    let _ = self.import_module_object_with_policy(parent, return_policy)?;
                     // Do not "rescue" modules that were first introduced during this failed
                     // import attempt. Returning such partially-initialized modules masks the
                     // underlying exception and causes silent stdlib/third-party corruption.
@@ -11263,14 +11286,22 @@ impl Vm {
                                     Value::Module(module.clone()),
                                 );
                             }
-                            return self.return_imported_module(module, caller_depth);
+                            return self.return_imported_module_with_policy(
+                                module,
+                                caller_depth,
+                                return_policy,
+                            );
                         }
                         if let Some(modules_dict) = self.sys_dict_obj("modules") {
                             let key = Value::Str(name.to_string());
                             match dict_get_value(&modules_dict, &key) {
                                 Some(Value::Module(module)) => {
                                     self.modules.insert(name.to_string(), module.clone());
-                                    return self.return_imported_module(module, caller_depth);
+                                    return self.return_imported_module_with_policy(
+                                        module,
+                                        caller_depth,
+                                        return_policy,
+                                    );
                                 }
                                 Some(Value::None) => {
                                     return Err(RuntimeError::module_not_found_error(format!(

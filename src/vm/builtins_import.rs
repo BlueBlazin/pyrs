@@ -1,7 +1,7 @@
 use super::{
-    BUILTIN_MODULE_LOADER, HashMap, ModuleObject, NAMESPACE_LOADER, OPCODE_METADATA, ObjRef,
-    Object, OpcodeMetadata, PathBuf, RuntimeError, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
-    Value, Vm, bytes_like_from_value, cache_path_from_source_path,
+    BUILTIN_MODULE_LOADER, HashMap, ImportReturnPolicy, ModuleObject, NAMESPACE_LOADER,
+    OPCODE_METADATA, ObjRef, Object, OpcodeMetadata, PathBuf, RuntimeError, SOURCE_FILE_LOADER,
+    SOURCELESS_FILE_LOADER, Value, Vm, bytes_like_from_value, cache_path_from_source_path,
     cache_path_from_source_path_with_optimization, class_attr_lookup, fs, is_truthy,
     opcode_flags_contains, source_path_from_cache_path, split_relative_import_name, value_to_int,
     value_to_path,
@@ -32,7 +32,6 @@ impl Vm {
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        let caller_depth = self.frames.len();
         if args.len() > 5 {
             return Err(RuntimeError::new("__import__() takes at most 5 arguments"));
         }
@@ -106,9 +105,10 @@ impl Vm {
         }
 
         let resolved_name = self.resolve_import_name(&name, level as usize)?;
-        let module = self.import_module_object(&resolved_name)?;
-        self.run_pending_import_frames(caller_depth)?;
-        let module = self.canonical_imported_module_for_name(&resolved_name, module);
+        let module = self.import_module_object_with_policy(
+            &resolved_name,
+            ImportReturnPolicy::DeferredWhenFramesQueued,
+        )?;
         let result = if self.fromlist_requested(&fromlist) {
             module
         } else {
@@ -122,7 +122,6 @@ impl Vm {
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        let caller_depth = self.frames.len();
         if args.len() > 2 {
             return Err(RuntimeError::new(
                 "import_module() takes at most 2 arguments",
@@ -186,9 +185,10 @@ impl Vm {
             })?;
             self.resolve_import_name_from_package(&package, &requested, level)?
         };
-        let module = self.import_module_object(&resolved_name)?;
-        self.run_pending_import_frames(caller_depth)?;
-        let module = self.canonical_imported_module_for_name(&resolved_name, module);
+        let module = self.import_module_object_with_policy(
+            &resolved_name,
+            ImportReturnPolicy::DeferredWhenFramesQueued,
+        )?;
         Ok(Value::Module(module))
     }
 
@@ -353,12 +353,28 @@ impl Vm {
         module: ObjRef,
         caller_depth: usize,
     ) -> Result<ObjRef, RuntimeError> {
+        self.return_imported_module_with_policy(
+            module,
+            caller_depth,
+            ImportReturnPolicy::Synchronous,
+        )
+    }
+
+    pub(super) fn return_imported_module_with_policy(
+        &mut self,
+        module: ObjRef,
+        caller_depth: usize,
+        return_policy: ImportReturnPolicy,
+    ) -> Result<ObjRef, RuntimeError> {
         // Ensure queued module frames are executed before returning an import
         // result. CPython import semantics require a fully initialized module
         // unless this is a genuine re-entrant cycle returning an already
         // registered in-progress module.
         if self.frames.len() > caller_depth {
-            self.run_pending_import_frames(caller_depth)?;
+            match return_policy {
+                ImportReturnPolicy::Synchronous => self.run_pending_import_frames(caller_depth)?,
+                ImportReturnPolicy::DeferredWhenFramesQueued => return Ok(module),
+            }
         }
         let module_name = match &*module.kind() {
             Object::Module(module_data) => module_data.name.clone(),

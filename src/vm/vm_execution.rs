@@ -12,8 +12,8 @@ use super::{
     AttrAccessOutcome, AttrMutationOutcome, Block, BoundArguments, BoundMethod, BuiltinFunction,
     ClassBuildOutcome, ClassObject, CodeObject, ExceptionObject, Frame, FunctionObject,
     GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome, HashMap, HashSet,
-    INSTANCE_DICT_STORAGE_ATTR, InstanceObject, Instruction, InternalCallOutcome,
-    LoadAttrSiteCacheEntry, LoadAttrSiteCacheKind, LoadGlobalSiteCacheEntry,
+    INSTANCE_DICT_STORAGE_ATTR, ImportReturnPolicy, InstanceObject, Instruction,
+    InternalCallOutcome, LoadAttrSiteCacheEntry, LoadAttrSiteCacheKind, LoadGlobalSiteCacheEntry,
     MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeMethodKind, NativeMethodObject, ObjRef, Object,
     OneArgCallHotPath, OneArgCallSiteCacheEntry, Opcode, PY_TPFLAGS_HEAPTYPE,
     PY_TPFLAGS_IMMUTABLETYPE, QuickenedSiteKind, Rc, RuntimeError, SOURCE_FILE_LOADER,
@@ -6793,7 +6793,6 @@ impl Vm {
             }
             Opcode::ImportName => {
                 let caller_idx = self.frames.len().saturating_sub(1);
-                let caller_depth = self.frames.len();
                 let idx = instr
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing import argument"))?
@@ -6808,18 +6807,15 @@ impl Vm {
                         return Err(RuntimeError::new("import name index out of range"));
                     }
                 };
-                let depth_before_import = self.frames.len();
-                let module = self.import_module_object(&name)?;
-                if self.frames.len() > depth_before_import {
-                    self.run_pending_import_frames_force(caller_depth)?;
-                }
-                let module = self.canonical_imported_module_for_name(&name, module);
+                let module = self.import_module_object_with_policy(
+                    &name,
+                    ImportReturnPolicy::DeferredWhenFramesQueued,
+                )?;
                 let result_module = self.module_for_plain_import(&name, module);
                 self.push_value_to_caller_frame(caller_idx, Value::Module(result_module))?;
             }
             Opcode::ImportNameCpython => {
                 let caller_idx = self.frames.len().saturating_sub(1);
-                let caller_depth = self.frames.len();
                 let idx = instr
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing import argument"))?
@@ -6840,12 +6836,10 @@ impl Vm {
                     return Err(RuntimeError::new("negative import level"));
                 }
                 let resolved_name = self.resolve_import_name(&name, level as usize)?;
-                let depth_before_import = self.frames.len();
-                let module = self.import_module_object(&resolved_name)?;
-                if self.frames.len() > depth_before_import {
-                    self.run_pending_import_frames_force(caller_depth)?;
-                }
-                let module = self.canonical_imported_module_for_name(&resolved_name, module);
+                let module = self.import_module_object_with_policy(
+                    &resolved_name,
+                    ImportReturnPolicy::DeferredWhenFramesQueued,
+                )?;
                 let result_module = if self.fromlist_requested(&fromlist) {
                     module
                 } else {
@@ -12850,7 +12844,9 @@ impl Vm {
                 Object::ByteArray(values) => Some(Value::Int(values.len() as i64)),
                 _ => None,
             },
-            Value::DictKeys(view_obj) | Value::DictValues(view_obj) | Value::DictItems(view_obj) => {
+            Value::DictKeys(view_obj)
+            | Value::DictValues(view_obj)
+            | Value::DictItems(view_obj) => {
                 if let Object::DictView(view) = &*view_obj.kind()
                     && let Object::Dict(values) = &*view.dict.kind()
                 {

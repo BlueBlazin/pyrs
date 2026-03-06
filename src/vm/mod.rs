@@ -402,6 +402,12 @@ enum ClassBuildOutcome {
     ExceptionHandled,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImportReturnPolicy {
+    Synchronous,
+    DeferredWhenFramesQueued,
+}
+
 #[derive(Clone, Copy)]
 enum ReMode {
     Search,
