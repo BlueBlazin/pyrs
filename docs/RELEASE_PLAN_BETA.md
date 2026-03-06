@@ -1,6 +1,6 @@
 # Beta Release Plan (Draft)
 
-Status: draft checkpoint (tracked now, not ready to execute yet).
+Status: active release checkpoint for the first public beta.
 
 This document captures the current release-first plan so we can continue implementation work without losing release decisions.
 
@@ -10,7 +10,7 @@ Ship a first public beta while long-tail compatibility/performance work continue
 
 ## Locked Decisions
 
-- Channel: beta (`v0.1.0-beta.1`)
+- Channel: first public beta (`v0.4.0`)
 - Distribution: GitHub Releases + crates.io
 - Platform matrix (required): Linux `x86_64-unknown-linux-gnu`, macOS `x86_64-apple-darwin`, macOS `aarch64-apple-darwin`
 - Integrity artifacts: `SHA256SUMS` + Sigstore cosign keyless signatures
@@ -22,7 +22,8 @@ Ship a first public beta while long-tail compatibility/performance work continue
 
 ## Current Release Blocker Snapshot
 
-The plan is intentionally parked until core blockers are reduced. Key blockers include:
+This plan is now being executed against the current release candidate. Remaining validation should be
+driven from the latest readiness trackers rather than the older milestone framing. Key blockers/checks include:
 
 - open Milestone 13 P0 items in `docs/PRODUCTION_READINESS.md`
 - open P0 ledger rows in `docs/STUB_ACCOUNTING.md`
@@ -43,7 +44,7 @@ Required green commands:
 
 ## 2. Packaging and Legal
 
-1. set package prerelease version (`0.1.0-beta.1`) in `Cargo.toml`
+1. set package version (`0.4.0`) in `Cargo.toml`
 2. add/validate `license-file` for beta terms
 3. complete crate metadata required for publishability
 4. pass `cargo package` and `cargo publish --dry-run` in CI
@@ -66,10 +67,10 @@ Required green commands:
 ## 5. Tag and Verification
 
 1. cut release branch + freeze unrelated merges
-2. tag `v0.1.0-beta.1`
+2. tag `v0.4.0`
 3. verify artifacts on each target (`--version`, source run, `.pyc` smoke)
 4. verify checksum + cosign signature flows
-5. verify `cargo install --locked pyrs --version 0.1.0-beta.1`
+5. verify `cargo install --locked pyrs --version 0.4.0`
 
 ## Non-Goals for This Beta
 
@@ -80,5 +81,5 @@ Required green commands:
 
 ## Notes
 
-- This plan is a release checkpoint, not a signal that release should happen immediately.
+- Installers intentionally default to nightly; the tagged release remains the explicit stable/pinned path.
 - Keep this file updated when release decisions change.
