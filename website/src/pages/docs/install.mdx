@@ -39,12 +39,13 @@ import {
 </DocSection>
 
 <DocSection title="Recommended on macOS: Homebrew (--HEAD)">
-	<p>Install the tap's <code>--HEAD</code> build with Homebrew:</p>
+	<p>Install the tap's nightly channel with Homebrew:</p>
 	<CommandBlock commands={homebrewHeadCommands} />
 	<Callout title="Default Choice">
-		On macOS, this is the smoothest default path and tracks the nightly channel. Homebrew keeps the bundled
-		stdlib inside the keg at <code>share/pyrs/stdlib/3.14.3/Lib</code>, so it does not reuse or overwrite a
-		system CPython install.
+		On macOS, this is the smoothest default path and tracks the nightly channel without compiling PYRS or
+		installing Homebrew's Rust toolchain. Homebrew keeps the bundled stdlib inside the keg at
+		<code>share/pyrs/stdlib/3.14.3/Lib</code>, so it does not reuse or overwrite a system CPython install. If
+		you want the latest tagged release instead of nightly, drop <code>--HEAD</code>.
 	</Callout>
 </DocSection>
 

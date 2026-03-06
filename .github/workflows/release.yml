@@ -179,14 +179,30 @@ jobs:
         run: |
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${HOMEBREW_TAP_REPO}.git" tap
 
-      - name: Compute source tarball checksum
+      - name: Download packaged artifacts
+        if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: homebrew-dist
+          merge-multiple: true
+
+      - name: Compute macOS binary archive checksums
         if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
         run: |
-          source_url="https://github.com/BlueBlazin/pyrs/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
-          curl -fsSL -o /tmp/pyrs-src.tar.gz "$source_url"
-          source_sha="$(shasum -a 256 /tmp/pyrs-src.tar.gz | awk '{print $1}')"
-          echo "HOMEBREW_SOURCE_URL=${source_url}" >> "$GITHUB_ENV"
-          echo "HOMEBREW_SOURCE_SHA=${source_sha}" >> "$GITHUB_ENV"
+          macos_arm64_archive="homebrew-dist/pyrs-${GITHUB_REF_NAME}-aarch64-apple-darwin.tar.gz"
+          macos_x86_64_archive="homebrew-dist/pyrs-${GITHUB_REF_NAME}-x86_64-apple-darwin.tar.gz"
+
+          test -f "$macos_arm64_archive"
+          test -f "$macos_x86_64_archive"
+
+          macos_arm64_sha="$(shasum -a 256 "$macos_arm64_archive" | awk '{print $1}')"
+          macos_x86_64_sha="$(shasum -a 256 "$macos_x86_64_archive" | awk '{print $1}')"
+
+          echo "HOMEBREW_MACOS_ARM64_URL=https://github.com/BlueBlazin/pyrs/releases/download/${GITHUB_REF_NAME}/pyrs-${GITHUB_REF_NAME}-aarch64-apple-darwin.tar.gz" >> "$GITHUB_ENV"
+          echo "HOMEBREW_MACOS_ARM64_SHA=${macos_arm64_sha}" >> "$GITHUB_ENV"
+          echo "HOMEBREW_MACOS_X86_64_URL=https://github.com/BlueBlazin/pyrs/releases/download/${GITHUB_REF_NAME}/pyrs-${GITHUB_REF_NAME}-x86_64-apple-darwin.tar.gz" >> "$GITHUB_ENV"
+          echo "HOMEBREW_MACOS_X86_64_SHA=${macos_x86_64_sha}" >> "$GITHUB_ENV"
 
       - name: Update Formula/pyrs.rb
         if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
@@ -196,11 +212,21 @@ jobs:
           class Pyrs < Formula
             desc "Python interpreter in Rust targeting CPython 3.14 compatibility"
             homepage "https://github.com/BlueBlazin/pyrs"
-            url "${HOMEBREW_SOURCE_URL}"
-            sha256 "${HOMEBREW_SOURCE_SHA}"
-            head "https://github.com/BlueBlazin/pyrs.git", branch: "master"
+            version "${GITHUB_REF_NAME#v}"
 
-            depends_on "rust" => :build
+            on_macos do
+              on_arm do
+                url "${HOMEBREW_MACOS_ARM64_URL}"
+                sha256 "${HOMEBREW_MACOS_ARM64_SHA}"
+              end
+
+              on_intel do
+                url "${HOMEBREW_MACOS_X86_64_URL}"
+                sha256 "${HOMEBREW_MACOS_X86_64_SHA}"
+              end
+            end
+
+            head "https://github.com/BlueBlazin/pyrs.git", branch: "master"
 
             resource "cpython-stdlib-${CPYTHON_STDLIB_VERSION}" do
               url "${CPYTHON_STDLIB_SOURCE_URL}"
@@ -208,11 +234,29 @@ jobs:
             end
 
             def install
-              system "cargo", "install", *std_cargo_args(path: "."), "--locked"
+              odie "pyrs Homebrew installs currently support macOS only" unless OS.mac?
+
+              if build.head?
+                nightly_url = "https://github.com/BlueBlazin/pyrs/releases/download/nightly/#{nightly_archive_name}"
+                system "curl", "-fsSL", nightly_url, "-o", "pyrs-nightly.tar.gz"
+                system "tar", "-xzf", "pyrs-nightly.tar.gz"
+              end
+
+              bin.install "pyrs"
               (share/"pyrs/stdlib/${CPYTHON_STDLIB_VERSION}").mkpath
               resource("cpython-stdlib-${CPYTHON_STDLIB_VERSION}").stage do
                 cp_r "Lib", share/"pyrs/stdlib/${CPYTHON_STDLIB_VERSION}/Lib"
                 cp "LICENSE", share/"pyrs/stdlib/${CPYTHON_STDLIB_VERSION}/LICENSE"
+              end
+            end
+
+            def nightly_archive_name
+              if Hardware::CPU.arm?
+                "pyrs-nightly-aarch64-apple-darwin.tar.gz"
+              elsif Hardware::CPU.intel?
+                "pyrs-nightly-x86_64-apple-darwin.tar.gz"
+              else
+                odie "Unsupported macOS CPU architecture"
               end
             end
 
