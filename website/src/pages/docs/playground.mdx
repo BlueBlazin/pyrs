@@ -62,10 +62,15 @@ pnpm --dir website dev
 		compiled into the Rust VM. For example, <code>urllib.parse</code> comes from the curated pack, while
 		<code>itertools</code> is available from the VM bootstrap without adding extra stdlib pack bytes.
 	</Callout>
+	<Callout title="Public modules only" tone="note">
+		The lists below intentionally omit private and internal helper modules such as <code>_collections_abc</code>
+		and <code>re._casefix</code>. Those helpers may still exist behind the scenes, but this page only lists the
+		public-facing import surface that users should rely on.
+	</Callout>
 	<DataTable headers={["Bucket", "Current scope", "Notes"]}>
 		<tr>
 			<td>Curated stdlib source pack</td>
-			<td>64 modules</td>
+			<td>53 public modules</td>
 			<td>
 				Loaded from <a href={withBasePath("/wasm/stdlib_subset_manifest_v1.json")}><code>/wasm/stdlib_subset_manifest_v1.json</code></a>
 				and pre-registered before the REPL becomes ready.
@@ -73,7 +78,7 @@ pnpm --dir website dev
 		</tr>
 		<tr>
 			<td>Native/bootstrap modules</td>
-			<td>70 additional modules</td>
+			<td>30 additional public modules</td>
 			<td>
 				Exposed by the VM bootstrap/runtime layer in <code>src/vm/vm_bootstrap_import.rs</code>. These are
 				importable in browser mode even when they are not part of the curated source pack.
@@ -81,7 +86,7 @@ pnpm --dir website dev
 		</tr>
 		<tr>
 			<td>Capability-blocked modules</td>
-			<td>10 explicitly blocked modules</td>
+			<td>7 public modules</td>
 			<td>
 				These are rejected by the browser capability policy instead of partially working.
 			</td>
@@ -93,31 +98,25 @@ pnpm --dir website dev
 		loading, and terminal-only behavior at call time.
 	</Callout>
 	<CodeBlock
-		label="Curated stdlib source pack (64 modules)"
-		code={`_collections_abc, _opcode_metadata, _py_warnings, _pydecimal, _weakrefset, abc
-annotationlib, argparse, ast, bisect, codecs, collections, contextlib, contextvars, copy
-copyreg, dataclasses, datetime, decimal, difflib, dis, encodings, encodings.aliases
-enum, fractions, functools, gettext, heapq, importlib, importlib._bootstrap
-importlib._bootstrap_external, importlib.machinery, inspect, io, ipaddress, json
-json.decoder, json.encoder, json.scanner, keyword, linecache, locale, numbers, opcode
-operator, pprint, random, re, re._casefix, re._compiler, re._constants, re._parser
+		label="Curated stdlib source pack (53 public modules)"
+		code={`abc, annotationlib, argparse, ast, bisect, codecs, collections, contextlib
+contextvars, copy, copyreg, dataclasses, datetime, decimal, difflib, dis, encodings
+encodings.aliases, enum, fractions, functools, gettext, heapq, importlib
+importlib.machinery, inspect, io, ipaddress, json, json.decoder, json.encoder
+json.scanner, keyword, linecache, locale, numbers, opcode, operator, pprint, random, re
 reprlib, statistics, string, textwrap, token, tokenize, types, typing, urllib
 urllib.parse, warnings, weakref`}
 	/>
 	<CodeBlock
-		label="Additional native/bootstrap modules available in wasm today (70 modules)"
-		code={`__future__, _abc, _ast, _blake2, _bz2, _colorize, _contextvars, _csv, _datetime
-_hashlib, _imp, _io, _json, _locale, _lzma, _md5, _opcode, _operator, _osx_support
-_pickle, _pylong, _queue, _scproxy, _sha1, _sha2, _sha3, _sqlite3, _sre, _ssl, _stat
-_string, _struct, _symtable, _testmultiphase, _testsinglephase, _thread, _tokenize
-_tracemalloc, _typing, _warnings, _weakref, array, asyncio, atexit, binascii
-collections.abc, errno, faulthandler, gc, itertools, marshal, math, mmap, os, os.path
-pathlib, platform, posix, pwd, pyexpat, resource, select, signal, ssl, sysconfig
-threading, time, unicodedata, uuid, zlib`}
+		label="Additional native/bootstrap modules available in wasm today (30 public modules)"
+		code={`__future__, array, asyncio, atexit, binascii, collections.abc, errno
+faulthandler, gc, itertools, marshal, math, mmap, os, os.path, pathlib, platform
+posix, pwd, pyexpat, resource, select, signal, ssl, sysconfig, threading, time
+unicodedata, uuid, zlib`}
 	/>
-	<DataTable headers={["Blocked modules", "Blocker key", "Why blocked in browser mode"]}>
+	<DataTable headers={["Blocked public modules", "Blocker key", "Why blocked in browser mode"]}>
 		<tr>
-			<td><code>_ctypes</code>, <code>ctypes</code></td>
+			<td><code>ctypes</code></td>
 			<td><code>dynamic_library_load</code></td>
 			<td>Dynamic library loading is not available in the wasm host.</td>
 		</tr>
@@ -127,12 +126,12 @@ threading, time, unicodedata, uuid, zlib`}
 			<td>Standard distributions depend on native extension binaries.</td>
 		</tr>
 		<tr>
-			<td><code>_socket</code>, <code>socket</code></td>
+			<td><code>socket</code></td>
 			<td><code>network_sockets</code></td>
 			<td>Raw socket capability is unavailable in browser mode.</td>
 		</tr>
 		<tr>
-			<td><code>_posixsubprocess</code>, <code>subprocess</code>, <code>multiprocessing</code></td>
+			<td><code>subprocess</code>, <code>multiprocessing</code></td>
 			<td><code>process_spawn</code></td>
 			<td>Browser mode does not expose process creation or subprocess spawning.</td>
 		</tr>
