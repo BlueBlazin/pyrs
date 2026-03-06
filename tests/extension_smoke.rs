@@ -99,7 +99,12 @@ fn extension_smoke_cache_dir() -> PathBuf {
         .join("extension_smoke_cache")
 }
 
-fn extension_smoke_cache_key(mode: &str, source: &[u8], toolchain: &str) -> String {
+fn extension_smoke_cache_key_with_extra(
+    mode: &str,
+    source: &[u8],
+    toolchain: &str,
+    extra_parts: &[&[u8]],
+) -> String {
     // deterministic, dependency-free FNV-1a digest for cache keys
     let mut hash: u64 = 0xcbf29ce484222325;
     for byte in mode.as_bytes() {
@@ -114,7 +119,19 @@ fn extension_smoke_cache_key(mode: &str, source: &[u8], toolchain: &str) -> Stri
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
+    for extra in extra_parts {
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(0x100000001b3);
+        for byte in *extra {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
     format!("{hash:016x}")
+}
+
+fn extension_smoke_cache_key(mode: &str, source: &[u8], toolchain: &str) -> String {
+    extension_smoke_cache_key_with_extra(mode, source, toolchain, &[])
 }
 
 fn extension_smoke_cache_path(output_path: &Path, key: &str) -> PathBuf {
@@ -263,8 +280,22 @@ fn compile_shared_extension_with_cpython_compat(
             source_path.display()
         )
     })?;
+    let include_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("include");
+    let compat_header_path = include_dir.join("pyrs_cpython_compat.h");
+    let compat_header_bytes = fs::read(&compat_header_path).map_err(|err| {
+        format!(
+            "failed to read compat header {}: {err}",
+            compat_header_path.display()
+        )
+    })?;
+    let compat_abi_salt = b"pyrs-cpython-compat-v1";
     let toolchain = "cc -fPIC compat dynamiclib/shared";
-    let cache_key = extension_smoke_cache_key("cpython_compat", &source_bytes, toolchain);
+    let cache_key = extension_smoke_cache_key_with_extra(
+        "cpython_compat",
+        &source_bytes,
+        toolchain,
+        &[compat_header_bytes.as_slice(), compat_abi_salt],
+    );
     let cache_path = extension_smoke_cache_path(output_path, &cache_key);
     let cacheable = extension_smoke_source_is_cacheable(&source_bytes);
     if extension_smoke_cache_enabled() && cacheable && cache_path.is_file() {
@@ -279,7 +310,6 @@ fn compile_shared_extension_with_cpython_compat(
         return Ok(());
     }
 
-    let include_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("include");
     let mut cmd = Command::new("cc");
     cmd.arg("-fPIC");
     #[cfg(target_os = "macos")]
@@ -8076,8 +8106,15 @@ fn cpython_compat_thread_abi_batch53_apis_work() {
         &source_path,
         r#"#include "pyrs_cpython_compat.h"
 
-static void noop_thread_fn(void *arg) {
+static volatile int thread_start_ran = 0;
+static void *thread_start_lock = 0;
+
+static void signal_thread_fn(void *arg) {
     (void)arg;
+    thread_start_ran = 1;
+    if (thread_start_lock) {
+        PyThread_release_lock(thread_start_lock);
+    }
 }
 
 static PyObject *
@@ -8144,8 +8181,28 @@ run(PyObject *self, PyObject *args) {
     int info_ok = (info && PyObject_Length(info) == 3) ? 1 : 0;
     Py_XDECREF(info);
 
-    unsigned long spawned = PyThread_start_new_thread(noop_thread_fn, 0);
-    int start_ok = spawned != (unsigned long)-1 ? 1 : 0;
+    unsigned long spawned = (unsigned long)-1;
+    int start_ok = 0;
+    int start_lock_held = 0;
+    thread_start_ran = 0;
+    thread_start_lock = PyThread_allocate_lock();
+    if (thread_start_lock) {
+        if (PyThread_acquire_lock(thread_start_lock, WAIT_LOCK) == PY_LOCK_ACQUIRED) {
+            start_lock_held = 1;
+            spawned = PyThread_start_new_thread(signal_thread_fn, 0);
+            if (spawned != (unsigned long)-1) {
+                int waited = PyThread_acquire_lock_timed(thread_start_lock, 5000000, 0);
+                if (waited == PY_LOCK_ACQUIRED && thread_start_ran == 1) {
+                    start_ok = 1;
+                }
+            }
+        }
+        if (start_lock_held) {
+            PyThread_release_lock(thread_start_lock);
+        }
+        PyThread_free_lock(thread_start_lock);
+        thread_start_lock = 0;
+    }
 
     return Py_BuildValue(
         "(iiiiiiiii)",

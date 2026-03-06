@@ -69,7 +69,7 @@ use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
 use crate::extensions::{
     PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1,
-    PyrsModuleStateFreeV1, SharedLibraryHandle,
+    PyrsModuleStateFreeV1,
 };
 use crate::host::{HostCapability, NativeHost, VmHost};
 use crate::parser;
@@ -1231,7 +1231,6 @@ pub struct Vm {
     typing_overload_registry: HashMap<(String, String), Vec<Value>>,
     thread_info_objects: HashMap<i64, ObjRef>,
     atexit_handlers: Vec<AtexitHandler>,
-    extension_libraries: Vec<SharedLibraryHandle>,
     extension_callable_registry: HashMap<u64, ExtensionCallableEntry>,
     callable_attr_overrides: HashMap<u64, HashMap<String, Value>>,
     builtin_attr_overrides: HashMap<BuiltinFunction, HashMap<String, Value>>,
@@ -1303,15 +1302,15 @@ impl Drop for Vm {
         for state in self.extension_module_state_registry.values() {
             if state.state != 0 {
                 if let Some(finalize_func) = state.finalize_func {
-                    // SAFETY: finalize function pointers come from loaded extension modules and
-                    // are invoked before extension libraries are dropped.
+                    // SAFETY: finalize function pointers come from loaded extension modules,
+                    // whose shared libraries are kept alive for process lifetime.
                     unsafe {
                         finalize_func(state.state as *mut c_void);
                     }
                 }
                 if let Some(free_func) = state.free_func {
-                    // SAFETY: free function pointers come from loaded extension modules and
-                    // are invoked before extension libraries are dropped.
+                    // SAFETY: free function pointers come from loaded extension modules,
+                    // whose shared libraries are kept alive for process lifetime.
                     unsafe {
                         free_func(state.state as *mut c_void);
                     }
@@ -1321,8 +1320,8 @@ impl Drop for Vm {
         self.extension_module_state_registry.clear();
         for capsule in self.extension_capsule_registry.values() {
             if let Some(destructor) = capsule.destructor {
-                // SAFETY: destructor pointers come from loaded extension modules and
-                // are invoked before extension libraries are dropped.
+                // SAFETY: destructor pointers come from loaded extension modules,
+                // whose shared libraries are kept alive for process lifetime.
                 unsafe {
                     destructor(
                         capsule.pointer as *mut c_void,
@@ -1535,7 +1534,6 @@ impl Vm {
             typing_overload_registry: HashMap::new(),
             thread_info_objects: HashMap::new(),
             atexit_handlers: Vec::new(),
-            extension_libraries: Vec::new(),
             extension_callable_registry: HashMap::new(),
             callable_attr_overrides: HashMap::new(),
             builtin_attr_overrides: HashMap::new(),
@@ -6636,8 +6634,7 @@ fn value_to_f64(value: Value) -> Result<f64, RuntimeError> {
             let Object::Instance(instance_data) = &*instance.kind() else {
                 return Err(RuntimeError::new("expected numeric value"));
             };
-            if let Some(Value::Float(value)) = instance_data.attrs.get(FLOAT_BACKING_STORAGE_ATTR)
-            {
+            if let Some(Value::Float(value)) = instance_data.attrs.get(FLOAT_BACKING_STORAGE_ATTR) {
                 return Ok(*value);
             }
             if let Some(backing) = instance_data.attrs.get(INT_BACKING_STORAGE_ATTR) {
@@ -11027,8 +11024,7 @@ fn decode_utf8_bytes(bytes: &[u8], errors: &str) -> Result<String, RuntimeError>
                         }
                     }
                     "surrogatepass" => {
-                        if let Some((ch, consumed)) =
-                            decode_utf8_surrogatepass_unit(&bytes[pos..])
+                        if let Some((ch, consumed)) = decode_utf8_surrogatepass_unit(&bytes[pos..])
                         {
                             out.push(ch);
                             pos += consumed;
@@ -11048,8 +11044,10 @@ fn decode_utf8_bytes(bytes: &[u8], errors: &str) -> Result<String, RuntimeError>
                             let consumed = invalid_len.unwrap_or(bytes.len() - pos);
                             for byte in &bytes[pos..pos + consumed] {
                                 let codepoint = 0xDC00 + u32::from(*byte);
-                                let ch = internal_char_from_codepoint(codepoint)
-                                    .ok_or_else(|| RuntimeError::new("utf-8 codec can't decode bytes"))?;
+                                let ch =
+                                    internal_char_from_codepoint(codepoint).ok_or_else(|| {
+                                        RuntimeError::new("utf-8 codec can't decode bytes")
+                                    })?;
                                 out.push(ch);
                             }
                             pos += consumed;

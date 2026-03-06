@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::extensions::{
     CpythonExtensionInit, ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
-    PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PyrsApiV1, SharedLibraryHandle,
+    PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PyrsApiV1, keep_dynamic_library_loaded,
     load_dynamic_initializer, load_dynamic_symbol, parse_extension_manifest,
     path_is_shared_library,
 };
@@ -349,11 +349,9 @@ impl Vm {
 
         enum ResolvedInit {
             Pyrs {
-                handle: SharedLibraryHandle,
                 initializer: crate::extensions::PyrsExtensionInitV1,
             },
             Cpython {
-                handle: SharedLibraryHandle,
                 initializer: CpythonExtensionInit,
             },
         }
@@ -370,35 +368,27 @@ impl Vm {
                 let (handle, init) =
                     load_dynamic_symbol::<CpythonExtensionInit>(library_path, symbol)
                         .map_err(import_error)?;
+                keep_dynamic_library_loaded(library_path, handle);
                 (
                     symbol.to_string(),
-                    ResolvedInit::Cpython {
-                        handle,
-                        initializer: init,
-                    },
+                    ResolvedInit::Cpython { initializer: init },
                 )
             } else {
                 match load_dynamic_initializer(library_path, symbol) {
-                    Ok((handle, init)) => (
-                        symbol.to_string(),
-                        ResolvedInit::Pyrs {
-                            handle,
-                            initializer: init,
-                        },
-                    ),
+                    Ok((handle, init)) => {
+                        keep_dynamic_library_loaded(library_path, handle);
+                        (symbol.to_string(), ResolvedInit::Pyrs { initializer: init })
+                    }
                     Err(pyrs_err) if symbol == PYRS_DYNAMIC_INIT_SYMBOL_V1 => {
                         let cpython_symbol = Self::cpython_init_symbol_for_module(module_name);
                         match load_dynamic_symbol::<CpythonExtensionInit>(
                             library_path,
                             &cpython_symbol,
                         ) {
-                            Ok((handle, init)) => (
-                                cpython_symbol,
-                                ResolvedInit::Cpython {
-                                    handle,
-                                    initializer: init,
-                                },
-                            ),
+                            Ok((handle, init)) => {
+                                keep_dynamic_library_loaded(library_path, handle);
+                                (cpython_symbol, ResolvedInit::Cpython { initializer: init })
+                            }
                             Err(cpython_err) => {
                                 return Err(import_error(format!(
                                     "{pyrs_err}; fallback '{}' also failed: {cpython_err}",
@@ -417,14 +407,10 @@ impl Vm {
             module_ctx.keep_cpython_allocations_on_drop = true;
         }
         let init_result = match resolved_init {
-            ResolvedInit::Pyrs {
-                handle,
-                initializer,
-            } => {
-                // Keep the extension library loaded even if init fails. Module C-API
-                // teardown can still invoke extension-provided callbacks (e.g. capsule
-                // destructors) while unwinding error paths.
-                self.extension_libraries.push(handle);
+            ResolvedInit::Pyrs { initializer } => {
+                // The shared library was promoted to process-lifetime keepalive before init.
+                // Unwind-time callback teardown can therefore safely invoke extension code
+                // even if initializer execution fails partway through.
                 let api = self.capi_api_v1();
                 // SAFETY: initializer is resolved from the shared object symbol with expected signature;
                 // pointers are valid for the duration of the call.
@@ -453,13 +439,8 @@ impl Vm {
                 }
                 std::ptr::null_mut()
             }
-            ResolvedInit::Cpython {
-                handle,
-                initializer,
-            } => {
-                // See comment above in the pyrs-v1 branch; keep shared library loaded across
-                // init failures to preserve callback pointer validity during teardown.
-                self.extension_libraries.push(handle);
+            ResolvedInit::Cpython { initializer } => {
+                // See comment above in the pyrs-v1 branch.
                 let _active_context_guard =
                     ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(module_ctx));
                 // SAFETY: symbol was resolved with `unsafe extern "C" fn() -> *mut c_void`.

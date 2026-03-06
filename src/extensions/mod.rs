@@ -3,6 +3,8 @@ use std::ffi::CString;
 use std::ffi::{c_char, c_void};
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::sync::{Mutex, OnceLock};
 
 pub const PYRS_EXTENSION_MANIFEST_SUFFIX: &str = ".pyrs-ext";
 pub const PYRS_EXTENSION_ABI_TAG: &str = "pyrs314";
@@ -775,6 +777,42 @@ impl SharedLibraryHandle {
         // SAFETY: caller chooses T to match the symbol signature.
         Ok(unsafe { std::mem::transmute_copy(&ptr) })
     }
+
+    fn into_raw(self) -> usize {
+        let raw = self.raw as usize;
+        std::mem::forget(self);
+        raw
+    }
+}
+
+#[cfg(unix)]
+#[derive(Default)]
+struct SharedLibraryKeepaliveRegistry {
+    paths: std::collections::HashSet<PathBuf>,
+    raw_handles: Vec<usize>,
+}
+
+#[cfg(unix)]
+fn shared_library_keepalive_registry() -> &'static Mutex<SharedLibraryKeepaliveRegistry> {
+    static REGISTRY: OnceLock<Mutex<SharedLibraryKeepaliveRegistry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(SharedLibraryKeepaliveRegistry::default()))
+}
+
+#[cfg(unix)]
+fn shared_library_keepalive_key(library_path: &Path) -> PathBuf {
+    fs::canonicalize(library_path).unwrap_or_else(|_| library_path.to_path_buf())
+}
+
+#[cfg(unix)]
+pub fn keep_dynamic_library_loaded(library_path: &Path, handle: SharedLibraryHandle) {
+    let key = shared_library_keepalive_key(library_path);
+    let mut registry = match shared_library_keepalive_registry().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if registry.paths.insert(key) {
+        registry.raw_handles.push(handle.into_raw());
+    }
 }
 
 #[cfg(unix)]
@@ -861,6 +899,9 @@ where
         library_path.display()
     ))
 }
+
+#[cfg(not(unix))]
+pub fn keep_dynamic_library_loaded(_library_path: &Path, _handle: SharedLibraryHandle) {}
 
 #[cfg(test)]
 mod tests {
