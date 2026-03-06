@@ -17,15 +17,15 @@ type InstallMethodData = {
 const installMethods: Record<"macos" | "linux", InstallMethodData[]> = {
 	macos: [
 		{
-			title: "Homebrew (--HEAD)",
-			description: "Install from tip of master via Homebrew (default channel for macOS).",
-			recommended: true,
-			lines: homebrewHeadCommands,
-		},
-		{
 			title: "GitHub installer",
 			description: "One command install from GitHub Releases (defaults to nightly).",
+			recommended: true,
 			lines: githubInstallerCommands,
+		},
+		{
+			title: "Homebrew",
+			description: "Install from tip of master via Homebrew (default channel for macOS).",
+			lines: homebrewHeadCommands,
 		},
 		{
 			title: "Cargo install (advanced)",
