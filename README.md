@@ -30,7 +30,7 @@
 | --- | --- |
 | Compatibility target | CPython 3.14 |
 | Core execution paths | Source (`.py`), bytecode (`.pyc`), interactive REPL |
-| Platform priority | macOS + Linux (`x86_64`, `aarch64`) |
+| Platform priority | Linux (`x86_64`) and macOS (`x86_64`, `aarch64`) |
 | C-extension support | In progress (scientific stack bring-up underway) |
 | Local test runner | `cargo nextest run` |
 

@@ -23,7 +23,6 @@ fn temp_root(prefix: &str) -> PathBuf {
 fn target_triple() -> &'static str {
     match (env::consts::ARCH, env::consts::OS) {
         ("x86_64", "linux") => "x86_64-unknown-linux-gnu",
-        ("aarch64", "linux") => "aarch64-unknown-linux-gnu",
         ("x86_64", "macos") => "x86_64-apple-darwin",
         ("aarch64", "macos") => "aarch64-apple-darwin",
         other => panic!("unsupported host target for installer test: {other:?}"),
@@ -181,6 +180,17 @@ printf '%s\n' "${PYRS_TEST_HOST_STDLIB:-}"
 "#,
     );
     bin_dir
+}
+
+fn write_uname_wrapper(wrapper_bin_dir: &Path, os_name: &str, arch: &str) {
+    let uname_path = wrapper_bin_dir.join("uname");
+    write_executable(
+        &uname_path,
+        &format!(
+            "#!/usr/bin/env bash\nset -euo pipefail\ncase \"${{1:-}}\" in\n  -s) printf '%s\\n' {:?} ;;\n  -m) printf '%s\\n' {:?} ;;\n  *) /usr/bin/uname \"$@\" ;;\nesac\n",
+            os_name, arch
+        ),
+    );
 }
 
 fn run_installer(
@@ -392,5 +402,37 @@ fn installer_stable_channel_resolves_latest_published_prerelease_tag() {
             .join("Lib/site.py")
             .is_file(),
         "expected installed stdlib under custom data dir"
+    );
+}
+
+#[test]
+fn installer_rejects_linux_arm64_native_target() {
+    let root = temp_root("install_script_linux_arm64_unsupported");
+    fs::create_dir_all(&root).expect("create temp root");
+    let assets = make_release_assets(&root, "nightly");
+    let api_response = root.join("releases.json");
+    fs::write(&api_response, "[]\n").expect("write api response");
+    let wrapper_bin_dir = make_curl_wrapper(&root);
+    write_uname_wrapper(&wrapper_bin_dir, "Linux", "aarch64");
+
+    let home = root.join("home");
+    fs::create_dir_all(&home).expect("create home");
+
+    let (code, _stdout, stderr, curl_log) = run_installer(
+        &root,
+        &wrapper_bin_dir,
+        &assets,
+        &api_response,
+        &["--tag", "nightly"],
+        &[("HOME", &home)],
+    );
+    assert_eq!(code, 1, "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("native Linux arm64/aarch64 binaries are not part of the current release matrix"),
+        "stderr:\n{stderr}"
+    );
+    assert!(
+        curl_log.trim().is_empty(),
+        "installer should fail before any network/download attempts\ncurl log:\n{curl_log}"
     );
 }

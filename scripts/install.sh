@@ -214,7 +214,13 @@ detect_target_triple() {
   esac
   case "$(uname -m)" in
     x86_64|amd64) arch="x86_64" ;;
-    arm64|aarch64) arch="aarch64" ;;
+    arm64|aarch64)
+      if [[ "${os}" == "unknown-linux-gnu" ]]; then
+        echo "error: native Linux arm64/aarch64 binaries are not part of the current release matrix" >&2
+        exit 1
+      fi
+      arch="aarch64"
+      ;;
     *)
       echo "error: unsupported architecture: $(uname -m)" >&2
       exit 1
