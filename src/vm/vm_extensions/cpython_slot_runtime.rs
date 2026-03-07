@@ -863,7 +863,7 @@ pub(super) fn cpython_call_method_for_capi(
     match cpython_call_internal_in_context(context, callable, args, HashMap::new()) {
         Ok(value) => Some(value),
         Err(err) => {
-            context.set_error(format!("{api_name} {err}"));
+            context.set_error_from_runtime_error(err);
             None
         }
     }
@@ -899,7 +899,7 @@ pub(super) fn cpython_unicode_decode_with_codec_in_context(
     source: Value,
     encoding_name: String,
     errors_name: Option<String>,
-    api_name: &str,
+    _api_name: &str,
 ) -> Option<Value> {
     let mut args = vec![source, Value::Str(encoding_name.clone())];
     if let Some(errors_name) = errors_name {
@@ -913,7 +913,7 @@ pub(super) fn cpython_unicode_decode_with_codec_in_context(
     ) {
         Ok(value) => value,
         Err(err) => {
-            context.set_error(format!("{api_name} {err}"));
+            context.set_error_from_runtime_error(err);
             return None;
         }
     };
@@ -937,7 +937,7 @@ pub(super) fn cpython_unicode_encode_with_codec_in_context(
     source: Value,
     encoding_name: String,
     errors_name: Option<String>,
-    api_name: &str,
+    _api_name: &str,
 ) -> Option<Value> {
     let mut args = vec![source, Value::Str(encoding_name.clone())];
     if let Some(errors_name) = errors_name {
@@ -951,7 +951,7 @@ pub(super) fn cpython_unicode_encode_with_codec_in_context(
     ) {
         Ok(value) => value,
         Err(err) => {
-            context.set_error(format!("{api_name} {err}"));
+            context.set_error_from_runtime_error(err);
             return None;
         }
     };

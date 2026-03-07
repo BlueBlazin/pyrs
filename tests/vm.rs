@@ -18697,6 +18697,306 @@ ok = (
 }
 
 #[test]
+fn exposes_testcapi_getargs_tuple_and_parse_helpers() {
+    let source = r#"import _testcapi
+
+class CustomError(Exception):
+    pass
+
+class TestSeq:
+    def __len__(self):
+        return 2
+    def __getitem__(self, index):
+        raise CustomError("boom")
+
+errors = {}
+
+def capture(name, func):
+    try:
+        func()
+    except Exception as exc:
+        errors[name] = (type(exc).__name__, str(exc))
+
+capture("tuple_custom_error", lambda: _testcapi.getargs_tuple(1, TestSeq()))
+capture("parse_bad_keywords", lambda: _testcapi.parse_tuple_and_keywords((), {}, "", 42))
+capture("parse_missing", lambda: _testcapi.parse_tuple_and_keywords((), {}, "O", ["a"]))
+
+ok = (
+    _testcapi.get_args(1, *(2, 3)) == (1, 2, 3)
+    and _testcapi.get_kwargs(a=1, **{"b": 2}) == {"a": 1, "b": 2}
+    and _testcapi.getargs_empty() == 1
+    and _testcapi.getargs_tuple(1, (2, 3)) == (1, 2, 3)
+    and _testcapi.parse_tuple_and_keywords((1,), {"b": 2}, "OO", ["a", "b"]) == (1, 2)
+    and _testcapi.parse_tuple_and_keywords((), {}, "|O", ["a"]) == (None,)
+    and _testcapi.argparsing("Hello", "World") == 1
+    and errors["tuple_custom_error"] == ("CustomError", "boom")
+    and errors["parse_bad_keywords"] == (
+        "ValueError",
+        "parse_tuple_and_keywords: sub_keywords must be either list or tuple",
+    )
+    and errors["parse_missing"][0] == "TypeError"
+    and "function missing required argument 'a'" in errors["parse_missing"][1]
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn testcapi_getargs_helper_wrappers_report_cpython_errors() {
+    let source = r#"import _testcapi
+
+errors = {}
+
+def capture(name, func):
+    try:
+        func()
+    except Exception as exc:
+        errors[name] = (type(exc).__name__, str(exc))
+
+capture("get_args_kw", lambda: _testcapi.get_args(a=1))
+capture("getargs_empty_positional", lambda: _testcapi.getargs_empty(1))
+capture("getargs_empty_keyword", lambda: _testcapi.getargs_empty(a=1))
+capture("getargs_tuple_kw", lambda: _testcapi.getargs_tuple(a=1))
+capture("parse_kwargs", lambda: _testcapi.parse_tuple_and_keywords(sub=1))
+capture("parse_arity", lambda: _testcapi.parse_tuple_and_keywords(()))
+capture("argparsing_kwargs", lambda: _testcapi.argparsing(a=1))
+capture("argparsing_arity", lambda: _testcapi.argparsing("x"))
+
+ok = (
+    errors["get_args_kw"] == ("TypeError", "get_args() takes no keyword arguments")
+    and errors["getargs_empty_positional"] == (
+        "TypeError",
+        "getargs_empty() takes exactly 0 arguments (1 given)",
+    )
+    and errors["getargs_empty_keyword"] == (
+        "TypeError",
+        "getargs_empty() takes at most 0 keyword arguments (1 given)",
+    )
+    and errors["getargs_tuple_kw"] == (
+        "TypeError",
+        "getargs_tuple() takes no keyword arguments",
+    )
+    and errors["parse_kwargs"] == (
+        "TypeError",
+        "parse_tuple_and_keywords() takes no keyword arguments",
+    )
+    and errors["parse_arity"] == (
+        "TypeError",
+        "parse_tuple_and_keywords() takes exactly 4 arguments (1 given)",
+    )
+    and errors["argparsing_kwargs"] == ("TypeError", "argparsing() takes no keyword arguments")
+    and errors["argparsing_arity"] == ("TypeError", "function takes exactly 2 arguments (1 given)")
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn exposes_testcapi_string_and_bytes_helpers() {
+    let source = r#"import _testcapi
+
+errors = {}
+
+def capture(name, func):
+    try:
+        func()
+    except Exception as exc:
+        errors[name] = (type(exc).__name__, str(exc))
+
+wbuf = bytearray(b"bytearray")
+wview_buf = bytearray(b"memoryview")
+es_buf = bytearray(b"x" * 5)
+capture("clear_args", lambda: _testcapi.gh_99240_clear_args("a", "\0b"))
+
+ok = (
+    _testcapi.getargs_c(b"a") == 97
+    and _testcapi.getargs_C("\U0001f40d") == 0x1F40D
+    and _testcapi.getargs_s("abc\xe9") == b"abc\xc3\xa9"
+    and _testcapi.getargs_s_star(bytearray(b"bytearray")) == b"bytearray"
+    and _testcapi.getargs_s_hash(b"bytes") == b"bytes"
+    and _testcapi.getargs_z(None) is None
+    and _testcapi.getargs_z_star(memoryview(b"memoryview")) == b"memoryview"
+    and _testcapi.getargs_z_hash(None) is None
+    and _testcapi.getargs_y(b"bytes") == b"bytes"
+    and _testcapi.getargs_y_star(memoryview(b"memoryview")) == b"memoryview"
+    and _testcapi.getargs_y_hash(b"nul:\0") == b"nul:\0"
+    and _testcapi.getargs_es("abc\xe9", "latin1") == b"abc\xe9"
+    and _testcapi.getargs_et(bytearray(b"bytearray"), "latin1") == b"bytearray"
+    and _testcapi.getargs_es_hash("abc\xe9", "latin1", es_buf) == b"abc\xe9"
+    and es_buf == bytearray(b"abc\xe9\0")
+    and _testcapi.getargs_et_hash(bytearray(b"nul:\0"), "latin1") == b"nul:\0"
+    and _testcapi.getargs_w_star(wbuf) == b"[ytearra]"
+    and wbuf == bytearray(b"[ytearra]")
+    and _testcapi.getargs_w_star_opt(memoryview(wview_buf)) == b"[emoryvie]"
+    and wview_buf == bytearray(b"[emoryvie]")
+    and errors["clear_args"][0] == "TypeError"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn testcapi_parse_keyword_messages_preserve_invalid_utf8_and_surrogates() {
+    let source = r#"import _testcapi
+
+errors = {}
+
+def capture(name, func):
+    try:
+        func()
+    except Exception as exc:
+        errors[name] = (type(exc).__name__, str(exc))
+
+invalid = b"\x80"
+capture("missing_invalid", lambda: _testcapi.parse_tuple_and_keywords((), {}, "O", [invalid]))
+capture("keyword_invalid", lambda: _testcapi.parse_tuple_and_keywords((), {"b": 1}, "|O", [invalid]))
+capture("surrogate_keyword", lambda: _testcapi.getargs_keyword_only(1, 2, **{"\uDC80": 10}))
+
+ok = (
+    _testcapi.parse_tuple_and_keywords((), {}, "|O", [invalid]) == (None,)
+    and errors["missing_invalid"][0] == "TypeError"
+    and "\ufffd" in errors["missing_invalid"][1]
+    and errors["keyword_invalid"][0] == "UnicodeDecodeError"
+    and errors["surrogate_keyword"] == (
+        "TypeError",
+        "this function got an unexpected keyword argument '\udc80'",
+    )
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn testcapi_string_and_parse_helpers_preserve_typed_errors_and_marker_semantics() {
+    let source = r#"import _testcapi
+
+errors = {}
+
+def capture(name, func):
+    try:
+        func()
+    except Exception as exc:
+        errors[name] = (type(exc).__name__, str(exc))
+
+capture("s_star_none", lambda: _testcapi.getargs_s_star(None))
+capture("y_star_str", lambda: _testcapi.getargs_y_star("abc\xe9"))
+capture("es_ascii", lambda: _testcapi.getargs_es("abc\xe9", "ascii"))
+capture("et_unknown", lambda: _testcapi.getargs_et("abc\xe9", "spam"))
+capture("w_star_bytes", lambda: _testcapi.getargs_w_star(b"bytes"))
+capture(
+    "nested_es_lookup",
+    lambda: _testcapi.parse_tuple_and_keywords((("a",),), {}, "(es)", ["a"]),
+)
+capture(
+    "bad_double_pipe",
+    lambda: _testcapi.parse_tuple_and_keywords((1,), {}, "||O", ["a"]),
+)
+capture(
+    "positional_only_exact",
+    lambda: _testcapi.parse_tuple_and_keywords((1,), {"a": 3}, "OO$O", ["", "", "a"]),
+)
+
+ok = (
+    errors["s_star_none"][0] == "TypeError"
+    and errors["y_star_str"][0] == "TypeError"
+    and errors["es_ascii"][0] == "UnicodeEncodeError"
+    and errors["et_unknown"][0] == "LookupError"
+    and errors["w_star_bytes"][0] == "TypeError"
+    and errors["nested_es_lookup"][0] == "LookupError"
+    and errors["bad_double_pipe"][0] == "SystemError"
+    and errors["positional_only_exact"] == (
+        "TypeError",
+        "function takes exactly 2 positional arguments (1 given)",
+    )
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn testcapi_parse_tuple_and_keywords_invalid_units_match_skipitem_contract() {
+    let source = r#"import _testcapi
+
+errors = {}
+
+def capture(name, func):
+    try:
+        func()
+    except Exception as exc:
+        errors[name] = (type(exc).__name__, str(exc))
+
+capture(
+    "invalid_used",
+    lambda: _testcapi.parse_tuple_and_keywords((0,), {"b": 1}, "!i", ["a", "b"]),
+)
+capture(
+    "invalid_skipped",
+    lambda: _testcapi.parse_tuple_and_keywords((), {"b": 1}, "|!i", ["a", "b"]),
+)
+capture(
+    "invalid_suffix_skipped",
+    lambda: _testcapi.parse_tuple_and_keywords((), {"b": 1}, "|a#i", ["a", "b"]),
+)
+capture(
+    "invalid_encoding_suffix_skipped",
+    lambda: _testcapi.parse_tuple_and_keywords((), {"b": 1}, "|eXi", ["a", "b"]),
+)
+capture(
+    "more_specifiers_than_keywords",
+    lambda: _testcapi.parse_tuple_and_keywords((1,), {}, "|OO", ["a"]),
+)
+
+ok = (
+    errors["invalid_used"] == (
+        "SystemError",
+        "argument 1 (impossible<bad format char>)",
+    )
+    and errors["invalid_skipped"] == (
+        "SystemError",
+        "impossible<bad format char>: '!i'",
+    )
+    and errors["invalid_suffix_skipped"] == (
+        "SystemError",
+        "impossible<bad format char>: 'a#i'",
+    )
+    and errors["invalid_encoding_suffix_skipped"] == (
+        "SystemError",
+        "impossible<bad format char>: 'eXi'",
+    )
+    and errors["more_specifiers_than_keywords"] == (
+        "SystemError",
+        "more argument specifiers than keyword list entries (remaining format:'O')",
+    )
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn builtin_hash_descriptors_use_runtime_hash_semantics() {
     let source = r#"class StrSub(str):
     pass

@@ -770,6 +770,28 @@ impl Vm {
                 }
             }
             Some(Value::ExceptionType(name)) => RuntimeError::with_exception(name, None),
+            Some(Value::Instance(instance))
+                if self.exception_class_name_for_instance(&instance).is_some() =>
+            {
+                match self.normalize_exception_value(Value::Instance(instance.clone())) {
+                    Ok(Value::Exception(exception)) => {
+                        let exception = *exception;
+                        let message = if super::super::env_var_present_cached(
+                            "PYRS_TRACE_ACTIVE_EXCEPTION_TRACEBACK",
+                        ) {
+                            self.format_traceback(&[], &Value::Exception(Box::new(exception.clone())))
+                        } else {
+                            self.format_exception_object(&exception)
+                        };
+                        RuntimeError {
+                            message,
+                            exception: Some(Box::new(exception)),
+                        }
+                    }
+                    Ok(value) => RuntimeError::new(format_value(&value)),
+                    Err(err) => err,
+                }
+            }
             Some(value) => RuntimeError::new(format_value(&value)),
             None => RuntimeError::new(fallback),
         }

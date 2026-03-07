@@ -1249,7 +1249,11 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
                 });
                 match runtime_result {
                     Ok(Ok(value)) => return cpython_new_ptr_for_value(value),
-                    Ok(Err(err)) | Err(err) => {
+                    Ok(Err(err)) => {
+                        cpython_set_error(err.message);
+                        return std::ptr::null_mut();
+                    }
+                    Err(err) => {
                         cpython_set_error(err);
                         return std::ptr::null_mut();
                     }

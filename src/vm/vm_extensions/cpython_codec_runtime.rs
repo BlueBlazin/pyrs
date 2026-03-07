@@ -41,6 +41,7 @@ pub(in crate::vm::vm_extensions) fn cpython_codec_lookup_info_in_context(
         vec![Value::Str(encoding.to_string())],
         HashMap::new(),
     )
+    .map_err(|err| err.message)
 }
 
 pub(in crate::vm::vm_extensions) fn cpython_codec_lookup_attr_in_context(
@@ -58,6 +59,7 @@ pub(in crate::vm::vm_extensions) fn cpython_codec_call_callable_in_context(
     args: Vec<Value>,
 ) -> Result<Value, String> {
     cpython_call_internal_in_context(context, callable, args, HashMap::new())
+        .map_err(|err| err.message)
 }
 
 pub(in crate::vm::vm_extensions) fn cpython_codec_module_in_context(
@@ -94,8 +96,8 @@ pub(in crate::vm::vm_extensions) fn cpython_codec_stream_fallback_in_context(
             .cloned()
             .ok_or_else(|| format!("codecs.{class_name} unavailable"))?
     };
-    let instance =
-        cpython_call_internal_in_context(context, class_value, Vec::new(), HashMap::new())?;
+    let instance = cpython_call_internal_in_context(context, class_value, Vec::new(), HashMap::new())
+        .map_err(|err| err.message)?;
     if let Value::Instance(instance_obj) = &instance
         && let Object::Instance(instance_data) = &mut *instance_obj.kind_mut()
     {

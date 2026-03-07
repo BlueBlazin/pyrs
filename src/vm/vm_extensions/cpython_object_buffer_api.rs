@@ -601,6 +601,10 @@ pub unsafe extern "C" fn PyObject_GetBuffer(
                     return -1;
                 }
             };
+            if flags & 0x0001 != 0 && info.readonly != 0 {
+                cpython_set_typed_error(unsafe { PyExc_BufferError }, "Object is not writable.");
+                return -1;
+            }
             let internal = context.register_buffer_internal(handle);
             // SAFETY: caller passed a valid writable Py_buffer pointer.
             unsafe {
@@ -628,10 +632,21 @@ pub unsafe extern "C" fn PyObject_GetBuffer(
         }
 
         if let Some(handle) = handle {
-            context.set_error(format!(
-                "object handle {} does not support buffer protocol",
-                handle
-            ));
+            let type_name = context
+                .object_value(handle)
+                .map(|value| {
+                    if context.vm.is_null() {
+                        "object".to_string()
+                    } else {
+                        // SAFETY: VM pointer is valid for active C-API context lifetime.
+                        unsafe { (&mut *context.vm).value_type_name_for_error(&value) }
+                    }
+                })
+                .unwrap_or_else(|| "object".to_string());
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                format!("a bytes-like object is required, not '{type_name}'"),
+            );
         } else {
             context.set_error("PyObject_GetBuffer received unknown object pointer");
         }

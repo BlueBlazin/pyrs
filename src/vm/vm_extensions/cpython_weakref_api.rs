@@ -56,7 +56,7 @@ fn cpython_weakref_target_from_value(
     match cpython_call_internal_in_context(context, weakref_value, Vec::new(), HashMap::new()) {
         Ok(Value::None) => Ok(None),
         Ok(value) => Ok(Some(value)),
-        Err(err) => Err(err),
+        Err(err) => Err(err.message),
     }
 }
 
@@ -104,7 +104,7 @@ pub unsafe extern "C" fn PyWeakref_NewRef(ob: *mut c_void, callback: *mut c_void
         ) {
             Ok(value) => value,
             Err(err) => {
-                context.set_error(err);
+                context.set_error_from_runtime_error(err);
                 return std::ptr::null_mut();
             }
         };
@@ -166,7 +166,7 @@ pub unsafe extern "C" fn PyWeakref_NewProxy(ob: *mut c_void, callback: *mut c_vo
         ) {
             Ok(value) => value,
             Err(err) => {
-                context.set_error(err);
+                context.set_error_from_runtime_error(err);
                 return std::ptr::null_mut();
             }
         };
@@ -186,7 +186,7 @@ pub unsafe extern "C" fn PyWeakref_NewProxy(ob: *mut c_void, callback: *mut c_vo
         ) {
             Ok(value) => context.alloc_cpython_ptr_for_value(value),
             Err(err) => {
-                context.set_error(err);
+                context.set_error_from_runtime_error(err);
                 std::ptr::null_mut()
             }
         }

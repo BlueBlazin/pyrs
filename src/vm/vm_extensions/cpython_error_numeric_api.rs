@@ -14,29 +14,18 @@ use super::{
     PyExc_ResourceWarning, PyExc_RuntimeError, PyExc_RuntimeWarning, PyExc_SystemError,
     PyExc_TypeError, PyExc_ValueError, PyObject_CallObject, PyObject_IsSubclass,
     PyObject_SetAttrString, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem, PyTuple_Type,
-    PyType_IsSubtype, PyType_Ready, PyType_Type, PyUnicode_FromString,
-    PyUnicode_FromStringAndSize, c_name_to_string, cpython_exception_name_parts,
-    cpython_exception_value_from_ptr, cpython_foreign_long_to_i64, cpython_foreign_long_to_u64,
-    cpython_is_exception_instance, cpython_is_type_object_ptr, cpython_mark_pending_interrupt,
-    cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error,
-    cpython_structseq_count_fields, cpython_structseq_registry, cpython_tuple_items_ptr,
-    cpython_type_name_for_object_ptr, cpython_value_debug_tag, cpython_value_from_ptr,
-    cpython_value_from_ptr_or_proxy, value_to_int, with_active_cpython_context_mut,
+    PyType_IsSubtype, PyType_Ready, PyType_Type, PyUnicode_FromString, PyUnicode_FromStringAndSize,
+    c_name_to_string, cpython_exception_name_parts, cpython_exception_value_from_ptr,
+    cpython_foreign_long_to_i64, cpython_foreign_long_to_u64, cpython_is_exception_instance,
+    cpython_is_type_object_ptr, cpython_mark_pending_interrupt, cpython_new_ptr_for_value,
+    cpython_set_error, cpython_set_typed_error, cpython_structseq_count_fields,
+    cpython_structseq_registry, cpython_tuple_items_ptr, cpython_type_name_for_object_ptr,
+    cpython_value_debug_tag, cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, value_to_int,
+    with_active_cpython_context_mut,
 };
 
 fn set_context_error_from_runtime_error(context: &mut ModuleCapiContext, err: RuntimeError) {
-    let RuntimeError { message, exception } = err;
-    if let Some(exception_obj) = exception {
-        let exception_name = exception_obj.name.clone();
-        let ptype = super::cpython_exception_ptr_for_name(&exception_name)
-            .unwrap_or(unsafe { PyExc_RuntimeError });
-        let pvalue = context.alloc_cpython_ptr_for_value(Value::Exception(exception_obj));
-        if !pvalue.is_null() {
-            context.set_error_state(ptype, pvalue, std::ptr::null_mut(), message);
-            return;
-        }
-    }
-    context.set_error(message);
+    context.set_error_from_runtime_error(err);
 }
 
 fn cpython_warning_category_name(category: *mut c_void) -> String {
@@ -2019,10 +2008,8 @@ pub unsafe extern "C" fn pyrs_capi_pyerr_format_fallback(
     let message = if format.is_null() {
         "error".to_string()
     } else {
-        unsafe { CStr::from_ptr(format) }
-            .to_str()
-            .unwrap_or("error")
-            .to_string()
+        let bytes = unsafe { CStr::from_ptr(format) }.to_bytes();
+        String::from_utf8_lossy(bytes).into_owned()
     };
     if super::super::env_var_present_cached("PYRS_TRACE_NUMPY_DTYPE")
         && message.contains("data type")

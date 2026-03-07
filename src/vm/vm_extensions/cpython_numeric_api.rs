@@ -12,27 +12,16 @@ use super::cpython_numeric_runtime::{
 };
 use super::{
     CPY_PROXY_PTR_ATTR, CpythonNumberMethods, CpythonObjectHead, CpythonTypeObject,
-    ModuleCapiContext, PyErr_Clear, PyErr_ExceptionMatches, PyErr_Occurred, PyExc_OverflowError,
-    PyExc_TypeError, PyFloat_AsDouble, PyLong_AsSsize_t, PyLong_Type, PyType_IsSubtype,
-    Py_DecRef, c_name_to_string, cpython_call_builtin, cpython_new_ptr_for_value,
+    ModuleCapiContext, Py_DecRef, PyErr_Clear, PyErr_ExceptionMatches, PyErr_Occurred,
+    PyExc_OverflowError, PyExc_TypeError, PyFloat_AsDouble, PyLong_AsSsize_t, PyLong_Type,
+    PyType_IsSubtype, c_name_to_string, cpython_call_builtin, cpython_new_ptr_for_value,
     cpython_set_error, cpython_set_typed_error, cpython_try_binary_number_slot,
     cpython_value_debug_tag, cpython_value_from_ptr, is_cpython_proxy_class, value_to_int,
     with_active_cpython_context_mut,
 };
 
 fn set_context_error_from_runtime_error(context: &mut ModuleCapiContext, err: RuntimeError) {
-    let RuntimeError { message, exception } = err;
-    if let Some(exception_obj) = exception {
-        let exception_name = exception_obj.name.clone();
-        let ptype = super::cpython_exception_ptr_for_name(&exception_name)
-            .unwrap_or(unsafe { super::PyExc_RuntimeError });
-        let pvalue = context.alloc_cpython_ptr_for_value(Value::Exception(exception_obj));
-        if !pvalue.is_null() {
-            context.set_error_state(ptype, pvalue, std::ptr::null_mut(), message);
-            return;
-        }
-    }
-    context.set_error(message);
+    context.set_error_from_runtime_error(err);
 }
 
 fn cpython_type_name(type_ptr: *mut CpythonTypeObject) -> String {
@@ -861,11 +850,7 @@ pub unsafe extern "C" fn PyNumber_AsSsize_t(object: *mut c_void, exc: *mut c_voi
                                 Value::BigInt(value) => value.is_negative(),
                                 _ => false,
                             };
-                            if is_negative {
-                                isize::MIN
-                            } else {
-                                isize::MAX
-                            }
+                            if is_negative { isize::MIN } else { isize::MAX }
                         } else {
                             cpython_set_typed_error(
                                 exc,

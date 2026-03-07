@@ -11,6 +11,7 @@ use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_uint, c_ulong, 
 use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, Once, OnceLock};
 
+use self::cpython_context_runtime::ActiveCpythonContextGuard;
 use super::capi_registry::{BorrowedRef, CapiPtrProvenance, CapiRefKind, OwnedRef, StolenRef};
 use super::{
     BYTES_BACKING_STORAGE_ATTR, ExtensionCallableKind, GeneratorResumeOutcome, InternalCallOutcome,
@@ -27,7 +28,8 @@ use crate::extensions::{
 };
 use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, DictViewKind, InstanceObject,
-    NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value, value_lookup_hash,
+    NativeMethodKind, NativeMethodObject, Object, RuntimeError, TestCapiStringParseKind, Value,
+    value_lookup_hash,
 };
 use crate::vm::ExtensionModuleStateEntry;
 
@@ -137,8 +139,7 @@ use self::cpython_args_runtime::{
 use self::cpython_bigint_runtime::{
     cpython_asnativebytes_resolve_endian, cpython_bigint_from_twos_complement_le,
     cpython_bigint_from_value, cpython_bigint_to_twos_complement_le,
-    cpython_required_signed_bytes_for_bigint,
-    cpython_required_unsigned_bytes_for_bigint,
+    cpython_required_signed_bytes_for_bigint, cpython_required_unsigned_bytes_for_bigint,
 };
 use self::cpython_bytes_api::{
     _PyBytes_Join, _PyBytes_Resize, PyByteArray_AsString, PyByteArray_Concat,
@@ -391,7 +392,7 @@ use self::cpython_slot_runtime::{
     cpython_unicode_text_from_value, cpython_valid_type_ptr,
 };
 use self::cpython_string_runtime::{
-    c_name_to_string, c_wide_name_to_string, cpython_string_to_wide_units,
+    c_name_to_bytes, c_name_to_string, c_wide_name_to_string, cpython_string_to_wide_units,
     cpython_wide_ptr_to_string,
 };
 use self::cpython_sys_thread_api::{
@@ -1762,7 +1763,8 @@ fn cpython_exception_value_from_ptr(raw: usize) -> Option<Value> {
             // SAFETY: exception symbol pointers are process-global and stable.
             unsafe {
                 let symbol = $symbol as usize;
-                if symbol != 0 && raw == symbol {
+                let symbol_storage = std::ptr::addr_of_mut!($symbol) as usize;
+                if raw == symbol_storage || (symbol != 0 && raw == symbol) {
                     return Some(Value::ExceptionType($name.to_string()));
                 }
             }
@@ -3496,7 +3498,7 @@ fn cpython_call_noargs_attr_on_self(self_obj: *mut c_void, attr_name: &str) -> *
             match cpython_call_internal_in_context(context, callable, Vec::new(), HashMap::new()) {
                 Ok(value) => value,
                 Err(err) => {
-                    context.set_error(err);
+                    context.set_error_from_runtime_error(err);
                     return std::ptr::null_mut();
                 }
             };
@@ -4852,20 +4854,30 @@ impl ModuleCapiContext {
         }
         match self.cpython_value_from_ptr(value) {
             Some(Value::Str(message)) => message,
-            Some(Value::Exception(err)) => {
-                if err
-                    .message
-                    .as_deref()
-                    .map_or(true, |message| message.is_empty())
-                {
-                    err.name
-                } else {
-                    format!(
-                        "{}: {}",
-                        err.name,
-                        err.message.unwrap_or_else(|| "error".to_string())
-                    )
+            Some(Value::Exception(err)) => err.message.unwrap_or(err.name),
+            Some(Value::Instance(instance)) if self.vm.is_null() => "error".to_string(),
+            Some(Value::Instance(instance)) => {
+                // SAFETY: VM pointer is valid while CPython init context is active.
+                let vm = unsafe { &mut *self.vm };
+                if !cpython_is_exception_instance(self, &instance) {
+                    if let Ok(text) = vm.call_builtin(
+                        BuiltinFunction::Str,
+                        vec![Value::Instance(instance.clone())],
+                        HashMap::new(),
+                    ) && let Value::Str(message) = text
+                        && !message.is_empty()
+                    {
+                        return message;
+                    }
+                    return format!(
+                        "{} object",
+                        vm.value_type_name_for_error(&Value::Instance(instance))
+                    );
                 }
+                vm.exception_message_for_instance(&instance).unwrap_or_else(|| {
+                    vm.exception_class_name_for_instance(&instance)
+                        .unwrap_or_else(|| "error".to_string())
+                })
             }
             Some(other) => {
                 if self.vm.is_null() {
@@ -5245,6 +5257,49 @@ impl ModuleCapiContext {
         });
         self.sync_thread_state_exception_view_from_current_error();
         self.set_error_message(message);
+    }
+
+    fn set_error_from_runtime_error(&mut self, err: RuntimeError) {
+        let RuntimeError { message, exception } = err;
+        let exception = exception.or_else(|| RuntimeError::new(message.clone()).exception);
+        if let Some(exception_obj) = exception {
+            let exception_name = exception_obj.name.clone();
+            let exception_class_value = exception_obj
+                .attrs
+                .borrow()
+                .get("__class__")
+                .cloned()
+                .and_then(|value| match value {
+                    Value::Class(class) => Some(Value::Class(class)),
+                    Value::ExceptionType(name) => Some(Value::ExceptionType(name)),
+                    _ => None,
+                });
+            let ptype = exception_class_value
+                .map(|value| self.alloc_cpython_ptr_for_value(value))
+                .filter(|ptr| !ptr.is_null())
+                .or_else(|| cpython_exception_ptr_for_name(&exception_name))
+                .unwrap_or(std::ptr::null_mut());
+            let pvalue = self.alloc_cpython_ptr_for_value(Value::Exception(exception_obj));
+            if !pvalue.is_null() {
+                let resolved_ptype = if ptype.is_null() {
+                    cpython_exception_type_ptr(pvalue).cast()
+                } else {
+                    ptype
+                };
+                self.set_error_state(
+                    if resolved_ptype.is_null() {
+                        unsafe { PyExc_RuntimeError }
+                    } else {
+                        resolved_ptype
+                    },
+                    pvalue,
+                    std::ptr::null_mut(),
+                    message,
+                );
+                return;
+            }
+        }
+        self.set_error(message);
     }
 
     fn exception_name_from_value(&self, value: &Value) -> Option<String> {
@@ -9092,7 +9147,7 @@ impl ModuleCapiContext {
                                                     if trace_attr_max {
                                                         eprintln!(
                                                             "[cpy-lookup-max] runtime descriptor __get__ call failed err={}",
-                                                            err
+                                                            err.message
                                                         );
                                                     }
                                                 }
@@ -10165,6 +10220,7 @@ impl ModuleCapiContext {
             // SAFETY: kwnames tuple is call-local materialization and no longer needed after call.
             unsafe { Py_DecRef(kwnames_ptr) };
         }
+        self.sync_owned_compat_storage_from_raw();
         Some(result)
     }
 
@@ -10375,6 +10431,7 @@ impl ModuleCapiContext {
             );
         }
         let result = unsafe { call(callable, args_ptr, kwargs_ptr) };
+        self.sync_owned_compat_storage_from_raw();
         if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
             let type_name = unsafe {
                 c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
@@ -11350,6 +11407,21 @@ impl ModuleCapiContext {
 
     fn sync_cpython_storage_from_value(&mut self, handle: PyrsObjectHandle) {
         self.sync_cpython_storage_inner(handle, false);
+    }
+
+    fn sync_owned_compat_storage_from_raw(&mut self) {
+        let handles = self
+            .cpython_ptr_by_handle
+            .iter()
+            .map(|(handle, ptr)| (*handle, *ptr))
+            .collect::<Vec<_>>();
+        for (handle, ptr) in handles {
+            if self.owns_cpython_allocation_ptr(ptr)
+                && self.cpython_handle_requires_storage_sync(handle)
+            {
+                self.sync_value_from_cpython_storage(handle, ptr);
+            }
+        }
     }
 
     fn sync_cpython_storage_inner(&mut self, handle: PyrsObjectHandle, pull_from_raw: bool) {
@@ -13936,6 +14008,33 @@ unsafe extern "C" {
         keywords: *mut *const c_char,
         vargs: *mut c_void,
     ) -> i32;
+    fn pyrs_testcapi_get_args(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_get_kwargs(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_empty(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_tuple(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_c(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_C(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_s(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_s_star(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_s_hash(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_z(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_z_star(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_z_hash(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_y(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_y_star(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_y_hash(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_es(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_et(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_es_hash(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_et_hash(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_w_star(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_getargs_w_star_opt(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_gh_99240_clear_args(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_parse_tuple_and_keywords(
+        args: *mut c_void,
+        kwargs: *mut c_void,
+    ) -> *mut c_void;
+    fn pyrs_testcapi_argparsing(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
     fn PyErr_Format(exception: *mut c_void, format: *const c_char, ...) -> *mut c_void;
     fn PyErr_FormatV(
         exception: *mut c_void,
@@ -13991,4 +14090,220 @@ unsafe fn capi_module_insert_value(
     };
     module_data.globals.insert(name, value);
     0
+}
+
+impl Vm {
+    fn call_testcapi_capi_helper(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        helper: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void,
+        failure_label: &str,
+    ) -> Result<Value, RuntimeError> {
+        let args_tuple = self.heap.alloc_tuple(args);
+        let kwargs_value = if kwargs.is_empty() {
+            None
+        } else {
+            Some(
+                self.heap.alloc_dict(
+                    kwargs
+                        .into_iter()
+                        .map(|(name, value)| (Value::Str(name), value))
+                        .collect(),
+                ),
+            )
+        };
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
+        let args_ptr = call_ctx.alloc_cpython_ptr_for_value(args_tuple);
+        if args_ptr.is_null() {
+            return Err(RuntimeError::new(format!(
+                "{failure_label}: failed to materialize args tuple",
+            )));
+        }
+        let kwargs_ptr = match kwargs_value {
+            Some(kwargs_value) => {
+                let ptr = call_ctx.alloc_cpython_ptr_for_value(kwargs_value);
+                if ptr.is_null() {
+                    return Err(RuntimeError::new(format!(
+                        "{failure_label}: failed to materialize kwargs dict",
+                    )));
+                }
+                ptr
+            }
+            None => std::ptr::null_mut(),
+        };
+        let result_ptr = unsafe { helper(args_ptr, kwargs_ptr) };
+        call_ctx.sync_owned_compat_storage_from_raw();
+        if result_ptr.is_null() {
+            if let Some(err) = call_ctx.runtime_error_from_current_error_state(failure_label) {
+                return Err(err);
+            }
+            return Err(RuntimeError::new(failure_label));
+        }
+        call_ctx
+            .cpython_value_from_owned_ptr(result_ptr)
+            .ok_or_else(|| RuntimeError::new(format!("{failure_label}: unknown result pointer")))
+    }
+
+    pub(in crate::vm) fn builtin_testcapi_get_args_via_capi(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.call_testcapi_capi_helper(args, kwargs, pyrs_testcapi_get_args, "get_args failed")
+    }
+
+    pub(in crate::vm) fn builtin_testcapi_get_kwargs_via_capi(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.call_testcapi_capi_helper(args, kwargs, pyrs_testcapi_get_kwargs, "get_kwargs failed")
+    }
+
+    pub(in crate::vm) fn builtin_testcapi_getargs_empty_via_capi(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.call_testcapi_capi_helper(
+            args,
+            kwargs,
+            pyrs_testcapi_getargs_empty,
+            "getargs_empty failed",
+        )
+    }
+
+    pub(in crate::vm) fn builtin_testcapi_getargs_tuple_via_capi(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.call_testcapi_capi_helper(
+            args,
+            kwargs,
+            pyrs_testcapi_getargs_tuple,
+            "getargs_tuple failed",
+        )
+    }
+
+    pub(in crate::vm) fn builtin_testcapi_getargs_string_via_capi(
+        &mut self,
+        kind: TestCapiStringParseKind,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        type TestCapiHelper = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
+        let (helper, label) = match kind {
+            TestCapiStringParseKind::LowerC => {
+                (pyrs_testcapi_getargs_c as TestCapiHelper, "getargs_c failed")
+            }
+            TestCapiStringParseKind::UpperC => {
+                (pyrs_testcapi_getargs_C as TestCapiHelper, "getargs_C failed")
+            }
+            TestCapiStringParseKind::LowerS => {
+                (pyrs_testcapi_getargs_s as TestCapiHelper, "getargs_s failed")
+            }
+            TestCapiStringParseKind::LowerSStar => {
+                (
+                    pyrs_testcapi_getargs_s_star as TestCapiHelper,
+                    "getargs_s_star failed",
+                )
+            }
+            TestCapiStringParseKind::LowerSHash => {
+                (
+                    pyrs_testcapi_getargs_s_hash as TestCapiHelper,
+                    "getargs_s_hash failed",
+                )
+            }
+            TestCapiStringParseKind::LowerZ => {
+                (pyrs_testcapi_getargs_z as TestCapiHelper, "getargs_z failed")
+            }
+            TestCapiStringParseKind::LowerZStar => {
+                (
+                    pyrs_testcapi_getargs_z_star as TestCapiHelper,
+                    "getargs_z_star failed",
+                )
+            }
+            TestCapiStringParseKind::LowerZHash => {
+                (
+                    pyrs_testcapi_getargs_z_hash as TestCapiHelper,
+                    "getargs_z_hash failed",
+                )
+            }
+            TestCapiStringParseKind::LowerY => {
+                (pyrs_testcapi_getargs_y as TestCapiHelper, "getargs_y failed")
+            }
+            TestCapiStringParseKind::LowerYStar => {
+                (
+                    pyrs_testcapi_getargs_y_star as TestCapiHelper,
+                    "getargs_y_star failed",
+                )
+            }
+            TestCapiStringParseKind::LowerYHash => {
+                (
+                    pyrs_testcapi_getargs_y_hash as TestCapiHelper,
+                    "getargs_y_hash failed",
+                )
+            }
+            TestCapiStringParseKind::LowerEs => {
+                (pyrs_testcapi_getargs_es as TestCapiHelper, "getargs_es failed")
+            }
+            TestCapiStringParseKind::LowerEt => {
+                (pyrs_testcapi_getargs_et as TestCapiHelper, "getargs_et failed")
+            }
+            TestCapiStringParseKind::LowerEsHash => {
+                (
+                    pyrs_testcapi_getargs_es_hash as TestCapiHelper,
+                    "getargs_es_hash failed",
+                )
+            }
+            TestCapiStringParseKind::LowerEtHash => {
+                (
+                    pyrs_testcapi_getargs_et_hash as TestCapiHelper,
+                    "getargs_et_hash failed",
+                )
+            }
+            TestCapiStringParseKind::WStar => {
+                (
+                    pyrs_testcapi_getargs_w_star as TestCapiHelper,
+                    "getargs_w_star failed",
+                )
+            }
+            TestCapiStringParseKind::WStarOpt => {
+                (
+                    pyrs_testcapi_getargs_w_star_opt as TestCapiHelper,
+                    "getargs_w_star_opt failed",
+                )
+            }
+            TestCapiStringParseKind::Gh99240ClearArgs => (
+                pyrs_testcapi_gh_99240_clear_args as TestCapiHelper,
+                "gh_99240_clear_args failed",
+            ),
+        };
+        self.call_testcapi_capi_helper(args, kwargs, helper, label)
+    }
+
+    pub(in crate::vm) fn builtin_testcapi_parse_tuple_and_keywords_via_capi(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.call_testcapi_capi_helper(
+            args,
+            kwargs,
+            pyrs_testcapi_parse_tuple_and_keywords,
+            "parse_tuple_and_keywords failed",
+        )
+    }
+
+    pub(in crate::vm) fn builtin_testcapi_argparsing_via_capi(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.call_testcapi_capi_helper(args, kwargs, pyrs_testcapi_argparsing, "argparsing failed")
+    }
 }

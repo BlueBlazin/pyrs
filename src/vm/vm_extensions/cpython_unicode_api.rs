@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
 
 use crate::runtime::{Object, Value};
 use crate::unicode::{canonical_codepoint_for_internal_char, internal_char_from_codepoint};
@@ -9,8 +9,9 @@ use super::{
     _Py_NotImplementedStruct, CpythonBuffer, CpythonBufferProcs, CpythonObjectHead,
     CpythonTypeObject, Cwchar, ModuleCapiContext, Py_DecRef, Py_IncRef, Py_XDecRef,
     PyBytes_AsString, PyErr_BadArgument, PyErr_BadInternalCall, PyErr_Clear, PyErr_NoMemory,
-    PyErr_Occurred, PyExc_IndexError, PyExc_RuntimeError, PyExc_SystemError, PyExc_TypeError,
-    PyExc_UnicodeEncodeError, PyExc_ValueError, PyMem_Malloc, PyOS_FSPath, c_name_to_string,
+    PyErr_Occurred, PyErr_WarnEx, PyExc_IndexError, PyExc_RuntimeError, PyExc_RuntimeWarning,
+    PyExc_SystemError, PyExc_TypeError, PyExc_UnicodeDecodeError, PyExc_UnicodeEncodeError,
+    PyExc_ValueError, PyMem_Malloc, PyOS_FSPath, c_name_to_bytes,
     cpython_call_internal_in_context, cpython_call_method_for_capi,
     cpython_codec_error_name_optional, cpython_codec_module_in_context,
     cpython_codec_name_or_default, cpython_getattr_in_context, cpython_lookup_interned_unicode_ptr,
@@ -61,23 +62,77 @@ fn cpython_rot13_text(text: &str) -> String {
         .collect()
 }
 
+fn cpython_utf8_decode_reason(bytes: &[u8], start: usize, error_len: Option<usize>) -> &'static str {
+    if error_len.is_none() {
+        return "unexpected end of data";
+    }
+    let Some(&byte) = bytes.get(start) else {
+        return "invalid start byte";
+    };
+    if (0x80..0xC0).contains(&byte) || byte == 0xC0 || byte == 0xC1 || byte >= 0xF5 {
+        "invalid start byte"
+    } else {
+        "invalid continuation byte"
+    }
+}
+
+fn cpython_utf8_decode_error_message(bytes: &[u8]) -> String {
+    let err = std::str::from_utf8(bytes).expect_err("caller only uses invalid utf-8 payloads");
+    let start = err.valid_up_to();
+    let end = err
+        .error_len()
+        .map(|len| start.saturating_add(len))
+        .unwrap_or(bytes.len())
+        .max(start.saturating_add(1))
+        .min(bytes.len());
+    let reason = cpython_utf8_decode_reason(bytes, start, err.error_len());
+    if end == start + 1 && start < bytes.len() {
+        return format!(
+            "'utf-8' codec can't decode byte 0x{:02x} in position {}: {}",
+            bytes[start], start, reason
+        );
+    }
+    format!(
+        "'utf-8' codec can't decode bytes in position {}-{}: {}",
+        start,
+        end.saturating_sub(1),
+        reason
+    )
+}
+
+fn cpython_decode_utf8_bytes_strict(bytes: &[u8]) -> Result<String, ()> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Ok(text.to_string()),
+        Err(_) => {
+            cpython_set_typed_error(
+                unsafe { PyExc_UnicodeDecodeError },
+                cpython_utf8_decode_error_message(bytes),
+            );
+            Err(())
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_FromString(value: *const c_char) -> *mut c_void {
-    match unsafe { c_name_to_string(value) } {
-        Ok(text) => with_active_cpython_context_mut(|context| {
+    let bytes = match unsafe { c_name_to_bytes(value) } {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            cpython_set_error(format!("PyUnicode_FromString {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let text = match cpython_decode_utf8_bytes_strict(&bytes) {
+        Ok(text) => text,
+        Err(()) => return std::ptr::null_mut(),
+    };
+    with_active_cpython_context_mut(|context| {
             context.alloc_cpython_ptr_for_value(Value::Str(text))
         })
         .unwrap_or_else(|err| {
             cpython_set_error(err);
             std::ptr::null_mut()
-        }),
-        Err(err) => {
-            cpython_set_error(format!(
-                "PyUnicode_FromString received invalid string: {err}"
-            ));
-            std::ptr::null_mut()
-        }
-    }
+        })
 }
 
 #[unsafe(no_mangle)]
@@ -86,11 +141,17 @@ pub unsafe extern "C" fn PyUnicode_FromStringAndSize(
     len: isize,
 ) -> *mut c_void {
     if len < 0 {
-        cpython_set_error("PyUnicode_FromStringAndSize received negative length");
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "Negative size passed to PyUnicode_FromStringAndSize",
+        );
         return std::ptr::null_mut();
     }
     if value.is_null() && len != 0 {
-        cpython_set_error("PyUnicode_FromStringAndSize received null pointer with non-zero length");
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "NULL string with positive size with NULL passed to PyUnicode_FromStringAndSize",
+        );
         return std::ptr::null_mut();
     }
     let bytes = if len == 0 {
@@ -99,7 +160,10 @@ pub unsafe extern "C" fn PyUnicode_FromStringAndSize(
         // SAFETY: caller guarantees `value` points to at least len bytes.
         unsafe { std::slice::from_raw_parts(value.cast::<u8>(), len as usize).to_vec() }
     };
-    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let text = match cpython_decode_utf8_bytes_strict(&bytes) {
+        Ok(text) => text,
+        Err(()) => return std::ptr::null_mut(),
+    };
     cpython_new_ptr_for_value(Value::Str(text))
 }
 
@@ -400,12 +464,12 @@ pub unsafe extern "C" fn PyUnicode_AsUTF8String(object: *mut c_void) -> *mut c_v
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_AsASCIIString(object: *mut c_void) -> *mut c_void {
-    unsafe { PyUnicode_AsUTF8String(object) }
+    unsafe { PyUnicode_AsEncodedString(object, c"ascii".as_ptr(), std::ptr::null()) }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_AsLatin1String(object: *mut c_void) -> *mut c_void {
-    unsafe { PyUnicode_AsUTF8String(object) }
+    unsafe { PyUnicode_AsEncodedString(object, c"latin-1".as_ptr(), std::ptr::null()) }
 }
 
 #[unsafe(no_mangle)]
@@ -505,7 +569,7 @@ pub unsafe extern "C" fn PyUnicode_AsCharmapString(
         ) {
             Ok(value) => value,
             Err(err) => {
-                context.set_error(err);
+                context.set_error_from_runtime_error(err);
                 return std::ptr::null_mut();
             }
         };
@@ -558,10 +622,104 @@ pub unsafe extern "C" fn PyUnicode_AsUTF32String(object: *mut c_void) -> *mut c_
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_AsEncodedString(
     object: *mut c_void,
-    _encoding: *const c_char,
-    _errors: *const c_char,
+    encoding: *const c_char,
+    errors: *const c_char,
 ) -> *mut c_void {
-    unsafe { PyUnicode_AsUTF8String(object) }
+    if object.is_null() {
+        unsafe { PyErr_BadArgument() };
+        return std::ptr::null_mut();
+    }
+    let encoding_name =
+        match cpython_codec_name_or_default(encoding, "utf-8", "PyUnicode_AsEncodedString") {
+            Ok(name) => name,
+            Err(err) => {
+                cpython_set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+    let errors_name = match cpython_codec_error_name_optional(errors, "PyUnicode_AsEncodedString") {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(object) else {
+            context.set_error("PyUnicode_AsEncodedString received unknown object pointer");
+            return std::ptr::null_mut();
+        };
+        if cpython_unicode_text_from_value(&value).is_none() {
+            unsafe { PyErr_BadArgument() };
+            return std::ptr::null_mut();
+        }
+        let Some(encoded) = cpython_unicode_encode_with_codec_in_context(
+            context,
+            value,
+            encoding_name.clone(),
+            errors_name,
+            "PyUnicode_AsEncodedString",
+        ) else {
+            return std::ptr::null_mut();
+        };
+        match encoded {
+            Value::Bytes(_) => context.alloc_cpython_ptr_for_value(encoded),
+            Value::ByteArray(buffer) => {
+                let Object::ByteArray(bytes) = &*buffer.kind() else {
+                    context.set_error("PyUnicode_AsEncodedString encountered invalid bytearray");
+                    return std::ptr::null_mut();
+                };
+                let warning_text = format!(
+                    "encoder {} returned bytearray instead of bytes; use codecs.encode() to encode to arbitrary types",
+                    encoding_name
+                );
+                let Ok(warning_cstr) = CString::new(warning_text) else {
+                    context.set_error(
+                        "PyUnicode_AsEncodedString warning text contained interior NUL byte",
+                    );
+                    return std::ptr::null_mut();
+                };
+                if unsafe {
+                    PyErr_WarnEx(
+                        PyExc_RuntimeWarning,
+                        warning_cstr.as_ptr(),
+                        1,
+                    )
+                } < 0
+                {
+                    return std::ptr::null_mut();
+                }
+                if context.vm.is_null() {
+                    context.set_error("missing VM context for bytes allocation");
+                    return std::ptr::null_mut();
+                }
+                // SAFETY: VM pointer is valid for the active C-API context lifetime.
+                let vm = unsafe { &mut *context.vm };
+                let bytes_obj = vm.heap.alloc(Object::Bytes(bytes.clone()));
+                context.alloc_cpython_ptr_for_value(Value::Bytes(bytes_obj))
+            }
+            other => {
+                let got = if context.vm.is_null() {
+                    "object".to_string()
+                } else {
+                    // SAFETY: VM pointer is valid for the active C-API context lifetime.
+                    unsafe { (&mut *context.vm).value_type_name_for_error(&other) }
+                };
+                cpython_set_typed_error(
+                    unsafe { PyExc_TypeError },
+                    format!(
+                        "'{}' encoder returned '{}' instead of 'bytes'; use codecs.encode() to encode to arbitrary types",
+                        encoding_name, got
+                    ),
+                );
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -753,23 +911,22 @@ pub unsafe extern "C" fn PyUnicode_InternFromString(value: *const c_char) -> *mu
         cpython_set_error("PyUnicode_InternFromString received null string");
         return std::ptr::null_mut();
     }
-    let text = match unsafe { c_name_to_string(value) } {
-        Ok(text) => text,
+    let bytes = match unsafe { c_name_to_bytes(value) } {
+        Ok(bytes) => bytes,
         Err(err) => {
-            cpython_set_error(format!(
-                "PyUnicode_InternFromString received invalid string: {err}"
-            ));
+            cpython_set_error(format!("PyUnicode_InternFromString {err}"));
             return std::ptr::null_mut();
         }
+    };
+    let text = match cpython_decode_utf8_bytes_strict(&bytes) {
+        Ok(text) => text,
+        Err(()) => return std::ptr::null_mut(),
     };
     if let Some(existing) = cpython_lookup_interned_unicode_ptr(&text) {
         unsafe { Py_IncRef(existing) };
         return existing;
     }
-    let created = unsafe { PyUnicode_FromString(value) };
-    if created.is_null() {
-        return std::ptr::null_mut();
-    }
+    let created = cpython_new_ptr_for_value(Value::Str(text.clone()));
     cpython_register_interned_unicode(&text, created);
     created
 }
@@ -2158,7 +2315,7 @@ pub unsafe extern "C" fn PyUnicode_DecodeCharmap(
         ) {
             Ok(value) => value,
             Err(err) => {
-                context.set_error(err);
+                context.set_error_from_runtime_error(err);
                 return std::ptr::null_mut();
             }
         };
@@ -2484,7 +2641,7 @@ pub unsafe extern "C" fn PyUnicode_AsDecodedObject(
         ) {
             Ok(decoded) => context.alloc_cpython_ptr_for_value(decoded),
             Err(err) => {
-                context.set_error(err);
+                context.set_error_from_runtime_error(err);
                 std::ptr::null_mut()
             }
         }
@@ -2618,6 +2775,7 @@ pub unsafe extern "C" fn PyUnicode_AsEncodedUnicode(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_FSConverter(arg: *mut c_void, addr: *mut c_void) -> c_int {
+    const PY_CLEANUP_SUPPORTED: c_int = 0x20000;
     if addr.is_null() {
         unsafe { PyErr_BadInternalCall() };
         return 0;
@@ -2661,7 +2819,7 @@ pub unsafe extern "C" fn PyUnicode_FSConverter(arg: *mut c_void, addr: *mut c_vo
         let slot = addr.cast::<*mut c_void>();
         *slot = output;
     }
-    1
+    PY_CLEANUP_SUPPORTED
 }
 
 #[unsafe(no_mangle)]
@@ -2771,7 +2929,7 @@ pub unsafe extern "C" fn PyUnicode_Translate(
         ) {
             Ok(value) => value,
             Err(err) => {
-                context.set_error(err);
+                context.set_error_from_runtime_error(err);
                 return std::ptr::null_mut();
             }
         };

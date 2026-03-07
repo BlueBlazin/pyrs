@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::runtime::Value;
+use crate::runtime::{RuntimeError, Value};
 
 use super::{InternalCallOutcome, ModuleCapiContext};
 
@@ -9,18 +9,18 @@ pub(in crate::vm::vm_extensions) fn cpython_call_internal_in_context(
     callable: Value,
     args: Vec<Value>,
     kwargs: HashMap<String, Value>,
-) -> Result<Value, String> {
+) -> Result<Value, RuntimeError> {
     if context.vm.is_null() {
-        return Err("missing VM context for call".to_string());
+        return Err(RuntimeError::new("missing VM context for call"));
     }
     // SAFETY: VM pointer is valid for active context lifetime.
     let vm = unsafe { &mut *context.vm };
     match vm.call_internal(callable, args, kwargs) {
         Ok(InternalCallOutcome::Value(value)) => Ok(value),
-        Ok(InternalCallOutcome::CallerExceptionHandled) => Err(vm
-            .runtime_error_from_active_exception("call failed")
-            .message),
-        Err(err) => Err(err.message),
+        Ok(InternalCallOutcome::CallerExceptionHandled) => {
+            Err(vm.runtime_error_from_active_exception("call failed"))
+        }
+        Err(err) => Err(err),
     }
 }
 

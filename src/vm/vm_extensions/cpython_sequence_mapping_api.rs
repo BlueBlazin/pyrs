@@ -1,20 +1,24 @@
 use std::collections::HashMap;
 use std::ffi::{CString, c_char, c_void};
 
-use crate::runtime::{BuiltinFunction, IteratorKind, IteratorObject, Object, Value};
-use crate::vm::{add_values, is_truthy, mul_values};
+use crate::runtime::{BuiltinFunction, IteratorKind, IteratorObject, Object, RuntimeError, Value};
+use crate::vm::{InternalCallOutcome, add_values, is_truthy, mul_values};
 
 use super::{
-    CpythonMappingMethods, CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject, Py_DecRef,
-    Py_XDecRef, Py_XIncRef, PyCallable_Check, PyDict_Items, PyDict_Keys, PyDict_Values,
-    PyErr_BadInternalCall, PyErr_Clear, PyExc_TypeError, PyLong_FromSsize_t, PyObject_CallNoArgs,
-    PyObject_DelItem, PyObject_GetAttrString, PyObject_GetItem, PyObject_HasAttrString,
-    PyObject_HasAttrStringWithError, PyObject_SetItem, PyObject_Size, PySlice_New,
-    PyUnicode_FromString, c_name_to_string, cpython_active_exception_is,
-    cpython_binary_numeric_op_with_heap, cpython_call_builtin, cpython_clear_active_exception,
-    cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error, cpython_value_from_ptr,
-    cpython_value_type_name_from_ptr, with_active_cpython_context_mut,
+    CpythonMappingMethods, CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject,
+    ModuleCapiContext, Py_DecRef, Py_XDecRef, Py_XIncRef, PyCallable_Check, PyDict_Items,
+    PyDict_Keys, PyDict_Values, PyErr_BadInternalCall, PyErr_Clear, PyExc_TypeError,
+    PyLong_FromSsize_t, PyObject_CallNoArgs, PyObject_DelItem, PyObject_GetAttrString,
+    PyObject_GetItem, PyObject_HasAttrString, PyObject_HasAttrStringWithError, PyObject_SetItem,
+    PyObject_Size, PySlice_New, PyUnicode_FromString, c_name_to_string,
+    cpython_active_exception_is, cpython_binary_numeric_op_with_heap,
+    cpython_clear_active_exception, cpython_set_error, cpython_set_typed_error,
+    cpython_value_from_ptr, cpython_value_type_name_from_ptr, with_active_cpython_context_mut,
 };
+
+fn set_context_error_from_runtime_error(context: &mut ModuleCapiContext, err: RuntimeError) {
+    context.set_error_from_runtime_error(err);
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PySequence_Check(object: *mut c_void) -> i32 {
@@ -380,38 +384,68 @@ pub unsafe extern "C" fn PySequence_In(container: *mut c_void, value: *mut c_voi
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PySequence_Tuple(object: *mut c_void) -> *mut c_void {
-    let value = match cpython_value_from_ptr(object) {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(err);
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PySequence_Tuple received unknown object pointer");
+            return std::ptr::null_mut();
+        };
+        if context.vm.is_null() {
+            context.set_error("PySequence_Tuple missing VM context");
             return std::ptr::null_mut();
         }
-    };
-    match cpython_call_builtin(BuiltinFunction::Tuple, vec![value]) {
-        Ok(value) => cpython_new_ptr_for_value(value),
-        Err(err) => {
-            cpython_set_error(err);
-            std::ptr::null_mut()
+        let vm = unsafe { &mut *context.vm };
+        match vm.call_internal(Value::Builtin(BuiltinFunction::Tuple), vec![value], HashMap::new()) {
+            Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                set_context_error_from_runtime_error(
+                    context,
+                    vm.runtime_error_from_active_exception("tuple() failed"),
+                );
+                std::ptr::null_mut()
+            }
+            Err(err) => {
+                set_context_error_from_runtime_error(context, err);
+                std::ptr::null_mut()
+            }
         }
-    }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PySequence_List(object: *mut c_void) -> *mut c_void {
-    let value = match cpython_value_from_ptr(object) {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(err);
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PySequence_List received unknown object pointer");
+            return std::ptr::null_mut();
+        };
+        if context.vm.is_null() {
+            context.set_error("PySequence_List missing VM context");
             return std::ptr::null_mut();
         }
-    };
-    match cpython_call_builtin(BuiltinFunction::List, vec![value]) {
-        Ok(value) => cpython_new_ptr_for_value(value),
-        Err(err) => {
-            cpython_set_error(err);
-            std::ptr::null_mut()
+        let vm = unsafe { &mut *context.vm };
+        match vm.call_internal(Value::Builtin(BuiltinFunction::List), vec![value], HashMap::new()) {
+            Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                set_context_error_from_runtime_error(
+                    context,
+                    vm.runtime_error_from_active_exception("list() failed"),
+                );
+                std::ptr::null_mut()
+            }
+            Err(err) => {
+                set_context_error_from_runtime_error(context, err);
+                std::ptr::null_mut()
+            }
         }
-    }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -421,19 +455,43 @@ pub unsafe extern "C" fn PySequence_Fast(object: *mut c_void, msg: *const c_char
             unsafe { Py_XIncRef(object) };
             object
         }
-        Ok(value) => match cpython_call_builtin(BuiltinFunction::Tuple, vec![value]) {
-            Ok(value) => cpython_new_ptr_for_value(value),
-            Err(err) => {
-                if !msg.is_null()
-                    && let Ok(text) = unsafe { c_name_to_string(msg) }
-                {
-                    cpython_set_error(text);
-                } else {
-                    cpython_set_error(err);
-                }
-                std::ptr::null_mut()
+        Ok(value) => with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                context.set_error("PySequence_Fast missing VM context");
+                return std::ptr::null_mut();
             }
-        },
+            let vm = unsafe { &mut *context.vm };
+            match vm.call_internal(Value::Builtin(BuiltinFunction::Tuple), vec![value], HashMap::new()) {
+                Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
+                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    let err = vm.runtime_error_from_active_exception("tuple() failed");
+                    if err.exception_name() == Some("TypeError")
+                        && !msg.is_null()
+                        && let Ok(text) = unsafe { c_name_to_string(msg) }
+                    {
+                        cpython_set_typed_error(unsafe { PyExc_TypeError }, text);
+                    } else {
+                        set_context_error_from_runtime_error(context, err);
+                    }
+                    std::ptr::null_mut()
+                }
+                Err(err) => {
+                    if err.exception_name() == Some("TypeError")
+                        && !msg.is_null()
+                        && let Ok(text) = unsafe { c_name_to_string(msg) }
+                    {
+                        cpython_set_typed_error(unsafe { PyExc_TypeError }, text);
+                    } else {
+                        set_context_error_from_runtime_error(context, err);
+                    }
+                    std::ptr::null_mut()
+                }
+            }
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }),
         Err(err) => {
             cpython_set_error(err);
             std::ptr::null_mut()

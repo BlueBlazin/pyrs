@@ -1686,7 +1686,7 @@ pub unsafe extern "C" fn PyWrapper_New(
         ) {
             Ok(value) => value,
             Err(err) => {
-                context.set_error(err);
+                context.set_error_from_runtime_error(err);
                 return std::ptr::null_mut();
             }
         };
@@ -1776,7 +1776,7 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_cfunction_tp_call(
             ) {
                 Ok(value) => value,
                 Err(err) => {
-                    context.set_error(err);
+                    context.set_error_from_runtime_error(err);
                     return std::ptr::null_mut();
                 }
             };
@@ -1856,7 +1856,7 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_tp_call(
                 ) {
                     Ok(value) => value,
                     Err(err) => {
-                        context.set_error(err);
+                        context.set_error_from_runtime_error(err);
                         return std::ptr::null_mut();
                     }
                 };
