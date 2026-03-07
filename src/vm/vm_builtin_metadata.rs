@@ -197,6 +197,147 @@ fn function_docstring_from_code(code: &CodeObject) -> Option<Value> {
 }
 
 impl Vm {
+    fn re_runtime_instance_kind(class_ref: &ObjRef) -> Option<&'static str> {
+        let Object::Class(class_data) = &*class_ref.kind() else {
+            return None;
+        };
+        if !matches!(
+            class_data.attrs.get("__module__"),
+            Some(Value::Str(module_name)) if module_name == "re"
+        ) {
+            return None;
+        }
+        match class_data.name.as_str() {
+            "Pattern" => Some("Pattern"),
+            "Match" => Some("Match"),
+            _ => None,
+        }
+    }
+
+    fn load_attr_re_runtime_instance(
+        &mut self,
+        instance: &ObjRef,
+        class_ref: &ObjRef,
+        attr_name: &str,
+    ) -> Option<AttrAccessOutcome> {
+        let kind = Self::re_runtime_instance_kind(class_ref)?;
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        let attr_value =
+            |name: &str| instance_data.attrs.get(name).cloned().map(AttrAccessOutcome::Value);
+        match kind {
+            "Pattern" => match attr_name {
+                "pattern" | "flags" | "groupindex" | "groups" => attr_value(attr_name),
+                "search" => Some(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                    NativeMethodKind::RePatternSearch,
+                    instance.clone(),
+                ))),
+                "match" => Some(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                    NativeMethodKind::RePatternMatch,
+                    instance.clone(),
+                ))),
+                "fullmatch" => Some(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                    NativeMethodKind::RePatternFullMatch,
+                    instance.clone(),
+                ))),
+                "sub" => Some(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                    NativeMethodKind::RePatternSub,
+                    instance.clone(),
+                ))),
+                "subn" => Some(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                    NativeMethodKind::RePatternSubN,
+                    instance.clone(),
+                ))),
+                "findall" => Some(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                    BuiltinFunction::RePatternFindAll,
+                    instance.clone(),
+                ))),
+                "finditer" => Some(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                    BuiltinFunction::RePatternFindIter,
+                    instance.clone(),
+                ))),
+                "split" => Some(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                    BuiltinFunction::RePatternSplit,
+                    instance.clone(),
+                ))),
+                "__repr__" | "__str__" => Some(AttrAccessOutcome::Value(
+                    self.alloc_native_bound_method(NativeMethodKind::RePatternRepr, instance.clone()),
+                )),
+                _ if attr_name.starts_with("__pyrs_") => attr_value(attr_name),
+                _ => None,
+            },
+            "Match" => match attr_name {
+                "re" | "string" | "pos" | "endpos" | "lastindex" | "lastgroup" | "regs" => {
+                    attr_value(attr_name)
+                }
+                "group" | "__getitem__" => Some(AttrAccessOutcome::Value(
+                    self.alloc_native_bound_method(NativeMethodKind::ReMatchGroup, instance.clone()),
+                )),
+                "groups" => Some(AttrAccessOutcome::Value(
+                    self.alloc_native_bound_method(NativeMethodKind::ReMatchGroups, instance.clone()),
+                )),
+                "groupdict" => Some(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                    NativeMethodKind::ReMatchGroupDict,
+                    instance.clone(),
+                ))),
+                "start" => Some(AttrAccessOutcome::Value(
+                    self.alloc_native_bound_method(NativeMethodKind::ReMatchStart, instance.clone()),
+                )),
+                "end" => Some(AttrAccessOutcome::Value(
+                    self.alloc_native_bound_method(NativeMethodKind::ReMatchEnd, instance.clone()),
+                )),
+                "span" => Some(AttrAccessOutcome::Value(
+                    self.alloc_native_bound_method(NativeMethodKind::ReMatchSpan, instance.clone()),
+                )),
+                "__repr__" | "__str__" => Some(AttrAccessOutcome::Value(
+                    self.alloc_native_bound_method(NativeMethodKind::ReMatchRepr, instance.clone()),
+                )),
+                _ if attr_name.starts_with('_') => attr_value(attr_name),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn re_runtime_attr_is_readonly(class_ref: &ObjRef, attr_name: &str) -> bool {
+        match Self::re_runtime_instance_kind(class_ref) {
+            Some("Pattern") => matches!(
+                attr_name,
+                "pattern"
+                    | "flags"
+                    | "groupindex"
+                    | "groups"
+                    | "search"
+                    | "match"
+                    | "fullmatch"
+                    | "sub"
+                    | "subn"
+                    | "findall"
+                    | "finditer"
+                    | "split"
+            ),
+            Some("Match") => matches!(
+                attr_name,
+                "re"
+                    | "string"
+                    | "pos"
+                    | "endpos"
+                    | "lastindex"
+                    | "lastgroup"
+                    | "regs"
+                    | "group"
+                    | "__getitem__"
+                    | "groups"
+                    | "groupdict"
+                    | "start"
+                    | "end"
+                    | "span"
+            ),
+            _ => false,
+        }
+    }
+
     fn builtin_type_has_none_hash(&self, builtin: BuiltinFunction) -> bool {
         matches!(
             builtin,
@@ -8147,6 +8288,10 @@ impl Vm {
             ));
         }
 
+        if let Some(attr) = self.load_attr_re_runtime_instance(instance, &class_ref, attr_name) {
+            return Ok(attr);
+        }
+
         if let Some(attr) = self.load_attr_property_instance(instance, attr_name)? {
             return Ok(AttrAccessOutcome::Value(attr));
         }
@@ -9232,6 +9377,17 @@ impl Vm {
                 ));
             }
         };
+        if Self::re_runtime_attr_is_readonly(&class_ref, attr_name) {
+            return Err(RuntimeError::attribute_error(format!(
+                "'{}' object attribute '{}' is read-only",
+                match Self::re_runtime_instance_kind(&class_ref) {
+                    Some("Pattern") => "re.Pattern",
+                    Some("Match") => "re.Match",
+                    _ => "object",
+                },
+                attr_name
+            )));
+        }
         if self.property_descriptor_parts(instance).is_some() && attr_name != "__doc__" {
             return Err(RuntimeError::attribute_error(format!(
                 "'property' object has no attribute '{}' and no __dict__ for setting new attributes",
@@ -9480,6 +9636,17 @@ impl Vm {
                 ));
             }
         };
+        if Self::re_runtime_attr_is_readonly(&class_ref, attr_name) {
+            return Err(RuntimeError::attribute_error(format!(
+                "'{}' object attribute '{}' is read-only",
+                match Self::re_runtime_instance_kind(&class_ref) {
+                    Some("Pattern") => "re.Pattern",
+                    Some("Match") => "re.Match",
+                    _ => "object",
+                },
+                attr_name
+            )));
+        }
         if attr_name == "_CHUNK_SIZE"
             && matches!(
                 &*class_ref.kind(),
