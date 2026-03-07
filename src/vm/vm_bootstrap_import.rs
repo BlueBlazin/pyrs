@@ -10747,9 +10747,12 @@ impl Vm {
             return Ok(Some(module));
         }
         if self.find_module_file(&full_name).is_some() {
-            let caller_depth = self.frames.len();
-            let module = self.import_module_object(&full_name)?;
-            self.run_pending_import_frames(caller_depth)?;
+            let return_policy = if self.should_defer_running_import_completion() {
+                ImportReturnPolicy::DeferredWhenFramesQueued
+            } else {
+                ImportReturnPolicy::Synchronous
+            };
+            let module = self.import_module_object_with_policy(&full_name, return_policy)?;
             let module = self.canonical_imported_module_for_name(&full_name, module);
             self.upsert_module_global(parent, attr_name, Value::Module(module.clone()));
             return Ok(Some(module));
@@ -11443,7 +11446,7 @@ impl Vm {
         self.cleanup_partial_modules(existing_modules);
     }
 
-    fn module_requires_realization(&mut self, name: &str, module: &ObjRef) -> bool {
+    pub(super) fn module_requires_realization(&mut self, name: &str, module: &ObjRef) -> bool {
         if Self::module_is_initializing(module) {
             return false;
         }

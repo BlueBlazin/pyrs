@@ -1047,6 +1047,53 @@ ok = os_mod.path.join('a', 'b') == 'a/b' and os.path.join('a', 'b') == 'a/b'\n";
 }
 
 #[test]
+fn from_import_submodule_executes_on_small_stack_without_recursive_vm_reentry() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    run_with_stack("small-stack-from-import-submodule", 2 * 1024 * 1024, move || {
+        let source = "\
+from compression._common import _streams\n\
+import io\n\
+ok = (_streams.__name__ == 'compression._common._streams' and io.__name__ == 'io')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn collections_abc_import_executes_on_small_stack_without_recursive_vm_reentry() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    run_with_stack("small-stack-import-collections-abc", 2 * 1024 * 1024, move || {
+        let source = concat!(
+            "from collections.abc import Mapping\n",
+            "class C(Mapping):\n",
+            "    def __iter__(self):\n",
+            "        return iter(())\n",
+            "    def __len__(self):\n",
+            "        return 0\n",
+            "    def __getitem__(self, key):\n",
+            "        raise KeyError\n",
+            "c = C()\n",
+            "setattr(c, 'x', 1)\n",
+            "ok = (c.x == 1 and C.__mro__[-1] is object)\n",
+        );
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn load_global_cache_invalidates_after_store_global() {
     let source = "x = 1\ndef f():\n    return x\na = f()\nx = 2\nb = f()";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -17266,7 +17313,7 @@ fn unittest_subtest_string_render_does_not_raise_repr_error() {
         .name("unittest-subtest-str".to_string())
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
-            let source = "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        pass\nsub = unittest.case._SubTest(T('test_x'), None, {'fn': (lambda: 1)})\ntext = str(sub)\nok = ('fn=<function>' in text and 'test_x' in text)\n";
+            let source = "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        pass\nsub = unittest.case._SubTest(T('test_x'), None, {'fn': (lambda: 1)})\ntext = str(sub)\nok = (text.startswith(\"test_x (__main__.T.test_x) [None] (fn=<function <lambda> at 0x\") and text.endswith('>)'))\n";
             let module = parser::parse_module(source).expect("parse should succeed");
             let code = compiler::compile_module(&module).expect("compile should succeed");
             let mut vm = Vm::new();

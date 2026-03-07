@@ -1191,6 +1191,7 @@ pub struct Vm {
     active_generator_resume: Option<u64>,
     active_generator_resume_boundary: Option<usize>,
     generator_resume_outcome: Option<GeneratorResumeOutcome>,
+    active_run_depth: usize,
     run_stop_depth: Option<usize>,
     suppress_metaclass_dispatch_depth: usize,
     pending_import_drain_depth: usize,
@@ -1494,6 +1495,7 @@ impl Vm {
             active_generator_resume: None,
             active_generator_resume_boundary: None,
             generator_resume_outcome: None,
+            active_run_depth: 0,
             run_stop_depth: None,
             suppress_metaclass_dispatch_depth: 0,
             pending_import_drain_depth: 0,
@@ -4099,6 +4101,7 @@ impl Vm {
         self.active_generator_resume = None;
         self.active_generator_resume_boundary = None;
         self.generator_resume_outcome = None;
+        self.active_run_depth = 0;
         self.run_stop_depth = None;
         self.pending_import_drain_depth = 0;
         let code = Rc::new(code.clone());

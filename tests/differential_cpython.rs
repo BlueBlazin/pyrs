@@ -3063,6 +3063,39 @@ result = {
 }
 
 #[test]
+fn differential_unittest_subtest_string_render_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+def normalize_text(text):
+    start = text.find("0x")
+    if start == -1:
+        return text
+    end = start + 2
+    while end < len(text) and text[end] in "0123456789abcdefABCDEF":
+        end += 1
+    return text[:start] + "0xADDR" + text[end:]
+
+import unittest
+
+class T(unittest.TestCase):
+    def test_x(self):
+        pass
+
+sub = unittest.case._SubTest(T("test_x"), None, {"fn": (lambda: 1)})
+result = {
+    "text": normalize_text(str(sub)),
+    "type_repr": repr(type(sub)),
+    "class_repr": repr(sub.__class__),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_cli_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
 fn differential_runtime_itertools_iterator_helper_parity() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;

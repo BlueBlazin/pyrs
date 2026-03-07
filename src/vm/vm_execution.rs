@@ -834,6 +834,39 @@ impl Vm {
         }
     }
 
+    fn defer_dotted_import_until_parent_ready(
+        &mut self,
+        name: &str,
+        caller_idx: usize,
+    ) -> Result<bool, RuntimeError> {
+        if !self.should_defer_running_import_completion() {
+            return Ok(false);
+        }
+        let Some((parent, _)) = name.rsplit_once('.') else {
+            return Ok(false);
+        };
+        let parent_needs_load = self
+            .modules
+            .get(parent)
+            .cloned()
+            .is_none_or(|parent_module| self.module_requires_realization(parent, &parent_module));
+        if !parent_needs_load {
+            return Ok(false);
+        }
+        let frames_before = self.frames.len();
+        let _ = self.import_module_object_with_policy(
+            parent,
+            ImportReturnPolicy::DeferredWhenFramesQueued,
+        )?;
+        if self.frames.len() <= frames_before {
+            return Ok(false);
+        }
+        if let Some(frame) = self.frames.get_mut(caller_idx) {
+            frame.ip = frame.last_ip;
+        }
+        Ok(true)
+    }
+
     fn bind_import_star_entries_to_caller(
         &mut self,
         caller_idx: usize,
@@ -895,7 +928,9 @@ impl Vm {
     }
 
     pub(super) fn run(&mut self) -> Result<Value, RuntimeError> {
-        loop {
+        self.active_run_depth = self.active_run_depth.saturating_add(1);
+        let result = (|| {
+            loop {
             if let Some(stop_depth) = self.run_stop_depth
                 && self.frames.len() <= stop_depth
             {
@@ -1095,7 +1130,10 @@ impl Vm {
                     self.run_pending_del_finalizers(false);
                 }
             }
-        }
+            }
+        })();
+        self.active_run_depth = self.active_run_depth.saturating_sub(1);
+        result
     }
 
     #[inline]
@@ -6807,6 +6845,9 @@ impl Vm {
                         return Err(RuntimeError::new("import name index out of range"));
                     }
                 };
+                if self.defer_dotted_import_until_parent_ready(&name, caller_idx)? {
+                    return Ok(None);
+                }
                 let module = self.import_module_object_with_policy(
                     &name,
                     ImportReturnPolicy::DeferredWhenFramesQueued,
@@ -6829,13 +6870,27 @@ impl Vm {
                         .cloned()
                         .ok_or_else(|| RuntimeError::new("import name index out of range"))?
                 };
-                let fromlist = self.pop_value()?;
-                let level_value = self.pop_value()?;
-                let level = value_to_int(level_value)?;
+                let level = {
+                    let frame = self.frames.get(caller_idx).ok_or_else(|| {
+                        RuntimeError::new("stack underflow (ImportNameCpython caller)")
+                    })?;
+                    let stack_len = frame.stack.len();
+                    let level_value = frame
+                        .stack
+                        .get(stack_len.saturating_sub(2))
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("stack underflow (ImportNameCpython level)"))?;
+                    value_to_int(level_value)?
+                };
                 if level < 0 {
                     return Err(RuntimeError::new("negative import level"));
                 }
                 let resolved_name = self.resolve_import_name(&name, level as usize)?;
+                if self.defer_dotted_import_until_parent_ready(&resolved_name, caller_idx)? {
+                    return Ok(None);
+                }
+                let fromlist = self.pop_value()?;
+                let _ = self.pop_value()?;
                 let module = self.import_module_object_with_policy(
                     &resolved_name,
                     ImportReturnPolicy::DeferredWhenFramesQueued,

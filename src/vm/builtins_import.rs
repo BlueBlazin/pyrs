@@ -8,6 +8,10 @@ use super::{
 };
 
 impl Vm {
+    pub(super) fn should_defer_running_import_completion(&self) -> bool {
+        self.active_run_depth > 0 && !super::vm_extensions::cpython_active_context_is_set()
+    }
+
     fn import_active_exception_summary(&self, value: &Value) -> String {
         match value {
             Value::Exception(exception) => {
@@ -371,10 +375,11 @@ impl Vm {
         // unless this is a genuine re-entrant cycle returning an already
         // registered in-progress module.
         if self.frames.len() > caller_depth {
-            let cpython_context_active = super::vm_extensions::cpython_active_context_is_set();
             match return_policy {
                 ImportReturnPolicy::Synchronous => self.run_pending_import_frames(caller_depth)?,
-                ImportReturnPolicy::DeferredWhenFramesQueued if !cpython_context_active => {
+                ImportReturnPolicy::DeferredWhenFramesQueued
+                    if self.should_defer_running_import_completion() =>
+                {
                     return Ok(module);
                 }
                 ImportReturnPolicy::DeferredWhenFramesQueued => {
