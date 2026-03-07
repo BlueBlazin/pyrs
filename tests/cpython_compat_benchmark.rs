@@ -96,6 +96,37 @@ fn summarizer_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/summarize_cpython_compat_benchmark.py")
 }
 
+fn create_synthetic_test_lib(root: &Path, cpython_lib: &Path) -> PathBuf {
+    let lib_root = root.join("lib");
+    let test_dir = lib_root.join("test");
+    fs::create_dir_all(&test_dir).expect("create synthetic test package");
+    fs::write(test_dir.join("__init__.py"), "").expect("write synthetic test package init");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(cpython_lib.join("test/libregrtest"), test_dir.join("libregrtest"))
+            .expect("symlink libregrtest package");
+        std::os::unix::fs::symlink(cpython_lib.join("test/support"), test_dir.join("support"))
+            .expect("symlink support package");
+    }
+    fs::write(
+        test_dir.join("test_benchmark_orchestrator.py"),
+        r#"
+import unittest
+
+class OrchestratorSuite(unittest.TestCase):
+    def test_pass(self):
+        self.assertEqual(4, 2 + 2)
+
+    def test_subtests(self):
+        for value in (1, 2):
+            with self.subTest(value=value):
+                self.assertLess(value, 2)
+"#,
+    )
+    .expect("write synthetic orchestrator module");
+    lib_root
+}
+
 fn run_worker(bin: &Path, module_name: &str, search_path: &Path, mode: &str) -> String {
     let output = Command::new(bin)
         .arg("-S")
@@ -214,33 +245,7 @@ fn orchestrator_emits_manifest_summary_and_shards_for_synthetic_suite() {
     };
 
     let root = temp_root("compat_benchmark_orchestrator");
-    let lib_root = root.join("lib");
-    let test_dir = lib_root.join("test");
-    fs::create_dir_all(&test_dir).expect("create synthetic test package");
-    fs::write(test_dir.join("__init__.py"), "").expect("write synthetic test package init");
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(cpython_lib.join("test/libregrtest"), test_dir.join("libregrtest"))
-            .expect("symlink libregrtest package");
-        std::os::unix::fs::symlink(cpython_lib.join("test/support"), test_dir.join("support"))
-            .expect("symlink support package");
-    }
-    fs::write(
-        test_dir.join("test_benchmark_orchestrator.py"),
-        r#"
-import unittest
-
-class OrchestratorSuite(unittest.TestCase):
-    def test_pass(self):
-        self.assertEqual(4, 2 + 2)
-
-    def test_subtests(self):
-        for value in (1, 2):
-            with self.subTest(value=value):
-                self.assertLess(value, 2)
-"#,
-    )
-    .expect("write synthetic orchestrator module");
+    let lib_root = create_synthetic_test_lib(&root, &cpython_lib);
 
     let out_dir = root.join("out");
     let output = Command::new(&cpython_bin)
@@ -277,6 +282,18 @@ class OrchestratorSuite(unittest.TestCase):
         manifest.contains(r#""count": 1"#),
         "manifest should record the single selected entry: {manifest}"
     );
+    for needle in [
+        r#""requested_entries": ["#,
+        r#""requested_entry_files": []"#,
+        r#""unmatched_requested_entries": []"#,
+        r#""selected_entry_count": 1"#,
+        r#""discovered_entry_count": 1"#,
+    ] {
+        assert!(
+            manifest.contains(needle),
+            "manifest missing expected selection metadata {needle}: {manifest}"
+        );
+    }
 
     let progress = fs::read_to_string(out_dir.join("progress.json")).expect("read progress");
     for needle in [
@@ -299,6 +316,7 @@ class OrchestratorSuite(unittest.TestCase):
         r#""run_timeout_secs": 60"#,
         r#""git": {"#,
         r#""host": {"#,
+        r#""selection": {"#,
         r#""result_shard": "results/test.test_benchmark_orchestrator.json""#,
     ] {
         assert!(
@@ -347,6 +365,117 @@ class OrchestratorSuite(unittest.TestCase):
         assert!(
             result.contains(needle),
             "result shard missing expected fragment {needle}: {result}"
+        );
+    }
+}
+
+#[test]
+fn orchestrator_entry_file_selection_is_strict_by_default_and_records_unmatched_entries() {
+    let Some(cpython_bin) = cpython_bin_file_or_skip() else {
+        return;
+    };
+    let Some(cpython_lib) = detect_cpython_lib() else {
+        eprintln!("skipping orchestrator selection benchmark test (CPython Lib not found)");
+        return;
+    };
+
+    let root = temp_root("compat_benchmark_orchestrator_selection");
+    let lib_root = create_synthetic_test_lib(&root, &cpython_lib);
+    let entry_file = root.join("entries.txt");
+    fs::write(
+        &entry_file,
+        "test.test_benchmark_orchestrator\n# comment\n\ntest.test_missing_entry\n",
+    )
+    .expect("write entry file");
+
+    let strict_output = Command::new(&cpython_bin)
+        .arg(orchestrator_script())
+        .arg("--runner-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-lib")
+        .arg(&lib_root)
+        .arg("--entry-file")
+        .arg(&entry_file)
+        .arg("--out-dir")
+        .arg(root.join("strict_out"))
+        .output()
+        .expect("run strict orchestrator selection");
+    assert!(
+        !strict_output.status.success(),
+        "strict orchestrator selection should fail\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&strict_output.stdout),
+        String::from_utf8_lossy(&strict_output.stderr)
+    );
+    let strict_stderr = String::from_utf8_lossy(&strict_output.stderr);
+    assert!(
+        strict_stderr.contains("test.test_missing_entry"),
+        "strict orchestrator selection should report the unmatched entry\nstderr:\n{strict_stderr}"
+    );
+
+    let out_dir = root.join("allow_missing_out");
+    let allow_output = Command::new(&cpython_bin)
+        .arg(orchestrator_script())
+        .arg("--runner-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-lib")
+        .arg(&lib_root)
+        .arg("--entry-file")
+        .arg(&entry_file)
+        .arg("--allow-missing-entries")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--jobs")
+        .arg("1")
+        .arg("--run-timeout")
+        .arg("60")
+        .output()
+        .expect("run allow-missing orchestrator selection");
+    assert!(
+        allow_output.status.success(),
+        "allow-missing orchestrator selection should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&allow_output.stdout),
+        String::from_utf8_lossy(&allow_output.stderr)
+    );
+    let allow_stderr = String::from_utf8_lossy(&allow_output.stderr);
+    assert!(
+        allow_stderr.contains("warning: requested benchmark entries are not discoverable on this host"),
+        "allow-missing orchestrator selection should warn about the unmatched entry\nstderr:\n{allow_stderr}"
+    );
+
+    let manifest =
+        fs::read_to_string(out_dir.join("manifest.json")).expect("read allow-missing manifest");
+    for needle in [
+        r#""requested_entry_files": ["#,
+        "entries.txt",
+        r#""requested_entries": ["#,
+        r#""test.test_missing_entry""#,
+        r#""unmatched_requested_entries": ["#,
+        r#""selected_entry_count": 1"#,
+        r#""allow_missing_entries": true"#,
+    ] {
+        assert!(
+            manifest.contains(needle),
+            "allow-missing manifest missing expected fragment {needle}: {manifest}"
+        );
+    }
+
+    let summary =
+        fs::read_to_string(out_dir.join("summary.json")).expect("read allow-missing summary");
+    for needle in [
+        r#""requested_entry_files": ["#,
+        "entries.txt",
+        r#""unmatched_requested_entries": ["#,
+        r#""test.test_missing_entry""#,
+        r#""discoverable_case_count": 2"#,
+        r#""executed_entry_count": 1"#,
+    ] {
+        assert!(
+            summary.contains(needle),
+            "allow-missing summary missing expected fragment {needle}: {summary}"
         );
     }
 }

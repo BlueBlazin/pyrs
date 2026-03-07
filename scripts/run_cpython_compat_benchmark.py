@@ -202,6 +202,12 @@ def build_metadata(
     inventory_timeout_secs: int,
     run_timeout_secs: int,
     inventory_only: bool,
+    requested_entries: list[str],
+    requested_entry_files: list[str],
+    unmatched_requested_entries: list[str],
+    max_entries: int,
+    allow_missing_entries: bool,
+    discovered_entry_count: int,
     entries: list[str],
 ) -> dict[str, Any]:
     return {
@@ -227,6 +233,17 @@ def build_metadata(
             "inventory_timeout_secs": inventory_timeout_secs,
             "run_timeout_secs": run_timeout_secs,
             "inventory_only": inventory_only,
+            "max_entries": max_entries if max_entries > 0 else None,
+            "allow_missing_entries": allow_missing_entries,
+        },
+        "discovery": {
+            "discovered_entry_count": discovered_entry_count,
+        },
+        "selection": {
+            "requested_entries": requested_entries,
+            "requested_entry_files": requested_entry_files,
+            "unmatched_requested_entries": unmatched_requested_entries,
+            "selected_entry_count": len(entries),
         },
         "entries": {
             "count": len(entries),
@@ -585,9 +602,65 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--jobs", type=int, default=0, help="Parallel workers (0 = CPU count)")
     parser.add_argument("--max-entries", type=int, default=0, help="Optional entry cap for dry runs")
     parser.add_argument("--entry", action="append", default=[], help="Only run the named entry/module (repeatable)")
+    parser.add_argument("--entry-file", action="append", default=[], help="Read explicit entry/module names from a newline-delimited file (repeatable)")
+    parser.add_argument("--allow-missing-entries", action="store_true", help="Continue when explicit entry names are not discoverable on this host")
     parser.add_argument("--inventory-only", action="store_true", help="Discover entries and inventory, but do not execute them")
     parser.add_argument("--force", action="store_true", help="Recompute shards even if they already exist")
     return parser.parse_args()
+
+
+def unique_preserving_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        ordered.append(item)
+    return ordered
+
+
+def read_entry_file(path: pathlib.Path) -> list[str]:
+    entries: list[str] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        entries.append(line)
+    return entries
+
+
+def resolve_selected_entries(
+    *,
+    discovered_entries: list[str],
+    requested_entries: list[str],
+    max_entries: int,
+    allow_missing_entries: bool,
+) -> tuple[list[str], list[str]]:
+    if not requested_entries:
+        selected = list(discovered_entries)
+        unmatched: list[str] = []
+    else:
+        discovered_set = set(discovered_entries)
+        selected = [entry for entry in requested_entries if entry in discovered_set]
+        unmatched = [entry for entry in requested_entries if entry not in discovered_set]
+        if unmatched:
+            preview = ", ".join(unmatched[:10])
+            if len(unmatched) > 10:
+                preview = f"{preview}, ... (+{len(unmatched) - 10} more)"
+            message = (
+                "requested benchmark entries are not discoverable on this host: "
+                f"{preview}"
+            )
+            if allow_missing_entries:
+                print(f"warning: {message}", file=sys.stderr, flush=True)
+            else:
+                raise SystemExit(message)
+    if max_entries > 0:
+        selected = selected[:max_entries]
+    if not selected:
+        raise SystemExit("no benchmark entries selected after applying filters")
+    return selected, unmatched
 
 
 def main() -> int:
@@ -609,12 +682,18 @@ def main() -> int:
     if not args.inventory_only:
         results_dir.mkdir(parents=True, exist_ok=True)
 
-    entries = discover_entries(cpython_bin, cpython_lib)
-    if args.entry:
-        selected = set(args.entry)
-        entries = [entry for entry in entries if entry in selected]
-    if args.max_entries > 0:
-        entries = entries[: args.max_entries]
+    discovered_entries = discover_entries(cpython_bin, cpython_lib)
+    requested_entry_files = [str(pathlib.Path(path)) for path in args.entry_file]
+    requested_entries = list(args.entry)
+    for entry_file in args.entry_file:
+        requested_entries.extend(read_entry_file(pathlib.Path(entry_file)))
+    requested_entries = unique_preserving_order(requested_entries)
+    entries, unmatched_requested_entries = resolve_selected_entries(
+        discovered_entries=discovered_entries,
+        requested_entries=requested_entries,
+        max_entries=args.max_entries,
+        allow_missing_entries=args.allow_missing_entries,
+    )
     jobs = args.jobs if args.jobs > 0 else max(1, os.cpu_count() or 1)
     metadata = build_metadata(
         cpython_bin=cpython_bin,
@@ -624,6 +703,12 @@ def main() -> int:
         inventory_timeout_secs=args.inventory_timeout,
         run_timeout_secs=args.run_timeout,
         inventory_only=args.inventory_only,
+        requested_entries=requested_entries,
+        requested_entry_files=requested_entry_files,
+        unmatched_requested_entries=unmatched_requested_entries,
+        max_entries=args.max_entries,
+        allow_missing_entries=args.allow_missing_entries,
+        discovered_entry_count=len(discovered_entries),
         entries=entries,
     )
     manifest = {

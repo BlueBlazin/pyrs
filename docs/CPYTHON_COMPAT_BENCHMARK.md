@@ -49,12 +49,30 @@ For a dry subset:
   --run-timeout 60
 ```
 
+For a curated batch file:
+
+```bash
+/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
+  scripts/run_cpython_compat_benchmark.py \
+  --runner-bin target/debug/pyrs \
+  --cpython-bin /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
+  --cpython-lib .local/Python-3.14.3/Lib \
+  --entry-file perf/cpython_compat_batch1.txt \
+  --allow-missing-entries \
+  --out-dir /tmp/cpython_compat_benchmark_batch1 \
+  --jobs 4 \
+  --run-timeout 120
+```
+
+Entry files are newline-delimited module names. Blank lines and `#` comments are
+ignored.
+
 ## Output Layout
 
 The orchestrator writes a directory, not a single monolithic file:
 
 - `manifest.json`
-  - run metadata, selected entries, timeout config, and completion state
+  - run metadata, discovery/selection provenance, timeout config, and completion state
 - `progress.json`
   - live phase/count/status snapshot for long-running or interrupted benchmark runs
 - `summary.json`
@@ -81,6 +99,11 @@ Each result shard includes:
   the full CPython setup path relies on runtime features `pyrs` does not yet implement.
 - JSON is written by the worker to a file path provided by the orchestrator so
   test stdout/stderr chatter does not corrupt result parsing.
+- Explicit `--entry` / `--entry-file` selections are strict by default. If a
+  requested entry is not discoverable on the current host, the run exits before
+  starting. Use `--allow-missing-entries` when a curated batch may contain
+  platform-specific rows; the unmatched names are then recorded in
+  `manifest.json` and `summary.json`.
 - A derived rollup can be generated after a run with:
 
 ```bash
