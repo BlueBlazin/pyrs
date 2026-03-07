@@ -2884,7 +2884,7 @@ fn runtime_error_is_execution_timeout(err: &crate::runtime::RuntimeError) -> boo
 #[cfg(feature = "wasm-vm-probe")]
 fn runtime_error_line_column(err: &crate::runtime::RuntimeError) -> (usize, usize) {
     if let Some(exception) = err.exception.as_ref() {
-        for frame in &exception.traceback_frames {
+        for frame in exception.traceback_frames.iter() {
             if frame.line > 0 {
                 return (frame.line, frame.column);
             }
