@@ -10,20 +10,17 @@ const navLinks =
 	context === "home"
 		? [
 				{ label: "Docs", href: withBase("docs/") },
-				{ label: "Benchmark", href: withBase("benchmark/") },
 				{ label: "Playground", href: withBase("playground/") },
 				{ label: "GitHub", href: "https://github.com/BlueBlazin/pyrs" },
 			]
 		: context === "docs"
 			? [
 					{ label: "Home", href: withBase("") },
-					{ label: "Benchmark", href: withBase("benchmark/") },
 					{ label: "Playground", href: withBase("playground/") },
 					{ label: "GitHub", href: "https://github.com/BlueBlazin/pyrs" },
 				]
 			: [
 					{ label: "Home", href: withBase("") },
-					{ label: "Benchmark", href: withBase("benchmark/") },
 					{ label: "Docs", href: withBase("docs/") },
 					{ label: "GitHub", href: "https://github.com/BlueBlazin/pyrs" },
 				];
