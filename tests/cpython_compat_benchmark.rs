@@ -92,6 +92,10 @@ fn orchestrator_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/run_cpython_compat_benchmark.py")
 }
 
+fn summarizer_script() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/summarize_cpython_compat_benchmark.py")
+}
+
 fn run_worker(bin: &Path, module_name: &str, search_path: &Path, mode: &str) -> String {
     let output = Command::new(bin)
         .arg("-S")
@@ -300,6 +304,34 @@ class OrchestratorSuite(unittest.TestCase):
         assert!(
             summary.contains(needle),
             "summary missing expected fragment {needle}: {summary}"
+        );
+    }
+
+    let summarize_output = Command::new(&cpython_bin)
+        .arg(summarizer_script())
+        .arg("--benchmark-dir")
+        .arg(&out_dir)
+        .output()
+        .expect("run derived summary script");
+    assert!(
+        summarize_output.status.success(),
+        "derived summary script should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&summarize_output.stdout),
+        String::from_utf8_lossy(&summarize_output.stderr)
+    );
+    let derived =
+        fs::read_to_string(out_dir.join("derived_summary.json")).expect("read derived summary");
+    for needle in [
+        r#""discoverable_case_count": 2"#,
+        r#""executed_subtest_count": 2"#,
+        r#""top_modules_by_nonpass": ["#,
+        r#""failure_signatures": {"#,
+        r#""slowest_cases": ["#,
+        r#""slowest_subtests": ["#,
+    ] {
+        assert!(
+            derived.contains(needle),
+            "derived summary missing expected fragment {needle}: {derived}"
         );
     }
 

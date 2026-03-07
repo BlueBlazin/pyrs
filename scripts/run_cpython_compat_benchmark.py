@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 from collections import Counter
 from typing import Any
 
@@ -20,6 +21,7 @@ from typing import Any
 SCHEMA_VERSION = "v1"
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKER = REPO_ROOT / "scripts" / "cpython_compat_benchmark_worker.py"
+MAX_ERROR_DETAIL_CHARS = 16_000
 
 
 def detect_cpython_bin(explicit: str | None) -> pathlib.Path:
@@ -159,6 +161,21 @@ def write_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def truncate_detail(detail: str) -> str:
+    if len(detail) <= MAX_ERROR_DETAIL_CHARS:
+        return detail
+    return f"{detail[:MAX_ERROR_DETAIL_CHARS]}...<truncated>"
+
+
+def exception_payload(exc: BaseException) -> dict[str, Any]:
+    detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    return {
+        "type": type(exc).__name__,
+        "message": str(exc),
+        "detail": truncate_detail(detail),
+    }
+
+
 def git_head() -> str | None:
     try:
         completed = subprocess.run(
@@ -221,12 +238,14 @@ def build_metadata(
 def build_progress(
     *,
     metadata: dict[str, Any],
+    status: str,
     phase: str,
     entries: list[str],
     inventory_rows: dict[str, dict[str, Any]],
     run_rows: dict[str, dict[str, Any]],
     elapsed_total: float,
     last_completed_module: str | None = None,
+    error: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     inventory_statuses = Counter(
         row.get("status", "unknown")
@@ -246,6 +265,7 @@ def build_progress(
         "git": metadata["git"],
         "host": metadata["host"],
         "config": metadata["config"],
+        "status": status,
         "phase": phase,
         "entries_total": len(entries),
         "inventory_completed": len(inventory_rows),
@@ -255,6 +275,7 @@ def build_progress(
         "run_statuses": dict(sorted(run_statuses.items())),
         "elapsed_total_secs": round(elapsed_total, 6),
         "last_completed_module": last_completed_module,
+        "error": error,
     }
 
 
@@ -414,6 +435,7 @@ def run_entry(
 def summarize(
     out_dir: pathlib.Path,
     metadata: dict[str, Any],
+    run_state: dict[str, Any],
     entries: list[str],
     inventory_rows: dict[str, dict[str, Any]],
     run_rows: dict[str, dict[str, Any]],
@@ -464,6 +486,7 @@ def summarize(
 
     summary = {
         **metadata,
+        "run_state": run_state,
         "paths": {
             "out_dir": str(out_dir),
             "inventory_dir": str(out_dir / "inventory"),
@@ -487,6 +510,67 @@ def summarize(
         },
         "entries": index_rows,
     }
+    return summary
+
+
+def finalize_run(
+    *,
+    out_dir: pathlib.Path,
+    metadata: dict[str, Any],
+    manifest: dict[str, Any],
+    entries: list[str],
+    inventory_rows: dict[str, dict[str, Any]],
+    run_rows: dict[str, dict[str, Any]],
+    started: float,
+    status: str,
+    phase: str,
+    error: dict[str, Any] | None = None,
+    last_completed_module: str | None = None,
+) -> dict[str, Any]:
+    completed_at_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    elapsed_total = time.perf_counter() - started
+    run_state = {
+        "status": status,
+        "phase": phase,
+        "completed_at_utc": completed_at_utc,
+        "elapsed_total_secs": round(elapsed_total, 6),
+        "error": error,
+    }
+    summary = summarize(
+        out_dir=out_dir,
+        metadata=metadata,
+        run_state=run_state,
+        entries=entries,
+        inventory_rows=inventory_rows,
+        run_rows=run_rows,
+        elapsed_total=elapsed_total,
+    )
+    write_json(out_dir / "summary.json", summary)
+    manifest["status"] = status
+    manifest["phase"] = phase
+    manifest["completed_at_utc"] = completed_at_utc
+    manifest["error"] = error
+    manifest["results"] = {
+        "executed_entry_count": len(run_rows),
+        "discoverable_case_count": summary["inventory"]["discoverable_case_count"],
+        "executed_case_count": summary["results"]["executed_case_count"],
+        "executed_subtest_count": summary["results"]["executed_subtest_count"],
+    }
+    write_json(out_dir / "manifest.json", manifest)
+    write_json(
+        out_dir / "progress.json",
+        build_progress(
+            metadata=metadata,
+            status=status,
+            phase=phase,
+            entries=entries,
+            inventory_rows=inventory_rows,
+            run_rows=run_rows,
+            elapsed_total=elapsed_total,
+            last_completed_module=last_completed_module,
+            error=error,
+        ),
+    )
     return summary
 
 
@@ -545,6 +629,7 @@ def main() -> int:
     manifest = {
         **metadata,
         "status": "running",
+        "phase": "inventory",
         "paths": {
             "out_dir": str(out_dir),
             "inventory_dir": str(inventory_dir),
@@ -561,6 +646,7 @@ def main() -> int:
         out_dir / "progress.json",
         build_progress(
             metadata=metadata,
+            status="running",
             phase="inventory",
             entries=entries,
             inventory_rows=inventory_rows,
@@ -568,113 +654,121 @@ def main() -> int:
             elapsed_total=0.0,
         ),
     )
-    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
-        future_to_module = {
-            executor.submit(
-                inventory_entry,
-                module_name,
-                cpython_bin,
-                cpython_lib,
-                args.inventory_timeout,
-                inventory_dir,
-                args.force,
-            ): module_name
-            for module_name in entries
-        }
-        for future in concurrent.futures.as_completed(future_to_module):
-            module_name = future_to_module[future]
-            inventory_rows[module_name] = future.result()
-            write_json(
-                out_dir / "progress.json",
-                build_progress(
-                    metadata=metadata,
-                    phase="inventory",
-                    entries=entries,
-                    inventory_rows=inventory_rows,
-                    run_rows={},
-                    elapsed_total=time.perf_counter() - started,
-                    last_completed_module=module_name,
-                ),
-            )
-            print(f"[inventory] {module_name}", flush=True)
-
     run_rows: dict[str, dict[str, Any]] = {}
-    if not args.inventory_only:
-        runnable_entries = [
-            module_name
-            for module_name in entries
-            if inventory_rows[module_name].get("status") == "ok"
-        ]
-        write_json(
-            out_dir / "progress.json",
-            build_progress(
-                metadata=metadata,
-                phase="run",
-                entries=entries,
-                inventory_rows=inventory_rows,
-                run_rows=run_rows,
-                elapsed_total=time.perf_counter() - started,
-            ),
-        )
+    current_phase = "inventory"
+    last_completed_module: str | None = None
+    error: dict[str, Any] | None = None
+    final_status = "completed"
+    try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
             future_to_module = {
                 executor.submit(
-                    run_entry,
+                    inventory_entry,
                     module_name,
-                    runner_bin,
+                    cpython_bin,
                     cpython_lib,
-                    args.run_timeout,
-                    results_dir,
+                    args.inventory_timeout,
+                    inventory_dir,
                     args.force,
                 ): module_name
-                for module_name in runnable_entries
+                for module_name in entries
             }
             for future in concurrent.futures.as_completed(future_to_module):
                 module_name = future_to_module[future]
-                run_rows[module_name] = future.result()
+                inventory_rows[module_name] = future.result()
+                last_completed_module = module_name
                 write_json(
                     out_dir / "progress.json",
                     build_progress(
                         metadata=metadata,
-                        phase="run",
+                        status="running",
+                        phase="inventory",
                         entries=entries,
                         inventory_rows=inventory_rows,
-                        run_rows=run_rows,
+                        run_rows={},
                         elapsed_total=time.perf_counter() - started,
                         last_completed_module=module_name,
                     ),
                 )
-                print(f"[run] {module_name} -> {run_rows[module_name].get('status')}", flush=True)
+                print(f"[inventory] {module_name}", flush=True)
 
-    summary = summarize(
+        if not args.inventory_only:
+            current_phase = "run"
+            manifest["phase"] = "run"
+            write_json(out_dir / "manifest.json", manifest)
+            runnable_entries = [
+                module_name
+                for module_name in entries
+                if inventory_rows[module_name].get("status") == "ok"
+            ]
+            write_json(
+                out_dir / "progress.json",
+                build_progress(
+                    metadata=metadata,
+                    status="running",
+                    phase="run",
+                    entries=entries,
+                    inventory_rows=inventory_rows,
+                    run_rows=run_rows,
+                    elapsed_total=time.perf_counter() - started,
+                    last_completed_module=last_completed_module,
+                ),
+            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
+                future_to_module = {
+                    executor.submit(
+                        run_entry,
+                        module_name,
+                        runner_bin,
+                        cpython_lib,
+                        args.run_timeout,
+                        results_dir,
+                        args.force,
+                    ): module_name
+                    for module_name in runnable_entries
+                }
+                for future in concurrent.futures.as_completed(future_to_module):
+                    module_name = future_to_module[future]
+                    run_rows[module_name] = future.result()
+                    last_completed_module = module_name
+                    write_json(
+                        out_dir / "progress.json",
+                        build_progress(
+                            metadata=metadata,
+                            status="running",
+                            phase="run",
+                            entries=entries,
+                            inventory_rows=inventory_rows,
+                            run_rows=run_rows,
+                            elapsed_total=time.perf_counter() - started,
+                            last_completed_module=module_name,
+                        ),
+                    )
+                    print(f"[run] {module_name} -> {run_rows[module_name].get('status')}", flush=True)
+    except KeyboardInterrupt as exc:
+        final_status = "interrupted"
+        error = exception_payload(exc)
+    except Exception as exc:
+        final_status = "failed"
+        error = exception_payload(exc)
+
+    finalize_run(
         out_dir=out_dir,
         metadata=metadata,
+        manifest=manifest,
         entries=entries,
         inventory_rows=inventory_rows,
         run_rows=run_rows,
-        elapsed_total=time.perf_counter() - started,
+        started=started,
+        status=final_status,
+        phase=current_phase if final_status != "completed" else "completed",
+        error=error,
+        last_completed_module=last_completed_module,
     )
-    write_json(out_dir / "summary.json", summary)
-    manifest["status"] = "completed"
-    manifest["completed_at_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    manifest["results"] = {
-        "executed_entry_count": len(run_rows),
-        "discoverable_case_count": summary["inventory"]["discoverable_case_count"],
-        "executed_case_count": summary["results"]["executed_case_count"],
-        "executed_subtest_count": summary["results"]["executed_subtest_count"],
-    }
-    write_json(out_dir / "manifest.json", manifest)
-    write_json(
-        out_dir / "progress.json",
-        build_progress(
-            metadata=metadata,
-            phase="completed",
-            entries=entries,
-            inventory_rows=inventory_rows,
-            run_rows=run_rows,
-            elapsed_total=time.perf_counter() - started,
-        ),
-    )
+    if final_status == "interrupted":
+        return 130
+    if final_status == "failed":
+        return 1
     return 0
 
 

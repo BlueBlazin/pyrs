@@ -59,6 +59,8 @@ The orchestrator writes a directory, not a single monolithic file:
   - live phase/count/status snapshot for long-running or interrupted benchmark runs
 - `summary.json`
   - top-level counts, host/git metadata, config, and entry index
+- `derived_summary.json`
+  - grouped failure signatures, top non-pass modules, and slowest cases/subtests
 - `inventory/*.json`
   - host-CPython inventory shards per test entry
 - `results/*.json`
@@ -79,3 +81,10 @@ Each result shard includes:
   the full CPython setup path relies on runtime features `pyrs` does not yet implement.
 - JSON is written by the worker to a file path provided by the orchestrator so
   test stdout/stderr chatter does not corrupt result parsing.
+- A derived rollup can be generated after a run with:
+
+```bash
+/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
+  scripts/summarize_cpython_compat_benchmark.py \
+  --benchmark-dir perf/cpython_compat_benchmark_latest
+```
