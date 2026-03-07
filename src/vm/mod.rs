@@ -77,11 +77,14 @@ use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, CallKeywordArgs, ClassObject, DictViewKind,
     ExceptionObject, FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind,
     IteratorObject, MemoryViewObject, ModuleObject, NativeMethodKind, NativeMethodObject, Obj,
-    ObjRef, Object, RuntimeError, SuperObject, TestCapiScalarParseKind, Value, format_repr,
-    format_value,
+    ObjRef, Object, RuntimeError, SuperObject, TestCapiScalarParseKind,
+    TestCapiStringParseKind, Value, format_repr, format_value,
     runtime_get_int_max_str_digits,
 };
-use crate::unicode::{internal_char_from_codepoint, surrogate_codepoint_from_internal_char};
+use crate::unicode::{
+    canonical_codepoint_for_internal_char, internal_char_from_codepoint,
+    surrogate_codepoint_from_internal_char,
+};
 
 #[derive(Debug, Clone)]
 struct Block {
@@ -1260,6 +1263,7 @@ pub struct Vm {
     extension_init_failures: HashMap<String, String>,
     next_extension_callable_id: u64,
     local_shim_fallback_enabled: bool,
+    is_main_interpreter: bool,
     prefer_pure_json_when_available: bool,
     prefer_pure_pickle_when_available: bool,
     prefer_pure_re_when_available: bool,
@@ -1566,6 +1570,7 @@ impl Vm {
             // Shim fallback is restricted by LOCAL_SHIM_MODULES (`_ctypes`) and only used when
             // normal path resolution fails, so keep it enabled by default (allow explicit opt-out).
             local_shim_fallback_enabled: !host.env_flag_enabled("PYRS_DISABLE_LOCAL_SHIMS"),
+            is_main_interpreter: true,
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
             prefer_pure_re_when_available: true,
@@ -1630,6 +1635,11 @@ impl Vm {
             Vec::new(),
             false,
         );
+        if let Some(stdlib_root) = vm.detect_cpython_stdlib_root()
+            && !vm.module_paths.iter().any(|existing| existing == &stdlib_root)
+        {
+            vm.module_paths.push(stdlib_root);
+        }
         vm.install_sys_module();
         vm.install_importlib_modules();
         // Provide CPython core `_random` substrate; stdlib `random.py` layers on top.
@@ -3821,6 +3831,10 @@ impl Vm {
         self.traceback_caret_enabled = enabled;
     }
 
+    pub(crate) fn mark_as_subinterpreter(&mut self) {
+        self.is_main_interpreter = false;
+    }
+
     pub fn register_source_in_linecache(
         &mut self,
         code: &CodeObject,
@@ -3982,6 +3996,85 @@ impl Vm {
                 self.decode_text_bytes_via_codec_lookup(bytes, encoding, errors)
             }
             Err(err) => Err(err),
+        }
+    }
+
+    fn encode_text_bytes_with_codec_fallback(
+        &mut self,
+        text: &str,
+        encoding: &str,
+        errors: &str,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        let normalized = normalize_codec_encoding(Value::Str(encoding.to_string()))
+            .unwrap_or_else(|_| encoding.to_ascii_lowercase().replace('_', "-"));
+        match encode_text_bytes(text, &normalized, errors) {
+            Ok(bytes) => Ok(bytes),
+            Err(err) if err.message.contains("unsupported encoding") => {
+                self.encode_text_bytes_via_codec_lookup(text, encoding, errors)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn encode_text_bytes_via_codec_lookup(
+        &mut self,
+        text: &str,
+        encoding: &str,
+        errors: &str,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        let codec_info = self.call_builtin(
+            BuiltinFunction::CodecsLookup,
+            vec![Value::Str(encoding.to_string())],
+            HashMap::new(),
+        )?;
+        let encode = self.builtin_getattr(
+            vec![codec_info, Value::Str("encode".to_string())],
+            HashMap::new(),
+        )?;
+        let encoded = match self.call_internal_preserving_caller(
+            encode,
+            vec![
+                Value::Str(text.to_string()),
+                Value::Str(errors.to_string()),
+            ],
+            HashMap::new(),
+        )? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception("encode() failed"));
+            }
+        };
+        let Value::Tuple(tuple_obj) = encoded else {
+            return Err(RuntimeError::new(
+                "TypeError: encode codec must return a tuple",
+            ));
+        };
+        let Object::Tuple(items) = &*tuple_obj.kind() else {
+            return Err(RuntimeError::new(
+                "TypeError: encode codec must return a tuple",
+            ));
+        };
+        let Some(first) = items.first() else {
+            return Err(RuntimeError::new(
+                "TypeError: encode codec must return a non-empty tuple",
+            ));
+        };
+        match first {
+            Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                Object::Bytes(bytes) => Ok(bytes.clone()),
+                _ => Err(RuntimeError::new(
+                    "TypeError: encoder should return a bytes result",
+                )),
+            },
+            Value::ByteArray(bytes_obj) => match &*bytes_obj.kind() {
+                Object::ByteArray(bytes) => Ok(bytes.clone()),
+                _ => Err(RuntimeError::new(
+                    "TypeError: encoder should return a bytes result",
+                )),
+            },
+            _ => Err(RuntimeError::new(
+                "TypeError: encoder should return a bytes result",
+            )),
         }
     }
 
@@ -5536,6 +5629,14 @@ impl Vm {
                     "get_recursion_depth",
                     BuiltinFunction::TestInternalCapiGetRecursionDepth,
                 ),
+                (
+                    "run_in_subinterp_with_config",
+                    BuiltinFunction::TestInternalCapiRunInSubinterpWithConfig,
+                ),
+                (
+                    "gh_119213_getargs",
+                    BuiltinFunction::TestInternalCapiGh119213Getargs,
+                ),
             ],
             vec![("TIER2_THRESHOLD", Value::Int(0))],
         );
@@ -5631,6 +5732,10 @@ impl Vm {
                 ("join_temporary_c_thread", BuiltinFunction::NoOp),
                 ("exception_print", BuiltinFunction::TestCapiExceptionPrint),
                 ("config_get", BuiltinFunction::TestCapiConfigGet),
+                ("get_args", BuiltinFunction::TestCapiGetArgs),
+                ("get_kwargs", BuiltinFunction::TestCapiGetKwargs),
+                ("getargs_empty", BuiltinFunction::TestCapiGetArgsEmpty),
+                ("getargs_tuple", BuiltinFunction::TestCapiGetArgsTuple),
                 (
                     "getargs_b",
                     BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::B),
@@ -5703,6 +5808,80 @@ impl Vm {
                     "getargs_U",
                     BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperU),
                 ),
+                (
+                    "getargs_c",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerC),
+                ),
+                (
+                    "getargs_C",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::UpperC),
+                ),
+                (
+                    "getargs_s",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerS),
+                ),
+                (
+                    "getargs_s_star",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerSStar),
+                ),
+                (
+                    "getargs_s_hash",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerSHash),
+                ),
+                (
+                    "getargs_z",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerZ),
+                ),
+                (
+                    "getargs_z_star",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerZStar),
+                ),
+                (
+                    "getargs_z_hash",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerZHash),
+                ),
+                (
+                    "getargs_y",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerY),
+                ),
+                (
+                    "getargs_y_star",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerYStar),
+                ),
+                (
+                    "getargs_y_hash",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerYHash),
+                ),
+                (
+                    "getargs_es",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerEs),
+                ),
+                (
+                    "getargs_et",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerEt),
+                ),
+                (
+                    "getargs_es_hash",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerEsHash),
+                ),
+                (
+                    "getargs_et_hash",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerEtHash),
+                ),
+                (
+                    "getargs_w_star",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::WStar),
+                ),
+                (
+                    "getargs_w_star_opt",
+                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::WStarOpt),
+                ),
+                (
+                    "gh_99240_clear_args",
+                    BuiltinFunction::TestCapiGetArgsString(
+                        TestCapiStringParseKind::Gh99240ClearArgs,
+                    ),
+                ),
                 ("getargs_keywords", BuiltinFunction::TestCapiGetArgsKeywords),
                 (
                     "getargs_keyword_only",
@@ -5712,6 +5891,11 @@ impl Vm {
                     "getargs_positional_only_and_keywords",
                     BuiltinFunction::TestCapiGetArgsPositionalOnlyAndKeywords,
                 ),
+                (
+                    "parse_tuple_and_keywords",
+                    BuiltinFunction::TestCapiParseTupleAndKeywords,
+                ),
+                ("argparsing", BuiltinFunction::TestCapiArgParsing),
                 (
                     "pyobject_vectorcall",
                     BuiltinFunction::TestCapiPyObjectVectorcall,
@@ -9748,7 +9932,7 @@ fn sre_class_matches(
             | SRE_OP_LITERAL_UNI_IGNORE => {
                 let value = sre_read_u32(code, idx)?;
                 idx += 1;
-                let expected = char::from_u32(value)?;
+                let expected = internal_char_from_codepoint(value)?;
                 let is_match = if ignore_case {
                     sre_char_equal_ignore_case(ch, expected)
                 } else {
@@ -9759,8 +9943,8 @@ fn sre_class_matches(
                 }
             }
             SRE_OP_RANGE | SRE_OP_RANGE_UNI_IGNORE => {
-                let lo = char::from_u32(sre_read_u32(code, idx)?)?;
-                let hi = char::from_u32(sre_read_u32(code, idx + 1)?)?;
+                let lo = internal_char_from_codepoint(sre_read_u32(code, idx)?)?;
+                let hi = internal_char_from_codepoint(sre_read_u32(code, idx + 1)?)?;
                 idx += 2;
                 let is_match = if ignore_case || opcode == SRE_OP_RANGE_UNI_IGNORE {
                     let lower = ch.to_lowercase().next().unwrap_or(ch);
@@ -9781,7 +9965,7 @@ fn sre_class_matches(
                 }
             }
             SRE_OP_CHARSET => {
-                let ch_u32 = ch as u32;
+                let ch_u32 = canonical_codepoint_for_internal_char(ch);
                 if ch_u32 < 256 && sre_bitmap_contains(code, idx, ch_u32 as usize)? {
                     return Some(ok);
                 }
@@ -9791,7 +9975,7 @@ fn sre_class_matches(
                 let block_count = sre_read_usize(code, idx)?;
                 idx += 1;
                 let mapping_start = idx;
-                let ch_u32 = ch as u32;
+                let ch_u32 = canonical_codepoint_for_internal_char(ch);
                 let block = if ch_u32 < 0x10000 {
                     Some(
                         sre_bigcharset_mapping_byte(code, mapping_start, (ch_u32 >> 8) as usize)?
@@ -9933,7 +10117,7 @@ fn sre_run_program<T: SreText>(
             | SRE_OP_LITERAL_IGNORE
             | SRE_OP_LITERAL_LOC_IGNORE
             | SRE_OP_LITERAL_UNI_IGNORE => {
-                let expected = char::from_u32(*code.get(pc + 1)? as u32)?;
+                let expected = internal_char_from_codepoint(*code.get(pc + 1)? as u32)?;
                 let current = text.char_at(cursor)?;
                 let matched = matches!(
                     opcode,
@@ -9951,7 +10135,7 @@ fn sre_run_program<T: SreText>(
             | SRE_OP_NOT_LITERAL_IGNORE
             | SRE_OP_NOT_LITERAL_LOC_IGNORE
             | SRE_OP_NOT_LITERAL_UNI_IGNORE => {
-                let expected = char::from_u32(*code.get(pc + 1)? as u32)?;
+                let expected = internal_char_from_codepoint(*code.get(pc + 1)? as u32)?;
                 let current = text.char_at(cursor)?;
                 let equal = matches!(
                     opcode,
@@ -10607,6 +10791,7 @@ fn normalize_codec_encoding(value: Value) -> Result<String, RuntimeError> {
         "latin-1" | "latin1" | "iso-8859-1" | "iso8859-1" | "cp819" | "l1" => {
             Ok("latin-1".to_string())
         }
+        "idna" => Ok("idna".to_string()),
         "gbk" | "cp936" | "ms936" | "936" => Ok("gbk".to_string()),
         "raw-unicode-escape" | "raw_unicode_escape" => Ok("raw-unicode-escape".to_string()),
         "unicode-escape" | "unicode_escape" => Ok("unicode-escape".to_string()),
@@ -10822,6 +11007,13 @@ fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>
             }
             Ok(out)
         }
+        "idna" => {
+            if text.is_ascii() {
+                Ok(text.as_bytes().to_vec())
+            } else {
+                Err(RuntimeError::lookup_error("unsupported encoding"))
+            }
+        }
         "gbk" => encode_gbk_bytes(text, errors),
         "raw-unicode-escape" => Ok(encode_raw_unicode_escape(text)),
         "unicode-escape" => Ok(encode_unicode_escape(text)),
@@ -10931,6 +11123,13 @@ fn decode_text_bytes(bytes: &[u8], encoding: &str, errors: &str) -> Result<Strin
                 out.push(*byte as char);
             }
             Ok(out)
+        }
+        "idna" => {
+            if bytes.iter().all(u8::is_ascii) {
+                Ok(String::from_utf8_lossy(bytes).into_owned())
+            } else {
+                Err(RuntimeError::lookup_error("unsupported encoding"))
+            }
         }
         "gbk" => decode_gbk_bytes(bytes, errors),
         "raw-unicode-escape" => decode_raw_unicode_escape(bytes, errors),

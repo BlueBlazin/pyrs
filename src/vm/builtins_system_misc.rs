@@ -2,12 +2,14 @@ use super::{
     BigInt, BuiltinFunction, CallKeywordArgs, HashMap, InstanceObject, InternalCallOutcome, IpAddr,
     IteratorKind, IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT,
     SIGNAL_IGNORE, SIGNAL_SIGINT, SocketAddr, TestCapiScalarParseKind, TimeParts, ToSocketAddrs,
-    Value, Vm, apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year,
-    days_from_civil, decode_text_bytes, dict_get_value, format_strftime, format_uuid_hex,
-    format_uuid_hyphenated, is_truthy, parse_uuid_like_string, runtime_error_matches_exception,
-    split_unix_timestamp, unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes,
+    TestCapiStringParseKind, Value, Vm, apply_uuid_variant, apply_uuid_version,
+    bytes_like_from_value, day_of_year, days_from_civil, decode_text_bytes, dict_get_value,
+    format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
+    parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp,
+    unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes,
     uuid_timestamp_100ns_since_gregorian, value_from_bigint, value_to_f64, value_to_int,
 };
+use crate::{compiler, parser};
 use std::rc::Rc;
 
 const DATETIME_MIN_YEAR: i64 = 1;
@@ -42,6 +44,14 @@ fn parse_ascii_i64_component(text: &str) -> Option<i64> {
 
 fn escaped_single_quoted(input: &str) -> String {
     input.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
+fn testcapi_keyword_name_display(key: &Value, normalized_name: &str) -> String {
+    let text = match key {
+        Value::Str(text) => text.clone(),
+        _ => normalized_name.to_string(),
+    };
+    format!("'{text}'")
 }
 
 fn is_leap_year(year: i64) -> bool {
@@ -161,10 +171,13 @@ impl Vm {
             Value::Int(value) => Some(Value::Int(*value)),
             Value::BigInt(value) => Some(Value::BigInt(value.clone())),
             Value::Bool(value) => Some(Value::Int(if *value { 1 } else { 0 })),
-            Value::Instance(instance) => self.instance_backing_int(instance).map(|backing| match backing {
-                Value::Bool(value) => Value::Int(if value { 1 } else { 0 }),
-                other => other,
-            }),
+            Value::Instance(instance) => {
+                self.instance_backing_int(instance)
+                    .map(|backing| match backing {
+                        Value::Bool(value) => Value::Int(if value { 1 } else { 0 }),
+                        other => other,
+                    })
+            }
             _ => None,
         }
     }
@@ -228,9 +241,9 @@ impl Vm {
     pub(super) fn capi_long_as_long(&mut self, value: Value) -> Result<i64, RuntimeError> {
         match self.capi_coerce_index_value(value)? {
             Value::Int(value) => Ok(value),
-            Value::BigInt(value) => value
-                .to_i64()
-                .ok_or_else(|| RuntimeError::overflow_error("Python int too large to convert to C long")),
+            Value::BigInt(value) => value.to_i64().ok_or_else(|| {
+                RuntimeError::overflow_error("Python int too large to convert to C long")
+            }),
             _ => unreachable!(),
         }
     }
@@ -359,7 +372,9 @@ impl Vm {
                     if converted.is_finite() {
                         Ok(converted)
                     } else {
-                        Err(RuntimeError::overflow_error("int too large to convert to float"))
+                        Err(RuntimeError::overflow_error(
+                            "int too large to convert to float",
+                        ))
                     }
                 }
                 _ => unreachable!(),
@@ -395,7 +410,10 @@ impl Vm {
             )));
         }
 
-        if self.lookup_bound_special_method(&value, "__index__")?.is_some() {
+        if self
+            .lookup_bound_special_method(&value, "__index__")?
+            .is_some()
+        {
             return match self.capi_coerce_index_value(value)? {
                 Value::Int(value) => Ok(value as f64),
                 Value::BigInt(value) => {
@@ -403,7 +421,9 @@ impl Vm {
                     if converted.is_finite() {
                         Ok(converted)
                     } else {
-                        Err(RuntimeError::overflow_error("int too large to convert to float"))
+                        Err(RuntimeError::overflow_error(
+                            "int too large to convert to float",
+                        ))
                     }
                 }
                 _ => unreachable!(),
@@ -416,7 +436,10 @@ impl Vm {
         )))
     }
 
-    pub(super) fn capi_complex_as_pair(&mut self, value: Value) -> Result<(f64, f64), RuntimeError> {
+    pub(super) fn capi_complex_as_pair(
+        &mut self,
+        value: Value,
+    ) -> Result<(f64, f64), RuntimeError> {
         if let Some(backing) = self.capi_complex_subclass_value(&value) {
             return Ok(backing);
         }
@@ -536,11 +559,9 @@ impl Vm {
             TestCapiScalarParseKind::I => Ok(Value::Int(
                 self.capi_long_as_unsigned_long_mask(value)? as u32 as i64,
             )),
-            TestCapiScalarParseKind::K => {
-                Ok(value_from_bigint(BigInt::from_u64(
-                    self.capi_long_as_unsigned_long_mask(value)?,
-                )))
-            }
+            TestCapiScalarParseKind::K => Ok(value_from_bigint(BigInt::from_u64(
+                self.capi_long_as_unsigned_long_mask(value)?,
+            ))),
             TestCapiScalarParseKind::LowerI => {
                 let value = self.capi_long_as_long(value)?;
                 if value < i32::MIN as i64 {
@@ -556,9 +577,7 @@ impl Vm {
                 Ok(Value::Int(value))
             }
             TestCapiScalarParseKind::L => Ok(Value::Int(self.capi_long_as_long(value)?)),
-            TestCapiScalarParseKind::N => Ok(Value::Int(
-                self.capi_long_as_ssize_t(value)? as i64,
-            )),
+            TestCapiScalarParseKind::N => Ok(Value::Int(self.capi_long_as_ssize_t(value)? as i64)),
             TestCapiScalarParseKind::P => match self.builtin_bool(vec![value], HashMap::new())? {
                 Value::Bool(value) => Ok(Value::Int(if value { 1 } else { 0 })),
                 other => Err(RuntimeError::type_error(format!(
@@ -566,13 +585,13 @@ impl Vm {
                     self.value_type_name_for_error(&other)
                 ))),
             },
-            TestCapiScalarParseKind::UpperL => {
-                Ok(Value::Int(self.capi_long_as_long_long(value)?))
-            }
+            TestCapiScalarParseKind::UpperL => Ok(Value::Int(self.capi_long_as_long_long(value)?)),
             TestCapiScalarParseKind::UpperK => Ok(value_from_bigint(BigInt::from_u64(
                 self.capi_long_as_unsigned_long_long_mask(value)?,
             ))),
-            TestCapiScalarParseKind::F => Ok(Value::Float(self.capi_float_as_double(value)? as f32 as f64)),
+            TestCapiScalarParseKind::F => {
+                Ok(Value::Float(self.capi_float_as_double(value)? as f32 as f64))
+            }
             TestCapiScalarParseKind::D => Ok(Value::Float(self.capi_float_as_double(value)?)),
             TestCapiScalarParseKind::UpperD => {
                 let (real, imag) = self.capi_complex_as_pair(value)?;
@@ -580,32 +599,83 @@ impl Vm {
             }
             TestCapiScalarParseKind::UpperS => match &value {
                 Value::Bytes(_) => Ok(value),
-                Value::Instance(instance)
-                    if matches!(&*instance.kind(), Object::Instance(data) if self.class_has_builtin_bytes_base(&data.class)) =>
-                {
+                Value::Instance(instance) if matches!(&*instance.kind(), Object::Instance(data) if self.class_has_builtin_bytes_base(&data.class)) => {
                     Ok(value)
                 }
                 _ => Err(RuntimeError::type_error("expected bytes")),
             },
             TestCapiScalarParseKind::UpperY => match &value {
                 Value::ByteArray(_) => Ok(value),
-                Value::Instance(instance)
-                    if matches!(&*instance.kind(), Object::Instance(data) if self.class_has_builtin_bytearray_base(&data.class)) =>
-                {
+                Value::Instance(instance) if matches!(&*instance.kind(), Object::Instance(data) if self.class_has_builtin_bytearray_base(&data.class)) => {
                     Ok(value)
                 }
                 _ => Err(RuntimeError::type_error("expected bytearray")),
             },
             TestCapiScalarParseKind::UpperU => match &value {
                 Value::Str(_) => Ok(value),
-                Value::Instance(instance)
-                    if matches!(&*instance.kind(), Object::Instance(data) if self.class_has_builtin_str_base(&data.class)) =>
-                {
+                Value::Instance(instance) if matches!(&*instance.kind(), Object::Instance(data) if self.class_has_builtin_str_base(&data.class)) => {
                     Ok(value)
                 }
                 _ => Err(RuntimeError::type_error("expected str")),
             },
         }
+    }
+
+    pub(super) fn builtin_testcapi_get_args(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_testcapi_get_args_via_capi(args, kwargs)
+    }
+
+    pub(super) fn builtin_testcapi_get_kwargs(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_testcapi_get_kwargs_via_capi(args, kwargs)
+    }
+
+    pub(super) fn builtin_testcapi_getargs_empty(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_testcapi_getargs_empty_via_capi(args, kwargs)
+    }
+
+    pub(super) fn builtin_testcapi_getargs_tuple(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_testcapi_getargs_tuple_via_capi(args, kwargs)
+    }
+
+    pub(super) fn builtin_testcapi_getargs_string(
+        &mut self,
+        kind: TestCapiStringParseKind,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_testcapi_getargs_string_via_capi(kind, args, kwargs)
+    }
+
+    pub(super) fn builtin_testcapi_parse_tuple_and_keywords(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_testcapi_parse_tuple_and_keywords_via_capi(args, kwargs)
+    }
+
+    pub(super) fn builtin_testcapi_argparsing(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_testcapi_argparsing_via_capi(args, kwargs)
     }
 
     fn bind_testcapi_keyword_args(
@@ -639,9 +709,10 @@ impl Vm {
         for entry in kwargs.into_entries() {
             let name = entry.normalized_name;
             let Some(index) = spec.param_names.iter().position(|param| *param == name) else {
+                let unexpected = testcapi_keyword_name_display(&entry.key, &name);
                 return Err(RuntimeError::type_error(format!(
-                    "this function got an unexpected keyword argument '{}'",
-                    name
+                    "this function got an unexpected keyword argument {}",
+                    unexpected
                 )));
             };
             if !entry.key_is_exact_str {
@@ -811,9 +882,11 @@ impl Vm {
 
         for entry in kwargs.into_entries() {
             if entry.normalized_name != "keyword" {
+                let unexpected =
+                    testcapi_keyword_name_display(&entry.key, &entry.normalized_name);
                 return Err(RuntimeError::type_error(format!(
-                    "this function got an unexpected keyword argument '{}'",
-                    entry.normalized_name
+                    "this function got an unexpected keyword argument {}",
+                    unexpected
                 )));
             }
             if !entry.key_is_exact_str {
@@ -4236,7 +4309,7 @@ impl Vm {
                 "_is_main_interpreter() expects no arguments",
             ));
         }
-        Ok(Value::Bool(true))
+        Ok(Value::Bool(self.is_main_interpreter))
     }
 
     pub(super) fn builtin_thread_handle_init(
@@ -7316,6 +7389,97 @@ impl Vm {
             ));
         }
         Ok(Value::Int(self.frames.len().max(1) as i64))
+    }
+
+    pub(super) fn builtin_testinternalcapi_run_in_subinterp_with_config(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 2 {
+            return Err(RuntimeError::type_error(format!(
+                "run_in_subinterp_with_config() takes at most 2 positional arguments ({} given)",
+                args.len()
+            )));
+        }
+
+        let xi = match kwargs.remove("xi") {
+            Some(value) => is_truthy(&value),
+            None => false,
+        };
+        let _ = xi;
+
+        let code_value = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("code")
+        }
+        .ok_or_else(|| RuntimeError::type_error("run_in_subinterp_with_config() missing code"))?;
+        let config_value = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("config")
+        }
+        .ok_or_else(|| RuntimeError::type_error("run_in_subinterp_with_config() missing config"))?;
+        let _ = config_value;
+
+        if !kwargs.is_empty() {
+            let name = kwargs.keys().next().cloned().unwrap_or_default();
+            return Err(RuntimeError::type_error(format!(
+                "run_in_subinterp_with_config() got an unexpected keyword argument '{name}'"
+            )));
+        }
+
+        let code = match code_value {
+            Value::Str(text) => text,
+            other => {
+                return Err(RuntimeError::type_error(format!(
+                    "run_in_subinterp_with_config() code must be str, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+
+        let module = parser::parse_module(&code).map_err(|err| RuntimeError::new(err.message))?;
+        let code = compiler::compile_module(&module).map_err(|err| RuntimeError::new(err.message))?;
+        let mut subvm = Vm::new_with_host(self.host.clone());
+        subvm.module_paths = self.module_paths.clone();
+        subvm.mark_as_subinterpreter();
+        let status = match subvm.execute(&code) {
+            Ok(_) => 0,
+            Err(_) => -1,
+        };
+        Ok(Value::Int(status))
+    }
+
+    pub(super) fn builtin_testinternalcapi_gh_119213_getargs(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::type_error(format!(
+                "gh_119213_getargs() takes at most 1 positional argument ({} given)",
+                args.len()
+            )));
+        }
+
+        let spam_from_kwargs = kwargs.remove("spam");
+        if !kwargs.is_empty() {
+            let name = kwargs.keys().next().cloned().unwrap_or_default();
+            return Err(RuntimeError::type_error(format!(
+                "gh_119213_getargs() got an unexpected keyword argument '{name}'"
+            )));
+        }
+        if !args.is_empty() && spam_from_kwargs.is_some() {
+            return Err(RuntimeError::type_error(
+                "gh_119213_getargs() got multiple values for argument 'spam'",
+            ));
+        }
+
+        Ok(spam_from_kwargs
+            .or_else(|| args.pop())
+            .unwrap_or(Value::None))
     }
 
     pub(super) fn builtin_testcapi_exception_print(

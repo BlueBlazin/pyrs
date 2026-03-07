@@ -4936,6 +4936,28 @@ pub enum TestCapiScalarParseKind {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum TestCapiStringParseKind {
+    LowerC,
+    UpperC,
+    LowerS,
+    LowerSStar,
+    LowerSHash,
+    LowerZ,
+    LowerZStar,
+    LowerZHash,
+    LowerY,
+    LowerYStar,
+    LowerYHash,
+    LowerEs,
+    LowerEt,
+    LowerEsHash,
+    LowerEtHash,
+    WStar,
+    WStarOpt,
+    Gh99240ClearArgs,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum BuiltinFunction {
     Print,
     Input,
@@ -5832,13 +5854,22 @@ pub enum BuiltinFunction {
     TypeAnnotationsGet,
     TestCapiExceptionPrint,
     TestCapiConfigGet,
+    TestCapiGetArgs,
+    TestCapiGetKwargs,
+    TestCapiGetArgsEmpty,
+    TestCapiGetArgsTuple,
     TestCapiGetArgsScalar(TestCapiScalarParseKind),
+    TestCapiGetArgsString(TestCapiStringParseKind),
+    TestCapiParseTupleAndKeywords,
+    TestCapiArgParsing,
     TestCapiGetArgsKeywords,
     TestCapiGetArgsKeywordOnly,
     TestCapiGetArgsPositionalOnlyAndKeywords,
     TestCapiPyObjectVectorcall,
     TestCapiPyTimeAsSecondsDouble,
     TestInternalCapiGetRecursionDepth,
+    TestInternalCapiRunInSubinterpWithConfig,
+    TestInternalCapiGh119213Getargs,
     DataclassesField,
     DataclassesIsDataclass,
     DataclassesFields,
@@ -9266,13 +9297,22 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::TypeAnnotationsGet
             | BuiltinFunction::TestCapiExceptionPrint
             | BuiltinFunction::TestCapiConfigGet
+            | BuiltinFunction::TestCapiGetArgs
+            | BuiltinFunction::TestCapiGetKwargs
+            | BuiltinFunction::TestCapiGetArgsEmpty
+            | BuiltinFunction::TestCapiGetArgsTuple
             | BuiltinFunction::TestCapiGetArgsScalar(_)
+            | BuiltinFunction::TestCapiGetArgsString(_)
+            | BuiltinFunction::TestCapiParseTupleAndKeywords
+            | BuiltinFunction::TestCapiArgParsing
             | BuiltinFunction::TestCapiGetArgsKeywords
             | BuiltinFunction::TestCapiGetArgsKeywordOnly
             | BuiltinFunction::TestCapiGetArgsPositionalOnlyAndKeywords
             | BuiltinFunction::TestCapiPyObjectVectorcall
             | BuiltinFunction::TestCapiPyTimeAsSecondsDouble
             | BuiltinFunction::TestInternalCapiGetRecursionDepth
+            | BuiltinFunction::TestInternalCapiRunInSubinterpWithConfig
+            | BuiltinFunction::TestInternalCapiGh119213Getargs
             | BuiltinFunction::DataclassesField
             | BuiltinFunction::DataclassesIsDataclass
             | BuiltinFunction::DataclassesFields
@@ -12126,6 +12166,9 @@ fn format_repr_string(value: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            c if canonical_codepoint_for_internal_char(c) != c as u32 => {
+                append_python_char_escape(&mut out, c)
+            }
             c if c.is_control() => append_python_char_escape(&mut out, c),
             c => out.push(c),
         }
@@ -12135,7 +12178,7 @@ fn format_repr_string(value: &str) -> String {
 }
 
 fn append_python_char_escape(out: &mut String, ch: char) {
-    let code = ch as u32;
+    let code = canonical_codepoint_for_internal_char(ch);
     if code <= 0xFF {
         out.push_str(&format!("\\x{code:02x}"));
     } else if code <= 0xFFFF {
@@ -12311,6 +12354,29 @@ fn testcapi_scalar_function_name(kind: TestCapiScalarParseKind) -> &'static str 
     }
 }
 
+fn testcapi_string_function_name(kind: TestCapiStringParseKind) -> &'static str {
+    match kind {
+        TestCapiStringParseKind::LowerC => "getargs_c",
+        TestCapiStringParseKind::UpperC => "getargs_C",
+        TestCapiStringParseKind::LowerS => "getargs_s",
+        TestCapiStringParseKind::LowerSStar => "getargs_s_star",
+        TestCapiStringParseKind::LowerSHash => "getargs_s_hash",
+        TestCapiStringParseKind::LowerZ => "getargs_z",
+        TestCapiStringParseKind::LowerZStar => "getargs_z_star",
+        TestCapiStringParseKind::LowerZHash => "getargs_z_hash",
+        TestCapiStringParseKind::LowerY => "getargs_y",
+        TestCapiStringParseKind::LowerYStar => "getargs_y_star",
+        TestCapiStringParseKind::LowerYHash => "getargs_y_hash",
+        TestCapiStringParseKind::LowerEs => "getargs_es",
+        TestCapiStringParseKind::LowerEt => "getargs_et",
+        TestCapiStringParseKind::LowerEsHash => "getargs_es_hash",
+        TestCapiStringParseKind::LowerEtHash => "getargs_et_hash",
+        TestCapiStringParseKind::WStar => "getargs_w_star",
+        TestCapiStringParseKind::WStarOpt => "getargs_w_star_opt",
+        TestCapiStringParseKind::Gh99240ClearArgs => "gh_99240_clear_args",
+    }
+}
+
 fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
     match builtin {
         BuiltinFunction::Print => "print".to_string(),
@@ -12382,9 +12448,18 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::CoroutineType => "coroutine".to_string(),
         BuiltinFunction::AsyncGeneratorType => "async_generator".to_string(),
         BuiltinFunction::TypeAnnotationsGet => "__annotations__.__get__".to_string(),
+        BuiltinFunction::TestCapiGetArgs => "get_args".to_string(),
+        BuiltinFunction::TestCapiGetKwargs => "get_kwargs".to_string(),
+        BuiltinFunction::TestCapiGetArgsEmpty => "getargs_empty".to_string(),
+        BuiltinFunction::TestCapiGetArgsTuple => "getargs_tuple".to_string(),
         BuiltinFunction::TestCapiGetArgsScalar(kind) => {
             testcapi_scalar_function_name(kind).to_string()
         }
+        BuiltinFunction::TestCapiGetArgsString(kind) => {
+            testcapi_string_function_name(kind).to_string()
+        }
+        BuiltinFunction::TestCapiParseTupleAndKeywords => "parse_tuple_and_keywords".to_string(),
+        BuiltinFunction::TestCapiArgParsing => "argparsing".to_string(),
         BuiltinFunction::TypingNoDefaultNew => "__new__".to_string(),
         BuiltinFunction::TypingNoDefaultRepr => "__repr__".to_string(),
         BuiltinFunction::TypingNoDefaultReduce => "__reduce__".to_string(),

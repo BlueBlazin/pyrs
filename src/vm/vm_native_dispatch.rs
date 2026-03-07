@@ -14008,9 +14008,24 @@ impl Vm {
                 self.builtin_testcapi_exception_print(args, kwargs)
             }
             BuiltinFunction::TestCapiConfigGet => self.builtin_testcapi_config_get(args, kwargs),
+            BuiltinFunction::TestCapiGetArgs => self.builtin_testcapi_get_args(args, kwargs),
+            BuiltinFunction::TestCapiGetKwargs => self.builtin_testcapi_get_kwargs(args, kwargs),
+            BuiltinFunction::TestCapiGetArgsEmpty => {
+                self.builtin_testcapi_getargs_empty(args, kwargs)
+            }
+            BuiltinFunction::TestCapiGetArgsTuple => {
+                self.builtin_testcapi_getargs_tuple(args, kwargs)
+            }
             BuiltinFunction::TestCapiGetArgsScalar(kind) => {
                 self.builtin_testcapi_getargs_scalar(kind, args, kwargs)
             }
+            BuiltinFunction::TestCapiGetArgsString(kind) => {
+                self.builtin_testcapi_getargs_string(kind, args, kwargs)
+            }
+            BuiltinFunction::TestCapiParseTupleAndKeywords => {
+                self.builtin_testcapi_parse_tuple_and_keywords(args, kwargs)
+            }
+            BuiltinFunction::TestCapiArgParsing => self.builtin_testcapi_argparsing(args, kwargs),
             BuiltinFunction::TestCapiGetArgsKeywords => {
                 self.builtin_testcapi_getargs_keywords(args, kwargs)
             }
@@ -14028,6 +14043,12 @@ impl Vm {
             }
             BuiltinFunction::TestInternalCapiGetRecursionDepth => {
                 self.builtin_testinternalcapi_get_recursion_depth(args, kwargs)
+            }
+            BuiltinFunction::TestInternalCapiRunInSubinterpWithConfig => {
+                self.builtin_testinternalcapi_run_in_subinterp_with_config(args, kwargs)
+            }
+            BuiltinFunction::TestInternalCapiGh119213Getargs => {
+                self.builtin_testinternalcapi_gh_119213_getargs(args, kwargs)
             }
             BuiltinFunction::DataclassesField => self.builtin_dataclasses_field(args, kwargs),
             BuiltinFunction::DataclassesIsDataclass => {

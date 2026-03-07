@@ -13872,6 +13872,16 @@ fn re_match_uses_character_offsets_for_unicode_text() {
 }
 
 #[test]
+fn re_match_supports_lone_surrogate_patterns() {
+    let source = "import re\ns = '\\udc80'\nok = (\n    re.search(s, s) is not None\n    and re.match(s, s) is not None\n    and re.fullmatch(s, s) is not None\n)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn re_sub_handles_unicode_prefix_without_byte_boundary_panics() {
     let source = "import re\ns = 'ሴx'\np = re.compile('x')\nout = p.sub('y', s)\nout2 = p.sub(lambda m: 'y', s)\nok = (out == 'ሴy' and out2 == 'ሴy')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -18988,6 +18998,32 @@ ok = (
         "more argument specifiers than keyword list entries (remaining format:'O')",
     )
 )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn testinternalcapi_run_in_subinterp_with_config_executes_code() {
+    let source = r#"import _testinternalcapi, types
+
+config = types.SimpleNamespace(
+    allow_fork=False,
+    allow_exec=False,
+    allow_threads=True,
+    allow_daemon_threads=False,
+    use_main_obmalloc=False,
+    gil="own",
+    check_multi_interp_extensions=True,
+)
+rc = _testinternalcapi.run_in_subinterp_with_config(
+    "import _testinternalcapi\nassert _testinternalcapi.gh_119213_getargs(spam='eggs') == 'eggs'\n",
+    config,
+)
+ok = (rc == 0)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
