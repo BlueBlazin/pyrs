@@ -1,6 +1,6 @@
 ---
 import ButtonLink from "../components/ButtonLink.astro";
-import CpythonBenchmarkSnapshot from "../components/docs/CpythonBenchmarkSnapshot.astro";
+import CpythonBenchmarkSnapshot from "../components/benchmark/CpythonBenchmarkSnapshot.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
 ---
 
@@ -11,11 +11,11 @@ import SiteLayout from "../layouts/SiteLayout.astro";
 	<section class="benchmark-page">
 		<header class="benchmark-intro">
 			<p class="benchmark-kicker">Compatibility Benchmark</p>
-			<h1>CPython test-suite progress, shown as a public product snapshot.</h1>
+			<h1>A clearer view of how much CPython 3.14 PYRS can really run today.</h1>
 			<p class="benchmark-lead">
-				PYRS runs the discoverable CPython 3.14 test-suite entries on the current host and records both
-				case-level and subtest-level outcomes. This page is the user-facing benchmark surface, separate from
-				internal CI and development probes.
+				This page is meant to answer the user-facing question directly: how complete is the interpreter right now?
+				Instead of dumping raw harness details, it focuses on current reach, what already passes, and the biggest
+				remaining areas still holding the benchmark back.
 			</p>
 			<div class="benchmark-actions">
 				<ButtonLink href="/docs/compatibility/" variant="secondary">Open Compatibility Docs</ButtonLink>
@@ -60,7 +60,7 @@ import SiteLayout from "../layouts/SiteLayout.astro";
 
 	.benchmark-intro h1 {
 		margin: 0.68rem 0 0;
-		max-width: 16ch;
+		max-width: 15ch;
 		font-size: clamp(2rem, 5vw, 3.4rem);
 		line-height: 0.98;
 		letter-spacing: -0.05em;
