@@ -725,6 +725,34 @@ impl Vm {
                     crate::runtime::TestCapiScalarParseKind::UpperY => "getargs_Y",
                     crate::runtime::TestCapiScalarParseKind::UpperU => "getargs_U",
                 },
+                BuiltinFunction::TestCapiGetArgsString(kind) => match kind {
+                    crate::runtime::TestCapiStringParseKind::LowerC => "getargs_c",
+                    crate::runtime::TestCapiStringParseKind::UpperC => "getargs_C",
+                    crate::runtime::TestCapiStringParseKind::LowerS => "getargs_s",
+                    crate::runtime::TestCapiStringParseKind::LowerSStar => "getargs_s_star",
+                    crate::runtime::TestCapiStringParseKind::LowerSHash => "getargs_s_hash",
+                    crate::runtime::TestCapiStringParseKind::LowerZ => "getargs_z",
+                    crate::runtime::TestCapiStringParseKind::LowerZStar => "getargs_z_star",
+                    crate::runtime::TestCapiStringParseKind::LowerZHash => "getargs_z_hash",
+                    crate::runtime::TestCapiStringParseKind::LowerY => "getargs_y",
+                    crate::runtime::TestCapiStringParseKind::LowerYStar => "getargs_y_star",
+                    crate::runtime::TestCapiStringParseKind::LowerYHash => "getargs_y_hash",
+                    crate::runtime::TestCapiStringParseKind::LowerEs => "getargs_es",
+                    crate::runtime::TestCapiStringParseKind::LowerEt => "getargs_et",
+                    crate::runtime::TestCapiStringParseKind::LowerEsHash => "getargs_es_hash",
+                    crate::runtime::TestCapiStringParseKind::LowerEtHash => "getargs_et_hash",
+                    crate::runtime::TestCapiStringParseKind::WStar => "getargs_w_star",
+                    crate::runtime::TestCapiStringParseKind::WStarOpt => "getargs_w_star_opt",
+                    crate::runtime::TestCapiStringParseKind::Gh99240ClearArgs => {
+                        "gh_99240_clear_args"
+                    }
+                },
+                BuiltinFunction::TestCapiGetArgs => "get_args",
+                BuiltinFunction::TestCapiGetKwargs => "get_kwargs",
+                BuiltinFunction::TestCapiGetArgsEmpty => "getargs_empty",
+                BuiltinFunction::TestCapiGetArgsTuple => "getargs_tuple",
+                BuiltinFunction::TestCapiParseTupleAndKeywords => "parse_tuple_and_keywords",
+                BuiltinFunction::TestCapiArgParsing => "argparsing",
                 _ => "builtin",
             })
     }
@@ -776,6 +804,36 @@ impl Vm {
                 crate::runtime::TestCapiScalarParseKind::UpperY => "getargs_Y".to_string(),
                 crate::runtime::TestCapiScalarParseKind::UpperU => "getargs_U".to_string(),
             },
+            BuiltinFunction::TestCapiGetArgsString(kind) => match kind {
+                crate::runtime::TestCapiStringParseKind::LowerC => "getargs_c".to_string(),
+                crate::runtime::TestCapiStringParseKind::UpperC => "getargs_C".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerS => "getargs_s".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerSStar => "getargs_s_star".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerSHash => "getargs_s_hash".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerZ => "getargs_z".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerZStar => "getargs_z_star".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerZHash => "getargs_z_hash".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerY => "getargs_y".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerYStar => "getargs_y_star".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerYHash => "getargs_y_hash".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerEs => "getargs_es".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerEt => "getargs_et".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerEsHash => "getargs_es_hash".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerEtHash => "getargs_et_hash".to_string(),
+                crate::runtime::TestCapiStringParseKind::WStar => "getargs_w_star".to_string(),
+                crate::runtime::TestCapiStringParseKind::WStarOpt => "getargs_w_star_opt".to_string(),
+                crate::runtime::TestCapiStringParseKind::Gh99240ClearArgs => {
+                    "gh_99240_clear_args".to_string()
+                }
+            },
+            BuiltinFunction::TestCapiGetArgs => "get_args".to_string(),
+            BuiltinFunction::TestCapiGetKwargs => "get_kwargs".to_string(),
+            BuiltinFunction::TestCapiGetArgsEmpty => "getargs_empty".to_string(),
+            BuiltinFunction::TestCapiGetArgsTuple => "getargs_tuple".to_string(),
+            BuiltinFunction::TestCapiParseTupleAndKeywords => {
+                "parse_tuple_and_keywords".to_string()
+            }
+            BuiltinFunction::TestCapiArgParsing => "argparsing".to_string(),
             BuiltinFunction::SqliteConnect => "connect".to_string(),
             BuiltinFunction::SqliteCompleteStatement => "complete_statement".to_string(),
             BuiltinFunction::SqliteRegisterAdapter => "register_adapter".to_string(),
@@ -9737,7 +9795,9 @@ impl Vm {
             return Ok(AttrMutationOutcome::Done);
         }
 
-        if let Some(descriptor) = class_attr_lookup(&class_ref, attr_name) {
+        if let Some((_owner, descriptor)) =
+            self.lookup_instance_class_attr_owner_and_value(&class_ref, attr_name)
+        {
             let (_getter, setter, _deleter) = self.descriptor_hooks(&descriptor)?;
             if let Some(setter) = setter {
                 return Ok(
@@ -9949,7 +10009,9 @@ impl Vm {
             return Err(RuntimeError::new("csv dialect attributes are read-only"));
         }
 
-        if let Some(descriptor) = class_attr_lookup(&class_ref, attr_name) {
+        if let Some((_owner, descriptor)) =
+            self.lookup_instance_class_attr_owner_and_value(&class_ref, attr_name)
+        {
             let (_getter, _setter, deleter) = self.descriptor_hooks(&descriptor)?;
             if let Some(deleter) = deleter {
                 return Ok(

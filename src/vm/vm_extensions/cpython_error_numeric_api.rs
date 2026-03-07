@@ -28,6 +28,84 @@ fn set_context_error_from_runtime_error(context: &mut ModuleCapiContext, err: Ru
     context.set_error_from_runtime_error(err);
 }
 
+fn cpython_ssize_t_overflow_error() -> RuntimeError {
+    RuntimeError::overflow_error("Python int too large to convert to C ssize_t")
+}
+
+fn cpython_mapped_long_as_ssize_t(value: &Value) -> Option<Result<isize, RuntimeError>> {
+    Some(match value {
+        Value::Bool(flag) => Ok(if *flag { 1 } else { 0 }),
+        Value::Int(value) => {
+            isize::try_from(*value).map_err(|_| cpython_ssize_t_overflow_error())
+        }
+        Value::BigInt(value) => match value.to_i64() {
+            Some(compact) => isize::try_from(compact).map_err(|_| cpython_ssize_t_overflow_error()),
+            None => Err(cpython_ssize_t_overflow_error()),
+        },
+        _ => return None,
+    })
+}
+
+unsafe fn cpython_ptr_is_long_like_object(object: *mut c_void) -> bool {
+    if object.is_null() {
+        return false;
+    }
+    let object_addr = object as usize;
+    if object_addr < super::MIN_VALID_PTR_THRESHOLD
+        || object_addr % std::mem::align_of::<CpythonObjectHead>() != 0
+    {
+        return false;
+    }
+    let Some(head) = (unsafe { object.cast::<CpythonObjectHead>().as_ref() }) else {
+        return false;
+    };
+    let type_ptr = head.ob_type.cast::<CpythonTypeObject>();
+    if type_ptr.is_null() {
+        return false;
+    }
+    let type_addr = type_ptr as usize;
+    if type_addr < super::MIN_VALID_PTR_THRESHOLD
+        || type_addr % std::mem::align_of::<CpythonTypeObject>() != 0
+    {
+        return false;
+    }
+    type_ptr == std::ptr::addr_of_mut!(super::PyLong_Type)
+        || unsafe {
+            PyType_IsSubtype(
+                type_ptr.cast::<c_void>(),
+                std::ptr::addr_of_mut!(super::PyLong_Type).cast::<c_void>(),
+            ) != 0
+        }
+}
+
+unsafe fn cpython_raw_long_as_ssize_t(object: *mut c_void) -> Result<isize, RuntimeError> {
+    if let Some(compact) = unsafe { cpython_foreign_long_to_i64(object) } {
+        return isize::try_from(compact).map_err(|_| cpython_ssize_t_overflow_error());
+    }
+    if let Some(compact) = unsafe { cpython_foreign_long_to_u64(object) } {
+        return isize::try_from(compact).map_err(|_| cpython_ssize_t_overflow_error());
+    }
+    if unsafe { cpython_ptr_is_long_like_object(object) } {
+        return Err(cpython_ssize_t_overflow_error());
+    }
+    Err(RuntimeError::type_error("an integer is required"))
+}
+
+unsafe fn cpython_strict_long_as_ssize_t(
+    object: *mut c_void,
+    mapped_value: Option<&Value>,
+) -> Result<isize, RuntimeError> {
+    if let Some(value) = mapped_value {
+        if let Some(result) = cpython_mapped_long_as_ssize_t(value) {
+            return result;
+        }
+        if let Some(proxy_raw_ptr) = ModuleCapiContext::cpython_proxy_raw_ptr_from_value(value) {
+            return unsafe { cpython_raw_long_as_ssize_t(proxy_raw_ptr) };
+        }
+    }
+    unsafe { cpython_raw_long_as_ssize_t(object) }
+}
+
 fn cpython_warning_category_name(category: *mut c_void) -> String {
     if category.is_null() {
         return "UserWarning".to_string();
@@ -185,34 +263,24 @@ pub unsafe extern "C" fn PyLong_AsLongLong(object: *mut c_void) -> i64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_AsSsize_t(object: *mut c_void) -> isize {
-    match cpython_value_from_ptr_or_proxy(object) {
-        Ok(value) => with_active_cpython_context_mut(|context| {
-            if context.vm.is_null() {
-                context.set_error("PyLong_AsSsize_t missing VM context");
-                return -1;
-            }
-            // SAFETY: VM pointer is valid for the active context lifetime.
-            let vm = unsafe { &mut *context.vm };
-            match vm.capi_long_as_ssize_t(value) {
-                Ok(value) => value,
-                Err(err) => {
-                    set_context_error_from_runtime_error(context, err);
-                    -1
-                }
-            }
-        })
-        .unwrap_or_else(|err| {
-            cpython_set_error(err);
-            -1
-        }),
-        Err(err) => {
-            if let Some(value) = unsafe { cpython_foreign_long_to_i64(object) } {
-                return value as isize;
-            }
-            cpython_set_error(err);
-            -1
-        }
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
     }
+    with_active_cpython_context_mut(|context| {
+        let mapped_value = context.cpython_value_from_ptr_or_proxy(object);
+        match unsafe { cpython_strict_long_as_ssize_t(object, mapped_value.as_ref()) } {
+            Ok(value) => value,
+            Err(err) => {
+                set_context_error_from_runtime_error(context, err);
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
 }
 
 #[unsafe(no_mangle)]

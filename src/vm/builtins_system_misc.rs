@@ -3,8 +3,9 @@ use super::{
     IteratorKind, IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT,
     SIGNAL_IGNORE, SIGNAL_SIGINT, SocketAddr, TestCapiScalarParseKind, TimeParts, ToSocketAddrs,
     TestCapiStringParseKind, Value, Vm, apply_uuid_variant, apply_uuid_version,
-    bytes_like_from_value, day_of_year, days_from_civil, decode_text_bytes, dict_get_value,
-    format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
+    bytes_like_from_value, day_of_year, days_from_civil, decode_text_bytes,
+    dict_contains_key_checked, dict_get_value, dict_set_value_checked, format_strftime,
+    format_uuid_hex, format_uuid_hyphenated, is_truthy,
     parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp,
     unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes,
     uuid_timestamp_100ns_since_gregorian, value_from_bigint, value_to_f64, value_to_int,
@@ -155,15 +156,347 @@ impl Vm {
         } else {
             stacklevel as i64
         };
-        self.builtin_warnings_warn(
-            vec![
-                Value::Str(message),
-                Value::ExceptionType(category.to_string()),
-                Value::Int(stacklevel),
-            ],
+        let (filename, lineno, globals_owner) = self.capi_warning_location(stacklevel);
+        let warnings_module = self.capi_warning_module()?;
+        self.warnings_ensure_defaultaction();
+        self.warnings_ensure_filters();
+        self.warnings_ensure_onceregistry();
+        self.warnings_ensure_showwarnmsg();
+
+        let module_name = Self::capi_warning_module_name(&filename);
+        let registry = self.capi_warning_registry(globals_owner);
+        let filters_version = self.capi_warning_filters_version(&warnings_module);
+        self.capi_warning_prepare_registry(&registry, filters_version);
+
+        let category_value = Value::ExceptionType(category.to_string());
+        let text_key = Value::Str(message.clone());
+        let module_key = Value::Str(module_name);
+        let key = self.heap.alloc_tuple(vec![
+            text_key.clone(),
+            category_value.clone(),
+            Value::Int(lineno),
+        ]);
+        if dict_contains_key_checked(&registry, &key)? {
+            return Ok(());
+        }
+
+        let action = self.capi_warning_select_action(
+            &warnings_module,
+            &message,
+            &category_value,
+            &module_key,
+            lineno,
+        )?;
+        match action.as_str() {
+            "ignore" => return Ok(()),
+            "error" => {
+                let InternalCallOutcome::Value(raised) = self.call_internal(
+                    category_value.clone(),
+                    vec![Value::Str(message.clone())],
+                    HashMap::new(),
+                )? else {
+                    return Err(RuntimeError::new("warning category call did not return a value"));
+                };
+                if let Value::Exception(exception) = raised {
+                    return Err(RuntimeError::from_exception((*exception).clone()));
+                }
+                return Err(RuntimeError::type_error(
+                    "warning category did not produce an exception instance",
+                ));
+            }
+            "once" => {
+                dict_set_value_checked(&registry, key.clone(), Value::Int(1))?;
+                let once_key =
+                    self.heap
+                        .alloc_tuple(vec![text_key.clone(), category_value.clone()]);
+                let onceregistry = self.capi_warning_onceregistry(&warnings_module)?;
+                if dict_contains_key_checked(&onceregistry, &once_key)? {
+                    return Ok(());
+                }
+                dict_set_value_checked(&onceregistry, once_key, Value::Int(1))?;
+            }
+            "always" | "all" => {}
+            "module" => {
+                dict_set_value_checked(&registry, key.clone(), Value::Int(1))?;
+                let alt_key = self
+                    .heap
+                    .alloc_tuple(vec![text_key.clone(), category_value.clone(), Value::Int(0)]);
+                if dict_contains_key_checked(&registry, &alt_key)? {
+                    return Ok(());
+                }
+                dict_set_value_checked(&registry, alt_key, Value::Int(1))?;
+            }
+            "default" => {
+                dict_set_value_checked(&registry, key.clone(), Value::Int(1))?;
+            }
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "Unrecognized action ({other:?}) in warnings.filters"
+                )));
+            }
+        }
+
+        let InternalCallOutcome::Value(warning_instance) = self.call_internal(
+            category_value.clone(),
+            vec![Value::Str(message)],
+            HashMap::new(),
+        )? else {
+            return Err(RuntimeError::new("warning category call did not return a value"));
+        };
+        let warning_message = self.capi_warning_message_value(
+            &warnings_module,
+            warning_instance,
+            category_value,
+            filename,
+            lineno,
+            category,
+        )?;
+        let showwarnmsg = self.capi_warning_show_callable(&warnings_module)?;
+        let _ = self.call_internal_preserving_caller(
+            showwarnmsg,
+            vec![warning_message],
             HashMap::new(),
         )?;
         Ok(())
+    }
+
+    fn capi_warning_location(&self, stacklevel: i64) -> (String, i64, Option<ObjRef>) {
+        let requested = usize::try_from(stacklevel.max(1)).unwrap_or(usize::MAX);
+        let frame = self
+            .frames
+            .iter()
+            .rev()
+            .filter(|frame| !Self::warnings_is_internal_traceback_file(&frame.code.filename))
+            .nth(requested.saturating_sub(1))
+            .or_else(|| self.frames.last());
+        let Some(frame) = frame else {
+            return ("<string>".to_string(), 1, None);
+        };
+        let lineno = frame
+            .code
+            .locations
+            .get(frame.last_ip)
+            .map(|location| i64::try_from(location.line.max(1)).unwrap_or(i64::MAX))
+            .unwrap_or(1);
+        (
+            frame.code.filename.clone(),
+            lineno,
+            Some(frame.function_globals.clone()),
+        )
+    }
+
+    fn capi_warning_module(&mut self) -> Result<ObjRef, RuntimeError> {
+        if let Some(module) = self.modules.get("warnings").cloned() {
+            return Ok(module);
+        }
+        self.load_module("warnings")
+    }
+
+    fn capi_warning_module_name(filename: &str) -> String {
+        if filename.is_empty() {
+            return "<unknown>".to_string();
+        }
+        if let Some(module) = filename.strip_suffix(".py") {
+            return module.to_string();
+        }
+        filename.to_string()
+    }
+
+    fn capi_warning_registry(&mut self, globals_owner: Option<ObjRef>) -> ObjRef {
+        if let Some(module_obj) = globals_owner
+            && let Object::Module(module_data) = &mut *module_obj.kind_mut()
+        {
+            if let Some(Value::Dict(dict_obj)) = module_data.globals.get("__warningregistry__") {
+                return dict_obj.clone();
+            }
+            let Value::Dict(dict_obj) = self.heap.alloc_dict(Vec::new()) else {
+                unreachable!();
+            };
+            module_data.globals.insert(
+                "__warningregistry__".to_string(),
+                Value::Dict(dict_obj.clone()),
+            );
+            return dict_obj;
+        }
+        let Value::Dict(dict_obj) = self.heap.alloc_dict(Vec::new()) else {
+            unreachable!();
+        };
+        dict_obj
+    }
+
+    fn capi_warning_filters_version(&mut self, warnings_module: &ObjRef) -> i64 {
+        self.load_attr_module(warnings_module, "_filters_version")
+            .ok()
+            .and_then(|value| value_to_int(value).ok())
+            .unwrap_or(1)
+    }
+
+    fn capi_warning_prepare_registry(&mut self, registry: &ObjRef, filters_version: i64) {
+        let current_version = dict_get_value(registry, &Value::Str("version".to_string()))
+            .and_then(|value| value_to_int(value).ok())
+            .unwrap_or(0);
+        if current_version == filters_version {
+            return;
+        }
+        if let Object::Dict(entries) = &mut *registry.kind_mut() {
+            entries.clear();
+        }
+        let _ = dict_set_value_checked(
+            registry,
+            Value::Str("version".to_string()),
+            Value::Int(filters_version),
+        );
+    }
+
+    fn capi_warning_select_action(
+        &mut self,
+        warnings_module: &ObjRef,
+        message: &str,
+        category: &Value,
+        module_name: &Value,
+        lineno: i64,
+    ) -> Result<String, RuntimeError> {
+        let filters = self.load_attr_module(warnings_module, "filters")?;
+        let Value::List(filters_obj) = filters else {
+            return Err(RuntimeError::type_error("warnings.filters must be a list"));
+        };
+        let Object::List(entries) = &*filters_obj.kind() else {
+            return Err(RuntimeError::type_error("warnings.filters must be a list"));
+        };
+        for entry in entries.iter() {
+            let Value::Tuple(item_obj) = entry else {
+                continue;
+            };
+            let Object::Tuple(items) = &*item_obj.kind() else {
+                continue;
+            };
+            if items.len() != 5 {
+                continue;
+            }
+            let Value::Str(action) = &items[0] else {
+                continue;
+            };
+            if !self.capi_warning_pattern_matches(&items[1], message)?
+                || !self.capi_warning_category_matches(category, &items[2])?
+                || !self.capi_warning_pattern_matches_value(&items[3], module_name)?
+            {
+                continue;
+            }
+            let line_filter = value_to_int(items[4].clone()).unwrap_or(0);
+            if line_filter == 0 || lineno == line_filter {
+                return Ok(action.clone());
+            }
+        }
+        match self.load_attr_module(warnings_module, "defaultaction")? {
+            Value::Str(action) => Ok(action),
+            other => Err(RuntimeError::type_error(format!(
+                "warnings.defaultaction must be str, not '{}'",
+                self.value_type_name_for_error(&other)
+            ))),
+        }
+    }
+
+    fn capi_warning_pattern_matches(&mut self, pattern: &Value, text: &str) -> Result<bool, RuntimeError> {
+        self.capi_warning_pattern_matches_value(pattern, &Value::Str(text.to_string()))
+    }
+
+    fn capi_warning_pattern_matches_value(
+        &mut self,
+        pattern: &Value,
+        candidate: &Value,
+    ) -> Result<bool, RuntimeError> {
+        match pattern {
+            Value::None => Ok(true),
+            Value::Str(expected) => Ok(matches!(candidate, Value::Str(actual) if actual == expected)),
+            other => {
+                let matcher = self.builtin_getattr(
+                    vec![other.clone(), Value::Str("match".to_string())],
+                    HashMap::new(),
+                )?;
+                let InternalCallOutcome::Value(matched) = self.call_internal_preserving_caller(
+                    matcher,
+                    vec![candidate.clone()],
+                    HashMap::new(),
+                )? else {
+                    return Ok(false);
+                };
+                Ok(is_truthy(&matched))
+            }
+        }
+    }
+
+    fn capi_warning_category_matches(
+        &mut self,
+        category: &Value,
+        expected: &Value,
+    ) -> Result<bool, RuntimeError> {
+        let result = self.builtin_issubclass(vec![category.clone(), expected.clone()], HashMap::new())?;
+        Ok(matches!(result, Value::Bool(true)))
+    }
+
+    fn capi_warning_onceregistry(&mut self, warnings_module: &ObjRef) -> Result<ObjRef, RuntimeError> {
+        match self.load_attr_module(warnings_module, "onceregistry")? {
+            Value::Dict(dict_obj) => Ok(dict_obj),
+            other => Err(RuntimeError::type_error(format!(
+                "warnings.onceregistry must be dict, not '{}'",
+                self.value_type_name_for_error(&other)
+            ))),
+        }
+    }
+
+    fn capi_warning_message_value(
+        &mut self,
+        warnings_module: &ObjRef,
+        warning_instance: Value,
+        category_value: Value,
+        filename: String,
+        lineno: i64,
+        category_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        let warning_message_type = self.load_attr_module(warnings_module, "WarningMessage")?;
+        let Value::Class(class_obj) = warning_message_type else {
+            return Err(RuntimeError::type_error(
+                "warnings.WarningMessage must be a class",
+            ));
+        };
+        let Value::Instance(instance_obj) = self.heap.alloc_instance(InstanceObject::new(class_obj))
+        else {
+            unreachable!();
+        };
+        if let Object::Instance(instance_data) = &mut *instance_obj.kind_mut() {
+            instance_data
+                .attrs
+                .insert("message".to_string(), warning_instance);
+            instance_data
+                .attrs
+                .insert("category".to_string(), category_value);
+            instance_data
+                .attrs
+                .insert("filename".to_string(), Value::Str(filename));
+            instance_data
+                .attrs
+                .insert("lineno".to_string(), Value::Int(lineno));
+            instance_data.attrs.insert("file".to_string(), Value::None);
+            instance_data.attrs.insert("line".to_string(), Value::None);
+            instance_data.attrs.insert("source".to_string(), Value::None);
+            instance_data.attrs.insert(
+                "_category_name".to_string(),
+                Value::Str(category_name.to_string()),
+            );
+        }
+        Ok(Value::Instance(instance_obj))
+    }
+
+    fn capi_warning_show_callable(
+        &mut self,
+        warnings_module: &ObjRef,
+    ) -> Result<Value, RuntimeError> {
+        let showwarning = self.load_attr_module(warnings_module, "showwarning")?;
+        let showwarning_orig = self.load_attr_module(warnings_module, "_showwarning_orig")?;
+        if showwarning != showwarning_orig {
+            return self.load_attr_module(warnings_module, "_showwarnmsg");
+        }
+        self.load_attr_module(warnings_module, "_showwarnmsg_impl")
     }
 
     fn capi_canonical_int_value(&self, value: &Value) -> Option<Value> {

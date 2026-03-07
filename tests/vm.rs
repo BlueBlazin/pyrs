@@ -18858,6 +18858,88 @@ ok = (
 }
 
 #[test]
+fn exposes_testcapi_structmember_types() {
+    let source = r#"import _testcapi, warnings
+
+classes = (
+    _testcapi._test_structmembersType_OldAPI,
+    _testcapi._test_structmembersType_NewAPI,
+)
+
+class Index:
+    def __init__(self, value):
+        self.value = value
+
+    def __index__(self):
+        return self.value
+
+def check(cls):
+    obj = cls(
+        False,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        23,
+        9.99999,
+        10.1010101010,
+        "hi",
+        12,
+        13,
+        b"c",
+    )
+    if obj.T_BOOL is not False or obj.T_STRING_INPLACE != "hi" or obj.T_CHAR != "c":
+        return False
+    obj.T_INT = 42
+    if obj.T_INT != 42:
+        return False
+    try:
+        obj.T_BOOL = 1
+    except TypeError:
+        pass
+    else:
+        return False
+    try:
+        obj.T_PYSSIZET = Index(23)
+    except TypeError:
+        pass
+    else:
+        return False
+    try:
+        del obj.T_STRING_INPLACE
+    except TypeError:
+        pass
+    else:
+        return False
+    try:
+        del obj.T_CHAR
+    except TypeError:
+        pass
+    else:
+        return False
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        obj.T_UINT = -1
+    return (
+        len(caught) == 1
+        and caught[0].category is RuntimeWarning
+        and obj.T_UINT == _testcapi.UINT_MAX
+    )
+
+ok = all(check(cls) for cls in classes)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn testcapi_parse_keyword_messages_preserve_invalid_utf8_and_surrogates() {
     let source = r#"import _testcapi
 

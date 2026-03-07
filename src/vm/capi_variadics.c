@@ -52,6 +52,55 @@ typedef struct {
     double imag;
 } Py_complex;
 typedef void (*PyOS_sighandler_t)(int);
+typedef struct {
+    Py_ssize_t ob_refcnt;
+    void *ob_type;
+} PyObject;
+typedef struct {
+    const char *name;
+    int member_type;
+    Py_ssize_t offset;
+    int flags;
+    const char *doc;
+} PyMemberDef;
+typedef struct {
+    int slot;
+    void *pfunc;
+} PyType_Slot;
+typedef struct {
+    const char *name;
+    int basicsize;
+    int itemsize;
+    unsigned int flags;
+    PyType_Slot *slots;
+} PyType_Spec;
+
+typedef struct pyrs_pytypeobject PyTypeObject;
+
+#define Py_TPFLAGS_DEFAULT 0u
+#define Py_TPFLAGS_BASETYPE (1u << 10)
+
+#define Py_tp_new 65
+#define Py_tp_members 72
+
+#define Py_READONLY 1
+
+#define Py_T_SHORT 0
+#define Py_T_INT 1
+#define Py_T_LONG 2
+#define Py_T_FLOAT 3
+#define Py_T_DOUBLE 4
+#define Py_T_CHAR 7
+#define Py_T_BYTE 8
+#define Py_T_UBYTE 9
+#define Py_T_USHORT 10
+#define Py_T_UINT 11
+#define Py_T_ULONG 12
+#define Py_T_STRING_INPLACE 13
+#define Py_T_BOOL 14
+#define Py_T_LONGLONG 17
+#define Py_T_ULONGLONG 18
+#define Py_T_PYSSIZET 19
 
 #ifndef PY_SSIZE_T_MAX
 #define PY_SSIZE_T_MAX INTPTR_MAX
@@ -130,6 +179,9 @@ extern void *PyObject_ASCII(void *object);
 extern Py_hash_t PyObject_Hash(void *object);
 extern int PyObject_IsTrue(void *object);
 extern int PyType_IsSubtype(void *subtype, void *type);
+extern void *PyType_FromModuleAndSpec(void *module, void *spec, void *bases);
+extern int PyModule_AddType(void *module, void *type_obj);
+extern void *PyType_GenericAlloc(void *subtype, Py_ssize_t nitems);
 extern int PyErr_ExceptionMatches(void *exception);
 extern const char *PyUnicode_AsUTF8(void *object);
 extern void *PyThreadState_GetUnchecked(void);
@@ -4746,6 +4798,152 @@ void *pyrs_testcapi_argparsing(void *args, void *kwargs)
         return result;
     }
     return build_none();
+}
+
+typedef struct {
+    char bool_member;
+    char byte_member;
+    unsigned char ubyte_member;
+    short short_member;
+    unsigned short ushort_member;
+    int int_member;
+    unsigned int uint_member;
+    long long_member;
+    unsigned long ulong_member;
+    Py_ssize_t pyssizet_member;
+    float float_member;
+    double double_member;
+    char inplace_member[6];
+    long long longlong_member;
+    unsigned long long ulonglong_member;
+    char char_member;
+} pyrs_all_structmembers;
+
+typedef struct {
+    PyObject ob_base;
+    pyrs_all_structmembers structmembers;
+} pyrs_test_structmembers;
+
+static PyMemberDef pyrs_test_structmembers_members[] = {
+    {"T_BOOL", Py_T_BOOL, offsetof(pyrs_test_structmembers, structmembers.bool_member), 0, NULL},
+    {"T_BYTE", Py_T_BYTE, offsetof(pyrs_test_structmembers, structmembers.byte_member), 0, NULL},
+    {"T_UBYTE", Py_T_UBYTE, offsetof(pyrs_test_structmembers, structmembers.ubyte_member), 0, NULL},
+    {"T_SHORT", Py_T_SHORT, offsetof(pyrs_test_structmembers, structmembers.short_member), 0, NULL},
+    {"T_USHORT", Py_T_USHORT, offsetof(pyrs_test_structmembers, structmembers.ushort_member), 0, NULL},
+    {"T_INT", Py_T_INT, offsetof(pyrs_test_structmembers, structmembers.int_member), 0, NULL},
+    {"T_UINT", Py_T_UINT, offsetof(pyrs_test_structmembers, structmembers.uint_member), 0, NULL},
+    {"T_LONG", Py_T_LONG, offsetof(pyrs_test_structmembers, structmembers.long_member), 0, NULL},
+    {"T_ULONG", Py_T_ULONG, offsetof(pyrs_test_structmembers, structmembers.ulong_member), 0, NULL},
+    {"T_PYSSIZET", Py_T_PYSSIZET, offsetof(pyrs_test_structmembers, structmembers.pyssizet_member), 0, NULL},
+    {"T_FLOAT", Py_T_FLOAT, offsetof(pyrs_test_structmembers, structmembers.float_member), 0, NULL},
+    {"T_DOUBLE", Py_T_DOUBLE, offsetof(pyrs_test_structmembers, structmembers.double_member), 0, NULL},
+    {"T_STRING_INPLACE", Py_T_STRING_INPLACE, offsetof(pyrs_test_structmembers, structmembers.inplace_member), 0, NULL},
+    {"T_LONGLONG", Py_T_LONGLONG, offsetof(pyrs_test_structmembers, structmembers.longlong_member), 0, NULL},
+    {"T_ULONGLONG", Py_T_ULONGLONG, offsetof(pyrs_test_structmembers, structmembers.ulonglong_member), 0, NULL},
+    {"T_CHAR", Py_T_CHAR, offsetof(pyrs_test_structmembers, structmembers.char_member), 0, NULL},
+    {NULL, 0, 0, 0, NULL},
+};
+
+static void *
+pyrs_test_structmembers_new(PyTypeObject *type, void *args, void *kwargs)
+{
+    static const char *keywords[] = {
+        "T_BOOL", "T_BYTE", "T_UBYTE", "T_SHORT", "T_USHORT",
+        "T_INT", "T_UINT", "T_LONG", "T_ULONG", "T_PYSSIZET",
+        "T_FLOAT", "T_DOUBLE", "T_STRING_INPLACE",
+        "T_LONGLONG", "T_ULONGLONG", "T_CHAR",
+        NULL
+    };
+    static const char fmt[] = "|bbBhHiIlknfds#LKc";
+    const char *inplace_src = NULL;
+    Py_ssize_t inplace_len = 0;
+    pyrs_test_structmembers *self =
+        (pyrs_test_structmembers *)PyType_GenericAlloc((void *)type, 0);
+    if (self == NULL) {
+        return NULL;
+    }
+    memset(&self->structmembers, 0, sizeof(self->structmembers));
+    if (!PyArg_ParseTupleAndKeywords(
+            args,
+            kwargs,
+            fmt,
+            keywords,
+            &self->structmembers.bool_member,
+            &self->structmembers.byte_member,
+            &self->structmembers.ubyte_member,
+            &self->structmembers.short_member,
+            &self->structmembers.ushort_member,
+            &self->structmembers.int_member,
+            &self->structmembers.uint_member,
+            &self->structmembers.long_member,
+            &self->structmembers.ulong_member,
+            &self->structmembers.pyssizet_member,
+            &self->structmembers.float_member,
+            &self->structmembers.double_member,
+            &inplace_src,
+            &inplace_len,
+            &self->structmembers.longlong_member,
+            &self->structmembers.ulonglong_member,
+            &self->structmembers.char_member)) {
+        Py_DecRef(self);
+        return NULL;
+    }
+    if (inplace_src != NULL) {
+        if (inplace_len > 5) {
+            Py_DecRef(self);
+            PyErr_SetString((void *)&PyExc_ValueError, "string too long");
+            return NULL;
+        }
+        memcpy(self->structmembers.inplace_member, inplace_src, (size_t)inplace_len);
+        self->structmembers.inplace_member[inplace_len] = '\0';
+    }
+    return (void *)self;
+}
+
+static PyType_Slot pyrs_test_structmembers_slots[] = {
+    {Py_tp_new, pyrs_test_structmembers_new},
+    {Py_tp_members, pyrs_test_structmembers_members},
+    {0, NULL},
+};
+
+static PyType_Spec pyrs_test_structmembers_old_spec = {
+    "_testcapi._test_structmembersType_OldAPI",
+    (int)sizeof(pyrs_test_structmembers),
+    0,
+    Py_TPFLAGS_DEFAULT,
+    pyrs_test_structmembers_slots,
+};
+
+static PyType_Spec pyrs_test_structmembers_new_spec = {
+    "_testcapi._test_structmembersType_NewAPI",
+    (int)sizeof(pyrs_test_structmembers),
+    0,
+    Py_TPFLAGS_DEFAULT,
+    pyrs_test_structmembers_slots,
+};
+
+int pyrs_testcapi_init_structmember_types(void *module)
+{
+    void *type_obj = PyType_FromModuleAndSpec(module, &pyrs_test_structmembers_old_spec, NULL);
+    if (type_obj == NULL) {
+        return -1;
+    }
+    if (PyModule_AddType(module, type_obj) < 0) {
+        Py_DecRef(type_obj);
+        return -1;
+    }
+    Py_DecRef(type_obj);
+
+    type_obj = PyType_FromModuleAndSpec(module, &pyrs_test_structmembers_new_spec, NULL);
+    if (type_obj == NULL) {
+        return -1;
+    }
+    if (PyModule_AddType(module, type_obj) < 0) {
+        Py_DecRef(type_obj);
+        return -1;
+    }
+    Py_DecRef(type_obj);
+    return 0;
 }
 
 int _PyArg_CheckPositional(const char *name, Py_ssize_t nargs, Py_ssize_t min, Py_ssize_t max)

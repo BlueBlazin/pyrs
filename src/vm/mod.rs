@@ -1646,6 +1646,7 @@ impl Vm {
         vm.install_random_module();
         vm.install_stdlib_modules();
         vm.install_builtins();
+        vm.init_testcapi_structmember_types();
         vm.normalize_bootstrap_module_classes();
         vm.install_builtins_module();
         vm.refresh_warnings_fallback_defaults();
@@ -6193,6 +6194,13 @@ impl Vm {
             }
         }
         self.register_module(name, module);
+    }
+
+    fn init_testcapi_structmember_types(&mut self) {
+        if let Some(module) = self.modules.get("_testcapi").cloned() {
+            self.init_testcapi_structmember_types_via_capi(module)
+                .expect("_testcapi structmember init should succeed");
+        }
     }
 
     fn alloc_bootstrap_class_value(&mut self, name: &str, module_name: &str) -> Value {

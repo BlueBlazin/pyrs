@@ -16,14 +16,15 @@ use super::{
     PY_MEMBER_T_STRING_INPLACE, PY_MEMBER_T_UBYTE, PY_MEMBER_T_UINT, PY_MEMBER_T_ULONG,
     PY_MEMBER_T_ULONGLONG, PY_MEMBER_T_USHORT, Py_DecRef, Py_XDecRef, Py_XIncRef, PyBool_FromLong,
     PyCFunction_Type, PyClassMethodDescr_Type, PyDict_GetItemWithError, PyErr_BadArgument,
-    PyErr_BadInternalCall, PyErr_Occurred, PyExc_AttributeError, PyExc_SystemError,
-    PyExc_TypeError, PyExc_ValueError, PyFloat_AsDouble, PyFloat_FromDouble, PyGetSetDescr_Type,
-    PyLong_AsLong, PyLong_AsLongLong, PyLong_AsSsize_t, PyLong_AsUnsignedLong,
-    PyLong_AsUnsignedLongLong, PyLong_FromLong, PyLong_FromLongLong, PyLong_FromSsize_t,
-    PyLong_FromUnsignedLong, PyLong_FromUnsignedLongLong, PyMemberDescr_Type, PyMethod_New,
-    PyMethodDescr_Type, PyObject_Call, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem,
-    PyType_IsSubtype, PyType_Type, PyUnicode_FromString, PyUnicode_FromStringAndSize,
-    PyUnicode_InternFromString, TRACE_NUMPY_TYPEDICT_PTR, c_name_to_string, cpython_call_builtin,
+    PyErr_BadInternalCall, PyErr_Occurred, PyErr_WarnEx, PyExc_AttributeError,
+    PyExc_RuntimeWarning, PyExc_SystemError, PyExc_TypeError, PyExc_ValueError,
+    PyFloat_AsDouble, PyFloat_FromDouble, PyGetSetDescr_Type, PyLong_AsLong,
+    PyLong_AsLongLong, PyLong_AsSsize_t, PyLong_AsUnsignedLong, PyLong_AsUnsignedLongLong,
+    PyLong_FromLong, PyLong_FromLongLong, PyLong_FromSsize_t, PyLong_FromUnsignedLong,
+    PyLong_FromUnsignedLongLong, PyMemberDescr_Type, PyMethod_New, PyMethodDescr_Type,
+    PyNumber_Index, PyObject_Call, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem, PyType_IsSubtype,
+    PyType_Type, PyUnicode_FromString, PyUnicode_FromStringAndSize, PyUnicode_InternFromString,
+    TRACE_NUMPY_TYPEDICT_PTR, c_name_to_string, cpython_call_builtin,
     cpython_call_internal_in_context, cpython_call_object, cpython_debug_compare_value,
     cpython_debug_ufunc_attr_summary, cpython_exception_traceback_ptr_for_value,
     cpython_exception_type_ptr_for_value, cpython_getattr_in_context, cpython_is_type_object_ptr,
@@ -31,7 +32,7 @@ use super::{
     cpython_positional_args_from_tuple_object, cpython_ptr_is_type_object,
     cpython_safe_object_type_name, cpython_set_error, cpython_set_typed_error,
     cpython_type_name_for_object_ptr, cpython_value_debug_tag, cpython_value_from_ptr,
-    value_to_int, with_active_cpython_context_mut,
+    with_active_cpython_context_mut,
 };
 
 fn cpython_cfunction_class_ptr(cfunction: *mut c_void, flags: i32) -> *mut c_void {
@@ -1416,7 +1417,12 @@ pub unsafe extern "C" fn PyMember_SetOne(
             if raw == -1 && !unsafe { PyErr_Occurred() }.is_null() {
                 return -1;
             }
-            unsafe { std::ptr::write_unaligned(field_ptr.cast::<i8>(), raw as i8) };
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<c_char>(), raw as c_char) };
+            if raw > c_char::MAX as i64 || raw < c_char::MIN as i64 {
+                if unsafe { cpython_member_warn("Truncation of value to char") } < 0 {
+                    return -1;
+                }
+            }
             0
         }
         PY_MEMBER_T_UBYTE => {
@@ -1425,6 +1431,11 @@ pub unsafe extern "C" fn PyMember_SetOne(
                 return -1;
             }
             unsafe { std::ptr::write_unaligned(field_ptr.cast::<u8>(), raw as u8) };
+            if raw > u8::MAX as i64 || raw < 0 {
+                if unsafe { cpython_member_warn("Truncation of value to unsigned char") } < 0 {
+                    return -1;
+                }
+            }
             0
         }
         PY_MEMBER_T_SHORT => {
@@ -1433,6 +1444,11 @@ pub unsafe extern "C" fn PyMember_SetOne(
                 return -1;
             }
             unsafe { std::ptr::write_unaligned(field_ptr.cast::<i16>(), raw as i16) };
+            if raw > i16::MAX as i64 || raw < i16::MIN as i64 {
+                if unsafe { cpython_member_warn("Truncation of value to short") } < 0 {
+                    return -1;
+                }
+            }
             0
         }
         PY_MEMBER_T_USHORT => {
@@ -1441,6 +1457,11 @@ pub unsafe extern "C" fn PyMember_SetOne(
                 return -1;
             }
             unsafe { std::ptr::write_unaligned(field_ptr.cast::<u16>(), raw as u16) };
+            if raw > u16::MAX as i64 || raw < 0 {
+                if unsafe { cpython_member_warn("Truncation of value to unsigned short") } < 0 {
+                    return -1;
+                }
+            }
             0
         }
         PY_MEMBER_T_INT => {
@@ -1449,26 +1470,49 @@ pub unsafe extern "C" fn PyMember_SetOne(
                 return -1;
             }
             unsafe { std::ptr::write_unaligned(field_ptr.cast::<c_int>(), raw as c_int) };
+            if raw > c_int::MAX as i64 || raw < c_int::MIN as i64 {
+                if unsafe { cpython_member_warn("Truncation of value to int") } < 0 {
+                    return -1;
+                }
+            }
             0
         }
         PY_MEMBER_T_UINT => {
-            let numeric_value = match cpython_value_from_ptr(value) {
-                Ok(v) => v,
-                Err(err) => {
-                    cpython_set_error(err);
+            let index_value = unsafe { PyNumber_Index(value) };
+            if index_value.is_null() {
+                return -1;
+            }
+            let is_negative = match unsafe { cpython_member_index_value_is_negative(index_value) } {
+                Ok(flag) => flag,
+                Err(()) => {
+                    unsafe { Py_DecRef(index_value) };
                     return -1;
                 }
             };
-            let raw = if let Ok(signed) = value_to_int(numeric_value.clone()) {
-                signed as u32
-            } else {
-                let unsigned = unsafe { PyLong_AsUnsignedLong(value) };
-                if !unsafe { PyErr_Occurred() }.is_null() {
+            if is_negative {
+                let raw = unsafe { PyLong_AsLong(index_value) };
+                unsafe { Py_DecRef(index_value) };
+                if raw == -1 && !unsafe { PyErr_Occurred() }.is_null() {
                     return -1;
                 }
-                unsigned as u32
-            };
-            unsafe { std::ptr::write_unaligned(field_ptr.cast::<u32>(), raw) };
+                unsafe { std::ptr::write_unaligned(field_ptr.cast::<u32>(), raw as u32) };
+                if unsafe { cpython_member_warn("Writing negative value into unsigned field") } < 0
+                {
+                    return -1;
+                }
+                return 0;
+            }
+            let raw = unsafe { PyLong_AsUnsignedLong(index_value) };
+            unsafe { Py_DecRef(index_value) };
+            if raw == u64::MAX && !unsafe { PyErr_Occurred() }.is_null() {
+                return -1;
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<u32>(), raw as u32) };
+            if raw > u32::MAX as u64
+                && unsafe { cpython_member_warn("Truncation of value to unsigned int") } < 0
+            {
+                return -1;
+            }
             0
         }
         PY_MEMBER_T_LONG => {
@@ -1480,23 +1524,36 @@ pub unsafe extern "C" fn PyMember_SetOne(
             0
         }
         PY_MEMBER_T_ULONG => {
-            let numeric_value = match cpython_value_from_ptr(value) {
-                Ok(v) => v,
-                Err(err) => {
-                    cpython_set_error(err);
+            let index_value = unsafe { PyNumber_Index(value) };
+            if index_value.is_null() {
+                return -1;
+            }
+            let is_negative = match unsafe { cpython_member_index_value_is_negative(index_value) } {
+                Ok(flag) => flag,
+                Err(()) => {
+                    unsafe { Py_DecRef(index_value) };
                     return -1;
                 }
             };
-            let raw = if let Ok(signed) = value_to_int(numeric_value.clone()) {
-                signed as c_ulong
-            } else {
-                let unsigned = unsafe { PyLong_AsUnsignedLong(value) };
-                if !unsafe { PyErr_Occurred() }.is_null() {
+            if is_negative {
+                let raw = unsafe { PyLong_AsLong(index_value) };
+                unsafe { Py_DecRef(index_value) };
+                if raw == -1 && !unsafe { PyErr_Occurred() }.is_null() {
                     return -1;
                 }
-                unsigned as c_ulong
-            };
-            unsafe { std::ptr::write_unaligned(field_ptr.cast::<c_ulong>(), raw) };
+                unsafe { std::ptr::write_unaligned(field_ptr.cast::<c_ulong>(), raw as c_ulong) };
+                if unsafe { cpython_member_warn("Writing negative value into unsigned field") } < 0
+                {
+                    return -1;
+                }
+                return 0;
+            }
+            let raw = unsafe { PyLong_AsUnsignedLong(index_value) };
+            unsafe { Py_DecRef(index_value) };
+            if raw == u64::MAX && !unsafe { PyErr_Occurred() }.is_null() {
+                return -1;
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<c_ulong>(), raw as c_ulong) };
             0
         }
         PY_MEMBER_T_PYSSIZET => {
@@ -1563,22 +1620,35 @@ pub unsafe extern "C" fn PyMember_SetOne(
             0
         }
         PY_MEMBER_T_ULONGLONG => {
-            let numeric_value = match cpython_value_from_ptr(value) {
-                Ok(v) => v,
-                Err(err) => {
-                    cpython_set_error(err);
+            let index_value = unsafe { PyNumber_Index(value) };
+            if index_value.is_null() {
+                return -1;
+            }
+            let is_negative = match unsafe { cpython_member_index_value_is_negative(index_value) } {
+                Ok(flag) => flag,
+                Err(()) => {
+                    unsafe { Py_DecRef(index_value) };
                     return -1;
                 }
             };
-            let raw = if let Ok(signed) = value_to_int(numeric_value.clone()) {
-                signed as u64
-            } else {
-                let unsigned = unsafe { PyLong_AsUnsignedLongLong(value) };
-                if !unsafe { PyErr_Occurred() }.is_null() {
+            if is_negative {
+                let raw = unsafe { PyLong_AsLong(index_value) };
+                unsafe { Py_DecRef(index_value) };
+                if raw == -1 && !unsafe { PyErr_Occurred() }.is_null() {
                     return -1;
                 }
-                unsigned
-            };
+                unsafe { std::ptr::write_unaligned(field_ptr.cast::<u64>(), raw as u64) };
+                if unsafe { cpython_member_warn("Writing negative value into unsigned field") } < 0
+                {
+                    return -1;
+                }
+                return 0;
+            }
+            let raw = unsafe { PyLong_AsUnsignedLongLong(index_value) };
+            unsafe { Py_DecRef(index_value) };
+            if raw == u64::MAX && !unsafe { PyErr_Occurred() }.is_null() {
+                return -1;
+            }
             unsafe { std::ptr::write_unaligned(field_ptr.cast::<u64>(), raw) };
             0
         }
@@ -1590,6 +1660,32 @@ pub unsafe extern "C" fn PyMember_SetOne(
             -1
         }
     }
+}
+
+unsafe fn cpython_member_warn(message: &str) -> c_int {
+    let Ok(message_cstr) = CString::new(message) else {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "member warning text contained interior NUL byte",
+        );
+        return -1;
+    };
+    unsafe { PyErr_WarnEx(PyExc_RuntimeWarning, message_cstr.as_ptr(), 1) }
+}
+
+unsafe fn cpython_member_index_value_is_negative(index_value: *mut c_void) -> Result<bool, ()> {
+    let numeric_value = match cpython_value_from_ptr(index_value) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return Err(());
+        }
+    };
+    Ok(match numeric_value {
+        Value::Int(value) => value < 0,
+        Value::BigInt(value) => value.is_negative(),
+        _ => false,
+    })
 }
 
 #[unsafe(no_mangle)]

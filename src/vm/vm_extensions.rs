@@ -4703,8 +4703,10 @@ impl ModuleCapiContext {
         if child_ptr.is_null() || !self.owns_cpython_allocation_ptr(child_ptr) {
             return;
         }
+        let mut newly_pinned = false;
         if vm.capi_pin_owned_ptr(child_ptr as usize) {
             vm.capi_registry_mark_alive(child_ptr as usize);
+            newly_pinned = true;
         }
         if let Some(handle) = self
             .cpython_objects_by_ptr
@@ -4718,6 +4720,9 @@ impl ModuleCapiContext {
                 vm.extension_cpython_ptr_by_object_id
                     .insert(object_id, child_ptr as usize);
             }
+        }
+        if newly_pinned {
+            self.pin_container_children_for_vm(vm, child_ptr.cast::<CpythonCompatObject>());
         }
     }
 
@@ -4735,6 +4740,17 @@ impl ModuleCapiContext {
             // Without this, objects that survive across active C-API contexts can end up with a
             // dangling `ob_type` pointer once the owning context frees heap-type allocations.
             self.pin_owned_child_pointer_for_vm(vm, head_ref.ob_type);
+            if cpython_is_type_object_ptr(raw.cast()) {
+                let type_ptr = raw.cast::<CpythonTypeObject>();
+                self.pin_owned_child_pointer_for_vm(vm, (*type_ptr).tp_base.cast::<c_void>());
+                self.pin_owned_child_pointer_for_vm(vm, (*type_ptr).tp_dict);
+                self.pin_owned_child_pointer_for_vm(vm, (*type_ptr).tp_bases);
+                self.pin_owned_child_pointer_for_vm(vm, (*type_ptr).tp_mro);
+                if ((*type_ptr).tp_flags & PY_TPFLAGS_HEAPTYPE) != 0 {
+                    let heap_type = type_ptr.cast::<CpythonHeapTypeObject>();
+                    self.pin_owned_child_pointer_for_vm(vm, (*heap_type).ht_module);
+                }
+            }
             if head_ref.ob_type == std::ptr::addr_of_mut!(PyTuple_Type).cast() {
                 let len = (*raw.cast::<CpythonVarObjectHead>()).ob_size.max(0) as usize;
                 let items_ptr = cpython_tuple_items_ptr(raw.cast());
@@ -7667,6 +7683,13 @@ impl ModuleCapiContext {
             );
         }
         if is_type_object {
+            let seeded_value = Value::Class(proxy_class.clone());
+            vm.extension_cpython_ptr_values
+                .insert(object as usize, seeded_value.clone());
+            if let Some(object_id) = Self::identity_object_id(&seeded_value) {
+                vm.extension_cpython_ptr_by_object_id
+                    .insert(object_id, object as usize);
+            }
             self.populate_proxy_class_layout_attrs_from_type_object(&proxy_class, object);
             self.populate_proxy_class_attrs_from_type_dict(&proxy_class, object);
             if let Object::Class(class_data) = &mut *proxy_class.kind_mut() {
@@ -8666,6 +8689,26 @@ impl ModuleCapiContext {
                 let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<u8>()) };
                 Some(self.alloc_cpython_ptr_for_value(Value::Bool(raw != 0)))
             }
+            PY_MEMBER_T_BYTE => {
+                // SAFETY: BYTE members store a signed 8-bit integer.
+                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<i8>()) };
+                Some(self.alloc_cpython_ptr_for_value(Value::Int(raw as i64)))
+            }
+            PY_MEMBER_T_UBYTE => {
+                // SAFETY: UBYTE members store an unsigned 8-bit integer.
+                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<u8>()) };
+                Some(self.alloc_cpython_ptr_for_value(Value::Int(raw as i64)))
+            }
+            PY_MEMBER_T_SHORT => {
+                // SAFETY: SHORT members store a signed 16-bit integer.
+                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<i16>()) };
+                Some(self.alloc_cpython_ptr_for_value(Value::Int(raw as i64)))
+            }
+            PY_MEMBER_T_USHORT => {
+                // SAFETY: USHORT members store an unsigned 16-bit integer.
+                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<u16>()) };
+                Some(self.alloc_cpython_ptr_for_value(Value::Int(raw as i64)))
+            }
             PY_MEMBER_T_INT => {
                 // SAFETY: INT members store a native c_int.
                 let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<c_int>()) };
@@ -8712,6 +8755,34 @@ impl ModuleCapiContext {
                 // SAFETY: PYSSIZET members store a native `isize`.
                 let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<isize>()) };
                 Some(self.alloc_cpython_ptr_for_value(Value::Int(raw as i64)))
+            }
+            PY_MEMBER_T_FLOAT => {
+                // SAFETY: FLOAT members store an f32 payload.
+                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<f32>()) };
+                Some(self.alloc_cpython_ptr_for_value(Value::Float(raw as f64)))
+            }
+            PY_MEMBER_T_DOUBLE => {
+                // SAFETY: DOUBLE members store an f64 payload.
+                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<f64>()) };
+                Some(self.alloc_cpython_ptr_for_value(Value::Float(raw)))
+            }
+            PY_MEMBER_T_STRING => {
+                // SAFETY: STRING members store a `const char*`.
+                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<*const c_char>()) };
+                if raw.is_null() {
+                    Some(self.alloc_cpython_ptr_for_value(Value::None))
+                } else {
+                    let text = unsafe { CStr::from_ptr(raw) }.to_str().ok()?.to_string();
+                    Some(self.alloc_cpython_ptr_for_value(Value::Str(text)))
+                }
+            }
+            PY_MEMBER_T_STRING_INPLACE => {
+                // SAFETY: STRING_INPLACE members are stored inline as a NUL-terminated buffer.
+                let text = unsafe { CStr::from_ptr(field_ptr.cast::<c_char>()) }
+                    .to_str()
+                    .ok()?
+                    .to_string();
+                Some(self.alloc_cpython_ptr_for_value(Value::Str(text)))
             }
             _ => None,
         }
@@ -14035,6 +14106,7 @@ unsafe extern "C" {
         kwargs: *mut c_void,
     ) -> *mut c_void;
     fn pyrs_testcapi_argparsing(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
+    fn pyrs_testcapi_init_structmember_types(module: *mut c_void) -> i32;
     fn PyErr_Format(exception: *mut c_void, format: *const c_char, ...) -> *mut c_void;
     fn PyErr_FormatV(
         exception: *mut c_void,
@@ -14305,5 +14377,31 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         self.call_testcapi_capi_helper(args, kwargs, pyrs_testcapi_argparsing, "argparsing failed")
+    }
+
+    pub(in crate::vm) fn init_testcapi_structmember_types_via_capi(
+        &mut self,
+        module: ObjRef,
+    ) -> Result<(), RuntimeError> {
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, module.clone());
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
+        let module_ptr = call_ctx.alloc_cpython_ptr_for_value(Value::Module(module));
+        if module_ptr.is_null() {
+            return Err(RuntimeError::new(
+                "testcapi structmember init failed: failed to materialize module",
+            ));
+        }
+        let status = unsafe { pyrs_testcapi_init_structmember_types(module_ptr) };
+        call_ctx.sync_owned_compat_storage_from_raw();
+        if status == 0 {
+            return Ok(());
+        }
+        if let Some(err) =
+            call_ctx.runtime_error_from_current_error_state("testcapi structmember init failed")
+        {
+            return Err(err);
+        }
+        Err(RuntimeError::new("testcapi structmember init failed"))
     }
 }
