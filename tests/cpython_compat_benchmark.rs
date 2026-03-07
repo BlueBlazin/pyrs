@@ -92,6 +92,10 @@ fn orchestrator_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/run_cpython_compat_benchmark.py")
 }
 
+fn dispatcher_script() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/dispatch_cpython_compat_benchmark.py")
+}
+
 fn summarizer_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/summarize_cpython_compat_benchmark.py")
 }
@@ -478,4 +482,121 @@ fn orchestrator_entry_file_selection_is_strict_by_default_and_records_unmatched_
             "allow-missing summary missing expected fragment {needle}: {summary}"
         );
     }
+}
+
+#[test]
+fn dispatcher_emits_combined_summary_for_multiple_batches() {
+    let Some(cpython_bin) = cpython_bin_file_or_skip() else {
+        return;
+    };
+    let Some(cpython_lib) = detect_cpython_lib() else {
+        eprintln!("skipping dispatcher benchmark test (CPython Lib not found)");
+        return;
+    };
+
+    let root = temp_root("compat_benchmark_dispatcher");
+    let lib_root = create_synthetic_test_lib(&root, &cpython_lib);
+    let test_dir = lib_root.join("test");
+    fs::write(
+        test_dir.join("test_benchmark_dispatch_extra.py"),
+        r#"
+import unittest
+
+class DispatchExtraSuite(unittest.TestCase):
+    def test_more_pass(self):
+        self.assertTrue(True)
+"#,
+    )
+    .expect("write synthetic dispatch module");
+
+    let out_dir = root.join("dispatch_out");
+    let output = Command::new(&cpython_bin)
+        .arg(dispatcher_script())
+        .arg("--runner-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-lib")
+        .arg(&lib_root)
+        .arg("--entries-per-batch")
+        .arg("1")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--jobs")
+        .arg("1")
+        .arg("--run-timeout")
+        .arg("60")
+        .output()
+        .expect("run benchmark dispatcher");
+    assert!(
+        output.status.success(),
+        "dispatcher should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let plan = fs::read_to_string(out_dir.join("plan.json")).expect("read dispatcher plan");
+    for needle in [
+        r#""planned_batch_count": 2"#,
+        r#""batch-000"#,
+        r#""batch-001"#,
+    ] {
+        assert!(
+            plan.contains(needle),
+            "dispatcher plan missing expected fragment {needle}: {plan}"
+        );
+    }
+
+    let progress =
+        fs::read_to_string(out_dir.join("progress.json")).expect("read dispatcher progress");
+    for needle in [
+        r#""phase": "completed""#,
+        r#""batches_total": 2"#,
+        r#""batches_completed": 2"#,
+    ] {
+        assert!(
+            progress.contains(needle),
+            "dispatcher progress missing expected fragment {needle}: {progress}"
+        );
+    }
+
+    let summary = fs::read_to_string(out_dir.join("summary.json")).expect("read dispatcher summary");
+    for needle in [
+        r#""planned_batch_count": 2"#,
+        r#""completed_batch_count": 2"#,
+        r#""entry_count": 2"#,
+        r#""executed_entry_count": 2"#,
+        r#""executed_subtest_count": 2"#,
+        r#""batch_id": "batch-000""#,
+        r#""batch_id": "batch-001""#,
+        r#""result_shard": "batches/batch-000/results/test.test_benchmark_dispatch_extra.json""#,
+        r#""result_shard": "batches/batch-001/results/test.test_benchmark_orchestrator.json""#,
+    ] {
+        assert!(
+            summary.contains(needle),
+            "dispatcher summary missing expected fragment {needle}: {summary}"
+        );
+    }
+
+    let derived =
+        fs::read_to_string(out_dir.join("derived_summary.json")).expect("read dispatcher derived summary");
+    for needle in [
+        r#""discoverable_case_count": 3"#,
+        r#""executed_case_count": 3"#,
+        r#""slowest_cases": ["#,
+    ] {
+        assert!(
+            derived.contains(needle),
+            "dispatcher derived summary missing expected fragment {needle}: {derived}"
+        );
+    }
+
+    assert!(
+        out_dir.join("batches/batch-000/summary.json").is_file(),
+        "dispatcher should emit nested batch summary for batch-000"
+    );
+    assert!(
+        out_dir.join("batches/batch-001/summary.json").is_file(),
+        "dispatcher should emit nested batch summary for batch-001"
+    );
 }

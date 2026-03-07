@@ -20,6 +20,8 @@ This benchmark is intended to answer:
 ## Scripts
 - Host orchestrator:
   - `scripts/run_cpython_compat_benchmark.py`
+- Batched dispatcher:
+  - `scripts/dispatch_cpython_compat_benchmark.py`
 - In-interpreter worker:
   - `scripts/cpython_compat_benchmark_worker.py`
 
@@ -67,12 +69,28 @@ For a curated batch file:
 Entry files are newline-delimited module names. Blank lines and `#` comments are
 ignored.
 
+For a full sharded run:
+
+```bash
+/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
+  scripts/dispatch_cpython_compat_benchmark.py \
+  --runner-bin target/debug/pyrs \
+  --cpython-bin /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
+  --cpython-lib .local/Python-3.14.3/Lib \
+  --entries-per-batch 25 \
+  --out-dir perf/cpython_compat_benchmark_latest \
+  --jobs 4 \
+  --run-timeout 120
+```
+
 ## Output Layout
 
-The orchestrator writes a directory, not a single monolithic file:
+The orchestrator or dispatcher writes a directory, not a single monolithic file:
 
 - `manifest.json`
   - run metadata, discovery/selection provenance, timeout config, and completion state
+- `plan.json`
+  - dispatcher batch layout and per-batch entry files when using the sharded dispatcher
 - `progress.json`
   - live phase/count/status snapshot for long-running or interrupted benchmark runs
 - `summary.json`
@@ -83,6 +101,8 @@ The orchestrator writes a directory, not a single monolithic file:
   - host-CPython inventory shards per test entry
 - `results/*.json`
   - `pyrs` execution shards per test entry
+- `batches/*`
+  - nested batch runs when using the sharded dispatcher
 
 Each result shard includes:
 - discoverable case ids for that entry,
@@ -104,6 +124,9 @@ Each result shard includes:
   starting. Use `--allow-missing-entries` when a curated batch may contain
   platform-specific rows; the unmatched names are then recorded in
   `manifest.json` and `summary.json`.
+- The sharded dispatcher writes one nested orchestrator run per batch and then
+  merges those batch summaries into one top-level `summary.json` /
+  `derived_summary.json`, so the website can consume a single combined artifact.
 - A derived rollup can be generated after a run with:
 
 ```bash
