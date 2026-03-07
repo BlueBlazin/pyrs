@@ -17,7 +17,10 @@ use super::{
     env_var_present_cached, format_repr, memoryview_bounds, runtime_error_matches_exception,
     value_from_bigint, value_from_object_ref, with_bytes_like_source,
 };
-use crate::runtime::{DictViewKind, builtin_type_name_info, canonical_static_class_name_info};
+use crate::runtime::{
+    BoundMethodDispatchKind, DictViewKind, builtin_type_name_info,
+    canonical_static_class_name_info,
+};
 
 thread_local! {
     static CALL_INTERNAL_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -5483,8 +5486,8 @@ impl Vm {
             Object::BoundMethod(data) => data.clone(),
             _ => return Err(RuntimeError::type_error("attempted to call non-function")),
         };
-        match &*method_data.function.kind() {
-            Object::Function(_) => {
+        match method_data.dispatch_kind {
+            BoundMethodDispatchKind::Python => {
                 let depth_before = self.frames.len();
                 let mut bound_args = Vec::with_capacity(args.len() + 1);
                 bound_args.push(self.receiver_value(&method_data.receiver)?);
@@ -5499,9 +5502,9 @@ impl Vm {
                     self.frames.len() > depth_before,
                 ))
             }
-            Object::NativeMethod(native) => {
+            BoundMethodDispatchKind::Native(native_kind) => {
                 let native_call = self.call_native_method(
-                    native.kind,
+                    native_kind,
                     method_data.receiver.clone(),
                     args,
                     kwargs,
@@ -5527,7 +5530,7 @@ impl Vm {
                     }
                 }
             }
-            _ => {
+            BoundMethodDispatchKind::Generic => {
                 let Some(callable) = value_from_object_ref(method_data.function.clone()) else {
                     return Err(RuntimeError::type_error("attempted to call non-function"));
                 };

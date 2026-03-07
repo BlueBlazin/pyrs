@@ -240,15 +240,32 @@ impl fmt::Debug for SuperObject {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum BoundMethodDispatchKind {
+    Python,
+    Native(NativeMethodKind),
+    Generic,
+}
+
 #[derive(Clone)]
 pub struct BoundMethod {
     pub function: ObjRef,
     pub receiver: ObjRef,
+    pub dispatch_kind: BoundMethodDispatchKind,
 }
 
 impl BoundMethod {
     pub fn new(function: ObjRef, receiver: ObjRef) -> Self {
-        Self { function, receiver }
+        let dispatch_kind = match &*function.kind() {
+            Object::Function(_) => BoundMethodDispatchKind::Python,
+            Object::NativeMethod(native) => BoundMethodDispatchKind::Native(native.kind),
+            _ => BoundMethodDispatchKind::Generic,
+        };
+        Self {
+            function,
+            receiver,
+            dispatch_kind,
+        }
     }
 }
 
@@ -257,6 +274,7 @@ impl fmt::Debug for BoundMethod {
         f.debug_struct("BoundMethod")
             .field("function_id", &self.function.id())
             .field("receiver_id", &self.receiver.id())
+            .field("dispatch_kind", &self.dispatch_kind)
             .finish()
     }
 }
