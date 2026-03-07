@@ -5530,10 +5530,24 @@ impl Vm {
                             Value::BoundMethod(bound) => match &*bound.kind() {
                                 Object::BoundMethod(bound_data) => {
                                     match &*bound_data.function.kind() {
-                                        Object::NativeMethod(native) => matches!(
-                                            native.kind,
-                                            NativeMethodKind::Builtin(BuiltinFunction::Str)
-                                        ),
+                                        Object::NativeMethod(native)
+                                            if matches!(
+                                                native.kind,
+                                                NativeMethodKind::Builtin(BuiltinFunction::Str)
+                                            ) =>
+                                        {
+                                            !matches!(
+                                                &*bound_data.receiver.kind(),
+                                                Object::Module(module_data)
+                                                    if module_data
+                                                        .globals
+                                                        .get("value")
+                                                        .is_some_and(|value| matches!(
+                                                            value,
+                                                            Value::Str(_)
+                                                        ))
+                                            )
+                                        }
                                         _ => false,
                                     }
                                 }
@@ -5565,7 +5579,14 @@ impl Vm {
                     }
                 }
             }
-            return Ok(Value::Str(format_value(&object)));
+            return match object {
+                Value::Str(text) => Ok(Value::Str(text)),
+                Value::Instance(_) => match self.builtin_repr(vec![object], HashMap::new())? {
+                    Value::Str(text) => Ok(Value::Str(text)),
+                    _ => Err(RuntimeError::new("__repr__ returned non-string")),
+                },
+                other => Ok(Value::Str(format_value(&other))),
+            };
         }
 
         let encoding =
@@ -8431,6 +8452,7 @@ impl Vm {
                         | BuiltinFunction::OperatorLt
                         | BuiltinFunction::OperatorAdd
                 ) | NativeMethodKind::IntReprMethod
+                    | NativeMethodKind::BuiltinBaseReprMethod
             )
     }
 
@@ -8466,6 +8488,7 @@ impl Vm {
                     | BuiltinFunction::OperatorLt
                     | BuiltinFunction::OperatorAdd
             ) | NativeMethodKind::IntReprMethod
+                | NativeMethodKind::BuiltinBaseReprMethod
         )
     }
 

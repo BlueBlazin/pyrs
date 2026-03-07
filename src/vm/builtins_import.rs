@@ -196,6 +196,15 @@ impl Vm {
         Ok(Value::Module(module))
     }
 
+    pub(super) fn import_module_value_sync(
+        &mut self,
+        module_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        let module = self.import_module_object(module_name)?;
+        let module = self.canonical_imported_module_for_name(module_name, module);
+        Ok(Value::Module(module))
+    }
+
     pub(super) fn run_pending_import_frames(
         &mut self,
         caller_depth: usize,

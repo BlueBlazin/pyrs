@@ -13,6 +13,9 @@ export PYRS_PARITY_STRICT=1
 echo "[parity] running builtin parity gate"
 ./scripts/run_builtin_parity_gate.sh
 
+echo "[parity] building release pyrs for strict subprocess suites"
+cargo build --release --bin pyrs
+
 echo "[parity] running focused parity gate suites"
 cargo nextest run \
   --status-level fail \

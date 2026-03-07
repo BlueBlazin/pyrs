@@ -10540,9 +10540,7 @@ impl ModuleCapiContext {
         }
         // SAFETY: the VM pointer is initialized for the extension context lifetime.
         let vm = unsafe { &mut *self.vm };
-        let value = match vm
-            .builtin_import_module(vec![Value::Str(module_name.to_string())], HashMap::new())
-        {
+        let value = match vm.import_module_value_sync(module_name) {
             Ok(value) => value,
             Err(err) => {
                 // Preserve the active exception type for C-API consumers that
@@ -12074,7 +12072,7 @@ impl ModuleCapiContext {
         let mut object = {
             // SAFETY: VM pointer is valid for the context lifetime.
             let vm = unsafe { &mut *self.vm };
-            vm.builtin_import_module(vec![Value::Str(module_name.to_string())], HashMap::new())
+            vm.import_module_value_sync(module_name)
                 .map_err(|_| {
                     if trace_capsule_import {
                         eprintln!(

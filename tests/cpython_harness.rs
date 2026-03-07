@@ -287,11 +287,16 @@ fn strict_timing_trace_enabled() -> bool {
 }
 
 fn run_source_in_subprocess(bin: &Path, source: &str, timeout: Duration) -> Result<(), String> {
-    let mut child = Command::new(bin)
+    let mut command = Command::new(bin);
+    command
         .arg("-c")
         .arg(source)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(lib) = detect_cpython_lib() {
+        command.env("PYRS_CPYTHON_LIB", lib);
+    }
+    let mut child = command
         .spawn()
         .map_err(|err| format!("failed to spawn subprocess harness: {err}"))?;
     let start = Instant::now();
@@ -543,6 +548,46 @@ fn subprocess_harness_helper_times_out_hanging_program() {
         err.contains("timed out"),
         "expected timeout error, got: {err}"
     );
+}
+
+#[test]
+fn strict_stdlib_json_entry_passes() {
+    let lib = cpython_lib_or_panic();
+    if lib.as_os_str().is_empty() {
+        return;
+    }
+    let Some(bin) = strict_subprocess_bin().or_else(pyrs_bin) else {
+        eprintln!("skipping strict json entry test (pyrs binary not found)");
+        return;
+    };
+    run_entry(
+        &lib,
+        "test/test_json/__init__.py",
+        SuiteMode::StrictUnittest,
+        Some(&bin),
+        Some(strict_timeout_for_entry(STRICT_STDLIB_SUITE, false)),
+    )
+    .expect("strict json unittest entry should pass");
+}
+
+#[test]
+fn strict_stdlib_sqlite_dump_entry_passes() {
+    let lib = cpython_lib_or_panic();
+    if lib.as_os_str().is_empty() {
+        return;
+    }
+    let Some(bin) = strict_subprocess_bin().or_else(pyrs_bin) else {
+        eprintln!("skipping strict sqlite dump entry test (pyrs binary not found)");
+        return;
+    };
+    run_entry(
+        &lib,
+        "test/test_sqlite3/test_dump.py",
+        SuiteMode::StrictUnittest,
+        Some(&bin),
+        Some(strict_timeout_for_entry(STRICT_STDLIB_SUITE, false)),
+    )
+    .expect("strict sqlite dump unittest entry should pass");
 }
 
 #[test]

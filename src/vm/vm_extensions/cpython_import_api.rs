@@ -299,7 +299,7 @@ pub unsafe extern "C" fn PyImport_ImportFrozenModule(name: *const c_char) -> i32
         }
         // SAFETY: VM pointer is valid for active context lifetime.
         let vm = unsafe { &mut *context.vm };
-        match vm.builtin_import_module(vec![Value::Str(module_name)], HashMap::new()) {
+        match vm.import_module_value_sync(&module_name) {
             Ok(_) => 1,
             Err(_) => {
                 vm.clear_active_exception();
@@ -549,9 +549,7 @@ pub unsafe extern "C" fn PyImport_GetImporter(path: *mut c_void) -> *mut c_void 
         };
         // SAFETY: VM pointer is valid for active context lifetime.
         let vm = unsafe { &mut *context.vm };
-        let pkgutil = match vm
-            .builtin_import_module(vec![Value::Str("pkgutil".to_string())], HashMap::new())
-        {
+        let pkgutil = match vm.import_module_value_sync("pkgutil") {
             Ok(value) => value,
             Err(err) => {
                 vm.clear_active_exception();
@@ -794,7 +792,7 @@ pub unsafe extern "C" fn PyImport_ReloadModule(module: *mut c_void) -> *mut c_vo
         }
         // SAFETY: VM pointer is valid for active context lifetime.
         let vm = unsafe { &mut *context.vm };
-        match vm.builtin_import_module(vec![Value::Str(module_name)], HashMap::new()) {
+        match vm.import_module_value_sync(&module_name) {
             Ok(value) => context.alloc_cpython_ptr_for_value(value),
             Err(err) => {
                 context.set_error(err.message);

@@ -384,6 +384,7 @@ pub enum NativeMethodKind {
     IntBitLengthMethod,
     IntIndexMethod,
     IntReprMethod,
+    BuiltinBaseReprMethod,
     FloatAsIntegerRatioMethod,
     FloatIsIntegerMethod,
     FloatConjugateMethod,
@@ -2424,6 +2425,7 @@ fn native_kind_is_slot_wrapper(kind: NativeMethodKind) -> bool {
                 | BuiltinFunction::OperatorLt
                 | BuiltinFunction::OperatorAdd
         ) | NativeMethodKind::IntReprMethod
+            | NativeMethodKind::BuiltinBaseReprMethod
     )
 }
 
@@ -10402,7 +10404,9 @@ fn module_wrapped_value(receiver: &ObjRef, key: &str) -> Option<Value> {
 }
 
 fn bound_method_receiver_value(receiver: &ObjRef) -> Option<Value> {
-    module_wrapped_value(receiver, "value").or_else(|| value_from_objref(receiver))
+    module_wrapped_value(receiver, "bound_receiver")
+        .or_else(|| module_wrapped_value(receiver, "value"))
+        .or_else(|| value_from_objref(receiver))
 }
 
 fn descriptor_owner_value(receiver: &ObjRef) -> Option<Value> {
@@ -10489,6 +10493,7 @@ fn native_method_name(kind: NativeMethodKind) -> Option<String> {
     match kind {
         NativeMethodKind::Builtin(builtin) => Some(builtin_callable_name(builtin)),
         NativeMethodKind::IntReprMethod => Some("__repr__".to_string()),
+        NativeMethodKind::BuiltinBaseReprMethod => Some("__repr__".to_string()),
         NativeMethodKind::DictKeys => Some("keys".to_string()),
         NativeMethodKind::DictValues => Some("values".to_string()),
         NativeMethodKind::DictItems => Some("items".to_string()),
@@ -11205,6 +11210,9 @@ pub fn format_value(value: &Value) -> String {
                         }
                         NativeMethodKind::IntReprMethod => {
                             "<bound method int.__repr__>".to_string()
+                        }
+                        NativeMethodKind::BuiltinBaseReprMethod => {
+                            "<bound method __repr__>".to_string()
                         }
                         NativeMethodKind::FloatAsIntegerRatioMethod => {
                             "<bound method float.as_integer_ratio>".to_string()

@@ -4295,8 +4295,7 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
         }
         let connection_id = self.sqlite_connection_id_from_value(&receiver, "iterdump")?;
         let _ = self.sqlite_open_db_handle(connection_id)?;
-        let dump_module = self
-            .builtin_import_module(vec![Value::Str("sqlite3.dump".to_string())], HashMap::new())?;
+        let dump_module = self.import_module_value_sync("sqlite3.dump")?;
         let iterdump_callable = self.builtin_getattr(
             vec![dump_module, Value::Str("_iterdump".to_string())],
             HashMap::new(),

@@ -306,6 +306,22 @@ impl Vm {
         receiver
     }
 
+    fn alloc_slot_wrapper_receiver_with_dispatch_owner(
+        &self,
+        module_name: &str,
+        owner: Value,
+        dispatch_owner: Value,
+        value: Option<Value>,
+    ) -> ObjRef {
+        let receiver = self.alloc_slot_wrapper_receiver(module_name, owner, value);
+        if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+            module_data
+                .globals
+                .insert("dispatch_owner".to_string(), dispatch_owner);
+        }
+        receiver
+    }
+
     fn alloc_builtin_slot_wrapper_method(
         &self,
         owner: Value,
@@ -337,6 +353,104 @@ impl Vm {
     ) -> Value {
         let receiver = self.alloc_slot_wrapper_receiver(module_name, owner, value);
         self.alloc_native_bound_method(kind, receiver)
+    }
+
+    fn alloc_builtin_base_repr_slot_wrapper_method(
+        &self,
+        display_owner: Value,
+        dispatch_owner: Value,
+        value: Option<Value>,
+    ) -> Value {
+        let module_name = if value.is_some() {
+            "__slot_wrapper_method__"
+        } else {
+            "__slot_wrapper_unbound_method__"
+        };
+        let receiver = self.alloc_slot_wrapper_receiver_with_dispatch_owner(
+            module_name,
+            display_owner,
+            dispatch_owner,
+            value,
+        );
+        self.alloc_native_bound_method(NativeMethodKind::BuiltinBaseReprMethod, receiver)
+    }
+
+    fn inherited_str_slot_wrapper_owner(&self, builtin: BuiltinFunction) -> Value {
+        match builtin {
+            BuiltinFunction::Str | BuiltinFunction::Bytes | BuiltinFunction::ByteArray => {
+                Value::Builtin(builtin)
+            }
+            _ => self.slot_wrapper_object_owner(),
+        }
+    }
+
+    fn builtin_display_base_for_class(&self, class: &ObjRef) -> Option<BuiltinFunction> {
+        if self.class_has_builtin_int_base(class) {
+            return Some(BuiltinFunction::Int);
+        }
+        if self.class_has_builtin_float_base(class) {
+            return Some(BuiltinFunction::Float);
+        }
+        if self.class_has_builtin_str_base(class) {
+            return Some(BuiltinFunction::Str);
+        }
+        if self.class_has_builtin_bytes_base(class) {
+            return Some(BuiltinFunction::Bytes);
+        }
+        if self.class_has_builtin_bytearray_base(class) {
+            return Some(BuiltinFunction::ByteArray);
+        }
+        if self.class_has_builtin_tuple_base(class) {
+            return Some(BuiltinFunction::Tuple);
+        }
+        if self.class_has_builtin_list_base(class) {
+            return Some(BuiltinFunction::List);
+        }
+        if self.class_has_builtin_dict_base(class) {
+            return Some(BuiltinFunction::Dict);
+        }
+        if self.class_has_builtin_set_base(class) {
+            return Some(BuiltinFunction::Set);
+        }
+        if self.class_has_builtin_frozenset_base(class) {
+            return Some(BuiltinFunction::FrozenSet);
+        }
+        None
+    }
+
+    fn load_attr_class_builtin_display_method(
+        &self,
+        class: &ObjRef,
+        attr_name: &str,
+    ) -> Option<Value> {
+        if !matches!(attr_name, "__repr__" | "__str__") {
+            return None;
+        }
+        let builtin = self.builtin_display_base_for_class(class)?;
+        match attr_name {
+            "__repr__" => {
+                if matches!(builtin, BuiltinFunction::Int | BuiltinFunction::Bool) {
+                    Some(self.alloc_native_slot_wrapper_method(
+                        "__int_unbound_method__",
+                        Value::Builtin(builtin),
+                        None,
+                        NativeMethodKind::IntReprMethod,
+                    ))
+                } else {
+                    Some(self.alloc_builtin_base_repr_slot_wrapper_method(
+                        Value::Builtin(builtin),
+                        Value::Builtin(builtin),
+                        None,
+                    ))
+                }
+            }
+            "__str__" => Some(self.alloc_builtin_slot_wrapper_method(
+                self.inherited_str_slot_wrapper_owner(builtin),
+                None,
+                BuiltinFunction::Str,
+            )),
+            _ => None,
+        }
     }
 
     pub(super) fn builtin_type_name(&self, builtin: BuiltinFunction) -> &'static str {
@@ -1370,12 +1484,23 @@ impl Vm {
                         | BuiltinFunction::Str
                         | BuiltinFunction::Bytes
                         | BuiltinFunction::ByteArray
-                        | BuiltinFunction::TypesMappingProxy
+                        | BuiltinFunction::Float
+                ) =>
+            {
+                Ok(self.alloc_builtin_base_repr_slot_wrapper_method(
+                    Value::Builtin(builtin),
+                    Value::Builtin(builtin),
+                    None,
+                ))
+            }
+            "__repr__"
+                if matches!(
+                    builtin,
+                    BuiltinFunction::TypesMappingProxy
                         | BuiltinFunction::CollectionsDefaultDict
                         | BuiltinFunction::CollectionsOrderedDict
                         | BuiltinFunction::CollectionsCounter
                         | BuiltinFunction::CollectionsDeque
-                        | BuiltinFunction::Float
                 ) =>
             {
                 Ok(self.alloc_builtin_slot_wrapper_method(
@@ -2177,19 +2302,8 @@ impl Vm {
         {
             return Some(Value::Builtin(BuiltinFunction::Format));
         }
-        if (self.class_has_builtin_int_base(class)
-            || self.class_has_builtin_float_base(class)
-            || self.class_has_builtin_str_base(class))
-            && attr_name == "__str__"
-        {
-            return Some(Value::Builtin(BuiltinFunction::Str));
-        }
-        if (self.class_has_builtin_int_base(class)
-            || self.class_has_builtin_float_base(class)
-            || self.class_has_builtin_str_base(class))
-            && attr_name == "__repr__"
-        {
-            return Some(Value::Builtin(BuiltinFunction::Repr));
+        if let Some(display_method) = self.load_attr_class_builtin_display_method(class, attr_name) {
+            return Some(display_method);
         }
         if (self.class_has_builtin_int_base(class)
             || self.class_has_builtin_float_base(class)
@@ -2199,7 +2313,11 @@ impl Vm {
             return Some(Value::Builtin(BuiltinFunction::ObjectReduceEx));
         }
         if self.class_has_builtin_list_base(class) && attr_name == "__reversed__" {
-            return Some(Value::Builtin(BuiltinFunction::Reversed));
+            return Some(self.alloc_native_unbound_method(
+                "__list_unbound_method__",
+                Value::Builtin(BuiltinFunction::List),
+                NativeMethodKind::ListDunderReversed,
+            ));
         }
         if self.class_has_builtin_tuple_base(class) && attr_name == "count" {
             let receiver = match self
@@ -2286,10 +2404,10 @@ impl Vm {
             ));
         }
         if attr_name == "__repr__" {
-            return Ok(self.alloc_builtin_slot_wrapper_method(
+            return Ok(self.alloc_builtin_base_repr_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::List),
                 Value::Builtin(BuiltinFunction::List),
                 Some(Value::List(list)),
-                BuiltinFunction::Repr,
             ));
         }
         if attr_name == "__len__" {
@@ -2345,10 +2463,10 @@ impl Vm {
             ));
         }
         if attr_name == "__repr__" {
-            return Ok(self.alloc_builtin_slot_wrapper_method(
+            return Ok(self.alloc_builtin_base_repr_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::Tuple),
                 Value::Builtin(BuiltinFunction::Tuple),
                 Some(Value::Tuple(tuple)),
-                BuiltinFunction::Repr,
             ));
         }
         if attr_name == "__len__" {
@@ -2506,10 +2624,10 @@ impl Vm {
             ));
         }
         if attr_name == "__repr__" {
-            return Ok(self.alloc_builtin_slot_wrapper_method(
+            return Ok(self.alloc_builtin_base_repr_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::Float),
                 Value::Builtin(BuiltinFunction::Float),
                 Some(Value::Float(value)),
-                BuiltinFunction::Repr,
             ));
         }
         let kind = match attr_name {
@@ -2569,10 +2687,10 @@ impl Vm {
             ));
         }
         if attr_name == "__repr__" {
-            return Ok(self.alloc_builtin_slot_wrapper_method(
+            return Ok(self.alloc_builtin_base_repr_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::Str),
                 Value::Builtin(BuiltinFunction::Str),
                 Some(Value::Str(text)),
-                BuiltinFunction::Repr,
             ));
         }
         if attr_name == "__doc__" {
@@ -2680,10 +2798,10 @@ impl Vm {
             } else {
                 BuiltinFunction::Bytes
             };
-            return Ok(self.alloc_builtin_slot_wrapper_method(
+            return Ok(self.alloc_builtin_base_repr_slot_wrapper_method(
+                Value::Builtin(owner),
                 Value::Builtin(owner),
                 Some(receiver_value),
-                BuiltinFunction::Repr,
             ));
         }
         if attr_name == "__doc__" {
@@ -3131,7 +3249,12 @@ impl Vm {
                 }),
                 BuiltinFunction::Str,
             )),
-            "__repr__" => Ok(self.alloc_builtin_slot_wrapper_method(
+            "__repr__" => Ok(self.alloc_builtin_base_repr_slot_wrapper_method(
+                Value::Builtin(if is_frozenset {
+                    BuiltinFunction::FrozenSet
+                } else {
+                    BuiltinFunction::Set
+                }),
                 Value::Builtin(if is_frozenset {
                     BuiltinFunction::FrozenSet
                 } else {
@@ -3142,7 +3265,6 @@ impl Vm {
                 } else {
                     Value::Set(set.clone())
                 }),
-                BuiltinFunction::Repr,
             )),
             "__reduce__" => {
                 Ok(self.alloc_builtin_bound_method(BuiltinFunction::SetReduce, set.clone()))
@@ -3222,10 +3344,11 @@ impl Vm {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, dict));
         }
         if attr_name == "__repr__" {
-            return Ok(self.alloc_builtin_slot_wrapper_method(
-                owner.unwrap_or(Value::Builtin(BuiltinFunction::Dict)),
+            let display_owner = owner.unwrap_or(Value::Builtin(BuiltinFunction::Dict));
+            return Ok(self.alloc_builtin_base_repr_slot_wrapper_method(
+                display_owner,
+                Value::Builtin(BuiltinFunction::Dict),
                 Some(Value::Dict(dict)),
-                BuiltinFunction::Repr,
             ));
         }
         if attr_name == "__str__" {
@@ -4673,6 +4796,32 @@ impl Vm {
         method: &ObjRef,
         receiver: &Value,
     ) -> Result<Option<Value>, RuntimeError> {
+        let canonical_bound_value = match receiver {
+            Value::Instance(instance) => {
+                if let Some(backing) = self.instance_backing_list(instance) {
+                    Value::List(backing)
+                } else if let Some(backing) = self.instance_backing_tuple(instance) {
+                    Value::Tuple(backing)
+                } else if let Some(backing) = self.instance_backing_str(instance) {
+                    Value::Str(backing)
+                } else if let Some(backing) = self.instance_backing_bytes_like(instance) {
+                    backing
+                } else if let Some(backing) = self.instance_backing_dict(instance) {
+                    Value::Dict(backing)
+                } else if let Some(backing) = self.instance_backing_set(instance) {
+                    Value::Set(backing)
+                } else if let Some(backing) = self.instance_backing_frozenset(instance) {
+                    Value::FrozenSet(backing)
+                } else if let Some(backing) = self.instance_backing_int(instance) {
+                    backing
+                } else if let Some(backing) = self.instance_backing_float(instance) {
+                    Value::Float(backing)
+                } else {
+                    receiver.clone()
+                }
+            }
+            _ => receiver.clone(),
+        };
         let method_ref = method.kind();
         let Object::BoundMethod(method_data) = &*method_ref else {
             return Err(RuntimeError::attribute_error(
@@ -4685,6 +4834,44 @@ impl Vm {
         );
         if !is_unbound_wrapper {
             return Ok(None);
+        }
+        if let Object::Module(module_data) = &*method_data.receiver.kind() {
+            let is_slot_wrapper = matches!(
+                module_data.globals.get("__slot_wrapper__"),
+                Some(Value::Bool(true))
+            );
+            if !is_slot_wrapper {
+                let receiver_ref = self.bound_receiver_ref(receiver)?;
+                return Ok(Some(self.heap.alloc_bound_method(BoundMethod::new(
+                    method_data.function.clone(),
+                    receiver_ref,
+                ))));
+            }
+            let bound_module_name = if module_data.name == "__int_unbound_method__" {
+                "__int_method__".to_string()
+            } else {
+                module_data.name.clone()
+            };
+            let bound_receiver = match self
+                .heap
+                .alloc_module(ModuleObject::new(bound_module_name))
+            {
+                Value::Module(obj) => obj,
+                _ => unreachable!(),
+            };
+            if let Object::Module(bound_module_data) = &mut *bound_receiver.kind_mut() {
+                bound_module_data.globals = module_data.globals.clone();
+                bound_module_data
+                    .globals
+                    .insert("value".to_string(), canonical_bound_value);
+                bound_module_data
+                    .globals
+                    .insert("bound_receiver".to_string(), receiver.clone());
+            }
+            return Ok(Some(self.heap.alloc_bound_method(BoundMethod::new(
+                method_data.function.clone(),
+                bound_receiver,
+            ))));
         }
         let receiver_ref = self.bound_receiver_ref(receiver)?;
         Ok(Some(self.heap.alloc_bound_method(BoundMethod::new(
@@ -6452,6 +6639,10 @@ impl Vm {
             && let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name)
         {
             proxy_attr
+        } else if matches!(attr_name, "__repr__" | "__str__")
+            && let Some(attr) = self.load_attr_class_builtin_base_method(class, attr_name)
+        {
+            attr
         } else if let Some(attr) = class_attr_lookup(class, attr_name) {
             attr
         } else if let Some(attr) = proxy_base_attr {
@@ -6736,19 +6927,27 @@ impl Vm {
         } else if attr_name == "__getstate__" {
             Value::Builtin(BuiltinFunction::ObjectGetState)
         } else if attr_name == "__repr__" && !is_cpython_proxy_class {
-            if let Some(meta) = class_metaclass.clone()
-                && let Some(meta_attr) = class_attr_lookup(&meta, attr_name)
-            {
-                descriptor_owner = Some(meta);
-                meta_attr
+            if let Some(inherited) = self.load_attr_class_builtin_base_method(class, attr_name) {
+                return Ok(AttrAccessOutcome::Value(inherited));
             } else {
                 return Ok(AttrAccessOutcome::Value(
-                    self.alloc_builtin_bound_method(BuiltinFunction::Repr, class.clone()),
+                    self.alloc_builtin_slot_wrapper_method(
+                        self.slot_wrapper_object_owner(),
+                        None,
+                        BuiltinFunction::Repr,
+                    ),
                 ));
             }
         } else if attr_name == "__str__" && !is_cpython_proxy_class {
+            if let Some(inherited) = self.load_attr_class_builtin_base_method(class, attr_name) {
+                return Ok(AttrAccessOutcome::Value(inherited));
+            }
             return Ok(AttrAccessOutcome::Value(
-                self.alloc_builtin_bound_method(BuiltinFunction::Str, class.clone()),
+                self.alloc_builtin_slot_wrapper_method(
+                    self.slot_wrapper_object_owner(),
+                    None,
+                    BuiltinFunction::Str,
+                ),
             ));
         } else if attr_name == "__format__" && !is_cpython_proxy_class {
             return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
@@ -6918,6 +7117,13 @@ impl Vm {
         if matches!(attr_name, "__repr__" | "__str__" | "__format__")
             && let Value::Builtin(builtin) = attr.clone()
         {
+            if matches!(builtin, BuiltinFunction::Repr | BuiltinFunction::Str) {
+                let inherited = self.load_attr_class_builtin_base_method(class, attr_name);
+                let slot_owner = self.slot_wrapper_object_owner();
+                return Ok(AttrAccessOutcome::Value(inherited.unwrap_or_else(|| {
+                    self.alloc_builtin_slot_wrapper_method(slot_owner, None, builtin)
+                })));
+            }
             return Ok(AttrAccessOutcome::Value(
                 self.alloc_builtin_bound_method(builtin, class.clone()),
             ));
@@ -7913,6 +8119,13 @@ impl Vm {
                     break;
                 }
                 if let Some(local_attr) = class_attr_lookup_direct(&candidate, attr_name) {
+                    class_attr_owner = Some(candidate);
+                    class_attr = Some(local_attr);
+                    break;
+                }
+                if let Some(local_attr) =
+                    self.load_attr_class_builtin_base_method(&candidate, attr_name)
+                {
                     class_attr_owner = Some(candidate);
                     class_attr = Some(local_attr);
                     break;

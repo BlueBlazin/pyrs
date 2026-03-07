@@ -462,6 +462,28 @@ result = {
 }
 
 #[test]
+fn differential_re_bound_method_identity_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import re
+pat = re.compile("")
+m = pat.match("")
+result = {
+    "pattern_match_self": pat.match.__self__ is pat,
+    "pattern_search_self": pat.search.__self__ is pat,
+    "pattern_fullmatch_self": pat.fullmatch.__self__ is pat,
+    "group_self": m.group.__self__ is m,
+    "group_value": m.group(0),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
 fn differential_builtin_type_objects_are_truthy() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;
@@ -3092,6 +3114,66 @@ result = {
 "#;
     let py = run_cpython_json(source).expect("CPython JSON should run");
     let ours = run_pyrs_cli_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
+fn differential_builtin_backed_subclass_display_parity() {
+    let source = r#"
+class L(list):
+    pass
+
+class S(str):
+    pass
+
+class I(int):
+    pass
+
+class F(float):
+    pass
+
+l = L([1, 2])
+s = S("hi")
+i = I(3)
+f = F(1.5)
+result = {
+    "reprs": {
+        "l": repr(l),
+        "s": repr(s),
+        "i": repr(i),
+        "f": repr(f),
+    },
+    "strs": {
+        "l": str(l),
+        "s": str(s),
+        "i": str(i),
+        "f": str(f),
+    },
+    "class_attrs": {
+        "L_repr": repr(L.__repr__),
+        "L_str": repr(L.__str__),
+        "S_repr": repr(S.__repr__),
+        "S_str": repr(S.__str__),
+        "I_repr": repr(I.__repr__),
+        "I_str": repr(I.__str__),
+        "F_repr": repr(F.__repr__),
+        "F_str": repr(F.__str__),
+    },
+    "calls": {
+        "L_repr": L.__repr__(l),
+        "L_str": L.__str__(l),
+        "S_repr": S.__repr__(s),
+        "S_str": S.__str__(s),
+        "I_repr": I.__repr__(i),
+        "I_str": I.__str__(i),
+        "float_repr": float.__repr__(f),
+        "F_repr": F.__repr__(f),
+        "F_str": F.__str__(f),
+    },
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
     assert_eq!(py, ours, "{}", source);
 }
 

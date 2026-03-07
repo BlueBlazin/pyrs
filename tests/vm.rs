@@ -704,6 +704,59 @@ fn builtin_function_repr_and_str_match_cpython_shape() {
 }
 
 #[test]
+fn builtin_backed_subclass_repr_and_str_follow_cpython_semantics() {
+    let source = r#"class L(list):
+    pass
+
+class S(str):
+    pass
+
+class I(int):
+    pass
+
+class F(float):
+    pass
+
+l = L([1, 2])
+s = S("hi")
+i = I(3)
+f = F(1.5)
+ok = (
+    repr(l) == "[1, 2]"
+    and str(l) == "[1, 2]"
+    and L.__repr__(l) == "[1, 2]"
+    and L.__str__(l) == "[1, 2]"
+    and repr(L.__repr__) == "<slot wrapper '__repr__' of 'list' objects>"
+    and repr(L.__str__) == "<slot wrapper '__str__' of 'object' objects>"
+    and repr(s) == "'hi'"
+    and str(s) == "hi"
+    and S.__repr__(s) == "'hi'"
+    and S.__str__(s) == "hi"
+    and repr(S.__repr__) == "<slot wrapper '__repr__' of 'str' objects>"
+    and repr(S.__str__) == "<slot wrapper '__str__' of 'str' objects>"
+    and repr(i) == "3"
+    and str(i) == "3"
+    and I.__repr__(i) == "3"
+    and I.__str__(i) == "3"
+    and repr(I.__repr__) == "<slot wrapper '__repr__' of 'int' objects>"
+    and repr(I.__str__) == "<slot wrapper '__str__' of 'object' objects>"
+    and repr(f) == "1.5"
+    and str(f) == "1.5"
+    and float.__repr__(f) == "1.5"
+    and F.__repr__(f) == "1.5"
+    and F.__str__(f) == "1.5"
+    and repr(F.__repr__) == "<slot wrapper '__repr__' of 'float' objects>"
+    and repr(F.__str__) == "<slot wrapper '__str__' of 'object' objects>"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn iterator_count_exposes_iter_and_next_attributes() {
     let source = "import itertools\nit = itertools.count(2, 3)\na = it.__next__()\nb = (it.__iter__() is it)\nc = next(it)\nok = (a == 2 and b and c == 5)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -7033,6 +7086,33 @@ ok = (
     and all(name in dir(pat) for name in pattern_names)
     and all(hasattr(m, name) for name in match_names)
     and all(name in dir(m) for name in match_names)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn re_bound_methods_bind_to_runtime_instances() {
+    let source = r#"import re
+pat = re.compile("")
+match_method = pat.match
+search_method = pat.search
+fullmatch_method = pat.fullmatch
+m = match_method("")
+group_method = m.group
+ok = (
+    match_method.__self__ is pat
+    and search_method.__self__ is pat
+    and fullmatch_method.__self__ is pat
+    and m is not None
+    and group_method.__self__ is m
+    and group_method(0) == ""
+    and search_method("").span() == (0, 0)
+    and fullmatch_method("").span() == (0, 0)
 )
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
