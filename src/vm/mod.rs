@@ -77,7 +77,8 @@ use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, CallKeywordArgs, ClassObject, DictViewKind,
     ExceptionObject, FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind,
     IteratorObject, MemoryViewObject, ModuleObject, NativeMethodKind, NativeMethodObject, Obj,
-    ObjRef, Object, RuntimeError, SuperObject, Value, format_repr, format_value,
+    ObjRef, Object, RuntimeError, SuperObject, TestCapiScalarParseKind, Value, format_repr,
+    format_value,
     runtime_get_int_max_str_digits,
 };
 use crate::unicode::{internal_char_from_codepoint, surrogate_codepoint_from_internal_char};
@@ -5631,9 +5632,78 @@ impl Vm {
                 ("exception_print", BuiltinFunction::TestCapiExceptionPrint),
                 ("config_get", BuiltinFunction::TestCapiConfigGet),
                 (
-                    "getargs_keywords",
-                    BuiltinFunction::TestCapiGetArgsKeywords,
+                    "getargs_b",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::B),
                 ),
+                (
+                    "getargs_B",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperB),
+                ),
+                (
+                    "getargs_h",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::H),
+                ),
+                (
+                    "getargs_H",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperH),
+                ),
+                (
+                    "getargs_I",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::I),
+                ),
+                (
+                    "getargs_k",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::K),
+                ),
+                (
+                    "getargs_i",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::LowerI),
+                ),
+                (
+                    "getargs_l",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::L),
+                ),
+                (
+                    "getargs_n",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::N),
+                ),
+                (
+                    "getargs_p",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::P),
+                ),
+                (
+                    "getargs_L",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperL),
+                ),
+                (
+                    "getargs_K",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperK),
+                ),
+                (
+                    "getargs_f",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::F),
+                ),
+                (
+                    "getargs_d",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::D),
+                ),
+                (
+                    "getargs_D",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperD),
+                ),
+                (
+                    "getargs_S",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperS),
+                ),
+                (
+                    "getargs_Y",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperY),
+                ),
+                (
+                    "getargs_U",
+                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperU),
+                ),
+                ("getargs_keywords", BuiltinFunction::TestCapiGetArgsKeywords),
                 (
                     "getargs_keyword_only",
                     BuiltinFunction::TestCapiGetArgsKeywordOnly,
@@ -9611,11 +9681,7 @@ fn sre_category_matches(category: i64, ch: char) -> bool {
 
 fn sre_at_matches<T: SreText>(at: i64, text: &T, pos: usize) -> bool {
     let len = text.len();
-    let prev = if pos > 0 {
-        text.char_at(pos - 1)
-    } else {
-        None
-    };
+    let prev = if pos > 0 { text.char_at(pos - 1) } else { None };
     let cur = text.char_at(pos);
     match at {
         SRE_AT_BEGINNING | SRE_AT_BEGINNING_STRING => pos == 0,
@@ -10104,15 +10170,9 @@ fn sre_run_program<T: SreText>(
                 let mut rep_pos = cursor;
                 for _ in 0..hard_max {
                     let repeat_checkpoint = marks.checkpoint();
-                    let Some(next_pos) = sre_run_program(
-                        code,
-                        unit_start,
-                        next_pc,
-                        text,
-                        rep_pos,
-                        marks,
-                        depth + 1,
-                    ) else {
+                    let Some(next_pos) =
+                        sre_run_program(code, unit_start, next_pc, text, rep_pos, marks, depth + 1)
+                    else {
                         marks.restore(repeat_checkpoint);
                         break;
                     };
@@ -10186,7 +10246,9 @@ fn compiled_regex_match_details_with_text<T: SreText>(
             let capture_start = marks.get(group * 2);
             let capture_end = marks.get(group * 2 + 1);
             let capture = match (capture_start, capture_end) {
-                (Some(cap_start), Some(cap_end)) if cap_start <= cap_end && cap_end <= text.len() => {
+                (Some(cap_start), Some(cap_end))
+                    if cap_start <= cap_end && cap_end <= text.len() =>
+                {
                     Some((text.byte_offset(cap_start), text.byte_offset(cap_end)))
                 }
                 _ => None,
@@ -10380,9 +10442,9 @@ fn re_match_details(
     match pattern {
         RePatternValue::Str(_) => match text {
             Value::Str(value) => re_match_details_str(pattern, value, mode, compiled_program),
-            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => Err(
-                RuntimeError::new("cannot use a string pattern on a bytes-like object"),
-            ),
+            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => Err(RuntimeError::new(
+                "cannot use a string pattern on a bytes-like object",
+            )),
             _ => Err(RuntimeError::new("string must be string")),
         },
         RePatternValue::Bytes(_) => match text {
@@ -12776,7 +12838,9 @@ where
 }
 
 fn class_attr_lookup(class: &ObjRef, name: &str) -> Option<Value> {
-    class_attr_walk_visit(class, &mut |candidate| class_attr_lookup_direct(candidate, name))
+    class_attr_walk_visit(class, &mut |candidate| {
+        class_attr_lookup_direct(candidate, name)
+    })
 }
 
 fn class_attr_lookup_direct(class: &ObjRef, name: &str) -> Option<Value> {

@@ -133,6 +133,7 @@ pub(super) struct CpythonSequenceMethods {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub(super) struct CpythonComplexValue {
     pub(super) real: f64,
     pub(super) imag: f64,

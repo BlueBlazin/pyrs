@@ -2,21 +2,20 @@ use std::backtrace::Backtrace;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 
-use crate::runtime::{BuiltinFunction, ExceptionObject, Object, Value};
+use crate::runtime::{BuiltinFunction, ExceptionObject, Object, RuntimeError, Value};
 
 use super::{
     _Py_NoneStruct, ACTIVE_CPYTHON_INIT_CONTEXT, CPY_EXCEPTION_TYPE_PTR_ATTR, CpythonComplexValue,
-    CpythonErrorState, CpythonNumberMethods, CpythonObjectHead, CpythonStructSeqTypeInfo,
-    CpythonStructSequenceDesc, CpythonTypeObject, CpythonVarObjectHead, InternalCallOutcome,
-    ModuleCapiContext, PY_TPFLAGS_BASETYPE, PY_TPFLAGS_READY, Py_DecRef, Py_IncRef, Py_XDecRef,
-    Py_XIncRef, PyDict_Contains, PyDict_New, PyDict_SetItem, PyDict_SetItemString,
-    PyErr_BadInternalCall, PyExc_Exception, PyExc_ImportError, PyExc_MemoryError, PyExc_OSError,
-    PyExc_OverflowError, PyExc_ResourceWarning, PyExc_RuntimeError, PyExc_RuntimeWarning,
-    PyExc_SystemError, PyExc_TypeError, PyExc_ValueError, PyObject_CallObject,
-    PyObject_GetAttrString, PyObject_IsSubclass, PyObject_SetAttrString, PyTuple_GetItem,
-    PyTuple_New, PyTuple_SetItem, PyTuple_Type, PyType_IsSubtype, PyType_Ready, PyType_Type,
-    PyUnicode_FromString, PyUnicode_FromStringAndSize, c_name_to_string, cpython_bigint_low_u64,
-    cpython_bigint_to_u64, cpython_call_builtin, cpython_exception_name_parts,
+    CpythonErrorState, CpythonObjectHead, CpythonStructSeqTypeInfo, CpythonStructSequenceDesc,
+    CpythonTypeObject, CpythonVarObjectHead, InternalCallOutcome, ModuleCapiContext,
+    PY_TPFLAGS_BASETYPE, PY_TPFLAGS_READY, Py_DecRef, Py_IncRef, Py_XDecRef, Py_XIncRef,
+    PyDict_Contains, PyDict_New, PyDict_SetItem, PyDict_SetItemString, PyErr_BadInternalCall,
+    PyExc_Exception, PyExc_ImportError, PyExc_MemoryError, PyExc_OSError, PyExc_OverflowError,
+    PyExc_ResourceWarning, PyExc_RuntimeError, PyExc_RuntimeWarning, PyExc_SystemError,
+    PyExc_TypeError, PyExc_ValueError, PyObject_CallObject, PyObject_IsSubclass,
+    PyObject_SetAttrString, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem, PyTuple_Type,
+    PyType_IsSubtype, PyType_Ready, PyType_Type, PyUnicode_FromString,
+    PyUnicode_FromStringAndSize, c_name_to_string, cpython_exception_name_parts,
     cpython_exception_value_from_ptr, cpython_foreign_long_to_i64, cpython_foreign_long_to_u64,
     cpython_is_exception_instance, cpython_is_type_object_ptr, cpython_mark_pending_interrupt,
     cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error,
@@ -25,174 +24,57 @@ use super::{
     cpython_value_from_ptr_or_proxy, value_to_int, with_active_cpython_context_mut,
 };
 
+fn set_context_error_from_runtime_error(context: &mut ModuleCapiContext, err: RuntimeError) {
+    let RuntimeError { message, exception } = err;
+    if let Some(exception_obj) = exception {
+        let exception_name = exception_obj.name.clone();
+        let ptype = super::cpython_exception_ptr_for_name(&exception_name)
+            .unwrap_or(unsafe { PyExc_RuntimeError });
+        let pvalue = context.alloc_cpython_ptr_for_value(Value::Exception(exception_obj));
+        if !pvalue.is_null() {
+            context.set_error_state(ptype, pvalue, std::ptr::null_mut(), message);
+            return;
+        }
+    }
+    context.set_error(message);
+}
+
+fn cpython_warning_category_name(category: *mut c_void) -> String {
+    if category.is_null() {
+        return "UserWarning".to_string();
+    }
+    match cpython_exception_value_from_ptr(category as usize) {
+        Some(Value::ExceptionType(name)) => name,
+        _ => "UserWarning".to_string(),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyFloat_AsDouble(object: *mut c_void) -> f64 {
-    const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     if object.is_null() {
         unsafe { PyErr_BadInternalCall() };
         return -1.0;
     }
-    let mapped = cpython_value_from_ptr_or_proxy(object);
-    match mapped.as_ref() {
-        Ok(Value::Float(value)) => return *value,
-        Ok(Value::Int(value)) => return *value as f64,
-        Ok(Value::Bool(value)) => return if *value { 1.0 } else { 0.0 },
-        Ok(Value::BigInt(value)) => return value.to_f64(),
-        _ => {}
-    }
-    // Follow CPython floatobject.c behavior first: resolve nb_float / nb_index on the
-    // target object's concrete type rather than routing through high-level builtin float().
-    let slot_object = mapped
-        .as_ref()
-        .ok()
-        .and_then(ModuleCapiContext::cpython_proxy_raw_ptr_from_value)
-        .filter(|ptr| !ptr.is_null())
-        .unwrap_or(object);
-    let trace_pyfloat = super::super::env_var_present_cached("PYRS_TRACE_PYFLOAT_AS_DOUBLE");
-    if trace_pyfloat {
-        let object_type = cpython_type_name_for_object_ptr(object);
-        let slot_type = cpython_type_name_for_object_ptr(slot_object);
-        let mapped_tag = mapped
-            .as_ref()
-            .map(cpython_value_debug_tag)
-            .unwrap_or_else(|_| "<unmapped>".to_string());
-        eprintln!(
-            "[cpy-float-asdouble] object={:p} type={} slot_object={:p} slot_type={} mapped={}",
-            object, object_type, slot_object, slot_type, mapped_tag
-        );
-        if super::super::env_var_present_cached("PYRS_TRACE_PYFLOAT_AS_DOUBLE_BT") {
-            eprintln!("[cpy-float-asdouble] bt={}", Backtrace::force_capture());
-        }
-    }
-    if (slot_object as usize) >= MIN_VALID_PTR
-        && (slot_object as usize) % std::mem::align_of::<usize>() == 0
-    {
-        // SAFETY: slot-object pointer shape is validated above.
-        let type_ptr = unsafe {
-            slot_object
-                .cast::<CpythonObjectHead>()
-                .as_ref()
-                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
-                .unwrap_or(std::ptr::null_mut())
-        };
-        if !type_ptr.is_null()
-            && (type_ptr as usize) >= MIN_VALID_PTR
-            && (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() == 0
-        {
-            // SAFETY: `type_ptr` was validated above.
-            let number_methods = unsafe {
-                (*type_ptr)
-                    .tp_as_number
-                    .cast::<CpythonNumberMethods>()
-                    .as_ref()
-            };
-            let nb_float = number_methods
-                .and_then(|methods| (!methods.nb_float.is_null()).then_some(methods.nb_float));
-            if let Some(nb_float) = nb_float {
-                if trace_pyfloat {
-                    eprintln!(
-                        "[cpy-float-asdouble] using nb_float object={:p} slot_object={:p}",
-                        object, slot_object
-                    );
-                }
-                let converter: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
-                    // SAFETY: `nb_float` comes from a validated number-method table.
-                    unsafe { std::mem::transmute(nb_float) };
-                // SAFETY: slot ABI matches CPython nb_float contract.
-                let result_ptr = unsafe { converter(slot_object) };
-                if result_ptr.is_null() {
-                    if trace_pyfloat {
-                        eprintln!(
-                            "[cpy-float-asdouble] nb_float returned NULL object={:p}",
-                            object
-                        );
-                    }
-                    return -1.0;
-                }
-                let resolved = cpython_value_from_ptr_or_proxy(result_ptr)
-                    .or_else(|_| cpython_value_from_ptr(result_ptr));
-                let value = match resolved {
-                    Ok(Value::Float(value)) => value,
-                    Ok(Value::Int(value)) => value as f64,
-                    Ok(Value::Bool(value)) => {
-                        if value {
-                            1.0
-                        } else {
-                            0.0
-                        }
-                    }
-                    Ok(Value::BigInt(value)) => value.to_f64(),
-                    Ok(_) => {
-                        if trace_pyfloat {
-                            eprintln!(
-                                "[cpy-float-asdouble] nb_float non-float owner={} returned={}",
-                                cpython_type_name_for_object_ptr(slot_object),
-                                cpython_type_name_for_object_ptr(result_ptr)
-                            );
-                        }
-                        let owner = cpython_type_name_for_object_ptr(slot_object);
-                        let returned = cpython_type_name_for_object_ptr(result_ptr);
-                        cpython_set_typed_error(
-                            unsafe { PyExc_TypeError },
-                            &format!("{owner}.__float__ returned non-float (type {returned})"),
-                        );
-                        unsafe { Py_DecRef(result_ptr) };
-                        return -1.0;
-                    }
-                    Err(err) => {
-                        cpython_set_error(err);
-                        unsafe { Py_DecRef(result_ptr) };
-                        return -1.0;
-                    }
-                };
-                unsafe { Py_DecRef(result_ptr) };
-                return value;
+    match cpython_value_from_ptr_or_proxy(object) {
+        Ok(value) => with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                context.set_error("PyFloat_AsDouble missing VM context");
+                return -1.0;
             }
-            if let Some(nb_index) = number_methods.and_then(|methods| methods.nb_index) {
-                if trace_pyfloat {
-                    eprintln!(
-                        "[cpy-float-asdouble] using nb_index object={:p} slot_object={:p}",
-                        object, slot_object
-                    );
-                }
-                // SAFETY: slot ABI matches CPython nb_index contract.
-                let indexed = unsafe { nb_index(slot_object) };
-                if indexed.is_null() {
-                    return -1.0;
-                }
-                let value = unsafe { PyLong_AsDouble(indexed) };
-                unsafe { Py_DecRef(indexed) };
-                return value;
-            }
-            let type_name = cpython_type_name_for_object_ptr(slot_object);
-            cpython_set_typed_error(
-                unsafe { PyExc_TypeError },
-                &format!("must be real number, not {type_name}"),
-            );
-            return -1.0;
-        }
-    }
-    match mapped {
-        Ok(value) => match cpython_call_builtin(BuiltinFunction::Float, vec![value]) {
-            Ok(Value::Float(value)) => value,
-            Ok(Value::Int(value)) => value as f64,
-            Ok(Value::Bool(value)) => {
-                if value {
-                    1.0
-                } else {
-                    0.0
+            // SAFETY: VM pointer is valid for the active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match vm.capi_float_as_double(value) {
+                Ok(value) => value,
+                Err(err) => {
+                    set_context_error_from_runtime_error(context, err);
+                    -1.0
                 }
             }
-            Ok(Value::BigInt(value)) => value.to_f64(),
-            Ok(_) => {
-                cpython_set_error("__float__ returned non-float-compatible result");
-                -1.0
-            }
-            Err(err) => {
-                cpython_set_error(err);
-                -1.0
-            }
-        },
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            -1.0
+        }),
         Err(err) => {
             cpython_set_error(err);
             -1.0
@@ -241,28 +123,26 @@ pub unsafe extern "C" fn PyFloat_GetInfo() -> *mut c_void {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_AsLong(object: *mut c_void) -> i64 {
-    match cpython_value_from_ptr(object) {
-        Ok(value) => match value_to_int(value) {
-            Ok(value) => {
-                if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") {
-                    eprintln!(
-                        "[cpy-long] mapped value object={:p} value={}",
-                        object, value
-                    );
-                }
-                value
+    match cpython_value_from_ptr_or_proxy(object) {
+        Ok(value) => with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                context.set_error("PyLong_AsLong missing VM context");
+                return -1;
             }
-            Err(err) => {
-                if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") {
-                    eprintln!(
-                        "[cpy-long] mapped conversion failed object={:p} err={}",
-                        object, err.message
-                    );
+            // SAFETY: VM pointer is valid for the active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match vm.capi_long_as_long(value) {
+                Ok(value) => value,
+                Err(err) => {
+                    set_context_error_from_runtime_error(context, err);
+                    -1
                 }
-                cpython_set_error(err.message);
-                -1
             }
-        },
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            -1
+        }),
         Err(err) => {
             if let Some(value) = unsafe { cpython_foreign_long_to_i64(object) } {
                 if super::super::env_var_present_cached("PYRS_TRACE_CPY_ERRORS") {
@@ -284,69 +164,90 @@ pub unsafe extern "C" fn PyLong_AsLong(object: *mut c_void) -> i64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_AsLongLong(object: *mut c_void) -> i64 {
-    unsafe { PyLong_AsLong(object) }
+    match cpython_value_from_ptr_or_proxy(object) {
+        Ok(value) => with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                context.set_error("PyLong_AsLongLong missing VM context");
+                return -1;
+            }
+            // SAFETY: VM pointer is valid for the active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match vm.capi_long_as_long_long(value) {
+                Ok(value) => value,
+                Err(err) => {
+                    set_context_error_from_runtime_error(context, err);
+                    -1
+                }
+            }
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            -1
+        }),
+        Err(err) => {
+            if let Some(value) = unsafe { cpython_foreign_long_to_i64(object) } {
+                return value;
+            }
+            cpython_set_error(err);
+            -1
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_AsSsize_t(object: *mut c_void) -> isize {
-    unsafe { PyLong_AsLong(object) as isize }
+    match cpython_value_from_ptr_or_proxy(object) {
+        Ok(value) => with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                context.set_error("PyLong_AsSsize_t missing VM context");
+                return -1;
+            }
+            // SAFETY: VM pointer is valid for the active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match vm.capi_long_as_ssize_t(value) {
+                Ok(value) => value,
+                Err(err) => {
+                    set_context_error_from_runtime_error(context, err);
+                    -1
+                }
+            }
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            -1
+        }),
+        Err(err) => {
+            if let Some(value) = unsafe { cpython_foreign_long_to_i64(object) } {
+                return value as isize;
+            }
+            cpython_set_error(err);
+            -1
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_AsUnsignedLong(object: *mut c_void) -> u64 {
-    match cpython_value_from_ptr(object) {
-        Ok(Value::Bool(value)) => {
-            if value {
-                1
-            } else {
-                0
-            }
-        }
-        Ok(Value::Int(value)) => {
-            if value < 0 {
-                cpython_set_typed_error(
-                    unsafe { PyExc_OverflowError },
-                    "can't convert negative value to unsigned int",
-                );
+    match cpython_value_from_ptr_or_proxy(object) {
+        Ok(value) => with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                context.set_error("PyLong_AsUnsignedLong missing VM context");
                 return u64::MAX;
             }
-            value as u64
-        }
-        Ok(Value::BigInt(value)) => {
-            if value.is_negative() {
-                cpython_set_typed_error(
-                    unsafe { PyExc_OverflowError },
-                    "can't convert negative value to unsigned int",
-                );
-                return u64::MAX;
-            }
-            match cpython_bigint_to_u64(&value) {
-                Some(compact) => compact,
-                None => {
-                    cpython_set_typed_error(
-                        unsafe { PyExc_OverflowError },
-                        "Python int too large to convert to C unsigned long",
-                    );
+            // SAFETY: VM pointer is valid for the active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match vm.capi_long_as_unsigned_long(value) {
+                Ok(value) => value,
+                Err(err) => {
+                    set_context_error_from_runtime_error(context, err);
                     u64::MAX
                 }
             }
-        }
-        Ok(value) => match value_to_int(value) {
-            Ok(compact) => {
-                if compact < 0 {
-                    cpython_set_typed_error(
-                        unsafe { PyExc_OverflowError },
-                        "can't convert negative value to unsigned int",
-                    );
-                    return u64::MAX;
-                }
-                compact as u64
-            }
-            Err(err) => {
-                cpython_set_error(err.message);
-                u64::MAX
-            }
-        },
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            u64::MAX
+        }),
         Err(err) => {
             if let Some(compact) = unsafe { cpython_foreign_long_to_u64(object) } {
                 return compact;
@@ -359,55 +260,98 @@ pub unsafe extern "C" fn PyLong_AsUnsignedLong(object: *mut c_void) -> u64 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_AsUnsignedLongLong(object: *mut c_void) -> u64 {
-    unsafe { PyLong_AsUnsignedLong(object) }
+    match cpython_value_from_ptr_or_proxy(object) {
+        Ok(value) => with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                context.set_error("PyLong_AsUnsignedLongLong missing VM context");
+                return u64::MAX;
+            }
+            // SAFETY: VM pointer is valid for the active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match vm.capi_long_as_unsigned_long_long(value) {
+                Ok(value) => value,
+                Err(err) => {
+                    set_context_error_from_runtime_error(context, err);
+                    u64::MAX
+                }
+            }
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            u64::MAX
+        }),
+        Err(err) => {
+            if let Some(compact) = unsafe { cpython_foreign_long_to_u64(object) } {
+                return compact;
+            }
+            cpython_set_error(err);
+            u64::MAX
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_AsUnsignedLongMask(object: *mut c_void) -> u64 {
-    let value = match cpython_value_from_ptr(object) {
-        Ok(value) => value,
+    match cpython_value_from_ptr_or_proxy(object) {
+        Ok(value) => with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                context.set_error("PyLong_AsUnsignedLongMask missing VM context");
+                return u64::MAX;
+            }
+            // SAFETY: VM pointer is valid for the active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match vm.capi_long_as_unsigned_long_mask(value) {
+                Ok(value) => value,
+                Err(err) => {
+                    set_context_error_from_runtime_error(context, err);
+                    u64::MAX
+                }
+            }
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            u64::MAX
+        }),
         Err(err) => {
             if let Some(compact) = unsafe { cpython_foreign_long_to_i64(object) } {
                 return compact as u64;
             }
             cpython_set_error(err);
-            return u64::MAX;
+            u64::MAX
         }
-    };
-    let normalized = match value {
-        Value::Int(_) | Value::Bool(_) | Value::BigInt(_) => value,
-        other => match cpython_call_builtin(BuiltinFunction::Int, vec![other]) {
-            Ok(value) => value,
-            Err(err) => {
-                cpython_set_error(err);
-                return u64::MAX;
-            }
-        },
-    };
-    match normalized {
-        Value::Bool(flag) => {
-            if flag {
-                1
-            } else {
-                0
-            }
-        }
-        Value::Int(compact) => compact as u64,
-        Value::BigInt(bigint) => {
-            let lower = cpython_bigint_low_u64(&bigint);
-            if bigint.is_negative() {
-                (0u64).wrapping_sub(lower)
-            } else {
-                lower
-            }
-        }
-        _ => u64::MAX,
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_AsUnsignedLongLongMask(object: *mut c_void) -> u64 {
-    unsafe { PyLong_AsUnsignedLongMask(object) }
+    match cpython_value_from_ptr_or_proxy(object) {
+        Ok(value) => with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                context.set_error("PyLong_AsUnsignedLongLongMask missing VM context");
+                return u64::MAX;
+            }
+            // SAFETY: VM pointer is valid for the active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match vm.capi_long_as_unsigned_long_long_mask(value) {
+                Ok(value) => value,
+                Err(err) => {
+                    set_context_error_from_runtime_error(context, err);
+                    u64::MAX
+                }
+            }
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            u64::MAX
+        }),
+        Err(err) => {
+            if let Some(compact) = unsafe { cpython_foreign_long_to_u64(object) } {
+                return compact;
+            }
+            cpython_set_error(err);
+            u64::MAX
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -634,62 +578,26 @@ pub unsafe extern "C" fn PyComplex_AsCComplex(object: *mut c_void) -> CpythonCom
         cpython_set_error("PyComplex_AsCComplex received null object");
         return err_value;
     }
-    match cpython_value_from_ptr(object) {
-        Ok(Value::Complex { real, imag }) => CpythonComplexValue { real, imag },
-        Ok(Value::Float(real)) => CpythonComplexValue { real, imag: 0.0 },
-        Ok(Value::Int(real)) => CpythonComplexValue {
-            real: real as f64,
-            imag: 0.0,
-        },
-        Ok(Value::Bool(flag)) => CpythonComplexValue {
-            real: if flag { 1.0 } else { 0.0 },
-            imag: 0.0,
-        },
-        Ok(Value::BigInt(real)) => CpythonComplexValue {
-            real: real.to_f64(),
-            imag: 0.0,
-        },
-        Ok(_) => {
-            // CPython behavior:
-            // 1) If __complex__ exists, call it and require a complex result.
-            // 2) Otherwise, fall back to PyFloat_AsDouble(op) + 0j.
-            let method_name = b"__complex__\0";
-            let method = unsafe { PyObject_GetAttrString(object, method_name.as_ptr().cast()) };
-            if !method.is_null() {
-                let result = unsafe { PyObject_CallObject(method, std::ptr::null_mut()) };
-                unsafe { Py_DecRef(method) };
-                if result.is_null() {
-                    return err_value;
-                }
-                let complex_value = match cpython_value_from_ptr(result) {
-                    Ok(Value::Complex { real, imag }) => CpythonComplexValue { real, imag },
-                    Ok(_) => {
-                        cpython_set_error("__complex__ returned non-complex object");
-                        err_value
-                    }
-                    Err(err) => {
-                        cpython_set_error(err);
-                        err_value
-                    }
-                };
-                unsafe { Py_DecRef(result) };
-                return complex_value;
-            }
-            let attribute_missing = with_active_cpython_context_mut(|context| {
-                context
-                    .last_error
-                    .as_deref()
-                    .is_some_and(|message| message.contains("has no attribute"))
-            })
-            .unwrap_or(false);
-            if attribute_missing {
-                unsafe { PyErr_Clear() };
-            } else if !unsafe { PyErr_Occurred() }.is_null() {
+    match cpython_value_from_ptr_or_proxy(object) {
+        Ok(value) => with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                context.set_error("PyComplex_AsCComplex missing VM context");
                 return err_value;
             }
-            let real = unsafe { PyFloat_AsDouble(object) };
-            CpythonComplexValue { real, imag: 0.0 }
-        }
+            // SAFETY: VM pointer is valid for the active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match vm.capi_complex_as_pair(value) {
+                Ok((real, imag)) => CpythonComplexValue { real, imag },
+                Err(err) => {
+                    set_context_error_from_runtime_error(context, err);
+                    err_value
+                }
+            }
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            err_value
+        }),
         Err(err) => {
             cpython_set_error(err);
             err_value
@@ -2559,16 +2467,39 @@ pub unsafe extern "C" fn PyErr_SetImportErrorSubclass(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_WarnEx(
-    _category: *mut c_void,
+    category: *mut c_void,
     message: *const c_char,
-    _stacklevel: isize,
+    stacklevel: isize,
 ) -> i32 {
-    if !message.is_null()
-        && let Ok(text) = unsafe { c_name_to_string(message) }
-    {
-        eprintln!("warning: {text}");
+    let text = match unsafe { c_name_to_string(message) } {
+        Ok(text) => text,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    let category_name = cpython_warning_category_name(category);
+    match with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyErr_WarnEx missing VM context");
+            return -1;
+        }
+        // SAFETY: VM pointer is valid for the active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.capi_warn(&category_name, text, stacklevel) {
+            Ok(()) => 0,
+            Err(err) => {
+                set_context_error_from_runtime_error(context, err);
+                -1
+            }
+        }
+    }) {
+        Ok(status) => status,
+        Err(err) => {
+            cpython_set_error(err);
+            -1
+        }
     }
-    0
 }
 
 #[unsafe(no_mangle)]

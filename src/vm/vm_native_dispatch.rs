@@ -14008,6 +14008,9 @@ impl Vm {
                 self.builtin_testcapi_exception_print(args, kwargs)
             }
             BuiltinFunction::TestCapiConfigGet => self.builtin_testcapi_config_get(args, kwargs),
+            BuiltinFunction::TestCapiGetArgsScalar(kind) => {
+                self.builtin_testcapi_getargs_scalar(kind, args, kwargs)
+            }
             BuiltinFunction::TestCapiGetArgsKeywords => {
                 self.builtin_testcapi_getargs_keywords(args, kwargs)
             }

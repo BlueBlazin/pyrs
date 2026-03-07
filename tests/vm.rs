@@ -18512,6 +18512,191 @@ ok = (
 }
 
 #[test]
+fn exposes_testcapi_getargs_scalar_helpers() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping _testcapi scalar warning regression (CPython Lib not found)");
+        return;
+    };
+    run_with_large_stack("exposes_testcapi_getargs_scalar_helpers", move || {
+        let source = r#"import _testcapi
+import warnings
+
+class Index:
+    def __index__(self):
+        return 99
+
+class IndexIntSubclass(int):
+    def __index__(self):
+        return 99
+
+class BadIndex2:
+    def __index__(self):
+        return True
+
+class Float:
+    def __float__(self):
+        return 4.25
+
+class FloatSubclass(float):
+    pass
+
+class FloatSubclass2(float):
+    def __float__(self):
+        return 4.25
+
+class BadFloat2:
+    def __float__(self):
+        return FloatSubclass(4.25)
+
+class BadFloat3(float):
+    def __float__(self):
+        return FloatSubclass(4.25)
+
+class Complex:
+    def __complex__(self):
+        return 4.25 + 0.5j
+
+class ComplexSubclass(complex):
+    pass
+
+class ComplexSubclass2(complex):
+    def __complex__(self):
+        return 4.25 + 0.5j
+
+class BadComplex2:
+    def __complex__(self):
+        return ComplexSubclass(4.25 + 0.5j)
+
+class BadComplex3(complex):
+    def __complex__(self):
+        return ComplexSubclass(4.25 + 0.5j)
+
+bytes_obj = b"bytes"
+bytearray_obj = bytearray(b"bytearray")
+str_obj = "str"
+
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    warned_b = _testcapi.getargs_b(BadIndex2())
+    warned_d = _testcapi.getargs_d(BadFloat2())
+    warned_D = _testcapi.getargs_D(BadComplex2())
+
+warning_types = [item.category.__name__ for item in caught]
+warning_texts = [str(item.message) for item in caught]
+
+ok = (
+    _testcapi.getargs_b(Index()) == 99
+    and _testcapi.getargs_b(IndexIntSubclass()) == 0
+    and _testcapi.getargs_B(-1) == _testcapi.UCHAR_MAX
+    and _testcapi.getargs_h(-123) == -123
+    and _testcapi.getargs_H(-1) == _testcapi.USHRT_MAX
+    and _testcapi.getargs_I(-1) == _testcapi.UINT_MAX
+    and _testcapi.getargs_k(-1) == _testcapi.ULONG_MAX
+    and _testcapi.getargs_i(_testcapi.INT_MAX) == _testcapi.INT_MAX
+    and _testcapi.getargs_l(_testcapi.LONG_MIN) == _testcapi.LONG_MIN
+    and _testcapi.getargs_n(_testcapi.PY_SSIZE_T_MAX) == _testcapi.PY_SSIZE_T_MAX
+    and _testcapi.getargs_L(_testcapi.LLONG_MIN) == _testcapi.LLONG_MIN
+    and _testcapi.getargs_K(_testcapi.ULLONG_MAX + 1) == 0
+    and _testcapi.getargs_f(Float()) == 4.25
+    and _testcapi.getargs_f(FloatSubclass(7.5)) == 7.5
+    and _testcapi.getargs_f(FloatSubclass2(7.5)) == 7.5
+    and _testcapi.getargs_d(Index()) == 99.0
+    and _testcapi.getargs_d(BadFloat3(7.5)) == 7.5
+    and _testcapi.getargs_D(Complex()) == 4.25 + 0.5j
+    and _testcapi.getargs_D(ComplexSubclass(7.5 + 0.25j)) == 7.5 + 0.25j
+    and _testcapi.getargs_D(ComplexSubclass2(7.5 + 0.25j)) == 7.5 + 0.25j
+    and _testcapi.getargs_D(BadComplex3(7.5 + 0.25j)) == 7.5 + 0.25j
+    and _testcapi.getargs_S(bytes_obj) is bytes_obj
+    and _testcapi.getargs_Y(bytearray_obj) is bytearray_obj
+    and _testcapi.getargs_U(str_obj) is str_obj
+    and warned_b == 1
+    and warned_d == 4.25
+    and warned_D == 4.25 + 0.5j
+    and warning_types == [
+        "DeprecationWarning",
+        "DeprecationWarning",
+        "DeprecationWarning",
+    ]
+    and "__index__ returned non-int" in warning_texts[0]
+    and "__float__ returned non-float" in warning_texts[1]
+    and "__complex__ returned non-complex" in warning_texts[2]
+)
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn testcapi_getargs_scalar_helpers_report_errors() {
+    let source = r#"import _testcapi
+import sys
+
+class BadIndex:
+    def __index__(self):
+        return 1.0
+
+class BadFloat:
+    def __float__(self):
+        return 687
+
+class BadComplex:
+    def __complex__(self):
+        return 1.25
+
+class Paradox:
+    def __bool__(self):
+        raise NotImplementedError("false")
+
+errors = {}
+
+def capture(name, func):
+    try:
+        func()
+    except Exception as exc:
+        errors[name] = (type(exc).__name__, str(exc))
+
+capture("bad_index", lambda: _testcapi.getargs_b(BadIndex()))
+capture("bad_float", lambda: _testcapi.getargs_f(BadFloat()))
+capture("bad_complex", lambda: _testcapi.getargs_D(BadComplex()))
+capture("overflow_b", lambda: _testcapi.getargs_b(-1))
+capture("overflow_h", lambda: _testcapi.getargs_h(_testcapi.SHRT_MAX + 1))
+capture("overflow_i", lambda: _testcapi.getargs_i(_testcapi.INT_MIN - 1))
+capture("overflow_d", lambda: _testcapi.getargs_d(1 << sys.float_info.max_exp))
+capture("truthiness", lambda: _testcapi.getargs_p(Paradox()))
+capture("bytes_type", lambda: _testcapi.getargs_S(bytearray(b"x")))
+capture("bytearray_type", lambda: _testcapi.getargs_Y(b"x"))
+capture("unicode_type", lambda: _testcapi.getargs_U(b"x"))
+
+ok = (
+    errors["bad_index"][0] == "TypeError"
+    and errors["bad_float"][0] == "TypeError"
+    and errors["bad_complex"][0] == "TypeError"
+    and errors["overflow_b"][0] == "OverflowError"
+    and errors["overflow_h"][0] == "OverflowError"
+    and errors["overflow_i"][0] == "OverflowError"
+    and errors["overflow_d"][0] == "OverflowError"
+    and errors["truthiness"][0] == "NotImplementedError"
+    and errors["bytes_type"][0] == "TypeError"
+    and errors["bytearray_type"][0] == "TypeError"
+    and errors["unicode_type"][0] == "TypeError"
+    and "__index__ returned non-int" in errors["bad_index"][1]
+    and "__float__ returned non-float" in errors["bad_float"][1]
+    and "__complex__ returned non-complex" in errors["bad_complex"][1]
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn builtin_hash_descriptors_use_runtime_hash_semantics() {
     let source = r#"class StrSub(str):
     pass

@@ -87,13 +87,16 @@ extern void *PyLong_FromUnsignedLongLong(unsigned long long value);
 extern void *PyLong_FromSsize_t(Py_ssize_t value);
 extern long PyLong_AsLong(void *value);
 extern unsigned long PyLong_AsUnsignedLong(void *value);
+extern unsigned long PyLong_AsUnsignedLongMask(void *value);
 extern unsigned long long PyLong_AsUnsignedLongLong(void *value);
+extern unsigned long long PyLong_AsUnsignedLongLongMask(void *value);
 extern long long PyLong_AsLongLong(void *value);
 extern Py_ssize_t PyLong_AsSsize_t(void *value);
 extern Py_ssize_t PyLong_AsNativeBytes(void *v, void *buffer, Py_ssize_t n_bytes, int flags);
 extern void *PyLong_FromNativeBytes(const void *buffer, size_t n_bytes, int flags);
 extern void *PyFloat_FromDouble(double value);
 extern double PyFloat_AsDouble(void *value);
+extern Py_complex PyComplex_AsCComplex(void *value);
 extern void *PyBool_FromLong(long value);
 extern void *PyUnicode_FromString(const char *value);
 extern void *PyUnicode_FromStringAndSize(const char *value, Py_ssize_t size);
@@ -209,6 +212,7 @@ extern char PyDict_Type;
 extern char PyTuple_Type;
 extern char PyUnicode_Type;
 extern char PyBytes_Type;
+extern char PyByteArray_Type;
 extern char PyLong_Type;
 extern char PyExc_TypeError;
 extern char PyExc_OverflowError;
@@ -2142,6 +2146,176 @@ static int parse_args_and_keywords_va(
             continue;
         }
 
+        if (token == 'b') {
+            unsigned char *output = va_arg(*ap, unsigned char *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            long parsed = PyLong_AsLong(value);
+            if (parsed == -1 && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (parsed < 0) {
+                free(spec);
+                PyErr_SetString(
+                    (void *)&PyExc_OverflowError,
+                    "unsigned byte integer is less than minimum"
+                );
+                return 0;
+            }
+            if ((unsigned long)parsed > UCHAR_MAX) {
+                free(spec);
+                PyErr_SetString(
+                    (void *)&PyExc_OverflowError,
+                    "unsigned byte integer is greater than maximum"
+                );
+                return 0;
+            }
+            if (output != NULL) {
+                *output = (unsigned char)parsed;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'B') {
+            unsigned char *output = va_arg(*ap, unsigned char *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            unsigned long parsed = PyLong_AsUnsignedLongMask(value);
+            if (parsed == ULONG_MAX && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (output != NULL) {
+                *output = (unsigned char)parsed;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'h') {
+            short *output = va_arg(*ap, short *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            long parsed = PyLong_AsLong(value);
+            if (parsed == -1 && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (parsed < SHRT_MIN) {
+                free(spec);
+                PyErr_SetString(
+                    (void *)&PyExc_OverflowError,
+                    "signed short integer is less than minimum"
+                );
+                return 0;
+            }
+            if (parsed > SHRT_MAX) {
+                free(spec);
+                PyErr_SetString(
+                    (void *)&PyExc_OverflowError,
+                    "signed short integer is greater than maximum"
+                );
+                return 0;
+            }
+            if (output != NULL) {
+                *output = (short)parsed;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'H') {
+            unsigned short *output = va_arg(*ap, unsigned short *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            unsigned long parsed = PyLong_AsUnsignedLongMask(value);
+            if (parsed == ULONG_MAX && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (output != NULL) {
+                *output = (unsigned short)parsed;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'I') {
+            unsigned int *output = va_arg(*ap, unsigned int *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            unsigned long parsed = PyLong_AsUnsignedLongMask(value);
+            if (parsed == ULONG_MAX && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (output != NULL) {
+                *output = (unsigned int)parsed;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'k') {
+            unsigned long *output = va_arg(*ap, unsigned long *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            unsigned long parsed = PyLong_AsUnsignedLongMask(value);
+            if (parsed == ULONG_MAX && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (output != NULL) {
+                *output = parsed;
+            }
+            token_index++;
+            continue;
+        }
+
         if (token == 'i') {
             int *output = va_arg(*ap, int *);
             if (!present) {
@@ -2160,13 +2334,177 @@ static int parse_args_and_keywords_va(
             }
             if (parsed < INT_MIN || parsed > INT_MAX) {
                 free(spec);
-                pyrs_capi_set_error_message(
-                    "PyArg_ParseTupleAndKeywords integer out of range for 'i'"
+                PyErr_SetString(
+                    (void *)&PyExc_OverflowError,
+                    parsed < INT_MIN
+                        ? "signed integer is less than minimum"
+                        : "signed integer is greater than maximum"
                 );
                 return 0;
             }
             if (output != NULL) {
                 *output = (int)parsed;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'l') {
+            long *output = va_arg(*ap, long *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            long parsed = PyLong_AsLong(value);
+            if (parsed == -1 && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (output != NULL) {
+                *output = parsed;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'n') {
+            Py_ssize_t *output = va_arg(*ap, Py_ssize_t *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            Py_ssize_t parsed = PyLong_AsSsize_t(value);
+            if (parsed == -1 && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (output != NULL) {
+                *output = parsed;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'L') {
+            long long *output = va_arg(*ap, long long *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            long long parsed = PyLong_AsLongLong(value);
+            if (parsed == -1 && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (output != NULL) {
+                *output = parsed;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'K') {
+            unsigned long long *output = va_arg(*ap, unsigned long long *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            unsigned long long parsed = PyLong_AsUnsignedLongLongMask(value);
+            if (parsed == ULLONG_MAX && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (output != NULL) {
+                *output = parsed;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'f') {
+            float *output = va_arg(*ap, float *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            double parsed = PyFloat_AsDouble(value);
+            if (parsed == -1.0 && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (output != NULL) {
+                *output = (float)parsed;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'd') {
+            double *output = va_arg(*ap, double *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            double parsed = PyFloat_AsDouble(value);
+            if (parsed == -1.0 && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (output != NULL) {
+                *output = parsed;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'D') {
+            Py_complex *output = va_arg(*ap, Py_complex *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            Py_complex parsed = PyComplex_AsCComplex(value);
+            if (parsed.real == -1.0 && parsed.imag == 0.0 && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (output != NULL) {
+                *output = parsed;
             }
             token_index++;
             continue;
@@ -2190,6 +2528,52 @@ static int parse_args_and_keywords_va(
             continue;
         }
 
+        if (token == 'S') {
+            void **output = va_arg(*ap, void **);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            if (!object_is_instance_of_type(value, (void *)&PyBytes_Type)) {
+                free(spec);
+                PyErr_SetString((void *)&PyExc_TypeError, "expected bytes");
+                return 0;
+            }
+            if (output != NULL) {
+                *output = value;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'Y') {
+            void **output = va_arg(*ap, void **);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            if (!object_is_instance_of_type(value, (void *)&PyByteArray_Type)) {
+                free(spec);
+                PyErr_SetString((void *)&PyExc_TypeError, "expected bytearray");
+                return 0;
+            }
+            if (output != NULL) {
+                *output = value;
+            }
+            token_index++;
+            continue;
+        }
+
         if (token == 'U') {
             void **output = va_arg(*ap, void **);
             if (!present) {
@@ -2203,9 +2587,7 @@ static int parse_args_and_keywords_va(
             }
             if (!object_is_instance_of_type(value, (void *)&PyUnicode_Type)) {
                 free(spec);
-                pyrs_capi_set_error_message(
-                    "PyArg_ParseTupleAndKeywords argument has incorrect type"
-                );
+                PyErr_SetString((void *)&PyExc_TypeError, "expected str");
                 return 0;
             }
             if (output != NULL) {

@@ -4914,6 +4914,28 @@ impl PartialEq for Value {
 impl Eq for Value {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum TestCapiScalarParseKind {
+    B,
+    UpperB,
+    H,
+    UpperH,
+    I,
+    K,
+    LowerI,
+    L,
+    N,
+    P,
+    UpperL,
+    UpperK,
+    F,
+    D,
+    UpperD,
+    UpperS,
+    UpperY,
+    UpperU,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum BuiltinFunction {
     Print,
     Input,
@@ -5810,6 +5832,7 @@ pub enum BuiltinFunction {
     TypeAnnotationsGet,
     TestCapiExceptionPrint,
     TestCapiConfigGet,
+    TestCapiGetArgsScalar(TestCapiScalarParseKind),
     TestCapiGetArgsKeywords,
     TestCapiGetArgsKeywordOnly,
     TestCapiGetArgsPositionalOnlyAndKeywords,
@@ -9243,6 +9266,7 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::TypeAnnotationsGet
             | BuiltinFunction::TestCapiExceptionPrint
             | BuiltinFunction::TestCapiConfigGet
+            | BuiltinFunction::TestCapiGetArgsScalar(_)
             | BuiltinFunction::TestCapiGetArgsKeywords
             | BuiltinFunction::TestCapiGetArgsKeywordOnly
             | BuiltinFunction::TestCapiGetArgsPositionalOnlyAndKeywords
@@ -12264,6 +12288,29 @@ fn builtin_type_object_name(builtin: BuiltinFunction) -> Option<&'static str> {
     builtin_type_name_info(builtin).map(|info| info.qualified_name)
 }
 
+fn testcapi_scalar_function_name(kind: TestCapiScalarParseKind) -> &'static str {
+    match kind {
+        TestCapiScalarParseKind::B => "getargs_b",
+        TestCapiScalarParseKind::UpperB => "getargs_B",
+        TestCapiScalarParseKind::H => "getargs_h",
+        TestCapiScalarParseKind::UpperH => "getargs_H",
+        TestCapiScalarParseKind::I => "getargs_I",
+        TestCapiScalarParseKind::K => "getargs_k",
+        TestCapiScalarParseKind::LowerI => "getargs_i",
+        TestCapiScalarParseKind::L => "getargs_l",
+        TestCapiScalarParseKind::N => "getargs_n",
+        TestCapiScalarParseKind::P => "getargs_p",
+        TestCapiScalarParseKind::UpperL => "getargs_L",
+        TestCapiScalarParseKind::UpperK => "getargs_K",
+        TestCapiScalarParseKind::F => "getargs_f",
+        TestCapiScalarParseKind::D => "getargs_d",
+        TestCapiScalarParseKind::UpperD => "getargs_D",
+        TestCapiScalarParseKind::UpperS => "getargs_S",
+        TestCapiScalarParseKind::UpperY => "getargs_Y",
+        TestCapiScalarParseKind::UpperU => "getargs_U",
+    }
+}
+
 fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
     match builtin {
         BuiltinFunction::Print => "print".to_string(),
@@ -12335,6 +12382,9 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::CoroutineType => "coroutine".to_string(),
         BuiltinFunction::AsyncGeneratorType => "async_generator".to_string(),
         BuiltinFunction::TypeAnnotationsGet => "__annotations__.__get__".to_string(),
+        BuiltinFunction::TestCapiGetArgsScalar(kind) => {
+            testcapi_scalar_function_name(kind).to_string()
+        }
         BuiltinFunction::TypingNoDefaultNew => "__new__".to_string(),
         BuiltinFunction::TypingNoDefaultRepr => "__repr__".to_string(),
         BuiltinFunction::TypingNoDefaultReduce => "__reduce__".to_string(),

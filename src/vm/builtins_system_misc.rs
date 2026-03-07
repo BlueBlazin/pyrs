@@ -1,9 +1,9 @@
 use super::{
-    BigInt, BuiltinFunction, CallKeywordArgs, HashMap, InstanceObject, InternalCallOutcome,
-    IpAddr, IteratorKind, IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT,
-    SIGNAL_IGNORE, SIGNAL_SIGINT, SocketAddr, TimeParts, ToSocketAddrs, Value, Vm,
-    apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil,
-    decode_text_bytes, dict_get_value, format_strftime, format_uuid_hex,
+    BigInt, BuiltinFunction, CallKeywordArgs, HashMap, InstanceObject, InternalCallOutcome, IpAddr,
+    IteratorKind, IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT,
+    SIGNAL_IGNORE, SIGNAL_SIGINT, SocketAddr, TestCapiScalarParseKind, TimeParts, ToSocketAddrs,
+    Value, Vm, apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year,
+    days_from_civil, decode_text_bytes, dict_get_value, format_strftime, format_uuid_hex,
     format_uuid_hyphenated, is_truthy, parse_uuid_like_string, runtime_error_matches_exception,
     split_unix_timestamp, unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes,
     uuid_timestamp_100ns_since_gregorian, value_from_bigint, value_to_f64, value_to_int,
@@ -110,7 +110,9 @@ fn testcapi_parse_pattern(
         TestCapiPattern::Tuple(items) => {
             let values = testcapi_sequence_values(value)?;
             if values.len() != items.len() {
-                return Err(RuntimeError::type_error("argument has wrong number of elements"));
+                return Err(RuntimeError::type_error(
+                    "argument has wrong number of elements",
+                ));
             }
             for (item_pattern, item_value) in items.iter().zip(values) {
                 testcapi_parse_pattern(item_pattern, item_value, out)?;
@@ -120,7 +122,492 @@ fn testcapi_parse_pattern(
     }
 }
 
+fn testcapi_bigint_low_u64(value: &BigInt) -> u64 {
+    let bytes = value.to_abs_le_bytes();
+    let mut out = 0u64;
+    for (index, byte) in bytes.into_iter().take(8).enumerate() {
+        out |= (byte as u64) << (index * 8);
+    }
+    out
+}
+
 impl Vm {
+    pub(super) fn capi_warn(
+        &mut self,
+        category: &str,
+        message: String,
+        stacklevel: isize,
+    ) -> Result<(), RuntimeError> {
+        let stacklevel = if stacklevel > i64::MAX as isize {
+            i64::MAX
+        } else if stacklevel < i64::MIN as isize {
+            i64::MIN
+        } else {
+            stacklevel as i64
+        };
+        self.builtin_warnings_warn(
+            vec![
+                Value::Str(message),
+                Value::ExceptionType(category.to_string()),
+                Value::Int(stacklevel),
+            ],
+            HashMap::new(),
+        )?;
+        Ok(())
+    }
+
+    fn capi_canonical_int_value(&self, value: &Value) -> Option<Value> {
+        match value {
+            Value::Int(value) => Some(Value::Int(*value)),
+            Value::BigInt(value) => Some(Value::BigInt(value.clone())),
+            Value::Bool(value) => Some(Value::Int(if *value { 1 } else { 0 })),
+            Value::Instance(instance) => self.instance_backing_int(instance).map(|backing| match backing {
+                Value::Bool(value) => Value::Int(if value { 1 } else { 0 }),
+                other => other,
+            }),
+            _ => None,
+        }
+    }
+
+    fn capi_float_subclass_value(&self, value: &Value) -> Option<f64> {
+        match value {
+            Value::Float(value) => Some(*value),
+            Value::Instance(instance) => self.instance_backing_float(instance),
+            _ => None,
+        }
+    }
+
+    fn capi_complex_subclass_value(&self, value: &Value) -> Option<(f64, f64)> {
+        match value {
+            Value::Complex { real, imag } => Some((*real, *imag)),
+            Value::Instance(instance) => self.instance_backing_complex(instance),
+            _ => None,
+        }
+    }
+
+    pub(super) fn capi_coerce_index_value(&mut self, value: Value) -> Result<Value, RuntimeError> {
+        if let Some(exact) = self.capi_canonical_int_value(&value) {
+            return Ok(exact);
+        }
+
+        let Some(index_method) = self.lookup_bound_special_method(&value, "__index__")? else {
+            return Err(RuntimeError::type_error(format!(
+                "'{}' object cannot be interpreted as an integer",
+                self.value_type_name_for_error(&value)
+            )));
+        };
+
+        let result = match self.call_internal(index_method, Vec::new(), HashMap::new())? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception("__index__() failed"));
+            }
+        };
+
+        let Some(exact) = self.capi_canonical_int_value(&result) else {
+            return Err(RuntimeError::type_error(format!(
+                "__index__ returned non-int (type {})",
+                self.value_type_name_for_error(&result)
+            )));
+        };
+
+        if !matches!(result, Value::Int(_) | Value::BigInt(_)) {
+            self.capi_warn(
+                "DeprecationWarning",
+                format!(
+                    "__index__ returned non-int (type {}).  The ability to return an instance of a strict subclass of int is deprecated, and may be removed in a future version of Python.",
+                    self.value_type_name_for_error(&result)
+                ),
+                1,
+            )?;
+        }
+
+        Ok(exact)
+    }
+
+    pub(super) fn capi_long_as_long(&mut self, value: Value) -> Result<i64, RuntimeError> {
+        match self.capi_coerce_index_value(value)? {
+            Value::Int(value) => Ok(value),
+            Value::BigInt(value) => value
+                .to_i64()
+                .ok_or_else(|| RuntimeError::overflow_error("Python int too large to convert to C long")),
+            _ => unreachable!(),
+        }
+    }
+
+    pub(super) fn capi_long_as_long_long(&mut self, value: Value) -> Result<i64, RuntimeError> {
+        match self.capi_coerce_index_value(value)? {
+            Value::Int(value) => Ok(value),
+            Value::BigInt(value) => value.to_i64().ok_or_else(|| {
+                RuntimeError::overflow_error("Python int too large to convert to C long long")
+            }),
+            _ => unreachable!(),
+        }
+    }
+
+    pub(super) fn capi_long_as_ssize_t(&mut self, value: Value) -> Result<isize, RuntimeError> {
+        match self.capi_coerce_index_value(value)? {
+            Value::Int(value) => isize::try_from(value).map_err(|_| {
+                RuntimeError::overflow_error("Python int too large to convert to C ssize_t")
+            }),
+            Value::BigInt(value) => {
+                let compact = value.to_i64().ok_or_else(|| {
+                    RuntimeError::overflow_error("Python int too large to convert to C ssize_t")
+                })?;
+                isize::try_from(compact).map_err(|_| {
+                    RuntimeError::overflow_error("Python int too large to convert to C ssize_t")
+                })
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    pub(super) fn capi_long_as_unsigned_long(&mut self, value: Value) -> Result<u64, RuntimeError> {
+        match self.capi_coerce_index_value(value)? {
+            Value::Int(value) => {
+                if value < 0 {
+                    return Err(RuntimeError::overflow_error(
+                        "can't convert negative value to unsigned int",
+                    ));
+                }
+                Ok(value as u64)
+            }
+            Value::BigInt(value) => {
+                if value.is_negative() {
+                    return Err(RuntimeError::overflow_error(
+                        "can't convert negative value to unsigned int",
+                    ));
+                }
+                let bytes = value.to_abs_le_bytes();
+                if bytes.len() > 8 {
+                    return Err(RuntimeError::overflow_error(
+                        "Python int too large to convert to C unsigned long",
+                    ));
+                }
+                Ok(testcapi_bigint_low_u64(&value))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    pub(super) fn capi_long_as_unsigned_long_long(
+        &mut self,
+        value: Value,
+    ) -> Result<u64, RuntimeError> {
+        match self.capi_coerce_index_value(value)? {
+            Value::Int(value) => {
+                if value < 0 {
+                    return Err(RuntimeError::overflow_error(
+                        "can't convert negative value to unsigned int",
+                    ));
+                }
+                Ok(value as u64)
+            }
+            Value::BigInt(value) => {
+                if value.is_negative() {
+                    return Err(RuntimeError::overflow_error(
+                        "can't convert negative value to unsigned int",
+                    ));
+                }
+                let bytes = value.to_abs_le_bytes();
+                if bytes.len() > 8 {
+                    return Err(RuntimeError::overflow_error(
+                        "Python int too large to convert to C unsigned long long",
+                    ));
+                }
+                Ok(testcapi_bigint_low_u64(&value))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    pub(super) fn capi_long_as_unsigned_long_mask(
+        &mut self,
+        value: Value,
+    ) -> Result<u64, RuntimeError> {
+        match self.capi_coerce_index_value(value)? {
+            Value::Int(value) => Ok(value as u64),
+            Value::BigInt(value) => {
+                let lower = testcapi_bigint_low_u64(&value);
+                if value.is_negative() {
+                    Ok((0u64).wrapping_sub(lower))
+                } else {
+                    Ok(lower)
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    pub(super) fn capi_long_as_unsigned_long_long_mask(
+        &mut self,
+        value: Value,
+    ) -> Result<u64, RuntimeError> {
+        self.capi_long_as_unsigned_long_mask(value)
+    }
+
+    pub(super) fn capi_float_as_double(&mut self, value: Value) -> Result<f64, RuntimeError> {
+        if let Some(backing) = self.capi_float_subclass_value(&value) {
+            return Ok(backing);
+        }
+
+        if let Some(index_value) = self.capi_canonical_int_value(&value) {
+            return match index_value {
+                Value::Int(value) => Ok(value as f64),
+                Value::BigInt(value) => {
+                    let converted = value.to_f64();
+                    if converted.is_finite() {
+                        Ok(converted)
+                    } else {
+                        Err(RuntimeError::overflow_error("int too large to convert to float"))
+                    }
+                }
+                _ => unreachable!(),
+            };
+        }
+
+        if let Some(float_method) = self.lookup_bound_special_method(&value, "__float__")? {
+            let result = match self.call_internal(float_method, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception("float() failed"));
+                }
+            };
+            if let Value::Float(value) = result {
+                return Ok(value);
+            }
+            if let Some(backing) = self.capi_float_subclass_value(&result) {
+                self.capi_warn(
+                    "DeprecationWarning",
+                    format!(
+                        "{}.__float__ returned non-float (type {}).  The ability to return an instance of a strict subclass of float is deprecated, and may be removed in a future version of Python.",
+                        self.value_type_name_for_error(&value),
+                        self.value_type_name_for_error(&result)
+                    ),
+                    1,
+                )?;
+                return Ok(backing);
+            }
+            return Err(RuntimeError::type_error(format!(
+                "{}.__float__ returned non-float (type {})",
+                self.value_type_name_for_error(&value),
+                self.value_type_name_for_error(&result)
+            )));
+        }
+
+        if self.lookup_bound_special_method(&value, "__index__")?.is_some() {
+            return match self.capi_coerce_index_value(value)? {
+                Value::Int(value) => Ok(value as f64),
+                Value::BigInt(value) => {
+                    let converted = value.to_f64();
+                    if converted.is_finite() {
+                        Ok(converted)
+                    } else {
+                        Err(RuntimeError::overflow_error("int too large to convert to float"))
+                    }
+                }
+                _ => unreachable!(),
+            };
+        }
+
+        Err(RuntimeError::type_error(format!(
+            "must be real number, not {}",
+            self.value_type_name_for_error(&value)
+        )))
+    }
+
+    pub(super) fn capi_complex_as_pair(&mut self, value: Value) -> Result<(f64, f64), RuntimeError> {
+        if let Some(backing) = self.capi_complex_subclass_value(&value) {
+            return Ok(backing);
+        }
+
+        if let Some(complex_method) = self.lookup_bound_special_method(&value, "__complex__")? {
+            let result = match self.call_internal(complex_method, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception("__complex__() failed"));
+                }
+            };
+            if let Value::Complex { real, imag } = result {
+                return Ok((real, imag));
+            }
+            if let Some(backing) = self.capi_complex_subclass_value(&result) {
+                self.capi_warn(
+                    "DeprecationWarning",
+                    format!(
+                        "__complex__ returned non-complex (type {}).  The ability to return an instance of a strict subclass of complex is deprecated, and may be removed in a future version of Python.",
+                        self.value_type_name_for_error(&result)
+                    ),
+                    1,
+                )?;
+                return Ok(backing);
+            }
+            return Err(RuntimeError::type_error(format!(
+                "__complex__ returned non-complex (type {})",
+                self.value_type_name_for_error(&result)
+            )));
+        }
+
+        Ok((self.capi_float_as_double(value)?, 0.0))
+    }
+
+    fn testcapi_single_scalar_arg(
+        &self,
+        function_name: &str,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if let Some(unexpected) = kwargs.keys().next() {
+            return Err(RuntimeError::type_error(format!(
+                "{function_name}() got an unexpected keyword argument '{unexpected}'"
+            )));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "{function_name}() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        Ok(args.remove(0))
+    }
+
+    pub(super) fn builtin_testcapi_getargs_scalar(
+        &mut self,
+        kind: TestCapiScalarParseKind,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let function_name = match kind {
+            TestCapiScalarParseKind::B => "getargs_b",
+            TestCapiScalarParseKind::UpperB => "getargs_B",
+            TestCapiScalarParseKind::H => "getargs_h",
+            TestCapiScalarParseKind::UpperH => "getargs_H",
+            TestCapiScalarParseKind::I => "getargs_I",
+            TestCapiScalarParseKind::K => "getargs_k",
+            TestCapiScalarParseKind::LowerI => "getargs_i",
+            TestCapiScalarParseKind::L => "getargs_l",
+            TestCapiScalarParseKind::N => "getargs_n",
+            TestCapiScalarParseKind::P => "getargs_p",
+            TestCapiScalarParseKind::UpperL => "getargs_L",
+            TestCapiScalarParseKind::UpperK => "getargs_K",
+            TestCapiScalarParseKind::F => "getargs_f",
+            TestCapiScalarParseKind::D => "getargs_d",
+            TestCapiScalarParseKind::UpperD => "getargs_D",
+            TestCapiScalarParseKind::UpperS => "getargs_S",
+            TestCapiScalarParseKind::UpperY => "getargs_Y",
+            TestCapiScalarParseKind::UpperU => "getargs_U",
+        };
+        let value = self.testcapi_single_scalar_arg(function_name, args, kwargs)?;
+        match kind {
+            TestCapiScalarParseKind::B => {
+                let value = self.capi_long_as_long(value)?;
+                if value < 0 {
+                    return Err(RuntimeError::overflow_error(
+                        "unsigned byte integer is less than minimum",
+                    ));
+                }
+                if value > u8::MAX as i64 {
+                    return Err(RuntimeError::overflow_error(
+                        "unsigned byte integer is greater than maximum",
+                    ));
+                }
+                Ok(Value::Int(value))
+            }
+            TestCapiScalarParseKind::UpperB => Ok(Value::Int(
+                self.capi_long_as_unsigned_long_mask(value)? as u8 as i64,
+            )),
+            TestCapiScalarParseKind::H => {
+                let value = self.capi_long_as_long(value)?;
+                if value < i16::MIN as i64 {
+                    return Err(RuntimeError::overflow_error(
+                        "signed short integer is less than minimum",
+                    ));
+                }
+                if value > i16::MAX as i64 {
+                    return Err(RuntimeError::overflow_error(
+                        "signed short integer is greater than maximum",
+                    ));
+                }
+                Ok(Value::Int(value))
+            }
+            TestCapiScalarParseKind::UpperH => Ok(Value::Int(
+                self.capi_long_as_unsigned_long_mask(value)? as u16 as i64,
+            )),
+            TestCapiScalarParseKind::I => Ok(Value::Int(
+                self.capi_long_as_unsigned_long_mask(value)? as u32 as i64,
+            )),
+            TestCapiScalarParseKind::K => {
+                Ok(value_from_bigint(BigInt::from_u64(
+                    self.capi_long_as_unsigned_long_mask(value)?,
+                )))
+            }
+            TestCapiScalarParseKind::LowerI => {
+                let value = self.capi_long_as_long(value)?;
+                if value < i32::MIN as i64 {
+                    return Err(RuntimeError::overflow_error(
+                        "signed integer is less than minimum",
+                    ));
+                }
+                if value > i32::MAX as i64 {
+                    return Err(RuntimeError::overflow_error(
+                        "signed integer is greater than maximum",
+                    ));
+                }
+                Ok(Value::Int(value))
+            }
+            TestCapiScalarParseKind::L => Ok(Value::Int(self.capi_long_as_long(value)?)),
+            TestCapiScalarParseKind::N => Ok(Value::Int(
+                self.capi_long_as_ssize_t(value)? as i64,
+            )),
+            TestCapiScalarParseKind::P => match self.builtin_bool(vec![value], HashMap::new())? {
+                Value::Bool(value) => Ok(Value::Int(if value { 1 } else { 0 })),
+                other => Err(RuntimeError::type_error(format!(
+                    "bool() returned non-bool (type {})",
+                    self.value_type_name_for_error(&other)
+                ))),
+            },
+            TestCapiScalarParseKind::UpperL => {
+                Ok(Value::Int(self.capi_long_as_long_long(value)?))
+            }
+            TestCapiScalarParseKind::UpperK => Ok(value_from_bigint(BigInt::from_u64(
+                self.capi_long_as_unsigned_long_long_mask(value)?,
+            ))),
+            TestCapiScalarParseKind::F => Ok(Value::Float(self.capi_float_as_double(value)? as f32 as f64)),
+            TestCapiScalarParseKind::D => Ok(Value::Float(self.capi_float_as_double(value)?)),
+            TestCapiScalarParseKind::UpperD => {
+                let (real, imag) = self.capi_complex_as_pair(value)?;
+                Ok(Value::Complex { real, imag })
+            }
+            TestCapiScalarParseKind::UpperS => match &value {
+                Value::Bytes(_) => Ok(value),
+                Value::Instance(instance)
+                    if matches!(&*instance.kind(), Object::Instance(data) if self.class_has_builtin_bytes_base(&data.class)) =>
+                {
+                    Ok(value)
+                }
+                _ => Err(RuntimeError::type_error("expected bytes")),
+            },
+            TestCapiScalarParseKind::UpperY => match &value {
+                Value::ByteArray(_) => Ok(value),
+                Value::Instance(instance)
+                    if matches!(&*instance.kind(), Object::Instance(data) if self.class_has_builtin_bytearray_base(&data.class)) =>
+                {
+                    Ok(value)
+                }
+                _ => Err(RuntimeError::type_error("expected bytearray")),
+            },
+            TestCapiScalarParseKind::UpperU => match &value {
+                Value::Str(_) => Ok(value),
+                Value::Instance(instance)
+                    if matches!(&*instance.kind(), Object::Instance(data) if self.class_has_builtin_str_base(&data.class)) =>
+                {
+                    Ok(value)
+                }
+                _ => Err(RuntimeError::type_error("expected str")),
+            },
+        }
+    }
+
     fn bind_testcapi_keyword_args(
         spec: &TestCapiKeywordSpec<'_>,
         args: Vec<Value>,
@@ -138,7 +625,9 @@ impl Vm {
             }
             return Err(RuntimeError::type_error(format!(
                 "{} takes at most {} positional arguments ({} given)",
-                spec.function_name, spec.max_positional, args.len()
+                spec.function_name,
+                spec.max_positional,
+                args.len()
             )));
         }
 
@@ -239,9 +728,9 @@ impl Vm {
                 offset += arity;
             }
         }
-        Ok(self.heap.alloc_tuple(
-            values.into_iter().map(Value::Int).collect::<Vec<_>>(),
-        ))
+        Ok(self
+            .heap
+            .alloc_tuple(values.into_iter().map(Value::Int).collect::<Vec<_>>()))
     }
 
     pub(super) fn builtin_testcapi_getargs_keyword_only(
