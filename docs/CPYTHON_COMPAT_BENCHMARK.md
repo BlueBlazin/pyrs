@@ -127,6 +127,13 @@ Each result shard includes:
 - The sharded dispatcher writes one nested orchestrator run per batch and then
   merges those batch summaries into one top-level `summary.json` /
   `derived_summary.json`, so the website can consume a single combined artifact.
+- Completed benchmark output is reused only when the current `--runner-bin`
+  fingerprint matches the existing artifact. Changing the `pyrs` binary
+  automatically invalidates the cached output directory so stale results are not
+  mixed across interpreter builds.
+- If one batch hits an internal runner/orchestrator failure, the dispatcher now
+  records that batch status and continues with later batches so the overall
+  benchmark still produces a full top-level artifact for all attempted batches.
 - A derived rollup can be generated after a run with:
 
 ```bash

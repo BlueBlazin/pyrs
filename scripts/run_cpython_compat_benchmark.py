@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import hashlib
 import json
 import os
 import pathlib
@@ -22,6 +23,51 @@ SCHEMA_VERSION = "v1"
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKER = REPO_ROOT / "scripts" / "cpython_compat_benchmark_worker.py"
 MAX_ERROR_DETAIL_CHARS = 16_000
+
+
+def normalize_process_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def file_fingerprint(path: pathlib.Path) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    stat = path.stat()
+    return {
+        "path": str(path),
+        "size_bytes": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def metadata_matches_runner_binary(document: dict[str, Any], runner_fingerprint: dict[str, Any]) -> bool:
+    existing = document.get("runner")
+    if not isinstance(existing, dict):
+        return False
+    return existing.get("sha256") == runner_fingerprint.get("sha256")
+
+
+def should_reset_for_runner_binary(out_dir: pathlib.Path, runner_fingerprint: dict[str, Any]) -> bool:
+    manifest_path = out_dir / "manifest.json"
+    if not out_dir.exists():
+        return False
+    if not manifest_path.is_file():
+        return True
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return True
+    return not metadata_matches_runner_binary(manifest, runner_fingerprint)
 
 
 def detect_cpython_bin(explicit: str | None) -> pathlib.Path:
@@ -78,16 +124,16 @@ def run_subprocess(argv: list[str], timeout_secs: int, env: dict[str, str]) -> d
             "ok": False,
             "timeout": True,
             "returncode": None,
-            "stdout": (exc.stdout or "").strip(),
-            "stderr": (exc.stderr or "").strip(),
+            "stdout": normalize_process_text(exc.stdout).strip(),
+            "stderr": normalize_process_text(exc.stderr).strip(),
             "elapsed_secs": round(time.perf_counter() - started, 6),
         }
     return {
         "ok": completed.returncode == 0,
         "timeout": False,
         "returncode": completed.returncode,
-        "stdout": (completed.stdout or "").strip(),
-        "stderr": (completed.stderr or "").strip(),
+        "stdout": normalize_process_text(completed.stdout).strip(),
+        "stderr": normalize_process_text(completed.stderr).strip(),
         "elapsed_secs": round(time.perf_counter() - started, 6),
     }
 
@@ -208,6 +254,7 @@ def build_metadata(
     max_entries: int,
     allow_missing_entries: bool,
     discovered_entry_count: int,
+    runner_fingerprint: dict[str, Any],
     entries: list[str],
 ) -> dict[str, Any]:
     return {
@@ -225,6 +272,7 @@ def build_metadata(
             "python": sys.version.split()[0],
             "cpu_count": os.cpu_count(),
         },
+        "runner": runner_fingerprint,
         "config": {
             "cpython_bin": str(cpython_bin),
             "cpython_lib": str(cpython_lib),
@@ -674,9 +722,12 @@ def main() -> int:
         raise SystemExit(f"worker script not found: {WORKER}")
 
     out_dir = pathlib.Path(args.out_dir)
+    runner_fingerprint = file_fingerprint(runner_bin)
     inventory_dir = out_dir / "inventory"
     results_dir = out_dir / "results"
     if args.force and out_dir.exists():
+        shutil.rmtree(out_dir)
+    elif should_reset_for_runner_binary(out_dir, runner_fingerprint):
         shutil.rmtree(out_dir)
     inventory_dir.mkdir(parents=True, exist_ok=True)
     if not args.inventory_only:
@@ -709,6 +760,7 @@ def main() -> int:
         max_entries=args.max_entries,
         allow_missing_entries=args.allow_missing_entries,
         discovered_entry_count=len(discovered_entries),
+        runner_fingerprint=runner_fingerprint,
         entries=entries,
     )
     manifest = {

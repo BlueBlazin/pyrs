@@ -93,6 +93,7 @@ def build_dispatch_metadata(
     max_entries: int,
     allow_missing_entries: bool,
     discovered_entry_count: int,
+    runner_fingerprint: dict[str, Any],
     entries: list[str],
     planned_batches: list[dict[str, Any]],
     entries_per_batch: int,
@@ -113,6 +114,7 @@ def build_dispatch_metadata(
         max_entries=max_entries,
         allow_missing_entries=allow_missing_entries,
         discovered_entry_count=discovered_entry_count,
+        runner_fingerprint=runner_fingerprint,
         entries=entries,
     )
     metadata["dispatch"] = {
@@ -163,7 +165,7 @@ def build_progress(
     completed_count = sum(
         1
         for row in batch_rows.values()
-        if row.get("status") in {"completed", "failed", "interrupted", "process_failed"}
+        if row.get("status") in {"cached", "completed", "failed", "interrupted", "process_failed"}
     )
     return {
         "schema_version": SCHEMA_VERSION,
@@ -226,6 +228,7 @@ def aggregate_summary(
     metadata: dict[str, Any],
     run_state: dict[str, Any],
     plan_rows: list[dict[str, Any]],
+    batch_rows_by_id: dict[str, dict[str, Any]],
     elapsed_total: float,
 ) -> dict[str, Any]:
     module_statuses = Counter()
@@ -256,10 +259,12 @@ def aggregate_summary(
 
         batch_summary = read_json(summary_path)
         batch_run_state = batch_summary.get("run_state", {})
+        current_batch_row = batch_rows_by_id.get(batch_id, {})
+        current_status = current_batch_row.get("status") or batch_run_state.get("status")
         batch_rows.append(
             {
                 "batch_id": batch_id,
-                "status": batch_run_state.get("status"),
+                "status": current_status,
                 "entry_count": plan_row["entry_count"],
                 "summary": plan_row["summary"],
                 "derived_summary": plan_row["derived_summary"],
@@ -313,7 +318,14 @@ def aggregate_summary(
         "dispatch": {
             **metadata["dispatch"],
             "aggregate_batch_elapsed_secs": round(aggregate_batch_elapsed, 6),
-            "completed_batch_count": sum(1 for row in batch_rows if row.get("status") == "completed"),
+            "completed_batch_count": sum(1 for row in batch_rows if row.get("status") in {"completed", "cached"}),
+            "cached_batch_count": sum(1 for row in batch_rows if row.get("status") == "cached"),
+            "failed_batch_count": sum(1 for row in batch_rows if row.get("status") in {"failed", "process_failed"}),
+            "interrupted_batch_count": sum(1 for row in batch_rows if row.get("status") == "interrupted"),
+            "missing_summary_batch_count": sum(1 for row in batch_rows if row.get("status") == "missing_summary"),
+            "batch_status_counts": dict(
+                sorted(Counter(row.get("status", "unknown") for row in batch_rows).items())
+            ),
         },
         "batches": batch_rows,
         "entries": entry_rows,
@@ -349,6 +361,7 @@ def finalize_dispatch(
         metadata=metadata,
         run_state=run_state,
         plan_rows=plan_rows,
+        batch_rows_by_id=batch_rows,
         elapsed_total=elapsed_total,
     )
     write_json(out_dir / "summary.json", summary)
@@ -410,6 +423,44 @@ def finalize_dispatch(
     return summary
 
 
+def reusable_batch_status(status: str | None) -> bool:
+    return status == "completed"
+
+
+def load_cached_batch(
+    *,
+    plan_row: dict[str, Any],
+    runner_fingerprint: dict[str, Any],
+) -> dict[str, Any] | None:
+    batch_out_dir = pathlib.Path(plan_row["out_dir"])
+    summary_path = batch_out_dir / "summary.json"
+    manifest_path = batch_out_dir / "manifest.json"
+    if not summary_path.is_file() or not manifest_path.is_file():
+        return None
+    try:
+        manifest = read_json(manifest_path)
+        summary = read_json(summary_path)
+    except Exception:
+        return None
+    if not benchmark.metadata_matches_runner_binary(manifest, runner_fingerprint):
+        return None
+    if not benchmark.metadata_matches_runner_binary(summary, runner_fingerprint):
+        return None
+    expected_entries = plan_row["entries"]
+    manifest_entries = manifest.get("entries", {}).get("names")
+    if manifest_entries != expected_entries:
+        return None
+    status = summary.get("run_state", {}).get("status")
+    if not reusable_batch_status(status):
+        return None
+    return {
+        "status": "cached",
+        "entry_count": plan_row["entry_count"],
+        "returncode": 0,
+        "source_status": status,
+    }
+
+
 def main() -> int:
     args = parse_args()
     runner_bin = pathlib.Path(args.runner_bin)
@@ -423,7 +474,10 @@ def main() -> int:
         raise SystemExit(f"benchmark summarizer not found: {SUMMARIZER}")
 
     out_dir = pathlib.Path(args.out_dir)
+    runner_fingerprint = benchmark.file_fingerprint(runner_bin)
     if args.force and out_dir.exists():
+        shutil.rmtree(out_dir)
+    elif benchmark.should_reset_for_runner_binary(out_dir, runner_fingerprint):
         shutil.rmtree(out_dir)
     (out_dir / "batches").mkdir(parents=True, exist_ok=True)
     (out_dir / "entry_files").mkdir(parents=True, exist_ok=True)
@@ -461,6 +515,7 @@ def main() -> int:
         max_entries=args.max_entries,
         allow_missing_entries=args.allow_missing_entries,
         discovered_entry_count=len(discovered_entries),
+        runner_fingerprint=runner_fingerprint,
         entries=entries,
         planned_batches=plan_rows,
         entries_per_batch=args.entries_per_batch,
@@ -509,6 +564,28 @@ def main() -> int:
     try:
         for plan_row in plan_rows:
             current_batch_id = plan_row["batch_id"]
+            cached = None
+            if not args.force:
+                cached = load_cached_batch(
+                    plan_row=plan_row,
+                    runner_fingerprint=runner_fingerprint,
+                )
+            if cached is not None:
+                batch_rows[current_batch_id] = cached
+                print(f"[dispatch] {current_batch_id} -> cached", flush=True)
+                write_json(
+                    out_dir / "progress.json",
+                    build_progress(
+                        status="running",
+                        phase="dispatch",
+                        metadata=metadata,
+                        plan_rows=plan_rows,
+                        batch_rows=batch_rows,
+                        elapsed_total=time.perf_counter() - started,
+                        current_batch_id=current_batch_id,
+                    ),
+                )
+                continue
             batch_rows[current_batch_id] = {
                 "status": "running",
                 "entry_count": plan_row["entry_count"],
@@ -554,17 +631,12 @@ def main() -> int:
                     "status": status,
                     "entry_count": plan_row["entry_count"],
                     "returncode": completed.returncode,
-                }
-                error = {
-                    "type": "BatchDispatchError",
-                    "message": f"batch {current_batch_id} failed",
-                    "detail": benchmark.truncate_detail(
+                    "error": benchmark.truncate_detail(
                         (completed.stderr or completed.stdout or "").strip()
                     ),
                 }
-                final_status = "failed"
-                final_phase = "dispatch"
-                break
+                print(f"[dispatch] {current_batch_id} -> {status}", flush=True)
+                continue
             batch_rows[current_batch_id] = {
                 "status": status,
                 "entry_count": plan_row["entry_count"],

@@ -131,6 +131,21 @@ class OrchestratorSuite(unittest.TestCase):
     lib_root
 }
 
+fn create_sleep_runner(path: &Path) {
+    fs::write(
+        path,
+        "#!/bin/sh\nsleep 2\n",
+    )
+    .expect("write sleep runner");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(path).expect("stat sleep runner").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).expect("chmod sleep runner");
+    }
+}
+
 fn run_worker(bin: &Path, module_name: &str, search_path: &Path, mode: &str) -> String {
     let output = Command::new(bin)
         .arg("-S")
@@ -599,4 +614,246 @@ class DispatchExtraSuite(unittest.TestCase):
         out_dir.join("batches/batch-001/summary.json").is_file(),
         "dispatcher should emit nested batch summary for batch-001"
     );
+}
+
+#[test]
+fn orchestrator_timeout_payloads_remain_json_serializable() {
+    let Some(cpython_bin) = cpython_bin_file_or_skip() else {
+        return;
+    };
+    let Some(cpython_lib) = detect_cpython_lib() else {
+        eprintln!("skipping orchestrator timeout serialization test (CPython Lib not found)");
+        return;
+    };
+
+    let root = temp_root("compat_benchmark_timeout_serialization");
+    let lib_root = create_synthetic_test_lib(&root, &cpython_lib);
+    let sleep_runner = root.join("sleep_runner.sh");
+    create_sleep_runner(&sleep_runner);
+
+    let out_dir = root.join("timeout_out");
+    let output = Command::new(&cpython_bin)
+        .arg(orchestrator_script())
+        .arg("--runner-bin")
+        .arg(&sleep_runner)
+        .arg("--cpython-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-lib")
+        .arg(&lib_root)
+        .arg("--entry")
+        .arg("test.test_benchmark_orchestrator")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--jobs")
+        .arg("1")
+        .arg("--run-timeout")
+        .arg("1")
+        .output()
+        .expect("run orchestrator timeout serialization benchmark");
+    assert!(
+        output.status.success(),
+        "orchestrator should succeed even when the runner times out\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let result =
+        fs::read_to_string(out_dir.join("results/test.test_benchmark_orchestrator.json"))
+            .expect("read timeout result shard");
+    for needle in [
+        r#""status": "process_timeout""#,
+        r#""timeout": true"#,
+        r#""stderr": """#,
+    ] {
+        assert!(
+            result.contains(needle),
+            "timeout result shard missing expected fragment {needle}: {result}"
+        );
+    }
+
+    let summary = fs::read_to_string(out_dir.join("summary.json")).expect("read timeout summary");
+    for needle in [
+        r#""module_statuses": {"#,
+        r#""process_timeout": 1"#,
+        r#""executed_case_count": 0"#,
+    ] {
+        assert!(
+            summary.contains(needle),
+            "timeout summary missing expected fragment {needle}: {summary}"
+        );
+    }
+}
+
+#[test]
+fn orchestrator_invalidates_cached_results_when_runner_binary_changes() {
+    let Some(cpython_bin) = cpython_bin_file_or_skip() else {
+        return;
+    };
+    let Some(cpython_lib) = detect_cpython_lib() else {
+        eprintln!("skipping orchestrator cache invalidation test (CPython Lib not found)");
+        return;
+    };
+
+    let root = temp_root("compat_benchmark_cache_invalidation");
+    let lib_root = create_synthetic_test_lib(&root, &cpython_lib);
+    let out_dir = root.join("cache_out");
+
+    let first = Command::new(&cpython_bin)
+        .arg(orchestrator_script())
+        .arg("--runner-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-lib")
+        .arg(&lib_root)
+        .arg("--entry")
+        .arg("test.test_benchmark_orchestrator")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--jobs")
+        .arg("1")
+        .arg("--run-timeout")
+        .arg("60")
+        .output()
+        .expect("run orchestrator cache baseline");
+    assert!(
+        first.status.success(),
+        "baseline orchestrator run should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let sleep_runner = root.join("sleep_runner.sh");
+    create_sleep_runner(&sleep_runner);
+    let second = Command::new(&cpython_bin)
+        .arg(orchestrator_script())
+        .arg("--runner-bin")
+        .arg(&sleep_runner)
+        .arg("--cpython-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-lib")
+        .arg(&lib_root)
+        .arg("--entry")
+        .arg("test.test_benchmark_orchestrator")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--jobs")
+        .arg("1")
+        .arg("--run-timeout")
+        .arg("1")
+        .output()
+        .expect("run orchestrator cache invalidation");
+    assert!(
+        second.status.success(),
+        "orchestrator should rerun when the runner binary changes\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let result =
+        fs::read_to_string(out_dir.join("results/test.test_benchmark_orchestrator.json"))
+            .expect("read invalidated result shard");
+    assert!(
+        result.contains(r#""status": "process_timeout""#),
+        "changed runner binary should invalidate the old cache entry: {result}"
+    );
+}
+
+#[test]
+fn dispatcher_reuses_completed_batches_for_same_runner_binary() {
+    let Some(cpython_bin) = cpython_bin_file_or_skip() else {
+        return;
+    };
+    let Some(cpython_lib) = detect_cpython_lib() else {
+        eprintln!("skipping dispatcher cache reuse test (CPython Lib not found)");
+        return;
+    };
+
+    let root = temp_root("compat_benchmark_dispatcher_cache");
+    let lib_root = create_synthetic_test_lib(&root, &cpython_lib);
+    let test_dir = lib_root.join("test");
+    fs::write(
+        test_dir.join("test_benchmark_dispatch_cache_extra.py"),
+        r#"
+import unittest
+
+class DispatchCacheSuite(unittest.TestCase):
+    def test_cache_pass(self):
+        self.assertTrue(True)
+"#,
+    )
+    .expect("write synthetic dispatcher cache module");
+
+    let out_dir = root.join("dispatch_cache_out");
+    let first = Command::new(&cpython_bin)
+        .arg(dispatcher_script())
+        .arg("--runner-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-lib")
+        .arg(&lib_root)
+        .arg("--entries-per-batch")
+        .arg("1")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--jobs")
+        .arg("1")
+        .arg("--run-timeout")
+        .arg("60")
+        .output()
+        .expect("run dispatcher cache baseline");
+    assert!(
+        first.status.success(),
+        "dispatcher baseline should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let second = Command::new(&cpython_bin)
+        .arg(dispatcher_script())
+        .arg("--runner-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-lib")
+        .arg(&lib_root)
+        .arg("--entries-per-batch")
+        .arg("1")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--jobs")
+        .arg("1")
+        .arg("--run-timeout")
+        .arg("60")
+        .output()
+        .expect("run dispatcher cache reuse");
+    assert!(
+        second.status.success(),
+        "dispatcher cache reuse should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let second_stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(
+        second_stdout.contains("[dispatch] batch-000 -> cached"),
+        "dispatcher should reuse completed batch-000\nstdout:\n{second_stdout}"
+    );
+    assert!(
+        second_stdout.contains("[dispatch] batch-001 -> cached"),
+        "dispatcher should reuse completed batch-001\nstdout:\n{second_stdout}"
+    );
+
+    let summary =
+        fs::read_to_string(out_dir.join("summary.json")).expect("read dispatcher cache summary");
+    for needle in [
+        r#""cached_batch_count": 2"#,
+        r#""batch_status_counts": {"#,
+        r#""cached": 2"#,
+    ] {
+        assert!(
+            summary.contains(needle),
+            "dispatcher cache summary missing expected fragment {needle}: {summary}"
+        );
+    }
 }
