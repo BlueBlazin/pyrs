@@ -4840,17 +4840,23 @@ impl Vm {
                 module_data.globals.get("__slot_wrapper__"),
                 Some(Value::Bool(true))
             );
-            if !is_slot_wrapper {
+            let preserve_helper_module = matches!(
+                module_data.name.as_str(),
+                "__float_unbound_method__"
+                    | "__str_unbound_method__"
+                    | "__tuple_unbound_method__"
+            );
+            if !is_slot_wrapper && !preserve_helper_module {
                 let receiver_ref = self.bound_receiver_ref(receiver)?;
                 return Ok(Some(self.heap.alloc_bound_method(BoundMethod::new(
                     method_data.function.clone(),
                     receiver_ref,
                 ))));
             }
-            let bound_module_name = if module_data.name == "__int_unbound_method__" {
-                "__int_method__".to_string()
-            } else {
-                module_data.name.clone()
+            let bound_module_name = match module_data.name.as_str() {
+                "__int_unbound_method__" => "__int_method__".to_string(),
+                "__float_unbound_method__" => "__float_method__".to_string(),
+                _ => module_data.name.clone(),
             };
             let bound_receiver = match self
                 .heap
@@ -4947,7 +4953,12 @@ impl Vm {
             }
         }
         if let Some(class_ref) = class_ref
-            && let Some(method) = class_attr_lookup(&class_ref, method_name)
+            && let Some(method) = if matches!(receiver, Value::Instance(_)) {
+                self.lookup_instance_class_attr_owner_and_value(&class_ref, method_name)
+                    .map(|(_owner, method)| method)
+            } else {
+                class_attr_lookup(&class_ref, method_name)
+            }
         {
             return self.bind_descriptor_method(method, receiver);
         }
@@ -6639,10 +6650,6 @@ impl Vm {
             && let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name)
         {
             proxy_attr
-        } else if matches!(attr_name, "__repr__" | "__str__")
-            && let Some(attr) = self.load_attr_class_builtin_base_method(class, attr_name)
-        {
-            attr
         } else if let Some(attr) = class_attr_lookup(class, attr_name) {
             attr
         } else if let Some(attr) = proxy_base_attr {
@@ -7146,6 +7153,67 @@ impl Vm {
         }
 
         Ok(AttrAccessOutcome::Value(attr))
+    }
+
+    fn should_defer_builtin_slot_placeholder_attr(
+        &self,
+        lookup_class: &ObjRef,
+        owner: &ObjRef,
+        attr_name: &str,
+        attr: &Value,
+    ) -> bool {
+        if !matches!(
+            (attr_name, attr),
+            ("__repr__", Value::Builtin(BuiltinFunction::Repr))
+                | ("__str__", Value::Builtin(BuiltinFunction::Str))
+        ) {
+            return false;
+        }
+        let Object::Class(owner_data) = &*owner.kind() else {
+            return false;
+        };
+        if matches!(
+            owner_data.attrs.get("__pyrs_user_class__"),
+            Some(Value::Bool(true))
+        ) {
+            return false;
+        }
+        self.load_attr_class_builtin_base_method(lookup_class, attr_name)
+            .is_some()
+    }
+
+    fn lookup_instance_class_attr_owner_and_value(
+        &mut self,
+        class_ref: &ObjRef,
+        attr_name: &str,
+    ) -> Option<(ObjRef, Value)> {
+        for candidate in class_attr_walk(class_ref) {
+            let is_proxy_class = matches!(
+                &*candidate.kind(),
+                Object::Class(class_data)
+                    if matches!(
+                        class_data.attrs.get("__pyrs_cpython_proxy_marker__"),
+                        Some(Value::Bool(true))
+                    )
+            );
+            if is_proxy_class
+                && let Some(proxy_attr) = self.load_cpython_proxy_attr(&candidate, attr_name)
+            {
+                return Some((candidate, proxy_attr));
+            }
+            if let Some(local_attr) = class_attr_lookup_direct(&candidate, attr_name) {
+                if self.should_defer_builtin_slot_placeholder_attr(
+                    class_ref,
+                    &candidate,
+                    attr_name,
+                    &local_attr,
+                ) {
+                    continue;
+                }
+                return Some((candidate, local_attr));
+            }
+        }
+        None
     }
 
     pub(super) fn class_has_builtin_list_base(&self, class: &ObjRef) -> bool {
@@ -8097,41 +8165,15 @@ impl Vm {
             attr_name,
             "__name__" | "__qualname__" | "__base__" | "__bases__" | "__mro__" | "__flags__"
         );
-        let mut class_attr_owner: Option<ObjRef> = None;
-        let mut class_attr = None;
-        if !suppress_class_metadata {
-            for candidate in class_attr_walk(&class_ref) {
-                let is_proxy_class = matches!(
-                    &*candidate.kind(),
-                    Object::Class(class_data)
-                        if matches!(
-                            class_data.attrs.get("__pyrs_cpython_proxy_marker__"),
-                            Some(Value::Bool(true))
-                        )
-                );
-                // Proxy classes should prefer CPython-backed attribute lookup before
-                // runtime fallback attrs inherited from local `object` scaffolding.
-                if is_proxy_class
-                    && let Some(proxy_attr) = self.load_cpython_proxy_attr(&candidate, attr_name)
-                {
-                    class_attr_owner = Some(candidate);
-                    class_attr = Some(proxy_attr);
-                    break;
-                }
-                if let Some(local_attr) = class_attr_lookup_direct(&candidate, attr_name) {
-                    class_attr_owner = Some(candidate);
-                    class_attr = Some(local_attr);
-                    break;
-                }
-                if let Some(local_attr) =
-                    self.load_attr_class_builtin_base_method(&candidate, attr_name)
-                {
-                    class_attr_owner = Some(candidate);
-                    class_attr = Some(local_attr);
-                    break;
-                }
-            }
-        }
+        let (class_attr_owner, mut class_attr) = if suppress_class_metadata {
+            (None, None)
+        } else if let Some((owner, attr)) =
+            self.lookup_instance_class_attr_owner_and_value(&class_ref, attr_name)
+        {
+            (Some(owner), Some(attr))
+        } else {
+            (None, None)
+        };
         if let Some(attr) = class_attr.clone() {
             let (getter, setter, deleter) = self.descriptor_hooks(&attr)?;
             if setter.is_some() || deleter.is_some() {
@@ -8186,6 +8228,10 @@ impl Vm {
                     return Ok(AttrAccessOutcome::Value(attr));
                 }
             }
+        }
+
+        if class_attr.is_none() && !suppress_class_metadata {
+            class_attr = self.load_attr_class_builtin_base_method(&class_ref, attr_name);
         }
 
         if attr_name == "__init__" {
@@ -8601,10 +8647,21 @@ impl Vm {
             );
         }
 
-        for class in mro.into_iter().skip(start_idx) {
+        let remaining_mro = mro.into_iter().skip(start_idx).collect::<Vec<_>>();
+        for class in &remaining_mro {
             let class_attr = class_attr_lookup_direct(&class, attr_name)
                 .or_else(|| self.load_cpython_proxy_attr(&class, attr_name));
             if let Some(attr) = class_attr {
+                if matches!(receiver_value, Value::Instance(_))
+                    && self.should_defer_builtin_slot_placeholder_attr(
+                        class,
+                        class,
+                        attr_name,
+                        &attr,
+                    )
+                {
+                    continue;
+                }
                 if env_var_present_cached("PYRS_TRACE_LOAD_ATTR_SUPER") && super_depth > 1 {
                     let owner_name = match &*class.kind() {
                         Object::Class(class_data) => class_data.name.clone(),
@@ -8690,6 +8747,8 @@ impl Vm {
                 }
                 return Ok(AttrAccessOutcome::Value(attr));
             }
+        }
+        for class in remaining_mro {
             if self.class_has_builtin_dict_base(&class) {
                 let dict_receiver = match &receiver_value {
                     Value::Dict(dict) => Some(dict.clone()),

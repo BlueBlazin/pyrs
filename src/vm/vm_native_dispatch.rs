@@ -248,6 +248,44 @@ impl Vm {
         }
     }
 
+    fn extract_tuple_receiver_object_for_method_call(
+        &self,
+        receiver: &ObjRef,
+        args: &mut Vec<Value>,
+        method_name: &str,
+    ) -> Result<ObjRef, RuntimeError> {
+        match &*receiver.kind() {
+            Object::Tuple(_) => Ok(receiver.clone()),
+            Object::Instance(_) => self
+                .instance_backing_tuple(receiver)
+                .ok_or_else(|| RuntimeError::type_error(format!("{method_name}() receiver must be tuple"))),
+            Object::Module(module_data) => {
+                if let Some(Value::Tuple(tuple)) = module_data.globals.get("value") {
+                    return Ok(tuple.clone());
+                }
+                if args.is_empty() {
+                    return Err(RuntimeError::new(format!(
+                        "{method_name}() expects one argument"
+                    )));
+                }
+                match args.remove(0) {
+                    Value::Tuple(tuple) => Ok(tuple),
+                    Value::Instance(instance) => self.instance_backing_tuple(&instance).ok_or_else(
+                        || RuntimeError::type_error(format!(
+                            "{method_name}() receiver must be tuple"
+                        )),
+                    ),
+                    _ => Err(RuntimeError::type_error(format!(
+                        "{method_name}() receiver must be tuple"
+                    ))),
+                }
+            }
+            _ => Err(RuntimeError::type_error(format!(
+                "{method_name}() receiver must be tuple"
+            ))),
+        }
+    }
+
     fn slot_wrapper_owner_name(&self, owner: &Value) -> String {
         match owner {
             Value::Builtin(builtin) => builtin_type_name_info(*builtin)
@@ -2323,62 +2361,22 @@ impl Vm {
                         "tuple.count() expects one argument",
                     ));
                 }
-                match &*receiver.kind() {
-                    Object::Tuple(values) => {
-                        if args.len() != 1 {
-                            return Err(RuntimeError::type_error(
-                                "tuple.count() expects one argument",
-                            ));
-                        }
-                        let target = args.remove(0);
-                        let count = values.iter().filter(|value| **value == target).count() as i64;
-                        Ok(NativeCallResult::Value(Value::Int(count)))
-                    }
-                    Object::Module(module_data) => {
-                        let tuple_obj =
-                            if let Some(Value::Tuple(tuple)) = module_data.globals.get("value") {
-                                tuple.clone()
-                            } else {
-                                if args.len() < 2 {
-                                    return Err(RuntimeError::new(
-                                        "tuple.count() expects one argument",
-                                    ));
-                                }
-                                match args.remove(0) {
-                                    Value::Tuple(tuple) => tuple,
-                                    Value::Instance(instance) => {
-                                        self.instance_backing_tuple(&instance).ok_or_else(|| {
-                                            RuntimeError::type_error(
-                                                "tuple.count() receiver must be tuple",
-                                            )
-                                        })?
-                                    }
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "tuple.count() receiver must be tuple",
-                                        ));
-                                    }
-                                }
-                            };
-                        if args.len() != 1 {
-                            return Err(RuntimeError::type_error(
-                                "tuple.count() expects one argument",
-                            ));
-                        }
-                        let target = args.remove(0);
-                        let tuple_kind = tuple_obj.kind();
-                        let Object::Tuple(values) = &*tuple_kind else {
-                            return Err(RuntimeError::type_error(
-                                "tuple.count() receiver must be tuple",
-                            ));
-                        };
-                        let count = values.iter().filter(|value| **value == target).count() as i64;
-                        Ok(NativeCallResult::Value(Value::Int(count)))
-                    }
-                    _ => Err(RuntimeError::type_error(
-                        "tuple.count() receiver must be tuple",
-                    )),
+                let tuple_obj =
+                    self.extract_tuple_receiver_object_for_method_call(&receiver, &mut args, "tuple.count")?;
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error(
+                        "tuple.count() expects one argument",
+                    ));
                 }
+                let target = args.remove(0);
+                let tuple_kind = tuple_obj.kind();
+                let Object::Tuple(values) = &*tuple_kind else {
+                    return Err(RuntimeError::type_error(
+                        "tuple.count() receiver must be tuple",
+                    ));
+                };
+                let count = values.iter().filter(|value| **value == target).count() as i64;
+                Ok(NativeCallResult::Value(Value::Int(count)))
             }
             cmp_kind @ (NativeMethodKind::TupleEq | NativeMethodKind::TupleNe) => {
                 if args.len() != 1 {
@@ -2494,57 +2492,19 @@ impl Vm {
                     }
                     Ok(None)
                 };
-                match &*receiver.kind() {
-                    Object::Tuple(values) => {
-                        let mut remaining_args = args;
-                        if let Some(index) = find_index(values, &mut remaining_args)? {
-                            Ok(NativeCallResult::Value(Value::Int(index)))
-                        } else {
-                            Err(RuntimeError::value_error("tuple.index(x): x not in tuple"))
-                        }
-                    }
-                    Object::Module(module_data) => {
-                        let tuple_obj =
-                            if let Some(Value::Tuple(tuple)) = module_data.globals.get("value") {
-                                tuple.clone()
-                            } else {
-                                if args.is_empty() {
-                                    return Err(RuntimeError::new(
-                                        "tuple.index() expects one argument",
-                                    ));
-                                }
-                                match args.remove(0) {
-                                    Value::Tuple(tuple) => tuple,
-                                    Value::Instance(instance) => {
-                                        self.instance_backing_tuple(&instance).ok_or_else(|| {
-                                            RuntimeError::type_error(
-                                                "tuple.index() receiver must be tuple",
-                                            )
-                                        })?
-                                    }
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "tuple.index() receiver must be tuple",
-                                        ));
-                                    }
-                                }
-                            };
-                        let mut remaining_args = args;
-                        let tuple_kind = tuple_obj.kind();
-                        let Object::Tuple(values) = &*tuple_kind else {
-                            return Err(RuntimeError::type_error(
-                                "tuple.index() receiver must be tuple",
-                            ));
-                        };
-                        if let Some(index) = find_index(values, &mut remaining_args)? {
-                            Ok(NativeCallResult::Value(Value::Int(index)))
-                        } else {
-                            Err(RuntimeError::value_error("tuple.index(x): x not in tuple"))
-                        }
-                    }
-                    _ => Err(RuntimeError::type_error(
+                let tuple_obj =
+                    self.extract_tuple_receiver_object_for_method_call(&receiver, &mut args, "tuple.index")?;
+                let mut remaining_args = args;
+                let tuple_kind = tuple_obj.kind();
+                let Object::Tuple(values) = &*tuple_kind else {
+                    return Err(RuntimeError::type_error(
                         "tuple.index() receiver must be tuple",
-                    )),
+                    ));
+                };
+                if let Some(index) = find_index(values, &mut remaining_args)? {
+                    Ok(NativeCallResult::Value(Value::Int(index)))
+                } else {
+                    Err(RuntimeError::value_error("tuple.index(x): x not in tuple"))
                 }
             }
             NativeMethodKind::ListIndex => {

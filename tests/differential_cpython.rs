@@ -3170,6 +3170,16 @@ result = {
         "F_repr": F.__repr__(f),
         "F_str": F.__str__(f),
     },
+    "bound_calls": {
+        "l_repr": l.__repr__(),
+        "l_str": l.__str__(),
+        "s_repr": s.__repr__(),
+        "s_str": s.__str__(),
+        "i_repr": i.__repr__(),
+        "i_str": i.__str__(),
+        "f_repr": f.__repr__(),
+        "f_str": f.__str__(),
+    },
 }
 "#;
     let py = run_cpython_json(source).expect("CPython JSON should run");
