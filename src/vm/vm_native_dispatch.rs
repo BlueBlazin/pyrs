@@ -256,9 +256,9 @@ impl Vm {
     ) -> Result<ObjRef, RuntimeError> {
         match &*receiver.kind() {
             Object::Tuple(_) => Ok(receiver.clone()),
-            Object::Instance(_) => self
-                .instance_backing_tuple(receiver)
-                .ok_or_else(|| RuntimeError::type_error(format!("{method_name}() receiver must be tuple"))),
+            Object::Instance(_) => self.instance_backing_tuple(receiver).ok_or_else(|| {
+                RuntimeError::type_error(format!("{method_name}() receiver must be tuple"))
+            }),
             Object::Module(module_data) => {
                 if let Some(Value::Tuple(tuple)) = module_data.globals.get("value") {
                     return Ok(tuple.clone());
@@ -270,11 +270,13 @@ impl Vm {
                 }
                 match args.remove(0) {
                     Value::Tuple(tuple) => Ok(tuple),
-                    Value::Instance(instance) => self.instance_backing_tuple(&instance).ok_or_else(
-                        || RuntimeError::type_error(format!(
-                            "{method_name}() receiver must be tuple"
-                        )),
-                    ),
+                    Value::Instance(instance) => {
+                        self.instance_backing_tuple(&instance).ok_or_else(|| {
+                            RuntimeError::type_error(format!(
+                                "{method_name}() receiver must be tuple"
+                            ))
+                        })
+                    }
                     _ => Err(RuntimeError::type_error(format!(
                         "{method_name}() receiver must be tuple"
                     ))),
@@ -301,6 +303,7 @@ impl Vm {
 
     fn slot_wrapper_method_name(&self, builtin: BuiltinFunction) -> &'static str {
         match builtin {
+            BuiltinFunction::Hash => "__hash__",
             BuiltinFunction::Repr => "__repr__",
             BuiltinFunction::Str => "__str__",
             BuiltinFunction::OperatorAdd => "__add__",
@@ -449,6 +452,83 @@ impl Vm {
             },
             _ => Err(RuntimeError::type_error("unsupported builtin repr owner")),
         }
+    }
+
+    fn builtin_base_hash_value(
+        &mut self,
+        dispatch_owner: &Value,
+        receiver_value: &Value,
+    ) -> Result<i64, RuntimeError> {
+        let value = match dispatch_owner {
+            Value::Builtin(BuiltinFunction::Int) | Value::Builtin(BuiltinFunction::Bool) => {
+                match receiver_value {
+                    Value::Int(value) => Value::Int(*value),
+                    Value::BigInt(value) => Value::BigInt(value.clone()),
+                    Value::Bool(value) => Value::Bool(*value),
+                    Value::Instance(instance) => self
+                        .instance_backing_int(instance)
+                        .ok_or_else(|| RuntimeError::type_error("int receiver is invalid"))?,
+                    _ => return Err(RuntimeError::type_error("int receiver is invalid")),
+                }
+            }
+            Value::Builtin(BuiltinFunction::Float) => match receiver_value {
+                Value::Float(value) => Value::Float(*value),
+                Value::Instance(instance) => Value::Float(
+                    self.instance_backing_float(instance)
+                        .ok_or_else(|| RuntimeError::type_error("float receiver is invalid"))?,
+                ),
+                _ => return Err(RuntimeError::type_error("float receiver is invalid")),
+            },
+            Value::Builtin(BuiltinFunction::Complex) => match receiver_value {
+                Value::Complex { real, imag } => Value::Complex {
+                    real: *real,
+                    imag: *imag,
+                },
+                Value::Instance(instance) => {
+                    let (real, imag) = self
+                        .instance_backing_complex(instance)
+                        .ok_or_else(|| RuntimeError::type_error("complex receiver is invalid"))?;
+                    Value::Complex { real, imag }
+                }
+                _ => return Err(RuntimeError::type_error("complex receiver is invalid")),
+            },
+            Value::Builtin(BuiltinFunction::Str) => match receiver_value {
+                Value::Str(value) => Value::Str(value.clone()),
+                Value::Instance(instance) => Value::Str(
+                    self.instance_backing_str(instance)
+                        .ok_or_else(|| RuntimeError::type_error("str receiver is invalid"))?,
+                ),
+                _ => return Err(RuntimeError::type_error("str receiver is invalid")),
+            },
+            Value::Builtin(BuiltinFunction::Bytes) => match receiver_value {
+                Value::Bytes(value) => Value::Bytes(value.clone()),
+                Value::Instance(instance) => self
+                    .instance_backing_bytes_like(instance)
+                    .ok_or_else(|| RuntimeError::type_error("bytes receiver is invalid"))?,
+                _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
+            },
+            Value::Builtin(BuiltinFunction::Tuple) => match receiver_value {
+                Value::Tuple(value) => Value::Tuple(value.clone()),
+                Value::Instance(instance) => Value::Tuple(
+                    self.instance_backing_tuple(instance)
+                        .ok_or_else(|| RuntimeError::type_error("tuple receiver is invalid"))?,
+                ),
+                _ => return Err(RuntimeError::type_error("tuple receiver is invalid")),
+            },
+            Value::Builtin(BuiltinFunction::FrozenSet) => match receiver_value {
+                Value::FrozenSet(value) => Value::FrozenSet(value.clone()),
+                Value::Instance(instance) => Value::FrozenSet(
+                    self.instance_backing_frozenset(instance)
+                        .ok_or_else(|| RuntimeError::type_error("frozenset receiver is invalid"))?,
+                ),
+                _ => return Err(RuntimeError::type_error("frozenset receiver is invalid")),
+            },
+            Value::Builtin(BuiltinFunction::ObjectNew) | Value::Class(_) => {
+                return Ok(self.heap.id_of(receiver_value) as i64);
+            }
+            _ => return Err(RuntimeError::type_error("unsupported builtin hash owner")),
+        };
+        self.hash_value_runtime(&value)
     }
 
     fn extract_slot_wrapper_receiver_value(
@@ -2361,8 +2441,11 @@ impl Vm {
                         "tuple.count() expects one argument",
                     ));
                 }
-                let tuple_obj =
-                    self.extract_tuple_receiver_object_for_method_call(&receiver, &mut args, "tuple.count")?;
+                let tuple_obj = self.extract_tuple_receiver_object_for_method_call(
+                    &receiver,
+                    &mut args,
+                    "tuple.count",
+                )?;
                 if args.len() != 1 {
                     return Err(RuntimeError::type_error(
                         "tuple.count() expects one argument",
@@ -2492,8 +2575,11 @@ impl Vm {
                     }
                     Ok(None)
                 };
-                let tuple_obj =
-                    self.extract_tuple_receiver_object_for_method_call(&receiver, &mut args, "tuple.index")?;
+                let tuple_obj = self.extract_tuple_receiver_object_for_method_call(
+                    &receiver,
+                    &mut args,
+                    "tuple.index",
+                )?;
                 let mut remaining_args = args;
                 let tuple_kind = tuple_obj.kind();
                 let Object::Tuple(values) = &*tuple_kind else {
@@ -2613,7 +2699,11 @@ impl Vm {
                             }
                         }
                     }
-                    _ => return Err(RuntimeError::new("list.__reversed__() receiver must be list")),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "list.__reversed__() receiver must be list",
+                        ));
+                    }
                 };
                 Ok(NativeCallResult::Value(
                     self.list_reverse_iterator(list_receiver)?,
@@ -2846,6 +2936,16 @@ impl Vm {
                     .ok_or_else(|| RuntimeError::type_error("repr dispatch owner is invalid"))?;
                 let value = self.builtin_base_repr_value(&dispatch_owner, &value)?;
                 Ok(NativeCallResult::Value(Value::Str(format_repr(&value))))
+            }
+            NativeMethodKind::BuiltinBaseHashMethod => {
+                let value = self
+                    .extract_slot_wrapper_receiver_value(&receiver, &mut args, "__hash__")?
+                    .ok_or_else(|| RuntimeError::type_error("hash receiver is invalid"))?;
+                let dispatch_owner = self
+                    .slot_wrapper_dispatch_owner(&receiver)
+                    .ok_or_else(|| RuntimeError::type_error("hash dispatch owner is invalid"))?;
+                let value = self.builtin_base_hash_value(&dispatch_owner, &value)?;
+                Ok(NativeCallResult::Value(Value::Int(value)))
             }
             NativeMethodKind::FloatAsIntegerRatioMethod => {
                 let value = self.extract_float_receiver_value_for_method_call(

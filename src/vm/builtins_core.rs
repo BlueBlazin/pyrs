@@ -8468,6 +8468,7 @@ impl Vm {
                         | BuiltinFunction::OperatorAdd
                 ) | NativeMethodKind::IntReprMethod
                     | NativeMethodKind::BuiltinBaseReprMethod
+                    | NativeMethodKind::BuiltinBaseHashMethod
             )
     }
 
@@ -8504,6 +8505,7 @@ impl Vm {
                     | BuiltinFunction::OperatorAdd
             ) | NativeMethodKind::IntReprMethod
                 | NativeMethodKind::BuiltinBaseReprMethod
+                | NativeMethodKind::BuiltinBaseHashMethod
         )
     }
 

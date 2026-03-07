@@ -516,6 +516,7 @@ pub enum NativeMethodKind {
     IntIndexMethod,
     IntReprMethod,
     BuiltinBaseReprMethod,
+    BuiltinBaseHashMethod,
     FloatAsIntegerRatioMethod,
     FloatIsIntegerMethod,
     FloatConjugateMethod,
@@ -818,13 +819,17 @@ fn owned_iterator_children(kind: IteratorKind) -> Vec<OwnedReleaseItem> {
             out.push(OwnedReleaseItem::Value(selectors));
         }
         IteratorKind::DropWhile {
-            predicate, iterator, ..
+            predicate,
+            iterator,
+            ..
         }
         | IteratorKind::Filter {
-            predicate, iterator,
+            predicate,
+            iterator,
         }
         | IteratorKind::FilterFalse {
-            predicate, iterator,
+            predicate,
+            iterator,
         }
         | IteratorKind::StarMap {
             callable: predicate,
@@ -836,7 +841,9 @@ fn owned_iterator_children(kind: IteratorKind) -> Vec<OwnedReleaseItem> {
         IteratorKind::Islice { iterator, .. }
         | IteratorKind::Batched { iterator, .. }
         | IteratorKind::GroupBy { shared: iterator }
-        | IteratorKind::Tee { shared: iterator, .. } => {
+        | IteratorKind::Tee {
+            shared: iterator, ..
+        } => {
             out.push(OwnedReleaseItem::Value(iterator));
         }
         IteratorKind::Pairwise {
@@ -846,7 +853,9 @@ fn owned_iterator_children(kind: IteratorKind) -> Vec<OwnedReleaseItem> {
             out.extend(previous.into_iter().map(OwnedReleaseItem::Value));
         }
         IteratorKind::TakeWhile {
-            predicate, iterator, ..
+            predicate,
+            iterator,
+            ..
         } => {
             out.push(OwnedReleaseItem::Value(predicate));
             out.push(OwnedReleaseItem::Value(iterator));
@@ -906,7 +915,9 @@ fn owned_object_children(object: Object) -> Vec<OwnedReleaseItem> {
             }
         }
         Object::Iterator(iterator) => out.extend(owned_iterator_children(iterator.kind)),
-        Object::Generator(generator) => out.push(OwnedReleaseItem::Value(Value::Code(generator.code))),
+        Object::Generator(generator) => {
+            out.push(OwnedReleaseItem::Value(Value::Code(generator.code)))
+        }
         Object::Module(module) => {
             out.extend(module.globals.into_values().map(OwnedReleaseItem::Value));
         }
@@ -2850,6 +2861,7 @@ fn native_kind_is_slot_wrapper(kind: NativeMethodKind) -> bool {
                 | BuiltinFunction::OperatorAdd
         ) | NativeMethodKind::IntReprMethod
             | NativeMethodKind::BuiltinBaseReprMethod
+            | NativeMethodKind::BuiltinBaseHashMethod
     )
 }
 
@@ -10926,6 +10938,7 @@ fn native_method_name(kind: NativeMethodKind) -> Option<String> {
         NativeMethodKind::Builtin(builtin) => Some(builtin_callable_name(builtin)),
         NativeMethodKind::IntReprMethod => Some("__repr__".to_string()),
         NativeMethodKind::BuiltinBaseReprMethod => Some("__repr__".to_string()),
+        NativeMethodKind::BuiltinBaseHashMethod => Some("__hash__".to_string()),
         NativeMethodKind::DictKeys => Some("keys".to_string()),
         NativeMethodKind::DictValues => Some("values".to_string()),
         NativeMethodKind::DictItems => Some("items".to_string()),
@@ -11645,6 +11658,9 @@ pub fn format_value(value: &Value) -> String {
                         }
                         NativeMethodKind::BuiltinBaseReprMethod => {
                             "<bound method __repr__>".to_string()
+                        }
+                        NativeMethodKind::BuiltinBaseHashMethod => {
+                            "<bound method __hash__>".to_string()
                         }
                         NativeMethodKind::FloatAsIntegerRatioMethod => {
                             "<bound method float.as_integer_ratio>".to_string()

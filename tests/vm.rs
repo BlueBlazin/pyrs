@@ -1112,18 +1112,22 @@ fn from_import_submodule_executes_on_small_stack_without_recursive_vm_reentry() 
     let Some(lib) = cpython_lib_path() else {
         return;
     };
-    run_with_stack("small-stack-from-import-submodule", 2 * 1024 * 1024, move || {
-        let source = "\
+    run_with_stack(
+        "small-stack-from-import-submodule",
+        2 * 1024 * 1024,
+        move || {
+            let source = "\
 from compression._common import _streams\n\
 import io\n\
 ok = (_streams.__name__ == 'compression._common._streams' and io.__name__ == 'io')\n";
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.add_module_path(&lib);
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        },
+    );
 }
 
 #[test]
@@ -1131,27 +1135,31 @@ fn collections_abc_import_executes_on_small_stack_without_recursive_vm_reentry()
     let Some(lib) = cpython_lib_path() else {
         return;
     };
-    run_with_stack("small-stack-import-collections-abc", 2 * 1024 * 1024, move || {
-        let source = concat!(
-            "from collections.abc import Mapping\n",
-            "class C(Mapping):\n",
-            "    def __iter__(self):\n",
-            "        return iter(())\n",
-            "    def __len__(self):\n",
-            "        return 0\n",
-            "    def __getitem__(self, key):\n",
-            "        raise KeyError\n",
-            "c = C()\n",
-            "setattr(c, 'x', 1)\n",
-            "ok = (c.x == 1 and C.__mro__[-1] is object)\n",
-        );
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.add_module_path(&lib);
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+    run_with_stack(
+        "small-stack-import-collections-abc",
+        2 * 1024 * 1024,
+        move || {
+            let source = concat!(
+                "from collections.abc import Mapping\n",
+                "class C(Mapping):\n",
+                "    def __iter__(self):\n",
+                "        return iter(())\n",
+                "    def __len__(self):\n",
+                "        return 0\n",
+                "    def __getitem__(self, key):\n",
+                "        raise KeyError\n",
+                "c = C()\n",
+                "setattr(c, 'x', 1)\n",
+                "ok = (c.x == 1 and C.__mro__[-1] is object)\n",
+            );
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        },
+    );
 }
 
 #[test]
@@ -9405,8 +9413,14 @@ fn bytes_like_values_expose_sequence_dunders_and_reversed() {
     assert_eq!(by_key.get("bytes_has_getitem"), Some(&Value::Bool(true)));
     assert_eq!(by_key.get("bytes_has_contains"), Some(&Value::Bool(true)));
     assert_eq!(by_key.get("bytearray_has_len"), Some(&Value::Bool(true)));
-    assert_eq!(by_key.get("bytearray_has_getitem"), Some(&Value::Bool(true)));
-    assert_eq!(by_key.get("bytearray_has_contains"), Some(&Value::Bool(true)));
+    assert_eq!(
+        by_key.get("bytearray_has_getitem"),
+        Some(&Value::Bool(true))
+    );
+    assert_eq!(
+        by_key.get("bytearray_has_contains"),
+        Some(&Value::Bool(true))
+    );
     assert_eq!(
         by_key
             .get("bytes_reversed")
@@ -18364,7 +18378,7 @@ fn dict_expansion_preserves_string_subclass_keyword_entries_for_function_binding
     def __eq__(self, other):
         return True
     def __hash__(self):
-        return 123456789
+        return str.__hash__(self) ^ 3
 
 def f(*, x=None):
     return x
@@ -18393,13 +18407,13 @@ class BadStrEqTrue(str):
     def __eq__(self, other):
         return True
     def __hash__(self):
-        return 123456789
+        return str.__hash__(self) ^ 3
 
 class BadStrEqFalse(str):
     def __eq__(self, other):
         return False
     def __hash__(self):
-        return 987654321
+        return str.__hash__(self)
 
 missing_message = None
 too_many_message = None
@@ -18498,8 +18512,40 @@ ok = (
 }
 
 #[test]
+fn builtin_hash_descriptors_use_runtime_hash_semantics() {
+    let source = r#"class StrSub(str):
+    pass
+
+class IntSub(int):
+    pass
+
+class TupleSub(tuple):
+    pass
+
+str_value = StrSub("hello")
+int_value = IntSub(123)
+tuple_value = TupleSub((1, 2, 3))
+
+ok = (
+    str.__hash__("hello") == hash("hello")
+    and StrSub.__hash__(str_value) == hash(str_value)
+    and int.__hash__(123) == hash(123)
+    and IntSub.__hash__(int_value) == hash(int_value)
+    and tuple.__hash__((1, 2, 3)) == hash((1, 2, 3))
+    and TupleSub.__hash__(tuple_value) == hash(tuple_value)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn unary_negation_promotes_i64_min_to_python_bigint() {
-    let source = "value = -((-9223372036854775807) - 1)\nok = (value == 2**63 and type(value) is int)\n";
+    let source =
+        "value = -((-9223372036854775807) - 1)\nok = (value == 2**63 and type(value) is int)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
