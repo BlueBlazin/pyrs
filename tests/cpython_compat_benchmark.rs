@@ -146,6 +146,45 @@ fn create_sleep_runner(path: &Path) {
     }
 }
 
+fn extract_json_string_value(body: &str, key: &str) -> String {
+    let pattern = format!("\"{key}\": \"");
+    let start = body
+        .find(&pattern)
+        .unwrap_or_else(|| panic!("missing string field {key} in {body}"))
+        + pattern.len();
+    let end = body[start..]
+        .find('"')
+        .unwrap_or_else(|| panic!("unterminated string field {key} in {body}"))
+        + start;
+    body[start..end].to_string()
+}
+
+fn extract_json_object_block(body: &str, key: &str) -> String {
+    let pattern = format!("\"{key}\": {{");
+    let start = body
+        .find(&pattern)
+        .unwrap_or_else(|| panic!("missing object field {key} in {body}"));
+    let brace_start = start + pattern.len() - 1;
+    let bytes = body.as_bytes();
+    let mut depth = 0_i32;
+    let mut end = None;
+    for (index, byte) in bytes.iter().enumerate().skip(brace_start) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(index + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let end = end.unwrap_or_else(|| panic!("unterminated object field {key} in {body}"));
+    body[start..end].to_string()
+}
+
 fn run_worker(bin: &Path, module_name: &str, search_path: &Path, mode: &str) -> String {
     let output = Command::new(bin)
         .arg("-S")
@@ -809,6 +848,16 @@ class DispatchCacheSuite(unittest.TestCase):
         String::from_utf8_lossy(&first.stdout),
         String::from_utf8_lossy(&first.stderr)
     );
+    let first_summary =
+        fs::read_to_string(out_dir.join("summary.json")).expect("read baseline dispatcher summary");
+    let first_manifest =
+        fs::read_to_string(out_dir.join("manifest.json")).expect("read baseline dispatcher manifest");
+    let first_generated_at = extract_json_string_value(&first_summary, "generated_at_utc");
+    let first_run_state = extract_json_object_block(&first_summary, "run_state");
+    let first_results = extract_json_object_block(&first_summary, "results");
+    let first_manifest_completed_at = extract_json_string_value(&first_manifest, "completed_at_utc");
+
+    std::thread::sleep(std::time::Duration::from_secs(1));
 
     let second = Command::new(&cpython_bin)
         .arg(dispatcher_script())
@@ -856,4 +905,27 @@ class DispatchCacheSuite(unittest.TestCase):
             "dispatcher cache summary missing expected fragment {needle}: {summary}"
         );
     }
+    assert!(
+        summary.contains(&format!(r#""generated_at_utc": "{first_generated_at}""#)),
+        "cached rerun should preserve original summary generation time\nfirst:\n{first_summary}\nsecond:\n{summary}"
+    );
+    assert!(
+        summary.contains(&first_run_state),
+        "cached rerun should preserve original run_state block\nfirst:\n{first_summary}\nsecond:\n{summary}"
+    );
+    assert!(
+        summary.contains(&first_results),
+        "cached rerun should preserve original results block\nfirst:\n{first_summary}\nsecond:\n{summary}"
+    );
+
+    let second_manifest =
+        fs::read_to_string(out_dir.join("manifest.json")).expect("read dispatcher cache manifest");
+    assert!(
+        second_manifest.contains(&format!(r#""generated_at_utc": "{first_generated_at}""#)),
+        "cached rerun should preserve original manifest generation time\nfirst:\n{first_manifest}\nsecond:\n{second_manifest}"
+    );
+    assert!(
+        second_manifest.contains(&format!(r#""completed_at_utc": "{first_manifest_completed_at}""#)),
+        "cached rerun should preserve original manifest completion time\nfirst:\n{first_manifest}\nsecond:\n{second_manifest}"
+    );
 }

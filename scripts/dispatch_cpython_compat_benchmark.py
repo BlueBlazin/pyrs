@@ -333,12 +333,64 @@ def aggregate_summary(
     return summary
 
 
+def fully_cached_rerun(
+    *,
+    plan_rows: list[dict[str, Any]],
+    batch_rows: dict[str, dict[str, Any]],
+    status: str,
+    phase: str,
+    error: dict[str, Any] | None,
+) -> bool:
+    if status != "completed" or phase != "completed" or error is not None:
+        return False
+    if len(batch_rows) != len(plan_rows):
+        return False
+    return all(
+        batch_rows.get(row["batch_id"], {}).get("status") == "cached"
+        for row in plan_rows
+    )
+
+
+def load_previous_top_level_artifacts(
+    *,
+    out_dir: pathlib.Path,
+    runner_fingerprint: dict[str, Any],
+    expected_entries: list[str],
+) -> dict[str, dict[str, Any]] | None:
+    summary_path = out_dir / "summary.json"
+    manifest_path = out_dir / "manifest.json"
+    if not summary_path.is_file() or not manifest_path.is_file():
+        return None
+    try:
+        summary = read_json(summary_path)
+        manifest = read_json(manifest_path)
+    except Exception:
+        return None
+    if not benchmark.metadata_matches_runner_binary(summary, runner_fingerprint):
+        return None
+    if not benchmark.metadata_matches_runner_binary(manifest, runner_fingerprint):
+        return None
+    manifest_entries = manifest.get("entries", {}).get("names")
+    if manifest_entries != expected_entries:
+        return None
+    summary_run_state = summary.get("run_state", {})
+    if summary_run_state.get("status") != "completed":
+        return None
+    if summary_run_state.get("error") is not None:
+        return None
+    return {
+        "summary": summary,
+        "manifest": manifest,
+    }
+
+
 def finalize_dispatch(
     *,
     out_dir: pathlib.Path,
     metadata: dict[str, Any],
     plan_rows: list[dict[str, Any]],
     batch_rows: dict[str, dict[str, Any]],
+    runner_fingerprint: dict[str, Any],
     started: float,
     status: str,
     phase: str,
@@ -347,8 +399,34 @@ def finalize_dispatch(
     cpython_bin: pathlib.Path,
     skip_derived_summary: bool,
 ) -> dict[str, Any]:
+    effective_metadata = dict(metadata)
     completed_at_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     elapsed_total = time.perf_counter() - started
+    if fully_cached_rerun(
+        plan_rows=plan_rows,
+        batch_rows=batch_rows,
+        status=status,
+        phase=phase,
+        error=error,
+    ):
+        previous = load_previous_top_level_artifacts(
+            out_dir=out_dir,
+            runner_fingerprint=runner_fingerprint,
+            expected_entries=metadata["entries"]["names"],
+        )
+        if previous is not None:
+            previous_summary = previous["summary"]
+            previous_manifest = previous["manifest"]
+            previous_generated_at = previous_summary.get("generated_at_utc") or previous_manifest.get("generated_at_utc")
+            if isinstance(previous_generated_at, str) and previous_generated_at:
+                effective_metadata["generated_at_utc"] = previous_generated_at
+            previous_run_state = previous_summary.get("run_state", {})
+            previous_completed_at = previous_run_state.get("completed_at_utc") or previous_manifest.get("completed_at_utc")
+            if isinstance(previous_completed_at, str) and previous_completed_at:
+                completed_at_utc = previous_completed_at
+            previous_elapsed = previous_run_state.get("elapsed_total_secs")
+            if isinstance(previous_elapsed, (int, float)):
+                elapsed_total = float(previous_elapsed)
     run_state = {
         "status": status,
         "phase": phase,
@@ -358,7 +436,7 @@ def finalize_dispatch(
     }
     summary = aggregate_summary(
         out_dir=out_dir,
-        metadata=metadata,
+        metadata=effective_metadata,
         run_state=run_state,
         plan_rows=plan_rows,
         batch_rows_by_id=batch_rows,
@@ -366,7 +444,7 @@ def finalize_dispatch(
     )
     write_json(out_dir / "summary.json", summary)
     manifest = {
-        **metadata,
+        **effective_metadata,
         "status": status,
         "phase": phase,
         "completed_at_utc": completed_at_utc,
@@ -657,6 +735,7 @@ def main() -> int:
         metadata=metadata,
         plan_rows=plan_rows,
         batch_rows=batch_rows,
+        runner_fingerprint=runner_fingerprint,
         started=started,
         status=final_status,
         phase=final_phase,
