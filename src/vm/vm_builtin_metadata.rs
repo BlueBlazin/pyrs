@@ -6,12 +6,14 @@ use super::{
     DICT_BACKING_STORAGE_ATTR, ExceptionObject, FLOAT_BACKING_STORAGE_ATTR,
     FROZENSET_BACKING_STORAGE_ATTR, Frame, HashMap, INSTANCE_DICT_STORAGE_ATTR,
     INT_BACKING_STORAGE_ATTR, InstanceObject, InternalCallOutcome, IteratorKind,
-    LIST_BACKING_STORAGE_ATTR, MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeCallResult,
-    NativeMethodKind, ObjRef, Object, Opcode, PY_TPFLAGS_HEAPTYPE, Rc, RuntimeError,
-    SET_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, TUPLE_BACKING_STORAGE_ATTR, Value, Vm,
-    apply_bindings, bind_arguments, bytes_like_source_is_readonly, class_attr_lookup,
-    class_attr_lookup_direct, class_attr_walk, class_inherits_dynamic_instance_dict,
-    class_name_for_instance, collect_slot_names, dict_get_value, dict_remove_value, dict_set_value,
+    LIST_BACKING_STORAGE_ATTR, LoadAttrSiteCacheEntry, LoadAttrSiteCacheKind,
+    MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object,
+    Opcode, PY_TPFLAGS_HEAPTYPE, Rc, RuntimeError, SET_BACKING_STORAGE_ATTR,
+    STR_BACKING_STORAGE_ATTR, TUPLE_BACKING_STORAGE_ATTR, Value, Vm, apply_bindings,
+    bind_arguments, bytes_like_source_is_readonly, class_attr_lookup, class_attr_lookup_direct,
+    class_attr_walk, class_attr_walk_visit, class_inherits_dynamic_instance_dict,
+    class_name_for_instance,
+    collect_slot_names, dict_get_value, dict_remove_value, dict_set_value,
     env_var_present_cached, format_repr, memoryview_bounds, runtime_error_matches_exception,
     value_from_bigint, value_from_object_ref, with_bytes_like_source,
 };
@@ -7328,7 +7330,7 @@ impl Vm {
         class_ref: &ObjRef,
         attr_name: &str,
     ) -> Option<(ObjRef, Value)> {
-        for candidate in class_attr_walk(class_ref) {
+        class_attr_walk_visit(class_ref, &mut |candidate| {
             let is_proxy_class = matches!(
                 &*candidate.kind(),
                 Object::Class(class_data)
@@ -7338,23 +7340,23 @@ impl Vm {
                     )
             );
             if is_proxy_class
-                && let Some(proxy_attr) = self.load_cpython_proxy_attr(&candidate, attr_name)
+                && let Some(proxy_attr) = self.load_cpython_proxy_attr(candidate, attr_name)
             {
-                return Some((candidate, proxy_attr));
+                return Some((candidate.clone(), proxy_attr));
             }
-            if let Some(local_attr) = class_attr_lookup_direct(&candidate, attr_name) {
+            if let Some(local_attr) = class_attr_lookup_direct(candidate, attr_name) {
                 if self.should_defer_builtin_slot_placeholder_attr(
                     class_ref,
-                    &candidate,
+                    candidate,
                     attr_name,
                     &local_attr,
                 ) {
-                    continue;
+                    return None;
                 }
-                return Some((candidate, local_attr));
+                return Some((candidate.clone(), local_attr));
             }
-        }
-        None
+            None
+        })
     }
 
     pub(super) fn class_has_builtin_list_base(&self, class: &ObjRef) -> bool {
@@ -8022,6 +8024,108 @@ impl Vm {
         attrs.insert("obj".to_string(), Value::Instance(instance.clone()));
     }
 
+    #[inline]
+    fn class_uses_default_object_getattribute(&self, class_ref: &ObjRef) -> bool {
+        matches!(
+            class_attr_lookup(class_ref, "__getattribute__"),
+            Some(Value::Builtin(BuiltinFunction::ObjectGetAttribute))
+        )
+    }
+
+    fn build_load_attr_instance_site_cache_entry(
+        &self,
+        class_ref: &ObjRef,
+        attr_name: &str,
+        owner_class: &ObjRef,
+        owner_attr: &Value,
+    ) -> Option<LoadAttrSiteCacheEntry> {
+        let kind = match owner_attr {
+            Value::Function(function) => Some(LoadAttrSiteCacheKind::InstanceFunction {
+                function: function.clone(),
+            }),
+            Value::Builtin(builtin) => {
+                let direct_user_defined_attr = matches!(
+                    &*class_ref.kind(),
+                    Object::Class(class_data)
+                        if matches!(
+                            class_data.attrs.get("__pyrs_user_class__"),
+                            Some(Value::Bool(true))
+                        ) && class_data.attrs.contains_key(attr_name)
+                );
+                if direct_user_defined_attr {
+                    None
+                } else {
+                    Some(LoadAttrSiteCacheKind::InstanceBuiltin { builtin: *builtin })
+                }
+            }
+            value if Self::is_load_attr_cacheable_plain_value(value) => {
+                Some(LoadAttrSiteCacheKind::InstanceValue {
+                    value: value.clone(),
+                })
+            }
+            Value::Module(descriptor) => {
+                let descriptor_module_name = match &*descriptor.kind() {
+                    Object::Module(module_data) => Some(module_data.name.clone()),
+                    _ => None,
+                };
+                match descriptor_module_name.as_deref() {
+                    Some("__classmethod__") => {
+                        Some(LoadAttrSiteCacheKind::InstanceClassMethod {
+                            descriptor: descriptor.clone(),
+                        })
+                    }
+                    Some("__staticmethod__") => {
+                        Some(LoadAttrSiteCacheKind::InstanceStaticMethod {
+                            descriptor: descriptor.clone(),
+                        })
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }?;
+
+        Some(LoadAttrSiteCacheEntry {
+            class_id: class_ref.id(),
+            class_version: self.class_attr_version(class_ref),
+            owner_class: owner_class.clone(),
+            owner_class_version: self.class_attr_version(owner_class),
+            kind,
+        })
+    }
+
+    pub(super) fn load_attr_instance_with_site_cache(
+        &mut self,
+        instance: &ObjRef,
+        attr_name: &str,
+    ) -> Result<(AttrAccessOutcome, Option<LoadAttrSiteCacheEntry>), RuntimeError> {
+        let class_ref = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => {
+                return Ok((self.load_attr_instance(instance, attr_name)?, None));
+            }
+        };
+
+        if !self.class_uses_default_object_getattribute(&class_ref) {
+            return Ok((self.load_attr_instance(instance, attr_name)?, None));
+        }
+
+        let mut site_cache_entry = None;
+        let allow_site_cache = class_attr_lookup(&class_ref, "__getattr__").is_none()
+            && !self.instance_has_attr_shadow(instance, attr_name);
+        let outcome = self.load_attr_instance_default(
+            instance,
+            attr_name,
+            true,
+            if allow_site_cache {
+                Some(&mut site_cache_entry)
+            } else {
+                None
+            },
+        )?;
+        Ok((outcome, site_cache_entry))
+    }
+
     pub(super) fn load_attr_instance(
         &mut self,
         instance: &ObjRef,
@@ -8049,11 +8153,8 @@ impl Vm {
         // rather than an ordinary Python-level method call each access.
         // Mirror that behavior by bypassing generic bound-method invocation when
         // __getattribute__ resolves to the builtin object implementation.
-        if matches!(
-            class_attr_lookup(&class_ref, "__getattribute__"),
-            Some(Value::Builtin(BuiltinFunction::ObjectGetAttribute))
-        ) {
-            return self.load_attr_instance_default(instance, attr_name, true);
+        if self.class_uses_default_object_getattribute(&class_ref) {
+            return self.load_attr_instance_default(instance, attr_name, true, None);
         }
 
         let receiver = Value::Instance(instance.clone());
@@ -8115,7 +8216,8 @@ impl Vm {
             }
 
             if is_cpython_proxy_instance {
-                let proxy_fallback = self.load_attr_instance_default(instance, attr_name, false);
+                let proxy_fallback =
+                    self.load_attr_instance_default(instance, attr_name, false, None);
                 match proxy_fallback {
                     Ok(AttrAccessOutcome::Value(value)) => {
                         return Ok(AttrAccessOutcome::Value(value));
@@ -8144,7 +8246,7 @@ impl Vm {
             return Err(self.instance_missing_attribute_error(instance, &class_name, attr_name));
         }
 
-        self.load_attr_instance_default(instance, attr_name, true)
+        self.load_attr_instance_default(instance, attr_name, true, None)
     }
 
     pub(super) fn load_attr_instance_default(
@@ -8152,7 +8254,12 @@ impl Vm {
         instance: &ObjRef,
         attr_name: &str,
         allow_getattr_fallback: bool,
+        site_cache_entry: Option<&mut Option<LoadAttrSiteCacheEntry>>,
     ) -> Result<AttrAccessOutcome, RuntimeError> {
+        let mut site_cache_entry = site_cache_entry;
+        if let Some(slot) = site_cache_entry.as_mut() {
+            **slot = None;
+        }
         let class_ref = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.class.clone(),
             _ => {
@@ -8562,6 +8669,14 @@ impl Vm {
         }
 
         if let Some(attr) = class_attr {
+            let class_attr_site_cache_entry = class_attr_owner.as_ref().and_then(|owner_class| {
+                self.build_load_attr_instance_site_cache_entry(
+                    &class_ref,
+                    attr_name,
+                    owner_class,
+                    &attr,
+                )
+            });
             if let Value::BoundMethod(method_obj) = &attr
                 && let Some(bound_method) = self.rebind_unbound_wrapper_bound_method(
                     method_obj,
@@ -8571,13 +8686,22 @@ impl Vm {
                 return Ok(AttrAccessOutcome::Value(bound_method));
             }
             if let Some(bound) = self.bind_classmethod_attr(&class_ref, &attr) {
+                if let Some(slot) = site_cache_entry.as_mut() {
+                    **slot = class_attr_site_cache_entry.clone();
+                }
                 return Ok(AttrAccessOutcome::Value(bound));
             }
 
             if let Some(unwrapped) = self.unwrap_staticmethod_attr(&attr) {
+                if let Some(slot) = site_cache_entry.as_mut() {
+                    **slot = class_attr_site_cache_entry.clone();
+                }
                 return Ok(AttrAccessOutcome::Value(unwrapped));
             }
             if let Value::Function(func) = attr.clone() {
+                if let Some(slot) = site_cache_entry.as_mut() {
+                    **slot = class_attr_site_cache_entry.clone();
+                }
                 let bound = BoundMethod::new(func, instance.clone());
                 return Ok(AttrAccessOutcome::Value(
                     self.heap.alloc_bound_method(bound),
@@ -8590,6 +8714,9 @@ impl Vm {
                         if matches!(class_data.attrs.get("__pyrs_user_class__"), Some(Value::Bool(true)))));
                 if owner_is_user_class {
                     return Ok(AttrAccessOutcome::Value(Value::Builtin(builtin)));
+                }
+                if let Some(slot) = site_cache_entry.as_mut() {
+                    **slot = class_attr_site_cache_entry;
                 }
                 return Ok(AttrAccessOutcome::Value(
                     self.alloc_builtin_bound_method(builtin, instance.clone()),
@@ -8612,6 +8739,9 @@ impl Vm {
                         }
                     },
                 );
+            }
+            if let Some(slot) = site_cache_entry.as_mut() {
+                **slot = class_attr_site_cache_entry;
             }
             return Ok(AttrAccessOutcome::Value(attr));
         }

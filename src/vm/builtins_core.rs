@@ -10862,7 +10862,7 @@ impl Vm {
 
         match target {
             Value::Instance(instance) => {
-                match self.load_attr_instance_default(&instance, &name, false)? {
+                match self.load_attr_instance_default(&instance, &name, false, None)? {
                     AttrAccessOutcome::Value(value) => Ok(value),
                     AttrAccessOutcome::ExceptionHandled => Err(self
                         .runtime_error_from_active_exception("object.__getattribute__() failed")),

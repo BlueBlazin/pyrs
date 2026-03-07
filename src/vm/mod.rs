@@ -12625,56 +12625,45 @@ fn split_relative_import_name(name: &str) -> (usize, String) {
     (level, name.chars().skip(level).collect())
 }
 
-fn class_attr_lookup(class: &ObjRef, name: &str) -> Option<Value> {
-    for candidate in class_attr_walk(class) {
-        if let Some(value) = class_attr_lookup_direct(&candidate, name) {
-            return Some(value);
-        }
-    }
-    None
-}
-
-fn class_attr_lookup_direct(class: &ObjRef, name: &str) -> Option<Value> {
+fn class_attr_proxy_seen_key(class: &ObjRef) -> Option<u64> {
     let class_kind = class.kind();
     let Object::Class(class_data) = &*class_kind else {
         return None;
     };
-    class_data.attrs.get(name).cloned()
+    match class_data.attrs.get("__pyrs_cpython_proxy_ptr__") {
+        Some(Value::Int(raw_ptr)) if *raw_ptr >= 0 => Some((*raw_ptr as u64) | (1u64 << 63)),
+        _ => None,
+    }
 }
 
-fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {
-    fn proxy_seen_key(class: &ObjRef) -> Option<u64> {
-        let class_kind = class.kind();
-        let Object::Class(class_data) = &*class_kind else {
-            return None;
-        };
-        match class_data.attrs.get("__pyrs_cpython_proxy_ptr__") {
-            Some(Value::Int(raw_ptr)) if *raw_ptr >= 0 => Some((*raw_ptr as u64) | (1u64 << 63)),
-            _ => None,
-        }
+fn class_attr_seen_contains(class: &ObjRef, seen: &HashSet<u64>) -> bool {
+    if seen.contains(&class.id()) {
+        return true;
     }
+    class_attr_proxy_seen_key(class).is_some_and(|key| seen.contains(&key))
+}
 
-    fn seen_contains_class(class: &ObjRef, seen: &HashSet<u64>) -> bool {
-        if seen.contains(&class.id()) {
-            return true;
-        }
-        proxy_seen_key(class).is_some_and(|key| seen.contains(&key))
+fn class_attr_seen_insert(class: &ObjRef, seen: &mut HashSet<u64>) -> bool {
+    let mut inserted = seen.insert(class.id());
+    if let Some(proxy_key) = class_attr_proxy_seen_key(class) {
+        inserted = seen.insert(proxy_key) || inserted;
     }
+    inserted
+}
 
-    fn seen_insert_class(class: &ObjRef, seen: &mut HashSet<u64>) -> bool {
-        let mut inserted = seen.insert(class.id());
-        if let Some(proxy_key) = proxy_seen_key(class) {
-            inserted = seen.insert(proxy_key) || inserted;
-        }
-        inserted
-    }
-
-    fn walk_recursive(
+pub(super) fn class_attr_walk_visit<T, F>(class: &ObjRef, visit: &mut F) -> Option<T>
+where
+    F: FnMut(&ObjRef) -> Option<T>,
+{
+    fn walk_recursive<T, F>(
         class: &ObjRef,
-        out: &mut Vec<ObjRef>,
         seen: &mut HashSet<u64>,
         depth: usize,
-    ) {
+        visit: &mut F,
+    ) -> Option<T>
+    where
+        F: FnMut(&ObjRef) -> Option<T>,
+    {
         if env_var_present_cached("PYRS_DEBUG_CLASS_ATTR_WALK_DEPTH") && depth > 256 {
             let class_name = match &*class.kind() {
                 Object::Class(class_data) => class_data.name.clone(),
@@ -12688,37 +12677,71 @@ fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {
         let class_kind = class.kind();
         let class_data = match &*class_kind {
             Object::Class(class_data) => class_data,
-            _ => return,
+            _ => return None,
         };
         if !class_data.mro.is_empty() {
-            let mut mro = class_data.mro.clone();
-            if let Some(object_idx) = mro.iter().position(|entry| {
-                matches!(&*entry.kind(), Object::Class(candidate) if candidate.name == "object")
-            })
-                && object_idx + 1 != mro.len()
-            {
-                let object_entry = mro.remove(object_idx);
-                mro.push(object_entry);
-            }
-            for entry in mro {
-                if !seen_contains_class(&entry, seen) && seen_insert_class(&entry, seen) {
-                    out.push(entry);
+            let mut object_entry: Option<&ObjRef> = None;
+            for entry in &class_data.mro {
+                let is_object = matches!(
+                    &*entry.kind(),
+                    Object::Class(candidate) if candidate.name == "object"
+                );
+                if is_object {
+                    if object_entry.is_none() {
+                        object_entry = Some(entry);
+                    }
+                    continue;
+                }
+                if !class_attr_seen_contains(entry, seen) && class_attr_seen_insert(entry, seen) {
+                    if let Some(value) = visit(entry) {
+                        return Some(value);
+                    }
                 }
             }
-            return;
+            if let Some(entry) = object_entry
+                && !class_attr_seen_contains(entry, seen)
+                && class_attr_seen_insert(entry, seen)
+            {
+                return visit(entry);
+            }
+            return None;
         }
-        if !seen_insert_class(class, seen) {
-            return;
+        if !class_attr_seen_insert(class, seen) {
+            return None;
         }
-        out.push(class.clone());
+        if let Some(value) = visit(class) {
+            return Some(value);
+        }
         for base in &class_data.bases {
-            walk_recursive(base, out, seen, depth.saturating_add(1));
+            if let Some(value) = walk_recursive(base, seen, depth.saturating_add(1), visit) {
+                return Some(value);
+            }
         }
+        None
     }
 
-    let mut out = Vec::new();
     let mut seen: HashSet<u64> = HashSet::new();
-    walk_recursive(class, &mut out, &mut seen, 0);
+    walk_recursive(class, &mut seen, 0, visit)
+}
+
+fn class_attr_lookup(class: &ObjRef, name: &str) -> Option<Value> {
+    class_attr_walk_visit(class, &mut |candidate| class_attr_lookup_direct(candidate, name))
+}
+
+fn class_attr_lookup_direct(class: &ObjRef, name: &str) -> Option<Value> {
+    let class_kind = class.kind();
+    let Object::Class(class_data) = &*class_kind else {
+        return None;
+    };
+    class_data.attrs.get(name).cloned()
+}
+
+fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {
+    let mut out = Vec::new();
+    let _ = class_attr_walk_visit(class, &mut |candidate| {
+        out.push(candidate.clone());
+        None::<()>
+    });
     out
 }
 

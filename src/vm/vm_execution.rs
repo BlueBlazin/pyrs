@@ -2291,7 +2291,12 @@ impl Vm {
                             )? {
                                 cached_attr
                             } else {
-                                let loaded = match self.load_attr_instance(&instance, &attr_name)? {
+                                let (loaded_outcome, site_cache_entry) =
+                                    self.load_attr_instance_with_site_cache(
+                                        &instance,
+                                        &attr_name,
+                                    )?;
+                                let loaded = match loaded_outcome {
                                     AttrAccessOutcome::Value(attr) => attr,
                                     AttrAccessOutcome::ExceptionHandled => {
                                         return Err(self.runtime_error_from_active_exception(
@@ -2299,9 +2304,14 @@ impl Vm {
                                         ));
                                     }
                                 };
-                                self.update_load_attr_instance_site_cache(
-                                    site_index, &instance, &attr_name,
-                                );
+                                if let Some(entry) = site_cache_entry {
+                                    self.insert_load_attr_instance_site_cache_entry(
+                                        site_index,
+                                        entry,
+                                    );
+                                } else {
+                                    self.clear_load_attr_site_cache(site_index);
+                                }
                                 loaded
                             }
                         }
@@ -8808,9 +8818,13 @@ impl Vm {
             DebugDepthGuard::enter_for_vm(self, &DEBUG_UNWIND_DEPTH, "unwind_exception");
         let mut traceback = Self::existing_traceback_frames(&exc);
         let mut skip_current_frame_trace = preserve_existing_traceback && !traceback.is_empty();
+        let mut traceback_dirty = false;
         loop {
             let frame_depth = self.frames.len();
             let Some(frame) = self.frames.last_mut() else {
+                if traceback_dirty {
+                    Self::attach_traceback_to_exception(&mut exc, &traceback);
+                }
                 let message = self.format_traceback(&traceback, &exc);
                 return Err(self.runtime_error_from_unhandled_exception(message, &exc));
             };
@@ -8820,9 +8834,11 @@ impl Vm {
             {
                 if !skip_current_frame_trace {
                     let current_frame_trace = Self::frame_trace(frame);
-                    if Self::push_traceback_frame(&mut traceback, current_frame_trace) {
-                        Self::attach_traceback_to_exception(&mut exc, &traceback);
-                    }
+                    traceback_dirty |=
+                        Self::push_traceback_frame(&mut traceback, current_frame_trace);
+                }
+                if traceback_dirty {
+                    Self::attach_traceback_to_exception(&mut exc, &traceback);
                 }
                 // Stop-depth calls (`run_pending_import_frames`) must not consume
                 // caller handlers/blocks; leave the frame intact and bubble the
@@ -8835,12 +8851,13 @@ impl Vm {
             if skip_current_frame_trace {
                 skip_current_frame_trace = false;
             } else {
-                if Self::push_traceback_frame(&mut traceback, Self::frame_trace(frame)) {
-                    Self::attach_traceback_to_exception(&mut exc, &traceback);
-                }
+                traceback_dirty |= Self::push_traceback_frame(&mut traceback, Self::frame_trace(frame));
             }
 
             if let Some(block) = frame.blocks.pop() {
+                if traceback_dirty {
+                    Self::attach_traceback_to_exception(&mut exc, &traceback);
+                }
                 if let Some(filter) = self.trace_text_filters.unwind.as_ref()
                     && frame.code.filename.contains(filter)
                 {
@@ -8869,6 +8886,9 @@ impl Vm {
             if let Some((target, depth, push_lasti)) =
                 Self::exception_handler_for_ip(frame, frame.last_ip)
             {
+                if traceback_dirty {
+                    Self::attach_traceback_to_exception(&mut exc, &traceback);
+                }
                 if self.trace_flags.exception_table {
                     eprintln!(
                         "[exc-table] last_ip={} ip={} -> target={} depth={} push_lasti={} stack_len={}",
@@ -8898,6 +8918,9 @@ impl Vm {
             if let Some(boundary) = self.active_generator_resume_boundary
                 && frame_depth <= boundary
             {
+                if traceback_dirty {
+                    Self::attach_traceback_to_exception(&mut exc, &traceback);
+                }
                 self.pending_generator_exception = Some(exc.clone());
                 self.generator_resume_outcome = Some(GeneratorResumeOutcome::PropagatedException);
                 return Ok(());
@@ -12068,7 +12091,7 @@ impl Vm {
         }
     }
 
-    fn instance_has_attr_shadow(&self, instance: &ObjRef, attr_name: &str) -> bool {
+    pub(super) fn instance_has_attr_shadow(&self, instance: &ObjRef, attr_name: &str) -> bool {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return false;
         };
@@ -12156,7 +12179,7 @@ impl Vm {
     }
 
     #[inline]
-    fn is_load_attr_cacheable_plain_value(value: &Value) -> bool {
+    pub(super) fn is_load_attr_cacheable_plain_value(value: &Value) -> bool {
         match value {
             Value::None
             | Value::Bool(_)
@@ -12228,103 +12251,6 @@ impl Vm {
         }
         // Preserve the first way as most-recently-hot and use way-1 as replacement.
         slot[1] = Some(entry);
-    }
-
-    fn update_load_attr_instance_site_cache(
-        &mut self,
-        site_index: usize,
-        instance: &ObjRef,
-        attr_name: &str,
-    ) {
-        let class_ref = match &*instance.kind() {
-            Object::Instance(instance_data) => instance_data.class.clone(),
-            _ => {
-                self.clear_load_attr_site_cache(site_index);
-                return;
-            }
-        };
-        if !matches!(
-            class_attr_lookup(&class_ref, "__getattribute__"),
-            Some(Value::Builtin(BuiltinFunction::ObjectGetAttribute))
-        ) {
-            self.clear_load_attr_site_cache(site_index);
-            return;
-        }
-        if class_attr_lookup(&class_ref, "__getattr__").is_some() {
-            self.clear_load_attr_site_cache(site_index);
-            return;
-        }
-        if self.instance_has_attr_shadow(instance, attr_name) {
-            self.clear_load_attr_site_cache(site_index);
-            return;
-        }
-
-        let mut owner_class: Option<ObjRef> = None;
-        let mut owner_attr: Option<Value> = None;
-        for candidate in self.class_mro_entries(&class_ref) {
-            if let Some(attr) = class_attr_lookup_direct(&candidate, attr_name) {
-                owner_class = Some(candidate);
-                owner_attr = Some(attr);
-                break;
-            }
-        }
-        let Some(owner_class) = owner_class else {
-            self.clear_load_attr_site_cache(site_index);
-            return;
-        };
-
-        let kind = match owner_attr {
-            Some(Value::Function(function)) => {
-                Some(LoadAttrSiteCacheKind::InstanceFunction { function })
-            }
-            Some(Value::Builtin(builtin)) => {
-                let direct_user_defined_attr = matches!(
-                    &*class_ref.kind(),
-                    Object::Class(class_data)
-                        if matches!(
-                            class_data.attrs.get("__pyrs_user_class__"),
-                            Some(Value::Bool(true))
-                        ) && class_data.attrs.contains_key(attr_name)
-                );
-                if direct_user_defined_attr {
-                    None
-                } else {
-                    Some(LoadAttrSiteCacheKind::InstanceBuiltin { builtin })
-                }
-            }
-            Some(value) if Self::is_load_attr_cacheable_plain_value(&value) => {
-                Some(LoadAttrSiteCacheKind::InstanceValue { value })
-            }
-            Some(Value::Module(descriptor)) => {
-                let descriptor_module_name = match &*descriptor.kind() {
-                    Object::Module(module_data) => Some(module_data.name.clone()),
-                    _ => None,
-                };
-                match descriptor_module_name.as_deref() {
-                    Some("__classmethod__") => {
-                        Some(LoadAttrSiteCacheKind::InstanceClassMethod { descriptor })
-                    }
-                    Some("__staticmethod__") => {
-                        Some(LoadAttrSiteCacheKind::InstanceStaticMethod { descriptor })
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        };
-
-        if let Some(kind) = kind {
-            let entry = LoadAttrSiteCacheEntry {
-                class_id: class_ref.id(),
-                class_version: self.class_attr_version(&class_ref),
-                owner_class: owner_class.clone(),
-                owner_class_version: self.class_attr_version(&owner_class),
-                kind,
-            };
-            self.insert_load_attr_instance_site_cache_entry(site_index, entry);
-        } else {
-            self.clear_load_attr_site_cache(site_index);
-        }
     }
 
     #[inline]
