@@ -4628,7 +4628,7 @@ impl Vm {
             },
             "__traceback__" => {
                 let frames = self.traceback_frames_from_value(value.clone())?;
-                exception.traceback_frames = frames.unwrap_or_default();
+                exception.traceback_frames = frames.unwrap_or_default().into();
                 exception
                     .attrs
                     .borrow_mut()

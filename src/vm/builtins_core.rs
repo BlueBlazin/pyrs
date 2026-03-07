@@ -79,6 +79,8 @@ impl Default for NumericFormatSpec {
 }
 
 impl Vm {
+    const RE_RUNTIME_TYPE_READY_ATTR: &str = "__pyrs_re_runtime_type_ready__";
+
     fn exception_str_value(&self, exception: &ExceptionObject) -> String {
         if exception.name == "KeyError" {
             let keyerror_from_args = {
@@ -8176,6 +8178,10 @@ impl Vm {
             for (name, value) in method_attrs {
                 class_data.attrs.insert(name, value);
             }
+            class_data.attrs.insert(
+                Self::RE_RUNTIME_TYPE_READY_ATTR.to_string(),
+                Value::Bool(true),
+            );
         }
     }
 
@@ -8352,7 +8358,16 @@ impl Vm {
             && let Some(Value::Class(class)) = module_data.globals.get(class_name)
         {
             let class = class.clone();
-            self.mark_re_runtime_type_class(&class, class_name);
+            let needs_mark = match &*class.kind() {
+                Object::Class(class_data) => !matches!(
+                    class_data.attrs.get(Self::RE_RUNTIME_TYPE_READY_ATTR),
+                    Some(Value::Bool(true))
+                ),
+                _ => true,
+            };
+            if needs_mark {
+                self.mark_re_runtime_type_class(&class, class_name);
+            }
             return class;
         }
         let class = self.alloc_synthetic_class(class_name);

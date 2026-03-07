@@ -8974,7 +8974,8 @@ impl Vm {
                 globals: frame.globals.clone(),
                 self_local: frame.self_local.clone(),
             })
-            .collect();
+            .collect::<Vec<_>>()
+            .into();
         exception.attrs.borrow_mut().remove("__traceback__");
     }
 

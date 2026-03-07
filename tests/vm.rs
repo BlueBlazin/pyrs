@@ -12464,6 +12464,53 @@ except Exception as exc:
 }
 
 #[test]
+fn regex_window_indices_follow_cpython_for_unicode_strings_and_bytes() {
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let source = r#"import json, re
+text = "aébc dé"
+text_pat = re.compile(r"\w+")
+text_match = text_pat.search(text, 1, 6)
+text_iter = [[m.group(0), list(m.span())] for m in text_pat.finditer(text, 1, 6)]
+
+data = b"aebc de"
+bytes_pat = re.compile(br"\w+")
+bytes_match = bytes_pat.search(data, 1, 6)
+bytes_iter = [[list(m.group(0)), list(m.span())] for m in bytes_pat.finditer(data, 1, 6)]
+
+result = {
+    "text_search": [text_match.group(0), list(text_match.span())],
+    "text_finditer": text_iter,
+    "bytes_search": [list(bytes_match.group(0)), list(bytes_match.span())],
+    "bytes_finditer": bytes_iter,
+}
+print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+"#;
+    let mut command = Command::new(pyrs_bin);
+    if let Some(lib_path) = cpython_lib_path() {
+        command.env("PYRS_CPYTHON_LIB", lib_path);
+    }
+    let output = command
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn pyrs regex window probe");
+    assert!(
+        output.status.success(),
+        "regex window probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(
+        last_line,
+        r#"{"bytes_finditer": [[[101, 98, 99], [1, 4]], [[100], [5, 6]]], "bytes_search": [[101, 98, 99], [1, 4]], "text_finditer": [["ébc", [1, 4]], ["d", [5, 6]]], "text_search": ["ébc", [1, 4]]}"#
+    );
+}
+
+#[test]
 fn mro_entries_non_tuple_contract_error_is_typed() {
     let source = r#"ok = False
 class Base:

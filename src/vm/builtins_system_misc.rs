@@ -8,6 +8,7 @@ use super::{
     unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes,
     uuid_timestamp_100ns_since_gregorian, value_from_bigint, value_to_f64, value_to_int,
 };
+use std::rc::Rc;
 
 const DATETIME_MIN_YEAR: i64 = 1;
 const DATETIME_MAX_YEAR: i64 = 9999;
@@ -129,8 +130,7 @@ impl Vm {
             return;
         };
         if let Value::Exception(exception) = &mut active {
-            exception
-                .traceback_frames
+            Rc::make_mut(&mut exception.traceback_frames)
                 .retain(|frame| !Self::warnings_is_internal_traceback_file(&frame.filename));
             for idx in 0..exception.traceback_frames.len() {
                 let (filename, line, column, end_line, end_column) = {
@@ -147,7 +147,7 @@ impl Vm {
                     && end_column == 0
                     && let Some(inferred_end) =
                         self.warnings_infer_call_span_end_column(&filename, line, column)
-                    && let Some(frame) = exception.traceback_frames.get_mut(idx)
+                    && let Some(frame) = Rc::make_mut(&mut exception.traceback_frames).get_mut(idx)
                 {
                     frame.end_line = line;
                     frame.end_column = inferred_end;
@@ -163,8 +163,7 @@ impl Vm {
         let Some(exception) = err.exception.as_mut() else {
             return;
         };
-        exception
-            .traceback_frames
+        Rc::make_mut(&mut exception.traceback_frames)
             .retain(|frame| !Self::warnings_is_internal_traceback_file(&frame.filename));
         for idx in 0..exception.traceback_frames.len() {
             let (filename, line, column, end_line, end_column) = {
@@ -181,7 +180,7 @@ impl Vm {
                 && end_column == 0
                 && let Some(inferred_end) =
                     self.warnings_infer_call_span_end_column(&filename, line, column)
-                && let Some(frame) = exception.traceback_frames.get_mut(idx)
+                && let Some(frame) = Rc::make_mut(&mut exception.traceback_frames).get_mut(idx)
             {
                 frame.end_line = line;
                 frame.end_column = inferred_end;

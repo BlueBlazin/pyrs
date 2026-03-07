@@ -462,6 +462,28 @@ result = {
 }
 
 #[test]
+fn differential_regex_windowed_search_and_finditer_match_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"import re
+result = {
+    "text_search": (lambda m: (m.group(0), m.span()))(re.compile(r"\w+").search("aébc dé", 1, 6)),
+    "text_finditer": [(m.group(0), m.span()) for m in re.compile(r"\w+").finditer("aébc dé", 1, 6)],
+    "bytes_search": (lambda m: (list(m.group(0)), m.span()))(re.compile(br"\w+").search(b"aebc de", 1, 6)),
+    "bytes_finditer": [(list(m.group(0)), m.span()) for m in re.compile(br"\w+").finditer(b"aebc de", 1, 6)],
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython should run");
+    let ours = run_pyrs_cli_json(source).expect("pyrs should run");
+    assert_eq!(
+        normalize_jsonish(&py),
+        normalize_jsonish(&ours),
+        "regex window differential mismatch"
+    );
+}
+
+#[test]
 fn differential_re_bound_method_identity_parity() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;

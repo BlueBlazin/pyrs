@@ -6431,7 +6431,7 @@ impl Vm {
                 else {
                     return Err(RuntimeError::type_error("exception receiver is invalid"));
                 };
-                exception.traceback_frames = traceback_frames.unwrap_or_default();
+                exception.traceback_frames = traceback_frames.unwrap_or_default().into();
                 exception
                     .attrs
                     .borrow_mut()

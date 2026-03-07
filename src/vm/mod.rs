@@ -26,7 +26,7 @@ mod wasm_c_float_format;
 #[cfg(target_arch = "wasm32")]
 mod wasm_libc_shim;
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
@@ -2206,26 +2206,7 @@ impl Vm {
     }
 
     fn clone_exception_for_active_frame(exception: &ExceptionObject) -> Box<ExceptionObject> {
-        let mut cloned = ExceptionObject::new(exception.name.clone(), exception.message.clone());
-        cloned.object_id = exception.object_id;
-        cloned.traceback_frames = exception.traceback_frames.clone();
-        cloned.notes = exception.notes.clone();
-        cloned.exceptions = exception
-            .exceptions
-            .iter()
-            .map(|member| *Self::clone_exception_for_active_frame(member))
-            .collect();
-        cloned.suppress_context = exception.suppress_context;
-        cloned.attrs = Rc::new(RefCell::new(exception.attrs.borrow().clone()));
-        cloned.cause = exception
-            .cause
-            .as_ref()
-            .map(|cause| Self::clone_exception_for_active_frame(cause));
-        cloned.context = exception
-            .context
-            .as_ref()
-            .map(|context| Self::clone_exception_for_active_frame(context));
-        Box::new(cloned)
+        Box::new(exception.clone())
     }
 
     #[inline]
@@ -9329,6 +9310,97 @@ fn pydecimal_parser_match_detail(text: &str) -> Option<ReMatchDetail> {
     None
 }
 
+trait SreText {
+    fn len(&self) -> usize;
+    fn char_at(&self, index: usize) -> Option<char>;
+    fn byte_offset(&self, index: usize) -> usize;
+
+    fn range_matches(
+        &self,
+        left_start: usize,
+        left_end: usize,
+        right_start: usize,
+        ignore_case: bool,
+    ) -> Option<usize> {
+        if left_end < left_start {
+            return None;
+        }
+        let len = left_end - left_start;
+        let candidate_end = right_start.checked_add(len)?;
+        if candidate_end > self.len() {
+            return None;
+        }
+        for offset in 0..len {
+            let left = self.char_at(left_start + offset)?;
+            let right = self.char_at(right_start + offset)?;
+            let matches = if ignore_case {
+                sre_char_equal_ignore_case(left, right)
+            } else {
+                left == right
+            };
+            if !matches {
+                return None;
+            }
+        }
+        Some(candidate_end)
+    }
+}
+
+struct UnicodeSreText {
+    chars: Vec<char>,
+    byte_offsets: Vec<usize>,
+}
+
+impl UnicodeSreText {
+    fn new(text: &str) -> Self {
+        let chars = text.chars().collect::<Vec<_>>();
+        let mut byte_offsets = text.char_indices().map(|(idx, _)| idx).collect::<Vec<_>>();
+        byte_offsets.push(text.len());
+        Self {
+            chars,
+            byte_offsets,
+        }
+    }
+}
+
+impl SreText for UnicodeSreText {
+    fn len(&self) -> usize {
+        self.chars.len()
+    }
+
+    fn char_at(&self, index: usize) -> Option<char> {
+        self.chars.get(index).copied()
+    }
+
+    fn byte_offset(&self, index: usize) -> usize {
+        self.byte_offsets[index]
+    }
+}
+
+struct AsciiSreText<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> AsciiSreText<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
+}
+
+impl SreText for AsciiSreText<'_> {
+    fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    fn char_at(&self, index: usize) -> Option<char> {
+        self.bytes.get(index).copied().map(char::from)
+    }
+
+    fn byte_offset(&self, index: usize) -> usize {
+        index
+    }
+}
+
 const SRE_OP_FAILURE: i64 = 0;
 const SRE_OP_SUCCESS: i64 = 1;
 const SRE_OP_ANY: i64 = 2;
@@ -9475,14 +9547,14 @@ fn sre_category_matches(category: i64, ch: char) -> bool {
     }
 }
 
-fn sre_at_matches(at: i64, chars: &[char], pos: usize) -> bool {
-    let len = chars.len();
+fn sre_at_matches<T: SreText>(at: i64, text: &T, pos: usize) -> bool {
+    let len = text.len();
     let prev = if pos > 0 {
-        chars.get(pos - 1).copied()
+        text.char_at(pos - 1)
     } else {
         None
     };
-    let cur = chars.get(pos).copied();
+    let cur = text.char_at(pos);
     match at {
         SRE_AT_BEGINNING | SRE_AT_BEGINNING_STRING => pos == 0,
         SRE_AT_BEGINNING_LINE => pos == 0 || prev == Some('\n'),
@@ -9619,66 +9691,112 @@ fn sre_class_matches(
     Some(!ok)
 }
 
-fn sre_groupref_matches(
-    chars: &[char],
+fn sre_groupref_matches<T: SreText>(
+    text: &T,
     pos: usize,
-    marks: &[Option<usize>],
+    marks: &SreMarkState,
     group: usize,
     ignore_case: bool,
 ) -> Option<usize> {
-    let start = marks.get(group * 2).copied().flatten()?;
-    let end = marks.get(group * 2 + 1).copied().flatten()?;
+    let start = marks.get(group * 2)?;
+    let end = marks.get(group * 2 + 1)?;
     if end < start {
         return None;
     }
-    let len = end - start;
-    let candidate_end = pos.checked_add(len)?;
-    if candidate_end > chars.len() {
-        return None;
-    }
-    let captured = &chars[start..end];
-    let candidate = &chars[pos..candidate_end];
-    let equal = if ignore_case {
-        captured
-            .iter()
-            .zip(candidate.iter())
-            .all(|(left, right)| sre_char_equal_ignore_case(*left, *right))
-    } else {
-        captured == candidate
-    };
-    equal.then_some(candidate_end)
+    text.range_matches(start, end, pos, ignore_case)
 }
 
-fn sre_run_program(
+enum SreMarkUndo {
+    Set { index: usize, old: Option<usize> },
+    Resize { old_len: usize },
+}
+
+struct SreMarkState {
+    slots: Vec<Option<usize>>,
+    undo: Vec<SreMarkUndo>,
+}
+
+impl SreMarkState {
+    fn new(len: usize) -> Self {
+        Self {
+            slots: vec![None; len],
+            undo: Vec::with_capacity(len.saturating_mul(4)),
+        }
+    }
+
+    fn reset(&mut self, len: usize) {
+        self.slots.clear();
+        self.slots.resize(len, None);
+        self.undo.clear();
+    }
+
+    fn checkpoint(&self) -> usize {
+        self.undo.len()
+    }
+
+    fn restore(&mut self, checkpoint: usize) {
+        while self.undo.len() > checkpoint {
+            match self.undo.pop().expect("checkpoint bounds checked") {
+                SreMarkUndo::Set { index, old } => {
+                    self.slots[index] = old;
+                }
+                SreMarkUndo::Resize { old_len } => {
+                    self.slots.truncate(old_len);
+                }
+            }
+        }
+    }
+
+    fn get(&self, index: usize) -> Option<usize> {
+        self.slots.get(index).copied().flatten()
+    }
+
+    fn set(&mut self, index: usize, value: Option<usize>) {
+        if index >= self.slots.len() {
+            let old_len = self.slots.len();
+            self.undo.push(SreMarkUndo::Resize { old_len });
+            self.slots.resize(index + 1, None);
+            self.slots[index] = value;
+            return;
+        }
+        let old = self.slots[index];
+        if old == value {
+            return;
+        }
+        self.undo.push(SreMarkUndo::Set { index, old });
+        self.slots[index] = value;
+    }
+}
+
+fn sre_run_program<T: SreText>(
     code: &[i64],
     pc_start: usize,
     pc_limit: usize,
-    chars: &[char],
+    text: &T,
     pos: usize,
-    marks: &[Option<usize>],
+    marks: &mut SreMarkState,
     depth: usize,
-) -> Option<(usize, Vec<Option<usize>>)> {
+) -> Option<usize> {
     if depth > 512 {
         return None;
     }
     let mut pc = pc_start;
     let mut cursor = pos;
-    let mut marks = marks.to_vec();
     while pc < pc_limit {
         let opcode = *code.get(pc)?;
         match opcode {
-            SRE_OP_SUCCESS => return Some((cursor, marks)),
+            SRE_OP_SUCCESS => return Some(cursor),
             SRE_OP_FAILURE => return None,
             // These opcodes terminate the repeated unit in REPEAT/MAX_UNTIL and
             // REPEAT/MIN_UNTIL programs.
-            SRE_OP_MAX_UNTIL | SRE_OP_MIN_UNTIL => return Some((cursor, marks)),
+            SRE_OP_MAX_UNTIL | SRE_OP_MIN_UNTIL => return Some(cursor),
             SRE_OP_INFO => {
                 let skip = sre_read_usize(code, pc + 1)?;
                 pc = pc + 1 + skip;
             }
             SRE_OP_AT => {
                 let at = *code.get(pc + 1)?;
-                if !sre_at_matches(at, chars, cursor) {
+                if !sre_at_matches(at, text, cursor) {
                     return None;
                 }
                 pc += 2;
@@ -9688,7 +9806,7 @@ fn sre_run_program(
             | SRE_OP_LITERAL_LOC_IGNORE
             | SRE_OP_LITERAL_UNI_IGNORE => {
                 let expected = char::from_u32(*code.get(pc + 1)? as u32)?;
-                let current = *chars.get(cursor)?;
+                let current = text.char_at(cursor)?;
                 let matched = matches!(
                     opcode,
                     SRE_OP_LITERAL_IGNORE | SRE_OP_LITERAL_LOC_IGNORE | SRE_OP_LITERAL_UNI_IGNORE
@@ -9706,7 +9824,7 @@ fn sre_run_program(
             | SRE_OP_NOT_LITERAL_LOC_IGNORE
             | SRE_OP_NOT_LITERAL_UNI_IGNORE => {
                 let expected = char::from_u32(*code.get(pc + 1)? as u32)?;
-                let current = *chars.get(cursor)?;
+                let current = text.char_at(cursor)?;
                 let equal = matches!(
                     opcode,
                     SRE_OP_NOT_LITERAL_IGNORE
@@ -9722,7 +9840,7 @@ fn sre_run_program(
                 pc += 2;
             }
             SRE_OP_ANY => {
-                let current = *chars.get(cursor)?;
+                let current = text.char_at(cursor)?;
                 if current == '\n' {
                     return None;
                 }
@@ -9730,7 +9848,7 @@ fn sre_run_program(
                 pc += 1;
             }
             SRE_OP_ANY_ALL => {
-                let _ = chars.get(cursor)?;
+                let _ = text.char_at(cursor)?;
                 cursor += 1;
                 pc += 1;
             }
@@ -9738,7 +9856,7 @@ fn sre_run_program(
                 let skip = sre_read_usize(code, pc + 1)?;
                 let class_start = pc + 2;
                 let class_end = pc + 1 + skip;
-                let current = *chars.get(cursor)?;
+                let current = text.char_at(cursor)?;
                 if !sre_class_matches(code, class_start, class_end, opcode, current)? {
                     return None;
                 }
@@ -9747,10 +9865,7 @@ fn sre_run_program(
             }
             SRE_OP_MARK => {
                 let mark_index = sre_read_usize(code, pc + 1)?;
-                if mark_index >= marks.len() {
-                    marks.resize(mark_index + 1, None);
-                }
-                marks[mark_index] = Some(cursor);
+                marks.set(mark_index, Some(cursor));
                 pc += 2;
             }
             SRE_OP_GROUPREF
@@ -9764,7 +9879,7 @@ fn sre_run_program(
                         | SRE_OP_GROUPREF_LOC_IGNORE
                         | SRE_OP_GROUPREF_UNI_IGNORE
                 );
-                let next = sre_groupref_matches(chars, cursor, &marks, group, ignore_case)?;
+                let next = sre_groupref_matches(text, cursor, &marks, group, ignore_case)?;
                 cursor = next;
                 pc += 2;
             }
@@ -9776,17 +9891,19 @@ fn sre_run_program(
                         return None;
                     }
                     let branch_start = branch + 1;
+                    let branch_checkpoint = marks.checkpoint();
                     if let Some(matched) = sre_run_program(
                         code,
                         branch_start,
                         pc_limit,
-                        chars,
+                        text,
                         cursor,
-                        &marks,
+                        marks,
                         depth + 1,
                     ) {
                         return Some(matched);
                     }
+                    marks.restore(branch_checkpoint);
                     branch += skip;
                     if branch >= pc_limit {
                         return None;
@@ -9805,26 +9922,29 @@ fn sre_run_program(
                 let Some(assert_pos) = cursor.checked_sub(back) else {
                     return None;
                 };
+                let assert_checkpoint = marks.checkpoint();
                 let sub_result = sre_run_program(
                     code,
                     sub_start,
                     sub_limit,
-                    chars,
+                    text,
                     assert_pos,
-                    &marks,
+                    marks,
                     depth + 1,
                 );
                 match opcode {
                     SRE_OP_ASSERT => {
-                        let Some((_sub_end, sub_marks)) = sub_result else {
+                        let Some(_sub_end) = sub_result else {
+                            marks.restore(assert_checkpoint);
                             return None;
                         };
-                        marks = sub_marks;
                     }
                     SRE_OP_ASSERT_NOT => {
                         if sub_result.is_some() {
+                            marks.restore(assert_checkpoint);
                             return None;
                         }
+                        marks.restore(assert_checkpoint);
                     }
                     _ => unreachable!(),
                 }
@@ -9842,63 +9962,71 @@ fn sre_run_program(
                 }
                 let next_pc = until_pc + 1;
                 let hard_max =
-                    max_count_raw.min(chars.len().saturating_sub(cursor).saturating_add(1));
-                let mut states = Vec::new();
-                states.push((cursor, marks.clone()));
+                    max_count_raw.min(text.len().saturating_sub(cursor).saturating_add(1));
+                let mut states = Vec::with_capacity(hard_max.saturating_add(1));
+                let base_checkpoint = marks.checkpoint();
+                states.push((cursor, base_checkpoint));
                 let mut rep_pos = cursor;
-                let mut rep_marks = marks.clone();
                 for _ in 0..hard_max {
-                    let Some((next_pos, next_marks)) = sre_run_program(
+                    let repeat_checkpoint = marks.checkpoint();
+                    let Some(next_pos) = sre_run_program(
                         code,
                         unit_start,
                         until_pc + 1,
-                        chars,
+                        text,
                         rep_pos,
-                        &rep_marks,
+                        marks,
                         depth + 1,
                     ) else {
+                        marks.restore(repeat_checkpoint);
                         break;
                     };
-                    states.push((next_pos, next_marks.clone()));
+                    let next_checkpoint = marks.checkpoint();
+                    states.push((next_pos, next_checkpoint));
                     if next_pos == rep_pos {
                         break;
                     }
                     rep_pos = next_pos;
-                    rep_marks = next_marks;
                 }
                 if min_count > states.len().saturating_sub(1) {
+                    marks.restore(base_checkpoint);
                     return None;
                 }
                 if until_opcode == SRE_OP_MAX_UNTIL {
                     for reps in (min_count..states.len()).rev() {
-                        let (candidate_pos, candidate_marks) = states[reps].clone();
+                        let (candidate_pos, candidate_checkpoint) = states[reps];
+                        marks.restore(candidate_checkpoint);
                         if let Some(result) = sre_run_program(
                             code,
                             next_pc,
                             pc_limit,
-                            chars,
+                            text,
                             candidate_pos,
-                            &candidate_marks,
+                            marks,
                             depth + 1,
                         ) {
                             return Some(result);
                         }
+                        marks.restore(candidate_checkpoint);
                     }
                 } else {
-                    for (candidate_pos, candidate_marks) in states.iter().skip(min_count) {
+                    for (candidate_pos, candidate_checkpoint) in states.iter().skip(min_count) {
+                        marks.restore(*candidate_checkpoint);
                         if let Some(result) = sre_run_program(
                             code,
                             next_pc,
                             pc_limit,
-                            chars,
+                            text,
                             *candidate_pos,
-                            candidate_marks,
+                            marks,
                             depth + 1,
                         ) {
                             return Some(result);
                         }
+                        marks.restore(*candidate_checkpoint);
                     }
                 }
+                marks.restore(base_checkpoint);
                 return None;
             }
             SRE_OP_REPEAT_ONE | SRE_OP_MIN_REPEAT_ONE => {
@@ -9907,63 +10035,71 @@ fn sre_run_program(
                 let max_count_raw = sre_read_usize(code, pc + 3)?;
                 let unit_start = pc + 4;
                 let next_pc = pc + 1 + skip;
-                let hard_max = max_count_raw.min(chars.len().saturating_sub(cursor));
-                let mut states = Vec::new();
-                states.push((cursor, marks.clone()));
+                let hard_max = max_count_raw.min(text.len().saturating_sub(cursor));
+                let mut states = Vec::with_capacity(hard_max.saturating_add(1));
+                let base_checkpoint = marks.checkpoint();
+                states.push((cursor, base_checkpoint));
                 let mut rep_pos = cursor;
-                let mut rep_marks = marks.clone();
                 for _ in 0..hard_max {
-                    let Some((next_pos, next_marks)) = sre_run_program(
+                    let repeat_checkpoint = marks.checkpoint();
+                    let Some(next_pos) = sre_run_program(
                         code,
                         unit_start,
                         next_pc,
-                        chars,
+                        text,
                         rep_pos,
-                        &rep_marks,
+                        marks,
                         depth + 1,
                     ) else {
+                        marks.restore(repeat_checkpoint);
                         break;
                     };
                     if next_pos == rep_pos {
+                        marks.restore(repeat_checkpoint);
                         break;
                     }
                     rep_pos = next_pos;
-                    rep_marks = next_marks.clone();
-                    states.push((rep_pos, next_marks));
+                    states.push((rep_pos, marks.checkpoint()));
                 }
                 if min_count > states.len().saturating_sub(1) {
+                    marks.restore(base_checkpoint);
                     return None;
                 }
                 if opcode == SRE_OP_REPEAT_ONE {
                     for reps in (min_count..states.len()).rev() {
-                        let (candidate_pos, candidate_marks) = states[reps].clone();
+                        let (candidate_pos, candidate_checkpoint) = states[reps];
+                        marks.restore(candidate_checkpoint);
                         if let Some(result) = sre_run_program(
                             code,
                             next_pc,
                             pc_limit,
-                            chars,
+                            text,
                             candidate_pos,
-                            &candidate_marks,
+                            marks,
                             depth + 1,
                         ) {
                             return Some(result);
                         }
+                        marks.restore(candidate_checkpoint);
                     }
                 } else {
-                    for (candidate_pos, candidate_marks) in states.iter().skip(min_count) {
+                    for (candidate_pos, candidate_checkpoint) in states.iter().skip(min_count) {
+                        marks.restore(*candidate_checkpoint);
                         if let Some(result) = sre_run_program(
                             code,
                             next_pc,
                             pc_limit,
-                            chars,
+                            text,
                             *candidate_pos,
-                            candidate_marks,
+                            marks,
                             depth + 1,
                         ) {
                             return Some(result);
                         }
+                        marks.restore(*candidate_checkpoint);
                     }
                 }
+                marks.restore(base_checkpoint);
                 return None;
             }
             _ => return None,
@@ -9972,76 +10108,72 @@ fn sre_run_program(
     None
 }
 
-fn compiled_regex_match_details(
+fn compiled_regex_match_details_with_text<T: SreText>(
     program: &ReCompiledRegexProgram,
-    text: &str,
+    text: &T,
     mode: ReMode,
 ) -> Option<ReMatchDetail> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut byte_offsets: Vec<usize> = text.char_indices().map(|(idx, _)| idx).collect();
-    byte_offsets.push(text.len());
-
-    let mut starts = Vec::new();
-    match mode {
-        ReMode::Search => starts.extend(0..=chars.len()),
-        ReMode::Match | ReMode::FullMatch => starts.push(0),
-    }
-    let initial_marks = vec![None; program.groups.saturating_mul(2)];
-    for start in starts {
-        let Some((end, marks)) = sre_run_program(
-            &program.code,
-            0,
-            program.code.len(),
-            &chars,
-            start,
-            &initial_marks,
-            0,
-        ) else {
-            continue;
-        };
-        if matches!(mode, ReMode::FullMatch) && end != chars.len() {
-            continue;
+    let try_start = |start: usize, marks: &mut SreMarkState| {
+        marks.reset(program.groups.saturating_mul(2));
+        let end = sre_run_program(&program.code, 0, program.code.len(), text, start, marks, 0)?;
+        if matches!(mode, ReMode::FullMatch) && end != text.len() {
+            return None;
         }
         let mut captures = Vec::with_capacity(program.groups);
         for group in 0..program.groups {
-            let capture_start = marks.get(group * 2).copied().flatten();
-            let capture_end = marks.get(group * 2 + 1).copied().flatten();
+            let capture_start = marks.get(group * 2);
+            let capture_end = marks.get(group * 2 + 1);
             let capture = match (capture_start, capture_end) {
-                (Some(cap_start), Some(cap_end))
-                    if cap_start <= cap_end && cap_end <= chars.len() =>
-                {
-                    Some((byte_offsets[cap_start], byte_offsets[cap_end]))
+                (Some(cap_start), Some(cap_end)) if cap_start <= cap_end && cap_end <= text.len() => {
+                    Some((text.byte_offset(cap_start), text.byte_offset(cap_end)))
                 }
                 _ => None,
             };
             captures.push(capture);
         }
-        return Some(ReMatchDetail {
-            start: byte_offsets[start],
-            end: byte_offsets[end],
+        Some(ReMatchDetail {
+            start: text.byte_offset(start),
+            end: text.byte_offset(end),
             captures,
-        });
+        })
+    };
+
+    let mut marks = SreMarkState::new(program.groups.saturating_mul(2));
+    match mode {
+        ReMode::Search => {
+            for start in 0..=text.len() {
+                if let Some(detail) = try_start(start, &mut marks) {
+                    return Some(detail);
+                }
+            }
+            None
+        }
+        ReMode::Match | ReMode::FullMatch => try_start(0, &mut marks),
     }
-    None
 }
 
-fn re_match_details(
+fn compiled_regex_match_details(
+    program: &ReCompiledRegexProgram,
+    text: &str,
+    mode: ReMode,
+) -> Option<ReMatchDetail> {
+    if text.is_ascii() {
+        let ascii = AsciiSreText::new(text.as_bytes());
+        compiled_regex_match_details_with_text(program, &ascii, mode)
+    } else {
+        let unicode = UnicodeSreText::new(text);
+        compiled_regex_match_details_with_text(program, &unicode, mode)
+    }
+}
+
+fn re_match_details_str(
     pattern: &RePatternValue,
-    text: &Value,
+    text: &str,
     mode: ReMode,
     compiled_program: Option<&ReCompiledRegexProgram>,
 ) -> Result<Option<ReMatchDetail>, RuntimeError> {
     match pattern {
         RePatternValue::Str(pattern_text) => {
-            let text = match text {
-                Value::Str(value) => value,
-                Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
-                    return Err(RuntimeError::new(
-                        "cannot use a string pattern on a bytes-like object",
-                    ));
-                }
-                _ => return Err(RuntimeError::new("string must be string")),
-            };
             let found = if let Some(program) = compiled_program {
                 compiled_regex_match_details(program, text, mode)
             } else if pattern_text == PKGUTIL_RESOLVE_NAME_PATTERN {
@@ -10107,33 +10239,25 @@ fn re_match_details(
             };
             Ok(found)
         }
+        RePatternValue::Bytes(_) => Err(RuntimeError::new(
+            "cannot use a bytes pattern on a string-like object",
+        )),
+    }
+}
+
+fn re_match_details_bytes(
+    pattern: &RePatternValue,
+    text: &[u8],
+    mode: ReMode,
+) -> Result<Option<ReMatchDetail>, RuntimeError> {
+    match pattern {
+        RePatternValue::Str(_) => Err(RuntimeError::new(
+            "cannot use a string pattern on a bytes-like object",
+        )),
         RePatternValue::Bytes(pattern_bytes) => {
-            let text = match text {
-                Value::Bytes(obj) => match &*obj.kind() {
-                    Object::Bytes(values) => values.clone(),
-                    _ => return Err(RuntimeError::type_error("string must be bytes-like")),
-                },
-                Value::ByteArray(obj) => match &*obj.kind() {
-                    Object::ByteArray(values) => values.clone(),
-                    _ => return Err(RuntimeError::type_error("string must be bytes-like")),
-                },
-                Value::MemoryView(obj) => match &*obj.kind() {
-                    Object::MemoryView(view) => {
-                        with_bytes_like_source(&view.source, |values| values.to_vec())
-                            .ok_or_else(|| RuntimeError::type_error("string must be bytes-like"))?
-                    }
-                    _ => return Err(RuntimeError::type_error("string must be bytes-like")),
-                },
-                Value::Str(_) => {
-                    return Err(RuntimeError::new(
-                        "cannot use a bytes pattern on a string-like object",
-                    ));
-                }
-                _ => return Err(RuntimeError::type_error("string must be bytes-like")),
-            };
             let regex_found = match (
                 std::str::from_utf8(pattern_bytes.as_slice()),
-                std::str::from_utf8(text.as_slice()),
+                std::str::from_utf8(text),
             ) {
                 (Ok(pattern_text), Ok(text_text)) => {
                     if pattern_text == LOGGING_PERCENT_VALIDATION_PATTERN {
@@ -10152,7 +10276,7 @@ fn re_match_details(
             };
             let found = match mode {
                 ReMode::Search => regex_found.or_else(|| {
-                    find_bytes_subslice(&text, pattern_bytes).map(|start| ReMatchDetail {
+                    find_bytes_subslice(text, pattern_bytes).map(|start| ReMatchDetail {
                         start,
                         end: start + pattern_bytes.len(),
                         captures: Vec::new(),
@@ -10166,7 +10290,7 @@ fn re_match_details(
                     })
                 }),
                 ReMode::FullMatch => regex_found.or_else(|| {
-                    (text == *pattern_bytes).then_some(ReMatchDetail {
+                    (text == pattern_bytes.as_slice()).then_some(ReMatchDetail {
                         start: 0,
                         end: pattern_bytes.len(),
                         captures: Vec::new(),
@@ -10182,6 +10306,44 @@ fn re_match_details(
             };
             Ok(found)
         }
+    }
+}
+
+fn re_match_details(
+    pattern: &RePatternValue,
+    text: &Value,
+    mode: ReMode,
+    compiled_program: Option<&ReCompiledRegexProgram>,
+) -> Result<Option<ReMatchDetail>, RuntimeError> {
+    match pattern {
+        RePatternValue::Str(_) => match text {
+            Value::Str(value) => re_match_details_str(pattern, value, mode, compiled_program),
+            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => Err(
+                RuntimeError::new("cannot use a string pattern on a bytes-like object"),
+            ),
+            _ => Err(RuntimeError::new("string must be string")),
+        },
+        RePatternValue::Bytes(_) => match text {
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(values) => re_match_details_bytes(pattern, values, mode),
+                _ => Err(RuntimeError::type_error("string must be bytes-like")),
+            },
+            Value::ByteArray(obj) => match &*obj.kind() {
+                Object::ByteArray(values) => re_match_details_bytes(pattern, values, mode),
+                _ => Err(RuntimeError::type_error("string must be bytes-like")),
+            },
+            Value::MemoryView(obj) => match &*obj.kind() {
+                Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                    re_match_details_bytes(pattern, values, mode)
+                })
+                .ok_or_else(|| RuntimeError::type_error("string must be bytes-like"))?,
+                _ => Err(RuntimeError::type_error("string must be bytes-like")),
+            },
+            Value::Str(_) => Err(RuntimeError::new(
+                "cannot use a bytes pattern on a string-like object",
+            )),
+            _ => Err(RuntimeError::type_error("string must be bytes-like")),
+        },
     }
 }
 
