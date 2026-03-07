@@ -1198,9 +1198,11 @@ fn json_serialize_value_at_depth(
     depth: usize,
     markers: &mut HashSet<u64>,
 ) -> Result<String, RuntimeError> {
-    const JSON_NATIVE_STACK_SAFE_DEPTH: usize = 1000;
-    let vm_recursion_limit = vm.recursion_limit.max(1) as usize;
-    let recursion_limit = vm_recursion_limit.min(JSON_NATIVE_STACK_SAFE_DEPTH);
+    // CPython wraps recursive _json encode/decode descent in
+    // _Py_EnterRecursiveCall(); use the VM's stack-safe effective limit here
+    // so deep accelerator recursion raises RecursionError before native Rust
+    // stack overflow.
+    let recursion_limit = vm.effective_recursion_limit() as usize;
     if depth >= recursion_limit {
         return Err(vm.recursion_limit_error());
     }
@@ -1502,8 +1504,7 @@ fn json_serialize_value_at_depth(
 }
 
 fn json_parse_depth_limit(vm: &Vm) -> usize {
-    let vm_limit = vm.recursion_limit.max(1) as usize;
-    vm_limit.min(JSON_PARSE_NATIVE_STACK_SAFE_DEPTH)
+    vm.effective_recursion_limit() as usize
 }
 
 fn json_parse_error_is_recursion_limit(err: &RuntimeError) -> bool {
@@ -1562,7 +1563,7 @@ enum JsonNode {
     Object(Vec<(String, JsonNode)>),
 }
 
-const JSON_PARSE_NATIVE_STACK_SAFE_DEPTH: usize = 1000;
+const JSON_PARSE_NATIVE_STACK_SAFE_DEPTH: usize = super::super::VM_STACK_SAFE_RECURSION_LIMIT as usize;
 
 #[derive(Debug, Clone)]
 struct JsonParseError {

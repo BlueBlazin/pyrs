@@ -244,6 +244,12 @@ pub struct CodeObject {
     pub exception_handlers: Vec<ExceptionHandler>,
 }
 
+impl Drop for CodeObject {
+    fn drop(&mut self) {
+        crate::runtime::release_owned_values_stack_safe(std::mem::take(&mut self.constants));
+    }
+}
+
 impl CodeObject {
     pub fn new(name: impl Into<String>, filename: impl Into<String>) -> Self {
         let name = name.into();

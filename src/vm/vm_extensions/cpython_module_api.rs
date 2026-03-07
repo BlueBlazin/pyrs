@@ -26,14 +26,35 @@ pub unsafe extern "C" fn PyModule_Create2(module: *mut c_void, _apiver: i32) -> 
     }
     let module = module.cast::<CpythonModuleDef>();
     let result = with_active_cpython_context_mut(|context| {
-        if !unsafe { (*module).m_name.is_null() } {
-            let name_result = unsafe { c_name_to_string((*module).m_name) };
-            if let Err(err) = name_result {
-                context.set_error(format!("PyModule_Create2 invalid module name: {err}"));
-                return std::ptr::null_mut();
+        if context.vm.is_null() {
+            context.set_error("PyModule_Create2 missing VM context");
+            return std::ptr::null_mut();
+        }
+        let module_name = if unsafe { (*module).m_name.is_null() } {
+            "module".to_string()
+        } else {
+            match unsafe { c_name_to_string((*module).m_name) } {
+                Ok(name) => name,
+                Err(err) => {
+                    context.set_error(format!("PyModule_Create2 invalid module name: {err}"));
+                    return std::ptr::null_mut();
+                }
             }
+        };
+        if !unsafe { (*module).m_slots.is_null() } {
+            context.set_error(format!(
+                "module {module_name}: PyModule_Create is incompatible with m_slots"
+            ));
+            return std::ptr::null_mut();
         }
         let module_obj = context.module.clone();
+        // CPython's single-phase module creation path adds `m_methods` before returning.
+        if let Err(err) = unsafe { &mut *context.vm }
+            .register_cpython_module_methods_from_def(&module_obj, module)
+        {
+            context.set_error(format!("PyModule_Create2 failed to register methods: {}", err.message));
+            return std::ptr::null_mut();
+        }
         if let Err(err) = cpython_bind_module_def(context, &module_obj, module) {
             context.set_error(format!(
                 "PyModule_Create2 failed to bind module definition: {err}"

@@ -231,6 +231,7 @@ const PURE_STDLIB_DECIMAL_MODULES: &[&str] = &["decimal"];
 const PURE_STDLIB_PATHLIB_MODULES: &[&str] = &["pathlib"];
 const PURE_STDLIB_TYPES_MODULES: &[&str] = &["types", "typing"];
 const PURE_STDLIB_WEAKREF_MODULES: &[&str] = &["weakref"];
+const PURE_STDLIB_ASYNCIO_MODULES: &[&str] = &["asyncio"];
 const MT_N: usize = 624;
 const MT_M: usize = 397;
 const MT_MATRIX_A: u32 = 0x9908_b0df;

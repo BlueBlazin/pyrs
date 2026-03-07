@@ -12,6 +12,7 @@ use super::{
     PURE_STDLIB_PLATFORM_MODULES, PURE_STDLIB_RE_MODULES, PURE_STDLIB_SIGNAL_MODULES,
     PURE_STDLIB_SOCKET_MODULES, PURE_STDLIB_SSL_MODULES, PURE_STDLIB_SUBPROCESS_MODULES,
     PURE_STDLIB_SYSCONFIG_MODULES, PURE_STDLIB_TYPES_MODULES, PURE_STDLIB_UUID_MODULES,
+    PURE_STDLIB_ASYNCIO_MODULES,
     PURE_STDLIB_WEAKREF_MODULES, Path, PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
     SIGNAL_SIGINT, SIGNAL_SIGKILL, SIGNAL_SIGTERM, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
     SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler, cpython, dict_get_value,
@@ -30,6 +31,12 @@ const UNSUPPORTED_EXTENSION_IMPORT_MODULES: &[&str] = &[
     "_interpreters",
     "_interpchannels",
 ];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BuiltinImportPolicy {
+    CanonicalBuiltin,
+    FilesystemFallback,
+}
 
 impl Vm {
     fn alloc_tuple_backed_builtin_class(&mut self, name: &str) -> Value {
@@ -9186,6 +9193,13 @@ impl Vm {
                 self.unregister_module(module_name);
             }
         }
+        for module_name in PURE_STDLIB_ASYNCIO_MODULES {
+            if self.has_preferred_filesystem_module(module_name)
+                && self.module_preference_requires_unload(module_name)
+            {
+                self.unregister_module(module_name);
+            }
+        }
     }
 
     pub(super) fn module_preference_requires_unload(&self, module_name: &str) -> bool {
@@ -9703,6 +9717,23 @@ impl Vm {
         );
     }
 
+    fn builtin_import_policy(name: &str) -> Option<BuiltinImportPolicy> {
+        match name {
+            // These mirror CPython builtin/extension modules and should be
+            // recreated by the builtin importer ahead of path-based loading.
+            "atexit" | "_warnings" | "_json" | "_queue" => {
+                Some(BuiltinImportPolicy::CanonicalBuiltin)
+            }
+            // These are pyrs bootstrap fallbacks for pure-Python stdlib modules
+            // or aliases and should only be used when no filesystem module is
+            // available.
+            "abc" | "sysconfig" | "_sysconfig" | "socket" | "datetime" | "_types" => {
+                Some(BuiltinImportPolicy::FilesystemFallback)
+            }
+            _ => None,
+        }
+    }
+
     fn install_builtin_import_fallback(&mut self, name: &str) -> Result<bool, RuntimeError> {
         match name {
             "abc" => {
@@ -9798,6 +9829,13 @@ impl Vm {
                     return Ok(module);
                 }
             }
+        }
+
+        if Self::builtin_import_policy(name) == Some(BuiltinImportPolicy::CanonicalBuiltin)
+            && self.install_builtin_import_fallback(name)?
+            && let Some(module) = self.modules.get(name).cloned()
+        {
+            return Ok(module);
         }
 
         let source_info = match self.find_module_source(name) {
@@ -11193,18 +11231,7 @@ impl Vm {
                     }
                 }
                 Some(Value::None) => {
-                    if self
-                        .modules
-                        .get(name)
-                        .cloned()
-                        .is_none_or(|module| {
-                            !self.should_preserve_cached_module_across_sys_modules_eviction(
-                                name, &module,
-                            )
-                        })
-                    {
-                        self.modules.remove(name);
-                    }
+                    self.modules.remove(name);
                     return Err(RuntimeError::module_not_found_error(format!(
                         "No module named '{}'",
                         name
@@ -11232,17 +11259,11 @@ impl Vm {
                 .get(name)
                 .is_some_and(Self::module_is_initializing);
             let cached_module = self.modules.get(name).cloned();
-            let keep_cached_builtin = cached_module.as_ref().is_some_and(|module| {
-                self.should_preserve_cached_module_across_sys_modules_eviction(name, module)
-            });
             let keep_cached_extension_initialized = cached_module.as_ref().is_some_and(|module| {
                 self.extension_initialized_names.contains(name)
                     && Self::module_is_extension_initialized(module)
             });
-            if !keep_cached_initializing
-                && !keep_cached_builtin
-                && !keep_cached_extension_initialized
-            {
+            if !keep_cached_initializing && !keep_cached_extension_initialized {
                 self.modules.remove(name);
             }
         }
@@ -11330,15 +11351,6 @@ impl Vm {
         }
     }
 
-    fn should_preserve_cached_module_across_sys_modules_eviction(
-        &mut self,
-        name: &str,
-        module: &ObjRef,
-    ) -> bool {
-        Self::module_loader_name(module).as_deref() == Some(BUILTIN_MODULE_LOADER)
-            && !self.should_prefer_filesystem_module(name, module)
-    }
-
     pub(super) fn prune_module_cache_for_removed_sys_modules(&mut self, modules_dict: &ObjRef) {
         let Object::Dict(entries) = &*modules_dict.kind() else {
             return;
@@ -11363,15 +11375,8 @@ impl Vm {
                 if present.contains(name) {
                     return None;
                 }
-                let is_builtin =
-                    Self::module_loader_name(module).as_deref() == Some(BUILTIN_MODULE_LOADER);
-                let preserve_builtin =
-                    is_builtin && !self.should_prefer_filesystem_module(name, module);
-                if preserve_builtin {
-                    None
-                } else {
-                    Some(name.clone())
-                }
+                let _ = module;
+                Some(name.clone())
             })
             .collect::<Vec<_>>();
         for name in stale {

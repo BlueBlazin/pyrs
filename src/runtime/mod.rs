@@ -605,6 +605,292 @@ impl ObjRef {
     }
 }
 
+enum OwnedReleaseItem {
+    Value(Value),
+    ObjRef(ObjRef),
+}
+
+fn owned_iterator_children(kind: IteratorKind) -> Vec<OwnedReleaseItem> {
+    let mut out = Vec::new();
+    match kind {
+        IteratorKind::List(obj)
+        | IteratorKind::Tuple(obj)
+        | IteratorKind::Set(obj)
+        | IteratorKind::Bytes(obj)
+        | IteratorKind::ByteArray(obj)
+        | IteratorKind::MemoryView(obj) => out.push(OwnedReleaseItem::ObjRef(obj)),
+        IteratorKind::ListReverse { list, .. } => out.push(OwnedReleaseItem::ObjRef(list)),
+        IteratorKind::Str(_) | IteratorKind::Count { .. } | IteratorKind::RangeObject { .. } => {}
+        IteratorKind::DictView { dict, .. } | IteratorKind::DictReverse { dict, .. } => {
+            out.push(OwnedReleaseItem::ObjRef(dict));
+        }
+        IteratorKind::Cycle { source, values, .. } => {
+            out.push(OwnedReleaseItem::Value(source));
+            out.extend(values.into_iter().map(OwnedReleaseItem::Value));
+        }
+        IteratorKind::Enumerate { iterator, .. } => out.push(OwnedReleaseItem::Value(iterator)),
+        IteratorKind::Map {
+            values,
+            func,
+            iterators,
+            sources,
+            ..
+        } => {
+            out.extend(values.into_iter().map(OwnedReleaseItem::Value));
+            out.push(OwnedReleaseItem::Value(func));
+            out.extend(iterators.into_iter().map(OwnedReleaseItem::Value));
+            out.extend(sources.into_iter().map(OwnedReleaseItem::Value));
+        }
+        IteratorKind::Zip { iterators, .. } => {
+            out.extend(iterators.into_iter().map(OwnedReleaseItem::Value));
+        }
+        IteratorKind::Chain {
+            sources, current, ..
+        } => {
+            out.extend(sources.into_iter().map(OwnedReleaseItem::Value));
+            out.extend(current.into_iter().map(OwnedReleaseItem::Value));
+        }
+        IteratorKind::ChainFromIterable {
+            source_iterable,
+            source,
+            current,
+            ..
+        } => {
+            out.push(OwnedReleaseItem::Value(source_iterable));
+            out.extend(source.into_iter().map(OwnedReleaseItem::Value));
+            out.extend(current.into_iter().map(OwnedReleaseItem::Value));
+        }
+        IteratorKind::Accumulate {
+            iterator,
+            func,
+            total,
+            initial,
+            ..
+        } => {
+            out.push(OwnedReleaseItem::Value(iterator));
+            out.extend(func.into_iter().map(OwnedReleaseItem::Value));
+            out.extend(total.into_iter().map(OwnedReleaseItem::Value));
+            out.extend(initial.into_iter().map(OwnedReleaseItem::Value));
+        }
+        IteratorKind::Combinations { pool, .. }
+        | IteratorKind::CombinationsWithReplacement { pool, .. }
+        | IteratorKind::Permutations { pool, .. } => {
+            out.extend(pool.into_iter().map(OwnedReleaseItem::Value));
+        }
+        IteratorKind::Product { pools, .. } => {
+            for pool in pools {
+                out.extend(pool.into_iter().map(OwnedReleaseItem::Value));
+            }
+        }
+        IteratorKind::Compress { data, selectors } => {
+            out.push(OwnedReleaseItem::Value(data));
+            out.push(OwnedReleaseItem::Value(selectors));
+        }
+        IteratorKind::DropWhile {
+            predicate, iterator, ..
+        }
+        | IteratorKind::Filter {
+            predicate, iterator,
+        }
+        | IteratorKind::FilterFalse {
+            predicate, iterator,
+        }
+        | IteratorKind::StarMap {
+            callable: predicate,
+            iterator,
+        } => {
+            out.push(OwnedReleaseItem::Value(predicate));
+            out.push(OwnedReleaseItem::Value(iterator));
+        }
+        IteratorKind::Islice { iterator, .. }
+        | IteratorKind::Batched { iterator, .. }
+        | IteratorKind::GroupBy { shared: iterator }
+        | IteratorKind::Tee { shared: iterator, .. } => {
+            out.push(OwnedReleaseItem::Value(iterator));
+        }
+        IteratorKind::Pairwise {
+            iterator, previous, ..
+        } => {
+            out.push(OwnedReleaseItem::Value(iterator));
+            out.extend(previous.into_iter().map(OwnedReleaseItem::Value));
+        }
+        IteratorKind::TakeWhile {
+            predicate, iterator, ..
+        } => {
+            out.push(OwnedReleaseItem::Value(predicate));
+            out.push(OwnedReleaseItem::Value(iterator));
+        }
+        IteratorKind::ZipLongest {
+            iterators,
+            fillvalue,
+            ..
+        } => {
+            out.extend(iterators.into_iter().map(OwnedReleaseItem::Value));
+            out.push(OwnedReleaseItem::Value(fillvalue));
+        }
+        IteratorKind::Repeat { value, .. } => out.push(OwnedReleaseItem::Value(value)),
+        IteratorKind::GroupByGrouper { shared, key, .. } => {
+            out.push(OwnedReleaseItem::Value(shared));
+            out.push(OwnedReleaseItem::Value(key));
+        }
+        IteratorKind::Range { .. } => {}
+        IteratorKind::ReversedSequenceGetItem {
+            target, getitem, ..
+        }
+        | IteratorKind::SequenceGetItem { target, getitem } => {
+            out.push(OwnedReleaseItem::Value(target));
+            out.push(OwnedReleaseItem::Value(getitem));
+        }
+        IteratorKind::ReversedCpythonSequence { target, .. }
+        | IteratorKind::CpythonSequence { target } => out.push(OwnedReleaseItem::Value(target)),
+        IteratorKind::CallIter { callable, sentinel } => {
+            out.push(OwnedReleaseItem::Value(callable));
+            out.push(OwnedReleaseItem::Value(sentinel));
+        }
+    }
+    out
+}
+
+fn owned_object_children(object: Object) -> Vec<OwnedReleaseItem> {
+    let mut out = Vec::new();
+    match object {
+        Object::List(values) | Object::Tuple(values) => {
+            out.extend(values.into_iter().map(OwnedReleaseItem::Value));
+        }
+        Object::Dict(entries) => {
+            for (key, value) in entries {
+                out.push(OwnedReleaseItem::Value(key));
+                out.push(OwnedReleaseItem::Value(value));
+            }
+        }
+        Object::DictView(view) => out.push(OwnedReleaseItem::ObjRef(view.dict)),
+        Object::Set(values) | Object::FrozenSet(values) => {
+            out.extend(values.into_iter().map(OwnedReleaseItem::Value));
+        }
+        Object::Bytes(_) | Object::ByteArray(_) | Object::NativeMethod(_) => {}
+        Object::MemoryView(view) => {
+            out.push(OwnedReleaseItem::ObjRef(view.source));
+            if let Some(owner) = view.export_owner {
+                out.push(OwnedReleaseItem::ObjRef(owner));
+            }
+        }
+        Object::Iterator(iterator) => out.extend(owned_iterator_children(iterator.kind)),
+        Object::Generator(generator) => out.push(OwnedReleaseItem::Value(Value::Code(generator.code))),
+        Object::Module(module) => {
+            out.extend(module.globals.into_values().map(OwnedReleaseItem::Value));
+        }
+        Object::Class(class) => {
+            for base in class.bases {
+                out.push(OwnedReleaseItem::ObjRef(base));
+            }
+            for entry in class.mro {
+                out.push(OwnedReleaseItem::ObjRef(entry));
+            }
+            if let Some(meta) = class.metaclass {
+                out.push(OwnedReleaseItem::ObjRef(meta));
+            }
+            out.extend(class.attrs.into_values().map(OwnedReleaseItem::Value));
+        }
+        Object::Instance(instance) => {
+            out.push(OwnedReleaseItem::ObjRef(instance.class));
+            out.extend(instance.attrs.into_values().map(OwnedReleaseItem::Value));
+        }
+        Object::Super(super_obj) => {
+            out.push(OwnedReleaseItem::ObjRef(super_obj.start_class));
+            out.push(OwnedReleaseItem::ObjRef(super_obj.object));
+            out.push(OwnedReleaseItem::ObjRef(super_obj.object_type));
+        }
+        Object::BoundMethod(method) => {
+            out.push(OwnedReleaseItem::ObjRef(method.function));
+            out.push(OwnedReleaseItem::ObjRef(method.receiver));
+        }
+        Object::Function(function) => {
+            out.push(OwnedReleaseItem::Value(Value::Code(function.code)));
+            out.push(OwnedReleaseItem::ObjRef(function.module));
+            out.extend(function.defaults.into_iter().map(OwnedReleaseItem::Value));
+            out.extend(
+                function
+                    .kwonly_defaults
+                    .into_values()
+                    .map(OwnedReleaseItem::Value),
+            );
+            for cell in function.closure {
+                out.push(OwnedReleaseItem::ObjRef(cell));
+            }
+            if let Some(annotations) = function.annotations {
+                out.push(OwnedReleaseItem::ObjRef(annotations));
+            }
+            if let Some(owner_class) = function.owner_class {
+                out.push(OwnedReleaseItem::ObjRef(owner_class));
+            }
+            if let Some(dict) = function.dict {
+                out.push(OwnedReleaseItem::ObjRef(dict));
+            }
+        }
+        Object::Cell(cell) => out.extend(cell.value.into_iter().map(OwnedReleaseItem::Value)),
+    }
+    out
+}
+
+fn take_object_children_for_release(obj: &ObjRef) -> Option<Vec<OwnedReleaseItem>> {
+    let mut kind = obj.try_kind_mut()?;
+    let object = std::mem::replace(&mut *kind, Object::Bytes(Vec::new()));
+    drop(kind);
+    Some(owned_object_children(object))
+}
+
+fn release_owned_items_stack_safe(mut stack: Vec<OwnedReleaseItem>) {
+    while let Some(item) = stack.pop() {
+        match item {
+            OwnedReleaseItem::Value(mut value) => match &mut value {
+                Value::List(obj)
+                | Value::Tuple(obj)
+                | Value::Dict(obj)
+                | Value::DictKeys(obj)
+                | Value::DictValues(obj)
+                | Value::DictItems(obj)
+                | Value::Set(obj)
+                | Value::FrozenSet(obj)
+                | Value::Bytes(obj)
+                | Value::ByteArray(obj)
+                | Value::MemoryView(obj)
+                | Value::Iterator(obj)
+                | Value::Generator(obj)
+                | Value::Module(obj)
+                | Value::Class(obj)
+                | Value::Instance(obj)
+                | Value::Super(obj)
+                | Value::BoundMethod(obj)
+                | Value::Function(obj)
+                | Value::Cell(obj) => stack.push(OwnedReleaseItem::ObjRef(obj.clone())),
+                Value::Code(code) => {
+                    if Rc::strong_count(code) == 1
+                        && let Some(code) = Rc::get_mut(code)
+                    {
+                        stack.extend(
+                            std::mem::take(&mut code.constants)
+                                .into_iter()
+                                .map(OwnedReleaseItem::Value),
+                        );
+                    }
+                }
+                _ => {}
+            },
+            OwnedReleaseItem::ObjRef(obj) => {
+                if obj.strong_count() == 1
+                    && let Some(mut children) = take_object_children_for_release(&obj)
+                {
+                    stack.append(&mut children);
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn release_owned_values_stack_safe(values: Vec<Value>) {
+    release_owned_items_stack_safe(values.into_iter().map(OwnedReleaseItem::Value).collect());
+}
+
 impl fmt::Debug for ObjRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ObjRef({})", self.id())
@@ -646,6 +932,13 @@ impl fmt::Debug for Obj {
             .field("id", &self.id)
             .field("kind", &kind)
             .finish()
+    }
+}
+
+impl Drop for Obj {
+    fn drop(&mut self) {
+        let object = std::mem::replace(self.kind.get_mut(), Object::Bytes(Vec::new()));
+        release_owned_items_stack_safe(owned_object_children(object));
     }
 }
 

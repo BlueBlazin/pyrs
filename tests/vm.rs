@@ -1808,6 +1808,24 @@ fn user_exception_instances_expose_default_traceback_chain_attrs() {
 }
 
 #[test]
+fn exception_with_traceback_none_clears_cached_traceback() {
+    let source = r#"ok = False
+try:
+    raise ValueError("boom")
+except ValueError as exc:
+    before = exc.__traceback__ is not None
+    cleared = exc.with_traceback(None)
+    ok = before and (cleared.__traceback__ is None)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn traceback_helpers_can_read_exception_traceback_attr() {
     let source = "ok = False\ntry:\n    1 / 0\nexcept Exception as exc:\n    tb = exc.__traceback__\n    ok = (tb is not None and type(tb).__name__ == 'traceback' and tb.tb_frame is not None and tb.tb_frame.f_code is not None and isinstance(tb.tb_lineno, int) and isinstance(tb.tb_lasti, int))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -11573,6 +11591,25 @@ ok = (first is not second)\n";
 }
 
 #[test]
+fn deleting_builtin_accelerator_from_sys_modules_reimports_fresh_builtin_module() {
+    let source = "import importlib\n\
+import sys\n\
+import _json as first\n\
+del sys.modules['_json']\n\
+second = importlib.import_module('_json')\n\
+ok = (\n\
+    first is not second and\n\
+    getattr(second, '__file__', None) is None and\n\
+    hasattr(second, 'scanstring')\n\
+)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn parser_accepts_for_iterable_tuple_with_lambda_tail() {
     let source = "for action in object(), lambda o: o:\n    pass\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -14284,6 +14321,148 @@ print(ok)
     assert_eq!(
         last_line, "True",
         "expected cli json fresh-import probe to print True, got:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn cli_single_phase_extension_modules_export_method_table() {
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let source = r#"try:
+    import readline
+except ImportError:
+    print("SKIP")
+else:
+    needed = [
+        'set_completer_delims',
+        'get_completer_delims',
+        'set_completer',
+        'get_completer',
+        'parse_and_bind',
+        'read_init_file',
+    ]
+    print(all(hasattr(readline, name) for name in needed))
+"#;
+    let output = Command::new(pyrs_bin)
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn pyrs cli single-phase extension probe");
+    assert!(
+        output.status.success(),
+        "cli single-phase extension probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    if last_line == "SKIP" {
+        return;
+    }
+    assert_eq!(
+        last_line, "True",
+        "expected cli single-phase extension probe to print True, got:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn cli_json_c_accelerator_deep_recursion_raises_recursionerror() {
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let source = r#"import json
+import sys
+
+sys.setrecursionlimit(10000)
+
+value = []
+for _ in range(5000):
+    value = [value]
+
+results = []
+for payload in (
+    ("encode", value),
+    ("decode", '{"a":' * 5000 + '1' + '}' * 5000),
+):
+    kind, candidate = payload
+    try:
+        if kind == "encode":
+            json.dumps(candidate)
+        else:
+            json.loads(candidate)
+    except RecursionError:
+        results.append(True)
+    else:
+        results.append(False)
+
+print(all(results))
+"#;
+    let output = Command::new(pyrs_bin)
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn pyrs cli json deep-recursion probe");
+    assert!(
+        output.status.success(),
+        "cli json deep-recursion probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(
+        last_line, "True",
+        "expected cli json deep-recursion probe to print True, got:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn cli_json_c_accelerator_cleanup_is_stack_safe_after_recursionerror() {
+    let Some(_lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let source = r#"import sys
+from test import support
+from test.support import import_helper
+
+cjson = import_helper.import_fresh_module('json', fresh=['_json'])
+sys.setrecursionlimit(10000)
+
+value = []
+for _ in range(500000):
+    value = [value]
+
+try:
+    with support.infinite_recursion(5000):
+        cjson.dumps(value)
+except RecursionError:
+    print(True)
+else:
+    print(False)
+"#;
+    let output = Command::new(pyrs_bin)
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn pyrs cli json cleanup stack-safety probe");
+    assert!(
+        output.status.success(),
+        "cli json cleanup stack-safety probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(
+        last_line, "True",
+        "expected cli json cleanup stack-safety probe to print True, got:\n{}",
         stdout
     );
 }
