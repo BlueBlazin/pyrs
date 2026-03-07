@@ -55,6 +55,8 @@ The orchestrator writes a directory, not a single monolithic file:
 
 - `manifest.json`
   - run metadata, selected entries, timeout config, and completion state
+- `progress.json`
+  - live phase/count/status snapshot for long-running or interrupted benchmark runs
 - `summary.json`
   - top-level counts, host/git metadata, config, and entry index
 - `inventory/*.json`

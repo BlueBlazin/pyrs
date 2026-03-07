@@ -274,6 +274,18 @@ class OrchestratorSuite(unittest.TestCase):
         "manifest should record the single selected entry: {manifest}"
     );
 
+    let progress = fs::read_to_string(out_dir.join("progress.json")).expect("read progress");
+    for needle in [
+        r#""phase": "completed""#,
+        r#""inventory_completed": 1"#,
+        r#""run_completed": 1"#,
+    ] {
+        assert!(
+            progress.contains(needle),
+            "progress missing expected fragment {needle}: {progress}"
+        );
+    }
+
     let summary = fs::read_to_string(out_dir.join("summary.json")).expect("read summary");
     for needle in [
         r#""discoverable_case_count": 2"#,
