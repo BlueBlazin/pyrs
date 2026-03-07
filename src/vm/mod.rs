@@ -5538,6 +5538,21 @@ impl Vm {
             vec![("TIER2_THRESHOLD", Value::Int(0))],
         );
         self.install_builtin_module("_testlimitedcapi", &[], Vec::new());
+        let unsigned_value = |value: u64| {
+            if let Ok(value) = i64::try_from(value) {
+                Value::Int(value)
+            } else {
+                Value::BigInt(Box::new(BigInt::from_u64(value)))
+            }
+        };
+        #[cfg(unix)]
+        let sizeof_time_t = std::mem::size_of::<libc::time_t>() as i64;
+        #[cfg(not(unix))]
+        let sizeof_time_t = std::mem::size_of::<i64>() as i64;
+        #[cfg(unix)]
+        let sizeof_pid_t = std::mem::size_of::<libc::pid_t>() as i64;
+        #[cfg(not(unix))]
+        let sizeof_pid_t = std::mem::size_of::<i32>() as i64;
         let meth_instance_class = match self
             .heap
             .alloc_class(ClassObject::new("MethInstance".to_string(), Vec::new()))
@@ -5618,19 +5633,53 @@ impl Vm {
                     "pyobject_vectorcall",
                     BuiltinFunction::TestCapiPyObjectVectorcall,
                 ),
+                (
+                    "PyTime_AsSecondsDouble",
+                    BuiltinFunction::TestCapiPyTimeAsSecondsDouble,
+                ),
+                ("PyTime_Monotonic", BuiltinFunction::TimeMonotonic),
+                ("PyTime_MonotonicRaw", BuiltinFunction::TimeMonotonic),
+                ("PyTime_PerfCounter", BuiltinFunction::TimeMonotonic),
+                ("PyTime_PerfCounterRaw", BuiltinFunction::TimeMonotonic),
+                ("PyTime_Time", BuiltinFunction::TimeTime),
+                ("PyTime_TimeRaw", BuiltinFunction::TimeTime),
             ],
             vec![
+                ("CHAR_MAX", Value::Int(std::ffi::c_char::MAX as i64)),
+                ("CHAR_MIN", Value::Int(std::ffi::c_char::MIN as i64)),
+                ("UCHAR_MAX", Value::Int(std::ffi::c_uchar::MAX as i64)),
+                ("SHRT_MAX", Value::Int(std::ffi::c_short::MAX as i64)),
+                ("SHRT_MIN", Value::Int(std::ffi::c_short::MIN as i64)),
+                ("USHRT_MAX", Value::Int(std::ffi::c_ushort::MAX as i64)),
                 ("INT_MAX", Value::Int(i32::MAX as i64)),
                 ("INT_MIN", Value::Int(i32::MIN as i64)),
                 ("UINT_MAX", Value::Int(u32::MAX as i64)),
+                ("LONG_MAX", Value::Int(std::ffi::c_long::MAX as i64)),
+                ("LONG_MIN", Value::Int(std::ffi::c_long::MIN as i64)),
+                ("ULONG_MAX", unsigned_value(std::ffi::c_ulong::MAX as u64)),
+                ("FLT_MAX", Value::Float(f32::MAX as f64)),
+                ("FLT_MIN", Value::Float(f32::MIN_POSITIVE as f64)),
+                ("DBL_MAX", Value::Float(f64::MAX)),
+                ("DBL_MIN", Value::Float(f64::MIN_POSITIVE)),
                 ("LLONG_MAX", Value::Int(i64::MAX)),
                 ("LLONG_MIN", Value::Int(i64::MIN)),
+                ("ULLONG_MAX", unsigned_value(u64::MAX)),
+                ("PY_SSIZE_T_MAX", Value::Int(isize::MAX as i64)),
+                ("PY_SSIZE_T_MIN", Value::Int(isize::MIN as i64)),
                 (
-                    "ULLONG_MAX",
-                    Value::BigInt(Box::new(BigInt::from_u64(u64::MAX))),
+                    "SIZEOF_VOID_P",
+                    Value::Int(std::mem::size_of::<*const c_void>() as i64),
                 ),
-                ("PY_SSIZE_T_MAX", Value::Int(i64::MAX)),
-                ("PY_SSIZE_T_MIN", Value::Int(i64::MIN)),
+                ("SIZEOF_TIME_T", Value::Int(sizeof_time_t)),
+                ("SIZEOF_PID_T", Value::Int(sizeof_pid_t)),
+                ("WITH_PYMALLOC", Value::Bool(false)),
+                ("WITH_MIMALLOC", Value::Bool(false)),
+                ("Py_single_input", Value::Int(256)),
+                ("Py_file_input", Value::Int(257)),
+                ("Py_eval_input", Value::Int(258)),
+                ("PyTime_MIN", Value::Int(i64::MIN)),
+                ("PyTime_MAX", Value::Int(i64::MAX)),
+                ("Py_Version", Value::Int(0x030e00f0)),
                 ("MethInstance", Value::Class(meth_instance_class)),
                 ("MethClass", Value::Class(meth_class_class)),
                 ("MethStatic", Value::Class(meth_static_class)),

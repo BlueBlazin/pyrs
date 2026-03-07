@@ -1049,12 +1049,10 @@ pub(super) fn pow_values(left: Value, right: Value) -> Result<Value, RuntimeErro
 
 pub(super) fn neg_value(value: Value) -> Result<Value, RuntimeError> {
     match value {
-        Value::Int(value) => {
-            let value = value
-                .checked_neg()
-                .ok_or_else(|| RuntimeError::overflow_error("integer overflow"))?;
-            Ok(Value::Int(value))
-        }
+        Value::Int(value) => match value.checked_neg() {
+            Some(value) => Ok(Value::Int(value)),
+            None => Ok(bigint_to_value(BigInt::from_i64(value).negated())),
+        },
         Value::BigInt(value) => Ok(bigint_to_value(value.negated())),
         Value::Bool(value) => Ok(Value::Int(if value { -1 } else { 0 })),
         Value::Float(value) => Ok(Value::Float(-value)),

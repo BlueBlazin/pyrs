@@ -6705,4 +6705,42 @@ impl Vm {
             }
         }
     }
+
+    pub(super) fn builtin_testcapi_pytime_as_secondsdouble(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "PyTime_AsSecondsDouble() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let nanoseconds = match args.remove(0) {
+            Value::Int(value) => value,
+            Value::Bool(flag) => {
+                if flag {
+                    1
+                } else {
+                    0
+                }
+            }
+            Value::BigInt(value) => value.to_i64().ok_or_else(|| {
+                RuntimeError::overflow_error("Python int too large to convert to C long long")
+            })?,
+            other => {
+                return Err(RuntimeError::type_error(format!(
+                    "expect int, got {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        let seconds = if nanoseconds % 1_000_000_000 == 0 {
+            (nanoseconds / 1_000_000_000) as f64
+        } else {
+            nanoseconds as f64 / 1_000_000_000.0
+        };
+        Ok(Value::Float(seconds))
+    }
 }

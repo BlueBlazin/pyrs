@@ -13911,6 +13911,9 @@ impl Vm {
             BuiltinFunction::TestCapiPyObjectVectorcall => {
                 self.builtin_testcapi_pyobject_vectorcall(args, kwargs)
             }
+            BuiltinFunction::TestCapiPyTimeAsSecondsDouble => {
+                self.builtin_testcapi_pytime_as_secondsdouble(args, kwargs)
+            }
             BuiltinFunction::TestInternalCapiGetRecursionDepth => {
                 self.builtin_testinternalcapi_get_recursion_depth(args, kwargs)
             }

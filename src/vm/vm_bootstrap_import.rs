@@ -5781,7 +5781,10 @@ impl Vm {
                 ("get_nb_ops", BuiltinFunction::OpcodeGetNbOps),
                 ("get_executor", BuiltinFunction::OpcodeGetExecutor),
             ],
-            Vec::new(),
+            vec![
+                ("ENABLE_SPECIALIZATION", Value::Int(0)),
+                ("ENABLE_SPECIALIZATION_FT", Value::Int(0)),
+            ],
         );
         self.install_builtin_module(
             "_abc",

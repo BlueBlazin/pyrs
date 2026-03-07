@@ -18319,6 +18319,56 @@ fn executes_opcode_metadata_helpers() {
 }
 
 #[test]
+fn exposes_testcapi_scalar_and_time_helpers() {
+    #[cfg(unix)]
+    let sizeof_time_t = std::mem::size_of::<libc::time_t>();
+    #[cfg(not(unix))]
+    let sizeof_time_t = std::mem::size_of::<i64>();
+    #[cfg(unix)]
+    let sizeof_pid_t = std::mem::size_of::<libc::pid_t>();
+    #[cfg(not(unix))]
+    let sizeof_pid_t = std::mem::size_of::<i32>();
+    let source = format!(
+        "import _opcode\nimport _testcapi\nimport time\nok = (\n    _testcapi.CHAR_MAX == {char_max}\n    and _testcapi.CHAR_MIN == {char_min}\n    and _testcapi.UCHAR_MAX == {uchar_max}\n    and _testcapi.SHRT_MAX == {shrt_max}\n    and _testcapi.SHRT_MIN == {shrt_min}\n    and _testcapi.USHRT_MAX == {ushort_max}\n    and _testcapi.INT_MAX == {int_max}\n    and _testcapi.INT_MIN == {int_min}\n    and _testcapi.UINT_MAX == {uint_max}\n    and _testcapi.LONG_MAX == {long_max}\n    and _testcapi.LONG_MIN == {long_min}\n    and _testcapi.ULONG_MAX == {ulong_max}\n    and _testcapi.LLONG_MAX == {llong_max}\n    and _testcapi.LLONG_MIN == {llong_min}\n    and _testcapi.ULLONG_MAX == {ullong_max}\n    and _testcapi.PY_SSIZE_T_MAX == {py_ssize_t_max}\n    and _testcapi.PY_SSIZE_T_MIN == {py_ssize_t_min}\n    and _testcapi.SIZEOF_VOID_P == {sizeof_void_p}\n    and _testcapi.SIZEOF_TIME_T == {sizeof_time_t}\n    and _testcapi.SIZEOF_PID_T == {sizeof_pid_t}\n    and _testcapi.WITH_PYMALLOC is False\n    and _testcapi.WITH_MIMALLOC is False\n    and _testcapi.Py_single_input == 256\n    and _testcapi.Py_file_input == 257\n    and _testcapi.Py_eval_input == 258\n    and _testcapi.PyTime_MIN == -(2**63)\n    and _testcapi.PyTime_MAX == 2**63 - 1\n    and _testcapi.Py_Version == 0x030e00f0\n    and _opcode.ENABLE_SPECIALIZATION == 0\n    and _opcode.ENABLE_SPECIALIZATION_FT == 0\n    and _testcapi.PyTime_AsSecondsDouble(0) == 0.0\n    and _testcapi.PyTime_AsSecondsDouble(1_000_000_000) == 1.0\n    and abs(_testcapi.PyTime_AsSecondsDouble(-1) + 1e-09) < 1e-18\n    and abs(_testcapi.PyTime_Monotonic() - time.monotonic()) < 0.25\n    and abs(_testcapi.PyTime_MonotonicRaw() - time.monotonic()) < 0.25\n    and abs(_testcapi.PyTime_PerfCounter() - time.perf_counter()) < 0.25\n    and abs(_testcapi.PyTime_PerfCounterRaw() - time.perf_counter()) < 0.25\n    and abs(_testcapi.PyTime_Time() - time.time()) < 0.25\n    and abs(_testcapi.PyTime_TimeRaw() - time.time()) < 0.25\n)\n",
+        char_max = std::ffi::c_char::MAX as i64,
+        char_min = std::ffi::c_char::MIN as i64,
+        uchar_max = std::ffi::c_uchar::MAX,
+        shrt_max = std::ffi::c_short::MAX,
+        shrt_min = std::ffi::c_short::MIN,
+        ushort_max = std::ffi::c_ushort::MAX,
+        int_max = std::ffi::c_int::MAX,
+        int_min = std::ffi::c_int::MIN,
+        uint_max = std::ffi::c_uint::MAX,
+        long_max = std::ffi::c_long::MAX,
+        long_min = std::ffi::c_long::MIN,
+        ulong_max = std::ffi::c_ulong::MAX,
+        llong_max = i64::MAX,
+        llong_min = i64::MIN,
+        ullong_max = u64::MAX,
+        py_ssize_t_max = isize::MAX,
+        py_ssize_t_min = isize::MIN,
+        sizeof_void_p = std::mem::size_of::<*const std::ffi::c_void>(),
+        sizeof_time_t = sizeof_time_t,
+        sizeof_pid_t = sizeof_pid_t,
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn unary_negation_promotes_i64_min_to_python_bigint() {
+    let source = "value = -((-9223372036854775807) - 1)\nok = (value == 2**63 and type(value) is int)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_str_isspace_method() {
     let source = "ok = ' \\t\\n'.isspace() and not ''.isspace() and not 'a'.isspace()\n";
     let module = parser::parse_module(source).expect("parse should succeed");

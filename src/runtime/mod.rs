@@ -5686,6 +5686,7 @@ pub enum BuiltinFunction {
     TestCapiExceptionPrint,
     TestCapiConfigGet,
     TestCapiPyObjectVectorcall,
+    TestCapiPyTimeAsSecondsDouble,
     TestInternalCapiGetRecursionDepth,
     DataclassesField,
     DataclassesIsDataclass,
@@ -9115,6 +9116,7 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::TestCapiExceptionPrint
             | BuiltinFunction::TestCapiConfigGet
             | BuiltinFunction::TestCapiPyObjectVectorcall
+            | BuiltinFunction::TestCapiPyTimeAsSecondsDouble
             | BuiltinFunction::TestInternalCapiGetRecursionDepth
             | BuiltinFunction::DataclassesField
             | BuiltinFunction::DataclassesIsDataclass
