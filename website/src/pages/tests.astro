@@ -1,0 +1,542 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import fs from "node:fs";
+import path from "node:path";
+
+/* ── data loading ─────────────────────────────────────────────── */
+const locate = (name: string): string | null => {
+	const candidates = [
+		path.resolve(process.cwd(), "..", "perf", "cpython_compat_benchmark_latest", name),
+		path.resolve(process.cwd(), "perf", "cpython_compat_benchmark_latest", name),
+	];
+	for (const c of candidates) if (fs.existsSync(c)) return c;
+	return null;
+};
+const tryRead = (p: string | null) => {
+	if (!p) return null;
+	try { return JSON.parse(fs.readFileSync(p, "utf-8")); }
+	catch { return null; }
+};
+
+const summary = tryRead(locate("summary.json"));
+const derived = tryRead(locate("derived_summary.json"));
+const ok = !!(summary && derived);
+
+/* ── computed stats ───────────────────────────────────────────── */
+const entries: any[] = summary?.entries ?? [];
+const totals = derived?.totals ?? {};
+const caseOut  = totals.case_outcomes ?? {};
+const subOut   = totals.subtest_outcomes ?? {};
+
+// resolve effective status: fall back to inventory_status when run_status is null
+const effectiveStatus = (e: any) => e.run_status ?? e.inventory_status ?? "unknown";
+
+// module-level counts (from raw entries for accuracy)
+const sc: Record<string, number> = {};
+for (const e of entries) { const s = effectiveStatus(e); sc[s] = (sc[s] || 0) + 1; }
+
+const totalModules    = entries.length;
+const passedModules   = sc.passed ?? 0;
+const failedModules   = sc.failed ?? 0;
+const erroredModules  = sc.process_error ?? 0;
+const timedOutModules = sc.process_timeout ?? 0;
+const loadErrModules  = sc.load_error ?? 0;
+const skippedModules  = (sc.skipped ?? 0) + (sc.host_skip ?? 0);
+
+// case & subtest numbers
+const totalCases    = totals.discoverable_case_count ?? 0;
+const execCases     = totals.executed_case_count ?? 0;
+const passedCases   = caseOut.passed ?? 0;
+const passedSubs    = subOut.passed ?? 0;
+const totalSubs     = totals.executed_subtest_count ?? 0;
+
+const casePassRate    = execCases > 0 ? passedCases / execCases * 100 : 0;
+const subtestPassRate = totalSubs > 0 ? passedSubs / totalSubs * 100 : 0;
+const execReach       = totalCases > 0 ? execCases / totalCases * 100 : 0;
+const overallPass     = totalCases > 0 ? passedCases / totalCases * 100 : 0;
+
+// sort entries: passed first → failed → errors → timeouts → load errors → skipped
+const pri: Record<string, number> = {
+	passed: 0, failed: 1, process_error: 2, process_timeout: 3,
+	load_error: 4, skipped: 5, host_skip: 6,
+};
+const sorted = [...entries].sort((a: any, b: any) => {
+	const pa = pri[effectiveStatus(a)] ?? 99, pb = pri[effectiveStatus(b)] ?? 99;
+	return pa !== pb ? pa - pb : (a.module as string).localeCompare(b.module);
+});
+
+// top failure modules
+const topMods = (derived?.top_modules_by_nonpass ?? []).slice(0, 8);
+const maxGap  = topMods[0]?.count ?? 1;
+
+// meta
+const hostOS   = summary?.host?.system === "Darwin" ? "macOS" : (summary?.host?.system ?? "");
+const hostArch = summary?.host?.machine ?? "";
+const pyVer    = summary?.host?.python ?? "";
+const genDate  = derived?.generated_at_utc ?? "";
+
+/* ── helpers ──────────────────────────────────────────────────── */
+const fN = (n: number) => n.toLocaleString("en-US");
+const fP = (n: number, d = 1) => n.toFixed(d) + "%";
+const fD = (iso: string) => {
+	if (!iso) return "";
+	return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+};
+const short = (m: string) => m.replace(/^test\./, "");
+---
+
+<SiteLayout
+	title="CPython Test Suite — PYRS"
+	description="Live results from running CPython 3.14's full test suite against PYRS."
+>
+{ok ? (
+<div class="tests-page">
+
+	<!-- ── HEADER ─────────────────────────────────────────── -->
+	<section class="header">
+		<span class="kicker">CPython 3.14 Test Suite</span>
+		<h1 class="title">Compatibility, test&nbsp;by&nbsp;test.</h1>
+		<p class="lead">
+			We run every module in CPython's official test suite against PYRS.
+			No cherry-picking — here's exactly where things stand.
+		</p>
+		<div class="meta-row">
+			<span class="pill">{hostOS} {hostArch}</span>
+			<span class="pill">Python {pyVer}</span>
+			<span class="pill">{totalModules} modules</span>
+			<span class="pill">Updated {fD(genDate)}</span>
+		</div>
+	</section>
+
+	<!-- ── MODULE GRID ────────────────────────────────────── -->
+	<section class="grid-section">
+		<h2 class="sh">Every module at a glance</h2>
+		<p class="sd">Each square is one of {totalModules} test modules. Color indicates outcome.</p>
+
+		<div class="module-grid" id="module-grid">
+			{sorted.map((e: any) => {
+				const status = effectiveStatus(e);
+				return (
+					<div
+						class={`gc st-${status}`}
+						data-m={short(e.module)}
+						data-s={status.replace(/_/g, " ")}
+						data-t={e.tests_run ?? 0}
+						aria-label={`${short(e.module)}: ${status.replace(/_/g, " ")}`}
+					/>
+				);
+			})}
+		</div>
+
+		<div class="hover-info" id="hover-info">Hover a square to inspect</div>
+
+		<div class="legend">
+			<span class="li"><span class="ld st-passed" /><span>Passed ({passedModules})</span></span>
+			<span class="li"><span class="ld st-failed" /><span>Failed ({failedModules})</span></span>
+			<span class="li"><span class="ld st-process_error" /><span>Errored ({erroredModules})</span></span>
+			<span class="li"><span class="ld st-process_timeout" /><span>Timed out ({timedOutModules})</span></span>
+			<span class="li"><span class="ld st-load_error" /><span>Load error ({loadErrModules})</span></span>
+			<span class="li"><span class="ld st-skipped" /><span>Skipped ({skippedModules})</span></span>
+		</div>
+	</section>
+
+	<!-- ── KEY METRICS ────────────────────────────────────── -->
+	<section class="metrics">
+		<div class="mc">
+			<span class="mv accent-value">{fN(passedCases)}</span>
+			<span class="ml">test cases passing</span>
+			<span class="mx">of {fN(execCases)} executed</span>
+		</div>
+		<div class="mc">
+			<span class="mv">{fP(casePassRate)}</span>
+			<span class="ml">case pass rate</span>
+			<span class="mx">across executed tests</span>
+		</div>
+		<div class="mc">
+			<span class="mv green-value">{fP(subtestPassRate)}</span>
+			<span class="ml">subtest pass rate</span>
+			<span class="mx">{fN(passedSubs)} of {fN(totalSubs)}</span>
+		</div>
+		<div class="mc">
+			<span class="mv green-value">{passedModules}</span>
+			<span class="ml">modules fully clean</span>
+			<span class="mx">every test passing</span>
+		</div>
+	</section>
+
+	<!-- ── EXECUTION PIPELINE ─────────────────────────────── -->
+	<section class="pipeline">
+		<h2 class="sh">From discovery to passing</h2>
+		<p class="sd">How tests flow through PYRS — from the full suite to confirmed passes.</p>
+
+		<div class="funnel">
+			<div class="step">
+				<div class="step-head">
+					<span class="step-num">{fN(totalCases)}</span>
+					<span class="step-lbl">discoverable test cases</span>
+				</div>
+				<div class="bar-track">
+					<div class="bar-fill fill-disc" style="width:100%"></div>
+				</div>
+			</div>
+			<div class="step">
+				<div class="step-head">
+					<span class="step-num">{fN(execCases)}</span>
+					<span class="step-lbl">executed</span>
+					<span class="step-pct">{fP(execReach)}</span>
+				</div>
+				<div class="bar-track">
+					<div class="bar-fill fill-exec" style={`width:${execReach}%`}></div>
+				</div>
+			</div>
+			<div class="step">
+				<div class="step-head">
+					<span class="step-num">{fN(passedCases)}</span>
+					<span class="step-lbl">passed</span>
+					<span class="step-pct">{fP(overallPass)}</span>
+				</div>
+				<div class="bar-track">
+					<div class="bar-fill fill-pass" style={`width:${overallPass}%`}></div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- ── TOP FAILURE AREAS ──────────────────────────────── -->
+	<section class="gaps">
+		<h2 class="sh">Where the work is concentrated</h2>
+		<p class="sd">Modules with the most non-passing test cases.</p>
+
+		<div class="gap-list">
+			{topMods.map((m: any, i: number) => (
+				<div class="gap-row">
+					<span class="gap-rank">{i + 1}</span>
+					<span class="gap-name">{short(m.name)}</span>
+					<div class="gap-track">
+						<div class="gap-fill" style={`width:${(m.count / maxGap * 100)}%`}></div>
+					</div>
+					<span class="gap-ct">{m.count}</span>
+				</div>
+			))}
+		</div>
+	</section>
+
+</div>
+) : (
+<div class="tests-page">
+	<section class="header">
+		<h1 class="title">Test Suite Results</h1>
+		<p class="lead">Benchmark data not available. Run the benchmark to generate results.</p>
+	</section>
+</div>
+)}
+</SiteLayout>
+
+<!-- ── STYLES ──────────────────────────────────────────────────── -->
+<style>
+	/* ── page ─────────────────────────────────── */
+	.tests-page {
+		display: flex;
+		flex-direction: column;
+		gap: 3.5rem;
+	}
+
+	/* ── header ───────────────────────────────── */
+	.header {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		max-width: 700px;
+	}
+	.kicker {
+		font-size: 0.78rem;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: var(--accent);
+		font-weight: 600;
+	}
+	.title {
+		font-size: 2.6rem;
+		font-weight: 700;
+		line-height: 1.08;
+		letter-spacing: -0.03em;
+		margin: 0;
+	}
+	.lead {
+		font-size: 1.05rem;
+		color: var(--text-muted);
+		line-height: 1.6;
+		margin: 0.25rem 0 0;
+	}
+	.meta-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-top: 0.8rem;
+	}
+	.pill {
+		font-size: 0.74rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: var(--text-muted);
+		background: #201510;
+		border: 1px solid #2e1f17;
+		padding: 0.22rem 0.6rem;
+		border-radius: 2rem;
+	}
+
+	/* ── grid section ─────────────────────────── */
+	.grid-section {
+		background: #110b08;
+		border: 1px solid #2b1e15;
+		border-radius: 0.75rem;
+		padding: 2rem 2rem 1.6rem;
+	}
+	.sh {
+		font-size: 1.25rem;
+		font-weight: 600;
+		letter-spacing: -0.02em;
+		margin: 0 0 0.2rem;
+	}
+	.sd {
+		font-size: 0.9rem;
+		color: var(--text-muted);
+		margin: 0 0 1.4rem;
+	}
+
+	/* module grid */
+	.module-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, 14px);
+		gap: 3px;
+		justify-content: center;
+		padding: 0.5rem 0;
+	}
+	.gc {
+		width: 14px;
+		height: 14px;
+		border-radius: 3px;
+		cursor: pointer;
+		transition: transform 120ms ease, box-shadow 120ms ease;
+		position: relative;
+	}
+	.gc:hover {
+		transform: scale(1.85);
+		z-index: 2;
+		box-shadow: 0 0 0 1.5px rgba(247, 238, 232, 0.45);
+	}
+
+	/* status colors */
+	.st-passed          { background: #5ec97a; }
+	.st-failed          { background: #e97d46; }
+	.st-process_error   { background: #d94f4f; }
+	.st-process_timeout { background: #d4a03a; }
+	.st-load_error      { background: #7d6452; }
+	.st-skipped,
+	.st-host_skip       { background: #473d37; }
+	.st-unknown         { background: #342c27; }
+
+	/* hover info */
+	.hover-info {
+		text-align: center;
+		font-size: 0.82rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: var(--text-muted);
+		min-height: 1.6em;
+		margin: 0.8rem 0 1rem;
+		transition: color 100ms ease;
+	}
+	.hover-info.active {
+		color: var(--text);
+	}
+
+	/* legend */
+	.legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.45rem 1.3rem;
+		justify-content: center;
+	}
+	.li {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+	.ld {
+		display: inline-block;
+		width: 10px;
+		height: 10px;
+		border-radius: 2px;
+		flex-shrink: 0;
+	}
+
+	/* ── metrics ──────────────────────────────── */
+	.metrics {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 1rem;
+	}
+	.mc {
+		background: var(--bg-card);
+		border: 1px solid var(--line);
+		border-radius: 0.6rem;
+		padding: 1.4rem 1.3rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+	}
+	.mv {
+		font-size: 2.2rem;
+		font-weight: 700;
+		letter-spacing: -0.03em;
+		line-height: 1.1;
+		color: var(--text);
+	}
+	.ml {
+		font-size: 0.88rem;
+		font-weight: 500;
+		color: var(--text-muted);
+		margin-top: 0.2rem;
+	}
+	.mx {
+		font-size: 0.78rem;
+		color: rgba(190, 170, 159, 0.6);
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+	}
+	.accent-value { color: var(--accent); }
+	.green-value  { color: #5ec97a; }
+
+	/* ── pipeline ─────────────────────────────── */
+	.pipeline {
+		display: flex;
+		flex-direction: column;
+	}
+	.funnel {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+	.step-head {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+		margin-bottom: 0.35rem;
+	}
+	.step-num {
+		font-size: 1.15rem;
+		font-weight: 600;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+	}
+	.step-lbl {
+		font-size: 0.88rem;
+		color: var(--text-muted);
+	}
+	.step-pct {
+		font-size: 0.8rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: rgba(190, 170, 159, 0.6);
+		margin-left: auto;
+	}
+	.bar-track {
+		height: 1.6rem;
+		background: #1c140f;
+		border-radius: 0.3rem;
+		overflow: hidden;
+	}
+	.bar-fill {
+		height: 100%;
+		border-radius: 0.3rem;
+		min-width: 2px;
+	}
+	.fill-disc { background: #3a322d; }
+	.fill-exec { background: #b05a2a; }
+	.fill-pass { background: #3d8a4e; }
+
+	/* ── gaps ─────────────────────────────────── */
+	.gaps {}
+	.gap-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+	}
+	.gap-row {
+		display: grid;
+		grid-template-columns: 1.4rem minmax(8rem, 13rem) 1fr 2.8rem;
+		align-items: center;
+		gap: 0.6rem;
+	}
+	.gap-rank {
+		font-size: 0.78rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: rgba(190, 170, 159, 0.45);
+		text-align: right;
+	}
+	.gap-name {
+		font-size: 0.85rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: var(--text-muted);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.gap-track {
+		height: 1.1rem;
+		background: #1a130e;
+		border-radius: 0.25rem;
+		overflow: hidden;
+	}
+	.gap-fill {
+		height: 100%;
+		background: #a0542b;
+		border-radius: 0.25rem;
+		min-width: 2px;
+	}
+	.gap-ct {
+		font-size: 0.82rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: var(--text-muted);
+		text-align: right;
+	}
+
+	/* ── responsive ───────────────────────────── */
+	@media (max-width: 1024px) {
+		.metrics { grid-template-columns: repeat(2, 1fr); }
+	}
+	@media (max-width: 760px) {
+		.tests-page { gap: 2.5rem; }
+		.title { font-size: 2rem; }
+		.grid-section { padding: 1.4rem 1.2rem 1.2rem; }
+		.module-grid { grid-template-columns: repeat(auto-fill, 12px); gap: 2px; }
+		.gc { width: 12px; height: 12px; border-radius: 2px; }
+		.metrics { grid-template-columns: 1fr; }
+		.mv { font-size: 1.8rem; }
+		.gap-row { grid-template-columns: 1.2rem minmax(6rem, 9rem) 1fr 2.4rem; gap: 0.4rem; }
+		.gap-name { font-size: 0.78rem; }
+		.legend { gap: 0.35rem 0.9rem; }
+	}
+</style>
+
+<!-- ── CLIENT JS ──────────────────────────────────────────────── -->
+<script>
+	const grid = document.getElementById("module-grid");
+	const info = document.getElementById("hover-info");
+	if (grid && info) {
+		const defaultText = "Hover a square to inspect";
+
+		grid.addEventListener("mouseover", (e) => {
+			const cell = (e.target as HTMLElement).closest(".gc") as HTMLElement | null;
+			if (!cell) return;
+			const m = cell.dataset.m ?? "";
+			const s = cell.dataset.s ?? "";
+			const t = cell.dataset.t ?? "0";
+			info.innerHTML = `<strong>${m}</strong> &middot; ${s} &middot; ${t} tests run`;
+			info.classList.add("active");
+		});
+
+		grid.addEventListener("mouseleave", () => {
+			info.textContent = defaultText;
+			info.classList.remove("active");
+		});
+	}
+</script>
