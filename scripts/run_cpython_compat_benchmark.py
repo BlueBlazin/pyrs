@@ -593,7 +593,7 @@ def finalize_run(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the product-facing CPython compatibility benchmark")
-    parser.add_argument("--runner-bin", default="target/debug/pyrs", help="Interpreter used for execution runs")
+    parser.add_argument("--runner-bin", default="target/release/pyrs", help="Interpreter used for execution runs")
     parser.add_argument("--cpython-bin", default=None, help="CPython 3.14 binary used for inventory/discovery")
     parser.add_argument("--cpython-lib", default=None, help="CPython 3.14 Lib root")
     parser.add_argument("--out-dir", default="perf/cpython_compat_benchmark_latest", help="Output directory for shards and summary")

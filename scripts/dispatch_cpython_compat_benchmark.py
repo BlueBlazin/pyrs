@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Dispatch the product-facing CPython compatibility benchmark across multiple batch runs"
     )
-    parser.add_argument("--runner-bin", default="target/debug/pyrs", help="Interpreter used for execution runs")
+    parser.add_argument("--runner-bin", default="target/release/pyrs", help="Interpreter used for execution runs")
     parser.add_argument("--cpython-bin", default=None, help="CPython 3.14 binary used for discovery/inventory")
     parser.add_argument("--cpython-lib", default=None, help="CPython 3.14 Lib root")
     parser.add_argument(

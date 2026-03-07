@@ -30,7 +30,7 @@ This benchmark is intended to answer:
 ```bash
 /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
   scripts/run_cpython_compat_benchmark.py \
-  --runner-bin target/debug/pyrs \
+  --runner-bin target/release/pyrs \
   --cpython-bin /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
   --cpython-lib .local/Python-3.14.3/Lib \
   --out-dir perf/cpython_compat_benchmark_latest \
@@ -42,7 +42,7 @@ For a dry subset:
 ```bash
 /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
   scripts/run_cpython_compat_benchmark.py \
-  --runner-bin target/debug/pyrs \
+  --runner-bin target/release/pyrs \
   --cpython-bin /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
   --cpython-lib .local/Python-3.14.3/Lib \
   --entry test.test_augassign \
@@ -56,7 +56,7 @@ For a curated batch file:
 ```bash
 /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
   scripts/run_cpython_compat_benchmark.py \
-  --runner-bin target/debug/pyrs \
+  --runner-bin target/release/pyrs \
   --cpython-bin /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
   --cpython-lib .local/Python-3.14.3/Lib \
   --entry-file perf/cpython_compat_batch1.txt \
@@ -74,7 +74,7 @@ For a full sharded run:
 ```bash
 /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
   scripts/dispatch_cpython_compat_benchmark.py \
-  --runner-bin target/debug/pyrs \
+  --runner-bin target/release/pyrs \
   --cpython-bin /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 \
   --cpython-lib .local/Python-3.14.3/Lib \
   --entries-per-batch 25 \
