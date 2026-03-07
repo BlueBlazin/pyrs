@@ -11193,7 +11193,16 @@ impl Vm {
                     }
                 }
                 Some(Value::None) => {
-                    if name != "_types" {
+                    if self
+                        .modules
+                        .get(name)
+                        .cloned()
+                        .is_none_or(|module| {
+                            !self.should_preserve_cached_module_across_sys_modules_eviction(
+                                name, &module,
+                            )
+                        })
+                    {
                         self.modules.remove(name);
                     }
                     return Err(RuntimeError::module_not_found_error(format!(
@@ -11224,9 +11233,7 @@ impl Vm {
                 .is_some_and(Self::module_is_initializing);
             let cached_module = self.modules.get(name).cloned();
             let keep_cached_builtin = cached_module.as_ref().is_some_and(|module| {
-                Self::module_loader_name(module).as_deref() == Some(BUILTIN_MODULE_LOADER)
-                    && name == "_types"
-                    && !self.should_prefer_filesystem_module(name, module)
+                self.should_preserve_cached_module_across_sys_modules_eviction(name, module)
             });
             let keep_cached_extension_initialized = cached_module.as_ref().is_some_and(|module| {
                 self.extension_initialized_names.contains(name)
@@ -11321,6 +11328,15 @@ impl Vm {
                 Err(load_err)
             }
         }
+    }
+
+    fn should_preserve_cached_module_across_sys_modules_eviction(
+        &mut self,
+        name: &str,
+        module: &ObjRef,
+    ) -> bool {
+        Self::module_loader_name(module).as_deref() == Some(BUILTIN_MODULE_LOADER)
+            && !self.should_prefer_filesystem_module(name, module)
     }
 
     pub(super) fn prune_module_cache_for_removed_sys_modules(&mut self, modules_dict: &ObjRef) {

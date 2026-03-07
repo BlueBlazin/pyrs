@@ -14251,6 +14251,44 @@ ok = (\n\
 }
 
 #[test]
+fn cli_import_fresh_json_uses_internal_accelerator_with_default_startup_paths() {
+    let Some(_lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let source = r#"from test.support import import_helper
+import json
+cjson = import_helper.import_fresh_module('json', fresh=['_json'])
+ok = (
+    cjson is not None and
+    cjson.scanner.make_scanner.__module__ == '_json' and
+    cjson.decoder.scanstring.__module__ == '_json'
+)
+print(ok)
+"#;
+    let output = Command::new(pyrs_bin)
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn pyrs cli json fresh-import probe");
+    assert!(
+        output.status.success(),
+        "cli json fresh-import probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(
+        last_line, "True",
+        "expected cli json fresh-import probe to print True, got:\n{}",
+        stdout
+    );
+}
+
+#[test]
 fn executes_property_descriptor_getter() {
     let source = "class C:\n    @property\n    def value(self):\n        return 42\nc = C()\nout = c.value\nclass_attr = C.value\n";
     let module = parser::parse_module(source).expect("parse should succeed");
