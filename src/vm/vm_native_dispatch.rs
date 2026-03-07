@@ -13908,6 +13908,15 @@ impl Vm {
                 self.builtin_testcapi_exception_print(args, kwargs)
             }
             BuiltinFunction::TestCapiConfigGet => self.builtin_testcapi_config_get(args, kwargs),
+            BuiltinFunction::TestCapiGetArgsKeywords => {
+                self.builtin_testcapi_getargs_keywords(args, kwargs)
+            }
+            BuiltinFunction::TestCapiGetArgsKeywordOnly => {
+                self.builtin_testcapi_getargs_keyword_only(args, kwargs)
+            }
+            BuiltinFunction::TestCapiGetArgsPositionalOnlyAndKeywords => {
+                self.builtin_testcapi_getargs_positional_only_and_keywords(args, kwargs)
+            }
             BuiltinFunction::TestCapiPyObjectVectorcall => {
                 self.builtin_testcapi_pyobject_vectorcall(args, kwargs)
             }

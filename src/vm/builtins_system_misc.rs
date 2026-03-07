@@ -1,11 +1,11 @@
 use super::{
-    BigInt, BuiltinFunction, HashMap, InstanceObject, InternalCallOutcome, IpAddr, IteratorKind,
-    IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
-    SIGNAL_SIGINT, SocketAddr, TimeParts, ToSocketAddrs, Value, Vm, apply_uuid_variant,
-    apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil, decode_text_bytes,
-    dict_get_value, format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
-    parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp,
-    unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes,
+    BigInt, BuiltinFunction, CallKeywordArgs, HashMap, InstanceObject, InternalCallOutcome,
+    IpAddr, IteratorKind, IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT,
+    SIGNAL_IGNORE, SIGNAL_SIGINT, SocketAddr, TimeParts, ToSocketAddrs, Value, Vm,
+    apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil,
+    decode_text_bytes, dict_get_value, format_strftime, format_uuid_hex,
+    format_uuid_hyphenated, is_truthy, parse_uuid_like_string, runtime_error_matches_exception,
+    split_unix_timestamp, unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes,
     uuid_timestamp_100ns_since_gregorian, value_from_bigint, value_to_f64, value_to_int,
 };
 use std::rc::Rc;
@@ -63,7 +63,289 @@ fn days_in_month(year: i64, month: u32) -> Option<u32> {
     })
 }
 
+#[derive(Clone)]
+enum TestCapiPattern {
+    Int,
+    Tuple(Vec<TestCapiPattern>),
+}
+
+struct TestCapiKeywordSpec<'a> {
+    function_name: &'a str,
+    param_names: &'a [&'a str],
+    required_count: usize,
+    max_positional: usize,
+}
+
+fn testcapi_pattern_arity(pattern: &TestCapiPattern) -> usize {
+    match pattern {
+        TestCapiPattern::Int => 1,
+        TestCapiPattern::Tuple(items) => items.iter().map(testcapi_pattern_arity).sum(),
+    }
+}
+
+fn testcapi_sequence_values(value: Value) -> Result<Vec<Value>, RuntimeError> {
+    match value {
+        Value::Tuple(tuple) => match &*tuple.kind() {
+            Object::Tuple(values) => Ok(values.clone()),
+            _ => Err(RuntimeError::type_error("argument must be a tuple")),
+        },
+        Value::List(list) => match &*list.kind() {
+            Object::List(values) => Ok(values.clone()),
+            _ => Err(RuntimeError::type_error("argument must be a tuple")),
+        },
+        _ => Err(RuntimeError::type_error("argument must be a tuple")),
+    }
+}
+
+fn testcapi_parse_pattern(
+    pattern: &TestCapiPattern,
+    value: Value,
+    out: &mut Vec<i64>,
+) -> Result<(), RuntimeError> {
+    match pattern {
+        TestCapiPattern::Int => {
+            out.push(value_to_int(value)?);
+            Ok(())
+        }
+        TestCapiPattern::Tuple(items) => {
+            let values = testcapi_sequence_values(value)?;
+            if values.len() != items.len() {
+                return Err(RuntimeError::type_error("argument has wrong number of elements"));
+            }
+            for (item_pattern, item_value) in items.iter().zip(values) {
+                testcapi_parse_pattern(item_pattern, item_value, out)?;
+            }
+            Ok(())
+        }
+    }
+}
+
 impl Vm {
+    fn bind_testcapi_keyword_args(
+        spec: &TestCapiKeywordSpec<'_>,
+        args: Vec<Value>,
+        kwargs: CallKeywordArgs,
+    ) -> Result<Vec<Option<Value>>, RuntimeError> {
+        if args.len() > spec.max_positional {
+            let total_given = args.len() + kwargs.len();
+            if total_given > spec.param_names.len() {
+                return Err(RuntimeError::type_error(format!(
+                    "{} takes at most {} arguments ({} given)",
+                    spec.function_name,
+                    spec.param_names.len(),
+                    total_given
+                )));
+            }
+            return Err(RuntimeError::type_error(format!(
+                "{} takes at most {} positional arguments ({} given)",
+                spec.function_name, spec.max_positional, args.len()
+            )));
+        }
+
+        let mut bound = vec![None; spec.param_names.len()];
+        for (idx, value) in args.into_iter().enumerate() {
+            bound[idx] = Some(value);
+        }
+
+        for entry in kwargs.into_entries() {
+            let name = entry.normalized_name;
+            let Some(index) = spec.param_names.iter().position(|param| *param == name) else {
+                return Err(RuntimeError::type_error(format!(
+                    "this function got an unexpected keyword argument '{}'",
+                    name
+                )));
+            };
+            if !entry.key_is_exact_str {
+                return Err(RuntimeError::type_error(
+                    "invalid keyword argument for this function",
+                ));
+            }
+            if bound[index].is_some() {
+                return Err(RuntimeError::type_error(format!(
+                    "{} got multiple values for argument '{}'",
+                    spec.function_name, name
+                )));
+            }
+            bound[index] = Some(entry.value);
+        }
+
+        for (index, name) in spec
+            .param_names
+            .iter()
+            .take(spec.required_count)
+            .enumerate()
+        {
+            if bound[index].is_none() {
+                return Err(RuntimeError::type_error(format!(
+                    "{} missing required argument '{}' (pos {})",
+                    spec.function_name,
+                    name,
+                    index + 1
+                )));
+            }
+        }
+        Ok(bound)
+    }
+
+    pub(super) fn builtin_testcapi_getargs_keywords(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_testcapi_getargs_keywords_with_keywords(
+            args,
+            CallKeywordArgs::from_normalized_map(kwargs, None),
+        )
+    }
+
+    pub(super) fn builtin_testcapi_getargs_keywords_with_keywords(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: CallKeywordArgs,
+    ) -> Result<Value, RuntimeError> {
+        let spec = TestCapiKeywordSpec {
+            function_name: "function",
+            param_names: &["arg1", "arg2", "arg3", "arg4", "arg5"],
+            required_count: 2,
+            max_positional: 5,
+        };
+        let patterns = [
+            TestCapiPattern::Tuple(vec![TestCapiPattern::Int, TestCapiPattern::Int]),
+            TestCapiPattern::Int,
+            TestCapiPattern::Tuple(vec![
+                TestCapiPattern::Int,
+                TestCapiPattern::Tuple(vec![TestCapiPattern::Int, TestCapiPattern::Int]),
+            ]),
+            TestCapiPattern::Tuple(vec![
+                TestCapiPattern::Int,
+                TestCapiPattern::Int,
+                TestCapiPattern::Int,
+            ]),
+            TestCapiPattern::Int,
+        ];
+        let bound = Self::bind_testcapi_keyword_args(&spec, args, kwargs)?;
+        let mut values = vec![-1; 10];
+        let mut offset = 0usize;
+        for (maybe_value, pattern) in bound.into_iter().zip(patterns.iter()) {
+            let arity = testcapi_pattern_arity(pattern);
+            if let Some(value) = maybe_value {
+                let mut parsed = Vec::with_capacity(arity);
+                testcapi_parse_pattern(pattern, value, &mut parsed)?;
+                for parsed_value in parsed {
+                    values[offset] = parsed_value;
+                    offset += 1;
+                }
+            } else {
+                offset += arity;
+            }
+        }
+        Ok(self.heap.alloc_tuple(
+            values.into_iter().map(Value::Int).collect::<Vec<_>>(),
+        ))
+    }
+
+    pub(super) fn builtin_testcapi_getargs_keyword_only(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_testcapi_getargs_keyword_only_with_keywords(
+            args,
+            CallKeywordArgs::from_normalized_map(kwargs, None),
+        )
+    }
+
+    pub(super) fn builtin_testcapi_getargs_keyword_only_with_keywords(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: CallKeywordArgs,
+    ) -> Result<Value, RuntimeError> {
+        let spec = TestCapiKeywordSpec {
+            function_name: "function",
+            param_names: &["required", "optional", "keyword_only"],
+            required_count: 1,
+            max_positional: 2,
+        };
+        let bound = Self::bind_testcapi_keyword_args(&spec, args, kwargs)?;
+        let mut values = [-1, -1, -1];
+        for (idx, maybe_value) in bound.into_iter().enumerate() {
+            if let Some(value) = maybe_value {
+                values[idx] = value_to_int(value)?;
+            }
+        }
+        Ok(self
+            .heap
+            .alloc_tuple(values.into_iter().map(Value::Int).collect::<Vec<_>>()))
+    }
+
+    pub(super) fn builtin_testcapi_getargs_positional_only_and_keywords(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_testcapi_getargs_positional_only_and_keywords_with_keywords(
+            args,
+            CallKeywordArgs::from_normalized_map(kwargs, None),
+        )
+    }
+
+    pub(super) fn builtin_testcapi_getargs_positional_only_and_keywords_with_keywords(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: CallKeywordArgs,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "function takes at least 1 positional argument (0 given)",
+            ));
+        }
+        if args.len() > 3 {
+            let total_given = args.len() + kwargs.len();
+            if total_given > 3 {
+                return Err(RuntimeError::type_error(format!(
+                    "function takes at most 3 arguments ({} given)",
+                    total_given
+                )));
+            }
+            return Err(RuntimeError::type_error(format!(
+                "function takes at most 3 positional arguments ({} given)",
+                args.len()
+            )));
+        }
+
+        let positional_count = args.len();
+        let mut values = [-1, -1, -1];
+        for (idx, value) in args.into_iter().enumerate() {
+            values[idx] = value_to_int(value)?;
+        }
+        let mut keyword_bound = positional_count >= 3;
+
+        for entry in kwargs.into_entries() {
+            if entry.normalized_name != "keyword" {
+                return Err(RuntimeError::type_error(format!(
+                    "this function got an unexpected keyword argument '{}'",
+                    entry.normalized_name
+                )));
+            }
+            if !entry.key_is_exact_str {
+                return Err(RuntimeError::type_error(
+                    "invalid keyword argument for this function",
+                ));
+            }
+            if keyword_bound {
+                return Err(RuntimeError::type_error(
+                    "function got multiple values for argument 'keyword'",
+                ));
+            }
+            values[2] = value_to_int(entry.value)?;
+            keyword_bound = true;
+        }
+
+        Ok(self
+            .heap
+            .alloc_tuple(values.into_iter().map(Value::Int).collect::<Vec<_>>()))
+    }
+
     fn uuid_node_from_host(&self) -> i64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         let host_name = self

@@ -18359,6 +18359,145 @@ fn exposes_testcapi_scalar_and_time_helpers() {
 }
 
 #[test]
+fn dict_expansion_preserves_string_subclass_keyword_entries_for_function_binding() {
+    let source = r#"class BadStr(str):
+    def __eq__(self, other):
+        return True
+    def __hash__(self):
+        return 123456789
+
+def f(*, x=None):
+    return x
+
+value = f(**{BadStr("x"): 3})
+duplicate_message = None
+try:
+    f(**{BadStr("x"): 1, "x": 2})
+except TypeError as exc:
+    duplicate_message = str(exc)
+
+ok = value == 3 and duplicate_message == "f() got multiple values for argument 'x'"
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn exposes_testcapi_getargs_keyword_helpers() {
+    let source = r#"import _testcapi
+
+class BadStrEqTrue(str):
+    def __eq__(self, other):
+        return True
+    def __hash__(self):
+        return 123456789
+
+class BadStrEqFalse(str):
+    def __eq__(self, other):
+        return False
+    def __hash__(self):
+        return 987654321
+
+missing_message = None
+too_many_message = None
+unexpected_message = None
+surrogate_message = None
+too_many_positional_message = None
+too_many_total_message = None
+invalid_keyword_message_1 = None
+invalid_keyword_message_2 = None
+unexpected_badstr = None
+positional_only_missing_message = None
+positional_only_empty_keyword_message = None
+
+try:
+    _testcapi.getargs_keywords(arg1=(1, 2))
+except TypeError as exc:
+    missing_message = str(exc)
+
+try:
+    _testcapi.getargs_keywords((1, 2), 3, (4, (5, 6)), (7, 8, 9), 10, 111)
+except TypeError as exc:
+    too_many_message = str(exc)
+
+try:
+    _testcapi.getargs_keywords((1, 2), 3, arg5=10, arg666=666)
+except TypeError as exc:
+    unexpected_message = str(exc)
+
+try:
+    _testcapi.getargs_keywords((1, 2), 3, (4, (5, 6)), (7, 8, 9), **{'\udc80': 10})
+except TypeError as exc:
+    surrogate_message = str(exc)
+
+try:
+    _testcapi.getargs_keyword_only(1, 2, 3)
+except TypeError as exc:
+    too_many_positional_message = str(exc)
+
+try:
+    _testcapi.getargs_keyword_only(1, 2, 3, keyword_only=5)
+except TypeError as exc:
+    too_many_total_message = str(exc)
+
+try:
+    _testcapi.getargs_keyword_only(1, 2, **{BadStrEqTrue("keyword_only"): 3})
+except TypeError as exc:
+    invalid_keyword_message_1 = str(exc)
+
+try:
+    _testcapi.getargs_keyword_only(1, 2, **{BadStrEqFalse("keyword_only"): 3})
+except TypeError as exc:
+    invalid_keyword_message_2 = str(exc)
+
+try:
+    _testcapi.getargs_keyword_only(1, 2, **{BadStrEqTrue("monster"): 666})
+except TypeError as exc:
+    unexpected_badstr = str(exc)
+
+try:
+    _testcapi.getargs_positional_only_and_keywords()
+except TypeError as exc:
+    positional_only_missing_message = str(exc)
+
+try:
+    _testcapi.getargs_positional_only_and_keywords(1, 2, **{'': 666})
+except TypeError as exc:
+    positional_only_empty_keyword_message = str(exc)
+
+ok = (
+    _testcapi.getargs_keywords((1, 2), 3, (4, (5, 6)), arg4=(7, 8, 9), arg5=10)
+        == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+    and _testcapi.getargs_keywords(arg1=(1, 2), arg2=3, arg5=10)
+        == (1, 2, 3, -1, -1, -1, -1, -1, -1, 10)
+    and _testcapi.getargs_keyword_only(1, 2) == (1, 2, -1)
+    and _testcapi.getargs_keyword_only(required=1, keyword_only=3) == (1, -1, 3)
+    and _testcapi.getargs_positional_only_and_keywords(1, 2, keyword=3) == (1, 2, 3)
+    and _testcapi.getargs_positional_only_and_keywords(1, keyword=3) == (1, -1, 3)
+    and missing_message == "function missing required argument 'arg2' (pos 2)"
+    and too_many_message == "function takes at most 5 arguments (6 given)"
+    and unexpected_message == "this function got an unexpected keyword argument 'arg666'"
+    and surrogate_message == "this function got an unexpected keyword argument '\udc80'"
+    and too_many_positional_message == "function takes at most 2 positional arguments (3 given)"
+    and too_many_total_message == "function takes at most 3 arguments (4 given)"
+    and invalid_keyword_message_1 == "invalid keyword argument for this function"
+    and invalid_keyword_message_2 == "invalid keyword argument for this function"
+    and unexpected_badstr.startswith("this function got an unexpected keyword argument")
+    and positional_only_missing_message == "function takes at least 1 positional argument (0 given)"
+    and positional_only_empty_keyword_message == "this function got an unexpected keyword argument ''"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn unary_negation_promotes_i64_min_to_python_bigint() {
     let source = "value = -((-9223372036854775807) - 1)\nok = (value == 2**63 and type(value) is int)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

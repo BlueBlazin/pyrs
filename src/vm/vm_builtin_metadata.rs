@@ -2,7 +2,7 @@ use std::cell::Cell;
 
 use super::{
     AttrAccessOutcome, AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, Block, BoundMethod,
-    BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, ClassObject, CodeObject,
+    BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, CallKeywordArgs, ClassObject, CodeObject,
     DICT_BACKING_STORAGE_ATTR, ExceptionObject, FLOAT_BACKING_STORAGE_ATTR,
     FROZENSET_BACKING_STORAGE_ATTR, Frame, HashMap, INSTANCE_DICT_STORAGE_ATTR,
     INT_BACKING_STORAGE_ATTR, InstanceObject, InternalCallOutcome, IteratorKind,
@@ -53,8 +53,7 @@ enum InternalCallDispatch {
     TailCall {
         callable: Value,
         args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-        kwargs_order: Option<Vec<String>>,
+        kwargs: CallKeywordArgs,
     },
     NeedsRun(bool),
     Return(InternalCallOutcome),
@@ -5446,6 +5445,29 @@ impl Vm {
         }
     }
 
+    pub(super) fn call_builtin_with_keywords(
+        &mut self,
+        builtin: BuiltinFunction,
+        args: Vec<Value>,
+        kwargs: CallKeywordArgs,
+    ) -> Result<Value, RuntimeError> {
+        match builtin {
+            BuiltinFunction::TestCapiGetArgsKeywords => {
+                self.builtin_testcapi_getargs_keywords_with_keywords(args, kwargs)
+            }
+            BuiltinFunction::TestCapiGetArgsKeywordOnly => {
+                self.builtin_testcapi_getargs_keyword_only_with_keywords(args, kwargs)
+            }
+            BuiltinFunction::TestCapiGetArgsPositionalOnlyAndKeywords => {
+                self.builtin_testcapi_getargs_positional_only_and_keywords_with_keywords(args, kwargs)
+            }
+            _ => {
+                let (kwargs_map, kwargs_order) = kwargs.into_normalized_map_and_order();
+                self.call_builtin_with_kwarg_order(builtin, args, kwargs_map, kwargs_order)
+            }
+        }
+    }
+
     pub(super) fn call_internal(
         &mut self,
         callable: Value,
@@ -5477,8 +5499,7 @@ impl Vm {
         &mut self,
         method: ObjRef,
         args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-        kwargs_order: Option<Vec<String>>,
+        kwargs: CallKeywordArgs,
         caller_depth: usize,
         caller_ip: usize,
     ) -> Result<InternalCallDispatch, RuntimeError> {
@@ -5492,10 +5513,11 @@ impl Vm {
                 let mut bound_args = Vec::with_capacity(args.len() + 1);
                 bound_args.push(self.receiver_value(&method_data.receiver)?);
                 bound_args.extend(args);
+                let (kwargs_map, kwargs_order) = kwargs.into_normalized_map_and_order();
                 self.push_function_call_from_obj_with_kwarg_order(
                     &method_data.function,
                     bound_args,
-                    kwargs,
+                    kwargs_map,
                     kwargs_order,
                 )?;
                 Ok(InternalCallDispatch::NeedsRun(
@@ -5503,11 +5525,12 @@ impl Vm {
                 ))
             }
             BoundMethodDispatchKind::Native(native_kind) => {
+                let kwargs_map = kwargs.cloned_normalized_map();
                 let native_call = self.call_native_method(
                     native_kind,
                     method_data.receiver.clone(),
                     args,
-                    kwargs,
+                    kwargs_map,
                 );
                 match native_call {
                     Ok(NativeCallResult::Value(result)) => Ok(InternalCallDispatch::Return(
@@ -5589,7 +5612,6 @@ impl Vm {
                     callable,
                     args: call_args,
                     kwargs,
-                    kwargs_order,
                 })
             }
         }
@@ -5600,12 +5622,11 @@ impl Vm {
         &mut self,
         instance: ObjRef,
         args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-        kwargs_order: Option<Vec<String>>,
+        kwargs: CallKeywordArgs,
     ) -> Result<InternalCallDispatch, RuntimeError> {
         let receiver = Value::Instance(instance.clone());
         if Self::cpython_proxy_raw_ptr_from_value(&receiver).is_some() {
-            let value = self.call_cpython_proxy_object(&receiver, args, kwargs)?;
+            let value = self.call_cpython_proxy_object(&receiver, args, kwargs.cloned_normalized_map())?;
             return Ok(InternalCallDispatch::Return(
                 InternalCallOutcome::Value(value),
             ));
@@ -5616,7 +5637,6 @@ impl Vm {
                     callable: call_target,
                     args,
                     kwargs,
-                    kwargs_order,
                 });
             }
             Ok(AttrAccessOutcome::ExceptionHandled) => {
@@ -5632,7 +5652,6 @@ impl Vm {
                 callable: call_target,
                 args,
                 kwargs,
-                kwargs_order,
             });
         }
         Err(RuntimeError::type_error("attempted to call non-function"))
@@ -5643,8 +5662,7 @@ impl Vm {
         &mut self,
         class: ObjRef,
         args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-        kwargs_order: Option<Vec<String>>,
+        kwargs: CallKeywordArgs,
         trace_class_call: bool,
     ) -> Result<InternalCallDispatch, RuntimeError> {
         let (class_name, metaclass_name) = match &*class.kind() {
@@ -5668,7 +5686,8 @@ impl Vm {
         }
         let proxy_value = Value::Class(class.clone());
         if Self::cpython_proxy_raw_ptr_from_value(&proxy_value).is_some() {
-            let value = self.call_cpython_proxy_object(&proxy_value, args, kwargs)?;
+            let value =
+                self.call_cpython_proxy_object(&proxy_value, args, kwargs.cloned_normalized_map())?;
             if trace_class_call {
                 eprintln!(
                     "[class-call] proxy-return class={} type={}",
@@ -5695,20 +5714,24 @@ impl Vm {
                 callable: call_target,
                 args,
                 kwargs,
-                kwargs_order,
             });
         }
         if let Some(message) = self.class_disallow_instantiation_message(&class) {
             return Err(RuntimeError::type_error(message));
         }
         if self.class_is_exact_types_generic_alias(&class) {
-            let value = self.instantiate_generic_alias_class(class.clone(), args, kwargs)?;
+            let value = self.instantiate_generic_alias_class(
+                class.clone(),
+                args,
+                kwargs.cloned_normalized_map(),
+            )?;
             return Ok(InternalCallDispatch::Return(
                 InternalCallOutcome::Value(value),
             ));
         }
         if self.class_has_builtin_type_base(&class) {
-            let value = self.instantiate_type_derived_class(class, args, kwargs)?;
+            let value =
+                self.instantiate_type_derived_class(class, args, kwargs.cloned_normalized_map())?;
             return Ok(InternalCallDispatch::Return(
                 InternalCallOutcome::Value(value),
             ));
@@ -5738,12 +5761,7 @@ impl Vm {
                     new_args.push(class_value.clone());
                 }
                 new_args.extend(args.clone());
-                match self.call_internal_with_kwarg_order(
-                    new_callable,
-                    new_args,
-                    kwargs.clone(),
-                    kwargs_order.clone(),
-                )? {
+                match self.call_internal_with_keywords(new_callable, new_args, kwargs.clone())? {
                     InternalCallOutcome::Value(value) => {
                         if !self.value_is_instance_of(&value, &class_value)? {
                             if trace_class_call {
@@ -5847,7 +5865,7 @@ impl Vm {
                         &instance,
                         &fields,
                         args.clone(),
-                        kwargs.clone(),
+                        kwargs.cloned_normalized_map(),
                     )?;
                     if trace_class_call {
                         eprintln!(
@@ -5873,7 +5891,6 @@ impl Vm {
                     &self.heap,
                     init_args,
                     kwargs,
-                    kwargs_order.clone(),
                 ) {
                     Ok(bindings) => bindings,
                     Err(err) => {
@@ -5941,12 +5958,7 @@ impl Vm {
             let mut init_args = Vec::with_capacity(args.len() + 1);
             init_args.push(Value::Instance(instance.clone()));
             init_args.extend(args);
-            match self.call_internal_with_kwarg_order(
-                init_callable,
-                init_args,
-                kwargs,
-                kwargs_order.clone(),
-            )? {
+            match self.call_internal_with_keywords(init_callable, init_args, kwargs)? {
                 InternalCallOutcome::Value(Value::None) => {
                     if trace_class_call {
                         eprintln!(
@@ -5976,7 +5988,12 @@ impl Vm {
                 Value::Instance(instance),
             )))
         } else if let Some(fields) = self.class_namedtuple_fields(&class) {
-            self.bind_namedtuple_instance_fields(&instance, &fields, args, kwargs)?;
+            self.bind_namedtuple_instance_fields(
+                &instance,
+                &fields,
+                args,
+                kwargs.cloned_normalized_map(),
+            )?;
             if trace_class_call {
                 eprintln!(
                     "[class-call] return-namedtuple-no-init class={} type=instance",
@@ -5992,14 +6009,15 @@ impl Vm {
                     instance_data
                         .attrs
                         .insert("args".to_string(), self.heap.alloc_tuple(args.clone()));
-                    for (name, value) in kwargs {
+                    for (name, value) in kwargs.cloned_normalized_map() {
                         instance_data.attrs.insert(name, value);
                     }
                 } else {
                     return Err(RuntimeError::new("exception instance construction failed"));
                 }
             } else if self.class_has_builtin_list_base(&class) {
-                let list_value = self.call_builtin(BuiltinFunction::List, args, kwargs)?;
+                let list_value =
+                    self.call_builtin(BuiltinFunction::List, args, kwargs.cloned_normalized_map())?;
                 let Value::List(_) = list_value else {
                     return Err(RuntimeError::new("list constructor returned non-list"));
                 };
@@ -6011,7 +6029,11 @@ impl Vm {
                     return Err(RuntimeError::new("list instance construction failed"));
                 }
             } else if self.class_has_builtin_tuple_base(&class) {
-                let tuple_value = self.call_builtin(BuiltinFunction::Tuple, args, kwargs)?;
+                let tuple_value = self.call_builtin(
+                    BuiltinFunction::Tuple,
+                    args,
+                    kwargs.cloned_normalized_map(),
+                )?;
                 let Value::Tuple(_) = tuple_value else {
                     return Err(RuntimeError::new("tuple constructor returned non-tuple"));
                 };
@@ -6023,7 +6045,8 @@ impl Vm {
                     return Err(RuntimeError::new("tuple instance construction failed"));
                 }
             } else if self.class_has_builtin_str_base(&class) {
-                let str_value = self.call_builtin(BuiltinFunction::Str, args, kwargs)?;
+                let str_value =
+                    self.call_builtin(BuiltinFunction::Str, args, kwargs.cloned_normalized_map())?;
                 let Value::Str(_) = str_value else {
                     return Err(RuntimeError::new("str constructor returned non-str"));
                 };
@@ -6035,7 +6058,11 @@ impl Vm {
                     return Err(RuntimeError::new("str instance construction failed"));
                 }
             } else if self.class_has_builtin_bytes_base(&class) {
-                let bytes_value = self.call_builtin(BuiltinFunction::Bytes, args, kwargs)?;
+                let bytes_value = self.call_builtin(
+                    BuiltinFunction::Bytes,
+                    args,
+                    kwargs.cloned_normalized_map(),
+                )?;
                 let Value::Bytes(_) = bytes_value else {
                     return Err(RuntimeError::new("bytes constructor returned non-bytes"));
                 };
@@ -6047,7 +6074,11 @@ impl Vm {
                     return Err(RuntimeError::new("bytes instance construction failed"));
                 }
             } else if self.class_has_builtin_bytearray_base(&class) {
-                let bytearray_value = self.call_builtin(BuiltinFunction::ByteArray, args, kwargs)?;
+                let bytearray_value = self.call_builtin(
+                    BuiltinFunction::ByteArray,
+                    args,
+                    kwargs.cloned_normalized_map(),
+                )?;
                 let Value::ByteArray(_) = bytearray_value else {
                     return Err(RuntimeError::new(
                         "bytearray constructor returned non-bytearray",
@@ -6061,7 +6092,7 @@ impl Vm {
                     return Err(RuntimeError::new("bytearray instance construction failed"));
                 }
             } else if self.class_has_builtin_int_base(&class) {
-                let int_value = self.builtin_int(args, kwargs)?;
+                let int_value = self.builtin_int(args, kwargs.cloned_normalized_map())?;
                 let (Value::Int(_) | Value::BigInt(_) | Value::Bool(_)) = int_value else {
                     return Err(RuntimeError::new("int constructor returned non-int"));
                 };
@@ -6073,7 +6104,7 @@ impl Vm {
                     return Err(RuntimeError::new("int instance construction failed"));
                 }
             } else if self.class_has_builtin_float_base(&class) {
-                let float_value = self.builtin_float(args, kwargs)?;
+                let float_value = self.builtin_float(args, kwargs.cloned_normalized_map())?;
                 let Value::Float(_) = float_value else {
                     return Err(RuntimeError::new("float constructor returned non-float"));
                 };
@@ -6085,7 +6116,7 @@ impl Vm {
                     return Err(RuntimeError::new("float instance construction failed"));
                 }
             } else if self.class_has_builtin_complex_base(&class) {
-                let complex_value = self.builtin_complex(args, kwargs)?;
+                let complex_value = self.builtin_complex(args, kwargs.cloned_normalized_map())?;
                 let Value::Complex { .. } = complex_value else {
                     return Err(RuntimeError::new(
                         "complex constructor returned non-complex",
@@ -6099,7 +6130,8 @@ impl Vm {
                     return Err(RuntimeError::new("complex instance construction failed"));
                 }
             } else if self.class_has_builtin_dict_base(&class) {
-                let dict_value = self.call_builtin(BuiltinFunction::Dict, args, kwargs)?;
+                let dict_value =
+                    self.call_builtin(BuiltinFunction::Dict, args, kwargs.cloned_normalized_map())?;
                 let Value::Dict(_) = dict_value else {
                     return Err(RuntimeError::new("dict constructor returned non-dict"));
                 };
@@ -6111,7 +6143,8 @@ impl Vm {
                     return Err(RuntimeError::new("dict instance construction failed"));
                 }
             } else if self.class_has_builtin_set_base(&class) {
-                let set_value = self.call_builtin(BuiltinFunction::Set, args, kwargs)?;
+                let set_value =
+                    self.call_builtin(BuiltinFunction::Set, args, kwargs.cloned_normalized_map())?;
                 let Value::Set(_) = set_value else {
                     return Err(RuntimeError::new("set constructor returned non-set"));
                 };
@@ -6123,7 +6156,11 @@ impl Vm {
                     return Err(RuntimeError::new("set instance construction failed"));
                 }
             } else if self.class_has_builtin_frozenset_base(&class) {
-                let frozenset_value = self.call_builtin(BuiltinFunction::FrozenSet, args, kwargs)?;
+                let frozenset_value = self.call_builtin(
+                    BuiltinFunction::FrozenSet,
+                    args,
+                    kwargs.cloned_normalized_map(),
+                )?;
                 let Value::FrozenSet(_) = frozenset_value else {
                     return Err(RuntimeError::new(
                         "frozenset constructor returned non-frozenset",
@@ -6140,7 +6177,11 @@ impl Vm {
                     ));
                 }
             } else if self.class_has_builtin_property_base(&class) {
-                let descriptor_value = self.call_builtin(BuiltinFunction::Property, args, kwargs)?;
+                let descriptor_value = self.call_builtin(
+                    BuiltinFunction::Property,
+                    args,
+                    kwargs.cloned_normalized_map(),
+                )?;
                 let Value::Instance(descriptor_instance) = descriptor_value else {
                     return Err(RuntimeError::new(
                         "property constructor returned non-property",
@@ -6209,8 +6250,7 @@ impl Vm {
         &mut self,
         func: ObjRef,
         mut args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-        kwargs_order: Option<Vec<String>>,
+        kwargs: CallKeywordArgs,
     ) -> Result<bool, RuntimeError> {
         let depth_before = self.frames.len();
         if kwargs.is_empty() {
@@ -6234,7 +6274,7 @@ impl Vm {
                 _ => self.push_function_call_from_obj(&func, args, HashMap::new())?,
             }
         } else {
-            self.push_function_call_from_obj_with_kwarg_order(&func, args, kwargs, kwargs_order)?;
+            self.push_function_call_from_obj_with_keywords(&func, args, kwargs)?;
         }
         Ok(self.frames.len() > depth_before)
     }
@@ -6317,7 +6357,7 @@ impl Vm {
         &self,
         other: &Value,
         args: &[Value],
-        kwargs: &HashMap<String, Value>,
+        kwargs: &CallKeywordArgs,
     ) {
         if !env_var_present_cached("PYRS_TRACE_CALL_NON_FUNCTION") {
             return;
@@ -6343,10 +6383,18 @@ impl Vm {
             if env_var_present_cached("PYRS_TRACE_CALL_NON_FUNCTION_ARGS") {
                 let args_summary = args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
                 let mut kw_entries = kwargs.iter().collect::<Vec<_>>();
-                kw_entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+                kw_entries.sort_by(|left, right| {
+                    left.normalized_name.cmp(&right.normalized_name)
+                });
                 let kwargs_summary = kw_entries
                     .into_iter()
-                    .map(|(key, value)| format!("{key}={}", format_repr(value)))
+                    .map(|entry| {
+                        format!(
+                            "{}={}",
+                            entry.normalized_name,
+                            format_repr(&entry.value)
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 eprintln!(
@@ -6451,14 +6499,32 @@ impl Vm {
         kwargs: HashMap<String, Value>,
         kwargs_order: Option<Vec<String>>,
     ) -> Result<InternalCallOutcome, RuntimeError> {
+        let kwargs = CallKeywordArgs::from_normalized_map(kwargs, kwargs_order);
+        self.call_internal_with_keywords(callable, args, kwargs)
+    }
+
+    pub(super) fn call_internal_with_keywords(
+        &mut self,
+        callable: Value,
+        args: Vec<Value>,
+        kwargs: CallKeywordArgs,
+    ) -> Result<InternalCallOutcome, RuntimeError> {
         if env_var_present_cached("PYRS_TRACE_CALLABLE_NONE_BT") && matches!(callable, Value::None)
         {
             let args_summary = args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
             let mut kw_entries = kwargs.iter().collect::<Vec<_>>();
-            kw_entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            kw_entries.sort_by(|left, right| {
+                left.normalized_name.cmp(&right.normalized_name)
+            });
             let kwargs_summary = kw_entries
                 .into_iter()
-                .map(|(name, value)| format!("{name}={}", format_repr(value)))
+                .map(|entry| {
+                    format!(
+                        "{}={}",
+                        entry.normalized_name,
+                        format_repr(&entry.value)
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             eprintln!(
@@ -6508,17 +6574,15 @@ impl Vm {
         let mut callable = callable;
         let mut args = args;
         let mut kwargs = kwargs;
-        let mut kwargs_order = kwargs_order;
         let needs_run = loop {
             match callable {
                 Value::Function(func) => {
-                    break self.dispatch_internal_function_call(func, args, kwargs, kwargs_order)?;
+                    break self.dispatch_internal_function_call(func, args, kwargs)?;
                 }
                 Value::BoundMethod(method) => match self.dispatch_internal_bound_method_call(
                     method,
                     args,
                     kwargs,
-                    kwargs_order,
                     caller_depth,
                     caller_ip,
                 )? {
@@ -6526,20 +6590,16 @@ impl Vm {
                         callable: next_callable,
                         args: next_args,
                         kwargs: next_kwargs,
-                        kwargs_order: next_kwargs_order,
                     } => {
                         callable = next_callable;
                         args = next_args;
                         kwargs = next_kwargs;
-                        kwargs_order = next_kwargs_order;
                     }
                     InternalCallDispatch::NeedsRun(needs_run) => break needs_run,
                     InternalCallDispatch::Return(outcome) => return Ok(outcome),
                 },
                 Value::Builtin(builtin) => {
-                    return match self
-                        .call_builtin_with_kwarg_order(builtin, args, kwargs, kwargs_order)
-                    {
+                    return match self.call_builtin_with_keywords(builtin, args, kwargs) {
                         Ok(result) => {
                             if self.caller_exception_handled(caller_depth, caller_ip) {
                                 Ok(InternalCallOutcome::CallerExceptionHandled)
@@ -6560,18 +6620,15 @@ impl Vm {
                     instance,
                     args,
                     kwargs,
-                    kwargs_order,
                 )? {
                     InternalCallDispatch::TailCall {
                         callable: next_callable,
                         args: next_args,
                         kwargs: next_kwargs,
-                        kwargs_order: next_kwargs_order,
                     } => {
                         callable = next_callable;
                         args = next_args;
                         kwargs = next_kwargs;
-                        kwargs_order = next_kwargs_order;
                     }
                     InternalCallDispatch::NeedsRun(needs_run) => break needs_run,
                     InternalCallDispatch::Return(outcome) => return Ok(outcome),
@@ -6580,25 +6637,23 @@ impl Vm {
                     class,
                     args,
                     kwargs,
-                    kwargs_order,
                     trace_class_call,
                 )? {
                     InternalCallDispatch::TailCall {
                         callable: next_callable,
                         args: next_args,
                         kwargs: next_kwargs,
-                        kwargs_order: next_kwargs_order,
                     } => {
                         callable = next_callable;
                         args = next_args;
                         kwargs = next_kwargs;
-                        kwargs_order = next_kwargs_order;
                     }
                     InternalCallDispatch::NeedsRun(needs_run) => break needs_run,
                     InternalCallDispatch::Return(outcome) => return Ok(outcome),
                 },
                 Value::ExceptionType(name) => {
-                    let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
+                    let value =
+                        self.instantiate_exception_type(&name, &args, &kwargs.cloned_normalized_map())?;
                     return Ok(InternalCallOutcome::Value(value));
                 }
                 other => {

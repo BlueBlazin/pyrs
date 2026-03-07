@@ -130,6 +130,119 @@ impl FunctionObject {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct CallKeywordArg {
+    pub key: Value,
+    pub normalized_name: String,
+    pub key_is_exact_str: bool,
+    pub value: Value,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CallKeywordArgs {
+    entries: Vec<CallKeywordArg>,
+}
+
+impl CallKeywordArgs {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_normalized_map(
+        mut kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
+    ) -> Self {
+        let mut entries = Vec::with_capacity(kwargs.len());
+        if let Some(order) = kwargs_order {
+            for name in order {
+                if let Some(value) = kwargs.remove(&name) {
+                    entries.push(CallKeywordArg {
+                        key: Value::Str(name.clone()),
+                        normalized_name: name,
+                        key_is_exact_str: true,
+                        value,
+                    });
+                }
+            }
+        }
+        for (name, value) in kwargs {
+            entries.push(CallKeywordArg {
+                key: Value::Str(name.clone()),
+                normalized_name: name,
+                key_is_exact_str: true,
+                value,
+            });
+        }
+        Self { entries }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn push(
+        &mut self,
+        key: Value,
+        normalized_name: String,
+        key_is_exact_str: bool,
+        value: Value,
+    ) {
+        self.entries.push(CallKeywordArg {
+            key,
+            normalized_name,
+            key_is_exact_str,
+            value,
+        });
+    }
+
+    pub fn push_exact_str(&mut self, name: String, value: Value) {
+        self.push(Value::Str(name.clone()), name, true, value);
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &CallKeywordArg> {
+        self.entries.iter()
+    }
+
+    pub fn into_entries(self) -> Vec<CallKeywordArg> {
+        self.entries
+    }
+
+    pub fn normalized_order(&self) -> Option<Vec<String>> {
+        if self.entries.is_empty() {
+            None
+        } else {
+            Some(
+                self.entries
+                    .iter()
+                    .map(|entry| entry.normalized_name.clone())
+                    .collect(),
+            )
+        }
+    }
+
+    pub fn cloned_normalized_map(&self) -> HashMap<String, Value> {
+        self.entries
+            .iter()
+            .map(|entry| (entry.normalized_name.clone(), entry.value.clone()))
+            .collect()
+    }
+
+    pub fn into_normalized_map_and_order(self) -> (HashMap<String, Value>, Option<Vec<String>>) {
+        let mut map = HashMap::with_capacity(self.entries.len());
+        let mut order = Vec::with_capacity(self.entries.len());
+        for entry in self.entries {
+            order.push(entry.normalized_name.clone());
+            map.insert(entry.normalized_name, entry.value);
+        }
+        let order = if order.is_empty() { None } else { Some(order) };
+        (map, order)
+    }
+}
+
 impl fmt::Debug for FunctionObject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let annotations = self.annotations.as_ref().map(ObjRef::id);
@@ -5685,6 +5798,9 @@ pub enum BuiltinFunction {
     TypeAnnotationsGet,
     TestCapiExceptionPrint,
     TestCapiConfigGet,
+    TestCapiGetArgsKeywords,
+    TestCapiGetArgsKeywordOnly,
+    TestCapiGetArgsPositionalOnlyAndKeywords,
     TestCapiPyObjectVectorcall,
     TestCapiPyTimeAsSecondsDouble,
     TestInternalCapiGetRecursionDepth,
@@ -9115,6 +9231,9 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::TypeAnnotationsGet
             | BuiltinFunction::TestCapiExceptionPrint
             | BuiltinFunction::TestCapiConfigGet
+            | BuiltinFunction::TestCapiGetArgsKeywords
+            | BuiltinFunction::TestCapiGetArgsKeywordOnly
+            | BuiltinFunction::TestCapiGetArgsPositionalOnlyAndKeywords
             | BuiltinFunction::TestCapiPyObjectVectorcall
             | BuiltinFunction::TestCapiPyTimeAsSecondsDouble
             | BuiltinFunction::TestInternalCapiGetRecursionDepth

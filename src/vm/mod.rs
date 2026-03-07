@@ -74,10 +74,11 @@ use crate::extensions::{
 use crate::host::{HostCapability, NativeHost, VmHost};
 use crate::parser;
 use crate::runtime::{
-    BigInt, BoundMethod, BuiltinFunction, ClassObject, DictViewKind, ExceptionObject,
-    FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject,
-    MemoryViewObject, ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object,
-    RuntimeError, SuperObject, Value, format_repr, format_value, runtime_get_int_max_str_digits,
+    BigInt, BoundMethod, BuiltinFunction, CallKeywordArgs, ClassObject, DictViewKind,
+    ExceptionObject, FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind,
+    IteratorObject, MemoryViewObject, ModuleObject, NativeMethodKind, NativeMethodObject, Obj,
+    ObjRef, Object, RuntimeError, SuperObject, Value, format_repr, format_value,
+    runtime_get_int_max_str_digits,
 };
 use crate::unicode::{internal_char_from_codepoint, surrogate_codepoint_from_internal_char};
 
@@ -5629,6 +5630,18 @@ impl Vm {
                 ("join_temporary_c_thread", BuiltinFunction::NoOp),
                 ("exception_print", BuiltinFunction::TestCapiExceptionPrint),
                 ("config_get", BuiltinFunction::TestCapiConfigGet),
+                (
+                    "getargs_keywords",
+                    BuiltinFunction::TestCapiGetArgsKeywords,
+                ),
+                (
+                    "getargs_keyword_only",
+                    BuiltinFunction::TestCapiGetArgsKeywordOnly,
+                ),
+                (
+                    "getargs_positional_only_and_keywords",
+                    BuiltinFunction::TestCapiGetArgsPositionalOnlyAndKeywords,
+                ),
                 (
                     "pyobject_vectorcall",
                     BuiltinFunction::TestCapiPyObjectVectorcall,
@@ -11868,14 +11881,13 @@ fn function_name_for_argument_errors(func: &FunctionObject) -> String {
 /// Bind positional/keyword call inputs to a function signature.
 ///
 /// Semantics intentionally follow CPython 3.14 for positional-only handling,
-/// default filling, duplicate detection, and keyword insertion order preservation
-/// (`kwargs_order`) for `**kwargs`.
+/// default filling, duplicate detection, and keyword insertion order
+/// preservation for `**kwargs`.
 fn bind_arguments(
     func: &FunctionObject,
     heap: &Heap,
     mut positional: Vec<Value>,
-    mut kwargs: HashMap<String, Value>,
-    kwargs_order: Option<Vec<String>>,
+    kwargs: CallKeywordArgs,
 ) -> Result<BoundArguments, RuntimeError> {
     let function_name = function_name_for_argument_errors(func);
     let posonly_len = func.code.posonly_params.len();
@@ -11984,19 +11996,9 @@ fn bind_arguments(
     let mut extra_kwargs: Vec<(String, Value)> = Vec::new();
     let mut extra_kwargs_seen: HashSet<String> = HashSet::new();
     let mut kwonly_values: HashMap<String, Value> = HashMap::new();
-    let mut ordered_kwargs: Vec<(String, Value)> = Vec::new();
-    if let Some(order) = kwargs_order {
-        for name in order {
-            if let Some(value) = kwargs.remove(&name) {
-                ordered_kwargs.push((name, value));
-            }
-        }
-    }
-    for (name, value) in kwargs.drain() {
-        ordered_kwargs.push((name, value));
-    }
-
-    for (name, value) in ordered_kwargs {
+    for entry in kwargs.into_entries() {
+        let name = entry.normalized_name;
+        let value = entry.value;
         if func.code.posonly_params.iter().any(|param| param == &name) {
             if func.code.kwarg.is_some() {
                 if !extra_kwargs_seen.insert(name.clone()) {
