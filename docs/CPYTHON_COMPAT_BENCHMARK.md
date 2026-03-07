@@ -53,8 +53,10 @@ For a dry subset:
 
 The orchestrator writes a directory, not a single monolithic file:
 
+- `manifest.json`
+  - run metadata, selected entries, timeout config, and completion state
 - `summary.json`
-  - top-level counts, config, and entry index
+  - top-level counts, host/git metadata, config, and entry index
 - `inventory/*.json`
   - host-CPython inventory shards per test entry
 - `results/*.json`

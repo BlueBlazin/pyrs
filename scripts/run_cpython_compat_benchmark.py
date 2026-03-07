@@ -8,6 +8,7 @@ import concurrent.futures
 import json
 import os
 import pathlib
+import platform
 import shutil
 import subprocess
 import sys
@@ -156,6 +157,65 @@ def safe_name(module_name: str) -> str:
 def write_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def git_head() -> str | None:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=REPO_ROOT,
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    value = (completed.stdout or "").strip()
+    return value or None
+
+
+def build_metadata(
+    *,
+    cpython_bin: pathlib.Path,
+    cpython_lib: pathlib.Path,
+    runner_bin: pathlib.Path,
+    jobs: int,
+    inventory_timeout_secs: int,
+    run_timeout_secs: int,
+    inventory_only: bool,
+    entries: list[str],
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "benchmark": "cpython_compat",
+        "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "git": {
+            "head": git_head(),
+        },
+        "host": {
+            "platform": platform.platform(),
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+            "python": sys.version.split()[0],
+            "cpu_count": os.cpu_count(),
+        },
+        "config": {
+            "cpython_bin": str(cpython_bin),
+            "cpython_lib": str(cpython_lib),
+            "runner_bin": str(runner_bin),
+            "jobs": jobs,
+            "inventory_timeout_secs": inventory_timeout_secs,
+            "run_timeout_secs": run_timeout_secs,
+            "inventory_only": inventory_only,
+        },
+        "entries": {
+            "count": len(entries),
+            "names": entries,
+        },
+    }
 
 
 def inventory_entry(
@@ -313,13 +373,10 @@ def run_entry(
 
 def summarize(
     out_dir: pathlib.Path,
-    cpython_bin: pathlib.Path,
-    cpython_lib: pathlib.Path,
-    runner_bin: pathlib.Path,
+    metadata: dict[str, Any],
     entries: list[str],
     inventory_rows: dict[str, dict[str, Any]],
     run_rows: dict[str, dict[str, Any]],
-    jobs: int,
     elapsed_total: float,
 ) -> dict[str, Any]:
     module_statuses = Counter()
@@ -366,19 +423,12 @@ def summarize(
         )
 
     summary = {
-        "schema_version": SCHEMA_VERSION,
-        "benchmark": "cpython_compat",
-        "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        **metadata,
         "paths": {
             "out_dir": str(out_dir),
             "inventory_dir": str(out_dir / "inventory"),
             "results_dir": str(out_dir / "results"),
-        },
-        "config": {
-            "cpython_bin": str(cpython_bin),
-            "cpython_lib": str(cpython_lib),
-            "runner_bin": str(runner_bin),
-            "jobs": jobs,
+            "manifest": str(out_dir / "manifest.json"),
         },
         "inventory": {
             "entry_count": len(entries),
@@ -390,6 +440,7 @@ def summarize(
             "case_outcomes": dict(sorted(case_outcomes.items())),
             "subtest_outcomes": dict(sorted(subtest_outcomes.items())),
             "fixture_outcomes": dict(sorted(fixture_outcomes.items())),
+            "executed_entry_count": len(run_rows),
             "executed_case_count": sum(case_outcomes.values()),
             "executed_subtest_count": sum(subtest_outcomes.values()),
             "elapsed_total_secs": round(elapsed_total, 6),
@@ -441,6 +492,27 @@ def main() -> int:
     if args.max_entries > 0:
         entries = entries[: args.max_entries]
     jobs = args.jobs if args.jobs > 0 else max(1, os.cpu_count() or 1)
+    metadata = build_metadata(
+        cpython_bin=cpython_bin,
+        cpython_lib=cpython_lib,
+        runner_bin=runner_bin,
+        jobs=jobs,
+        inventory_timeout_secs=args.inventory_timeout,
+        run_timeout_secs=args.run_timeout,
+        inventory_only=args.inventory_only,
+        entries=entries,
+    )
+    manifest = {
+        **metadata,
+        "status": "running",
+        "paths": {
+            "out_dir": str(out_dir),
+            "inventory_dir": str(inventory_dir),
+            "results_dir": str(results_dir),
+            "summary": str(out_dir / "summary.json"),
+        },
+    }
+    write_json(out_dir / "manifest.json", manifest)
 
     started = time.perf_counter()
     inventory_rows: dict[str, dict[str, Any]] = {}
@@ -489,16 +561,22 @@ def main() -> int:
 
     summary = summarize(
         out_dir=out_dir,
-        cpython_bin=cpython_bin,
-        cpython_lib=cpython_lib,
-        runner_bin=runner_bin,
+        metadata=metadata,
         entries=entries,
         inventory_rows=inventory_rows,
         run_rows=run_rows,
-        jobs=jobs,
         elapsed_total=time.perf_counter() - started,
     )
     write_json(out_dir / "summary.json", summary)
+    manifest["status"] = "completed"
+    manifest["completed_at_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    manifest["results"] = {
+        "executed_entry_count": len(run_rows),
+        "discoverable_case_count": summary["inventory"]["discoverable_case_count"],
+        "executed_case_count": summary["results"]["executed_case_count"],
+        "executed_subtest_count": summary["results"]["executed_subtest_count"],
+    }
+    write_json(out_dir / "manifest.json", manifest)
     return 0
 
 

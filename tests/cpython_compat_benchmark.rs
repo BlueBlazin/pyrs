@@ -33,6 +33,47 @@ fn cpython_bin_or_skip() -> Option<PathBuf> {
     Some(bin)
 }
 
+fn cpython_bin_file_or_skip() -> Option<PathBuf> {
+    let Some(bin) = cpython_bin_or_skip() else {
+        return None;
+    };
+    if bin.is_file() {
+        return Some(bin);
+    }
+    let output = Command::new("which")
+        .arg(&bin)
+        .output()
+        .expect("resolve CPython binary path");
+    if !output.status.success() {
+        eprintln!("skipping orchestrator benchmark test (could not resolve CPython binary path)");
+        return None;
+    }
+    let resolved = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    if resolved.is_file() {
+        Some(resolved)
+    } else {
+        eprintln!("skipping orchestrator benchmark test (resolved CPython binary is not a file)");
+        None
+    }
+}
+
+fn detect_cpython_lib() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("PYRS_CPYTHON_LIB") {
+        let path = PathBuf::from(path);
+        if path.join("test").is_dir() {
+            return Some(path);
+        }
+    }
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let candidates = [
+        workspace.join(".local/Python-3.14.3/Lib"),
+        PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14"),
+    ];
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.join("test").is_dir())
+}
+
 fn temp_root(label: &str) -> PathBuf {
     let base = std::env::temp_dir().join(format!(
         "pyrs_{label}_{}_{}",
@@ -45,6 +86,10 @@ fn temp_root(label: &str) -> PathBuf {
 
 fn worker_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/cpython_compat_benchmark_worker.py")
+}
+
+fn orchestrator_script() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/run_cpython_compat_benchmark.py")
 }
 
 fn run_worker(bin: &Path, module_name: &str, search_path: &Path, mode: &str) -> String {
@@ -152,4 +197,112 @@ class SampleBenchmarkSuite(unittest.TestCase):
         run.contains(r#""duration_secs": "#),
         "run output should record durations: {run}"
     );
+}
+
+#[test]
+fn orchestrator_emits_manifest_summary_and_shards_for_synthetic_suite() {
+    let Some(cpython_bin) = cpython_bin_file_or_skip() else {
+        return;
+    };
+    let Some(cpython_lib) = detect_cpython_lib() else {
+        eprintln!("skipping orchestrator benchmark test (CPython Lib not found)");
+        return;
+    };
+
+    let root = temp_root("compat_benchmark_orchestrator");
+    let lib_root = root.join("lib");
+    let test_dir = lib_root.join("test");
+    fs::create_dir_all(&test_dir).expect("create synthetic test package");
+    fs::write(test_dir.join("__init__.py"), "").expect("write synthetic test package init");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(cpython_lib.join("test/libregrtest"), test_dir.join("libregrtest"))
+            .expect("symlink libregrtest package");
+        std::os::unix::fs::symlink(cpython_lib.join("test/support"), test_dir.join("support"))
+            .expect("symlink support package");
+    }
+    fs::write(
+        test_dir.join("test_benchmark_orchestrator.py"),
+        r#"
+import unittest
+
+class OrchestratorSuite(unittest.TestCase):
+    def test_pass(self):
+        self.assertEqual(4, 2 + 2)
+
+    def test_subtests(self):
+        for value in (1, 2):
+            with self.subTest(value=value):
+                self.assertLess(value, 2)
+"#,
+    )
+    .expect("write synthetic orchestrator module");
+
+    let out_dir = root.join("out");
+    let output = Command::new(&cpython_bin)
+        .arg(orchestrator_script())
+        .arg("--runner-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-bin")
+        .arg(&cpython_bin)
+        .arg("--cpython-lib")
+        .arg(&lib_root)
+        .arg("--entry")
+        .arg("test.test_benchmark_orchestrator")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--jobs")
+        .arg("1")
+        .arg("--run-timeout")
+        .arg("60")
+        .output()
+        .expect("run orchestrator benchmark");
+    assert!(
+        output.status.success(),
+        "orchestrator should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let manifest = fs::read_to_string(out_dir.join("manifest.json")).expect("read manifest");
+    assert!(
+        manifest.contains(r#""status": "completed""#),
+        "manifest should mark the run completed: {manifest}"
+    );
+    assert!(
+        manifest.contains(r#""count": 1"#),
+        "manifest should record the single selected entry: {manifest}"
+    );
+
+    let summary = fs::read_to_string(out_dir.join("summary.json")).expect("read summary");
+    for needle in [
+        r#""discoverable_case_count": 2"#,
+        r#""executed_entry_count": 1"#,
+        r#""executed_case_count": 2"#,
+        r#""executed_subtest_count": 2"#,
+        r#""run_timeout_secs": 60"#,
+        r#""git": {"#,
+        r#""host": {"#,
+        r#""result_shard": "results/test.test_benchmark_orchestrator.json""#,
+    ] {
+        assert!(
+            summary.contains(needle),
+            "summary missing expected fragment {needle}: {summary}"
+        );
+    }
+
+    let result =
+        fs::read_to_string(out_dir.join("results/test.test_benchmark_orchestrator.json"))
+            .expect("read result shard");
+    for needle in [
+        r#""status": "failed""#,
+        r#""outcome": "passed""#,
+        r#""outcome": "failed""#,
+        r#""subtest_outcomes": {"#,
+    ] {
+        assert!(
+            result.contains(needle),
+            "result shard missing expected fragment {needle}: {result}"
+        );
+    }
 }
