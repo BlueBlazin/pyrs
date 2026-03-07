@@ -2341,9 +2341,7 @@ pub fn canonical_static_class_name_info(class: &ObjRef) -> Option<RuntimeTypeNam
         "method_descriptor" => Some(RuntimeTypeNameInfo::builtins("method_descriptor")),
         "wrapper_descriptor" => Some(RuntimeTypeNameInfo::builtins("wrapper_descriptor")),
         "method-wrapper" => Some(RuntimeTypeNameInfo::builtins("method-wrapper")),
-        "classmethod_descriptor" => {
-            Some(RuntimeTypeNameInfo::builtins("classmethod_descriptor"))
-        }
+        "classmethod_descriptor" => Some(RuntimeTypeNameInfo::builtins("classmethod_descriptor")),
         "getset_descriptor" => Some(RuntimeTypeNameInfo::builtins("getset_descriptor")),
         "member_descriptor" => Some(RuntimeTypeNameInfo::builtins("member_descriptor")),
         "code" => Some(RuntimeTypeNameInfo::builtins("code")),
@@ -2425,8 +2423,7 @@ fn native_kind_is_slot_wrapper(kind: NativeMethodKind) -> bool {
                 | BuiltinFunction::ObjectNew
                 | BuiltinFunction::OperatorLt
                 | BuiltinFunction::OperatorAdd
-        )
-            | NativeMethodKind::IntReprMethod
+        ) | NativeMethodKind::IntReprMethod
     )
 }
 
@@ -2457,7 +2454,9 @@ fn bound_method_is_unbound_descriptor(receiver: &ObjRef) -> bool {
 }
 
 fn bound_method_is_unbound_slot_wrapper(receiver: &ObjRef, kind: NativeMethodKind) -> bool {
-    (module_is_slot_wrapper(receiver) && !module_has_wrapped_value(receiver) && native_kind_is_slot_wrapper(kind))
+    (module_is_slot_wrapper(receiver)
+        && !module_has_wrapped_value(receiver)
+        && native_kind_is_slot_wrapper(kind))
         || (matches!(&*receiver.kind(), Object::Class(_))
             && matches!(
                 kind,
@@ -2466,7 +2465,8 @@ fn bound_method_is_unbound_slot_wrapper(receiver: &ObjRef, kind: NativeMethodKin
 }
 
 fn bound_method_is_slot_wrapper(receiver: &ObjRef, kind: NativeMethodKind) -> bool {
-    let receiver_is_slot_wrapper = (module_is_slot_wrapper(receiver) && module_has_wrapped_value(receiver))
+    let receiver_is_slot_wrapper = (module_is_slot_wrapper(receiver)
+        && module_has_wrapped_value(receiver))
         || matches!(&*receiver.kind(), Object::Instance(_))
         || matches!(
             &*receiver.kind(),
@@ -9423,9 +9423,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     DictViewKind::Values => {
                         Ok(values.iter().map(|(_, value)| value.clone()).collect())
                     }
-                    DictViewKind::Items => {
-                        Err(RuntimeError::type_error("expected iterable"))
-                    }
+                    DictViewKind::Items => Err(RuntimeError::type_error("expected iterable")),
                 },
                 _ => Err(RuntimeError::type_error("expected iterable")),
             },
@@ -10413,7 +10411,9 @@ fn descriptor_owner_value(receiver: &ObjRef) -> Option<Value> {
 
 fn owner_type_name(value: &Value) -> Option<String> {
     match value {
-        Value::Builtin(builtin) => builtin_type_name_info(*builtin).map(|info| info.name.to_string()),
+        Value::Builtin(builtin) => {
+            builtin_type_name_info(*builtin).map(|info| info.name.to_string())
+        }
         Value::Class(class) => match &*class.kind() {
             Object::Class(class_data) => Some(class_data.name.clone()),
             _ => None,
@@ -10548,12 +10548,8 @@ fn format_builtin_descriptor_repr(builtin: BuiltinFunction) -> Option<String> {
         BuiltinFunction::ListAppendDescriptor => {
             Some("<method 'append' of 'list' objects>".to_string())
         }
-        BuiltinFunction::DictFromKeys => {
-            Some("<method 'fromkeys' of 'dict' objects>".to_string())
-        }
-        BuiltinFunction::IntFromBytes => {
-            Some("<method 'from_bytes' of 'int' objects>".to_string())
-        }
+        BuiltinFunction::DictFromKeys => Some("<method 'fromkeys' of 'dict' objects>".to_string()),
+        BuiltinFunction::IntFromBytes => Some("<method 'from_bytes' of 'int' objects>".to_string()),
         _ => None,
     }
 }
@@ -10571,7 +10567,10 @@ fn format_descriptor_instance_repr(obj: &ObjRef, instance: &InstanceObject) -> O
             };
             let owner = instance.attrs.get("__objclass__")?;
             let owner_name = owner_type_name(owner)?;
-            Some(format!("<attribute '{}' of '{}' objects>", name, owner_name))
+            Some(format!(
+                "<attribute '{}' of '{}' objects>",
+                name, owner_name
+            ))
         }
         "member_descriptor" => {
             let name = match instance.attrs.get("__name__") {
@@ -10623,7 +10622,10 @@ fn format_bound_method_repr(obj: &ObjRef) -> Option<String> {
             let name = function_or_method_name(&method.function)?;
             let owner = descriptor_owner_value(&method.receiver)?;
             let owner_name = owner_type_name(&owner)?;
-            Some(format!("<slot wrapper '{}' of '{}' objects>", name, owner_name))
+            Some(format!(
+                "<slot wrapper '{}' of '{}' objects>",
+                name, owner_name
+            ))
         }
         CallableFamily::MethodWrapper => {
             let name = function_or_method_name(&method.function)?;
@@ -11102,447 +11104,493 @@ pub fn format_value(value: &Value) -> String {
                     return rendered;
                 }
                 match &*method.function.kind() {
-                Object::Function(func) => format!("<bound method {}>", func.code.name),
-                Object::NativeMethod(native) => match native.kind {
-                    NativeMethodKind::GeneratorIter => "<bound method __iter__>".to_string(),
-                    NativeMethodKind::Builtin(builtin) => {
-                        format!("<bound method {:?}>", builtin)
-                    }
-                    NativeMethodKind::GeneratorAwait => "<bound method __await__>".to_string(),
-                    NativeMethodKind::GeneratorANext => "<bound method __anext__>".to_string(),
-                    NativeMethodKind::GeneratorNext => "<bound method __next__>".to_string(),
-                    NativeMethodKind::GeneratorSend => "<bound method send>".to_string(),
-                    NativeMethodKind::GeneratorThrow => "<bound method throw>".to_string(),
-                    NativeMethodKind::GeneratorClose => "<bound method close>".to_string(),
-                    NativeMethodKind::IteratorIter => "<bound method __iter__>".to_string(),
-                    NativeMethodKind::IteratorNext => "<bound method __next__>".to_string(),
-                    NativeMethodKind::DictKeys => "<bound method dict.keys>".to_string(),
-                    NativeMethodKind::DictValues => "<bound method dict.values>".to_string(),
-                    NativeMethodKind::DictItems => "<bound method dict.items>".to_string(),
-                    NativeMethodKind::DictDunderReversed => {
-                        "<bound method dict.__reversed__>".to_string()
-                    }
-                    NativeMethodKind::DictViewDunderReversed(kind) => {
-                        format!("<bound method {}.__reversed__>", kind.type_name())
-                    }
-                    NativeMethodKind::DictClear => "<bound method dict.clear>".to_string(),
-                    NativeMethodKind::DictUpdateMethod => "<bound method dict.update>".to_string(),
-                    NativeMethodKind::DictSetDefault => {
-                        "<bound method dict.setdefault>".to_string()
-                    }
-                    NativeMethodKind::DictGet => "<bound method dict.get>".to_string(),
-                    NativeMethodKind::DictGetItem => "<bound method dict.__getitem__>".to_string(),
-                    NativeMethodKind::DictSetItem => "<bound method dict.__setitem__>".to_string(),
-                    NativeMethodKind::DictDelItem => "<bound method dict.__delitem__>".to_string(),
-                    NativeMethodKind::DictPop => "<bound method dict.pop>".to_string(),
-                    NativeMethodKind::DictPopItem => "<bound method dict.popitem>".to_string(),
-                    NativeMethodKind::DictMoveToEnd => {
-                        "<bound method OrderedDict.move_to_end>".to_string()
-                    }
-                    NativeMethodKind::DictCopy => "<bound method dict.copy>".to_string(),
-                    NativeMethodKind::DictInit => "<bound method dict.__init__>".to_string(),
-                    NativeMethodKind::ContextVarGetMethod => {
-                        "<bound method ContextVar.get>".to_string()
-                    }
-                    NativeMethodKind::ContextVarSetMethod => {
-                        "<bound method ContextVar.set>".to_string()
-                    }
-                    NativeMethodKind::ContextVarResetMethod => {
-                        "<bound method ContextVar.reset>".to_string()
-                    }
-                    NativeMethodKind::ListInit => "<bound method list.__init__>".to_string(),
-                    NativeMethodKind::ListAppend => "<bound method list.append>".to_string(),
-                    NativeMethodKind::ListExtend => "<bound method list.extend>".to_string(),
-                    NativeMethodKind::ListInsert => "<bound method list.insert>".to_string(),
-                    NativeMethodKind::ListRemove => "<bound method list.remove>".to_string(),
-                    NativeMethodKind::ListPop => "<bound method list.pop>".to_string(),
-                    NativeMethodKind::QueueSimpleQueuePut => {
-                        "<bound method SimpleQueue.put>".to_string()
-                    }
-                    NativeMethodKind::QueueSimpleQueueGet => {
-                        "<bound method SimpleQueue.get>".to_string()
-                    }
-                    NativeMethodKind::QueueSimpleQueueGetNowait => {
-                        "<bound method SimpleQueue.get_nowait>".to_string()
-                    }
-                    NativeMethodKind::QueueSimpleQueueEmpty => {
-                        "<bound method SimpleQueue.empty>".to_string()
-                    }
-                    NativeMethodKind::ListCount => "<bound method list.count>".to_string(),
-                    NativeMethodKind::ListCopy => "<bound method list.copy>".to_string(),
-                    NativeMethodKind::ListClear => "<bound method list.clear>".to_string(),
-                    NativeMethodKind::ListEq => "<bound method list.__eq__>".to_string(),
-                    NativeMethodKind::ListNe => "<bound method list.__ne__>".to_string(),
-                    NativeMethodKind::TupleCount => "<bound method tuple.count>".to_string(),
-                    NativeMethodKind::TupleIndex => "<bound method tuple.index>".to_string(),
-                    NativeMethodKind::TupleEq => "<bound method tuple.__eq__>".to_string(),
-                    NativeMethodKind::TupleNe => "<bound method tuple.__ne__>".to_string(),
-                    NativeMethodKind::ListIndex => "<bound method list.index>".to_string(),
-                    NativeMethodKind::ListReverse => "<bound method list.reverse>".to_string(),
-                    NativeMethodKind::ListDunderReversed => {
-                        "<bound method list.__reversed__>".to_string()
-                    }
-                    NativeMethodKind::ListSort => "<bound method list.sort>".to_string(),
-                    NativeMethodKind::RangeDunderReversed => {
-                        "<bound method range.__reversed__>".to_string()
-                    }
-                    NativeMethodKind::IntToBytes => "<bound method int.to_bytes>".to_string(),
-                    NativeMethodKind::IntBitLengthMethod => {
-                        "<bound method int.bit_length>".to_string()
-                    }
-                    NativeMethodKind::IntIndexMethod => "<bound method int.__index__>".to_string(),
-                    NativeMethodKind::IntReprMethod => "<bound method int.__repr__>".to_string(),
-                    NativeMethodKind::FloatAsIntegerRatioMethod => {
-                        "<bound method float.as_integer_ratio>".to_string()
-                    }
-                    NativeMethodKind::FloatIsIntegerMethod => {
-                        "<bound method float.is_integer>".to_string()
-                    }
-                    NativeMethodKind::FloatConjugateMethod => {
-                        "<bound method float.conjugate>".to_string()
-                    }
-                    NativeMethodKind::FloatReprMethod => {
-                        "<bound method float.__repr__>".to_string()
-                    }
-                    NativeMethodKind::StrStartsWith => "<bound method str.startswith>".to_string(),
-                    NativeMethodKind::StrEndsWith => "<bound method str.endswith>".to_string(),
-                    NativeMethodKind::StrReplace => "<bound method str.replace>".to_string(),
-                    NativeMethodKind::StrUpper => "<bound method str.upper>".to_string(),
-                    NativeMethodKind::StrLower => "<bound method str.lower>".to_string(),
-                    NativeMethodKind::StrSwapCase => "<bound method str.swapcase>".to_string(),
-                    NativeMethodKind::StrCapitalize => "<bound method str.capitalize>".to_string(),
-                    NativeMethodKind::StrTitle => "<bound method str.title>".to_string(),
-                    NativeMethodKind::StrEncode => "<bound method str.encode>".to_string(),
-                    NativeMethodKind::StrDecode => "<bound method str.decode>".to_string(),
-                    NativeMethodKind::BytesDecode => "<bound method bytes.decode>".to_string(),
-                    NativeMethodKind::BytesHex => "<bound method bytes.hex>".to_string(),
-                    NativeMethodKind::BytesStartsWith => {
-                        "<bound method bytes.startswith>".to_string()
-                    }
-                    NativeMethodKind::BytesEndsWith => "<bound method bytes.endswith>".to_string(),
-                    NativeMethodKind::BytesCount => "<bound method bytes.count>".to_string(),
-                    NativeMethodKind::BytesFind => "<bound method bytes.find>".to_string(),
-                    NativeMethodKind::BytesIndex => "<bound method bytes.index>".to_string(),
-                    NativeMethodKind::BytesRFind => "<bound method bytes.rfind>".to_string(),
-                    NativeMethodKind::BytesRIndex => "<bound method bytes.rindex>".to_string(),
-                    NativeMethodKind::BytesSplit => "<bound method bytes.split>".to_string(),
-                    NativeMethodKind::BytesSplitLines => {
-                        "<bound method bytes.splitlines>".to_string()
-                    }
-                    NativeMethodKind::BytesTranslate => {
-                        "<bound method bytes.translate>".to_string()
-                    }
-                    NativeMethodKind::BytesJoin => "<bound method bytes.join>".to_string(),
-                    NativeMethodKind::BytesLJust => "<bound method bytes.ljust>".to_string(),
-                    NativeMethodKind::BytesLStrip => "<bound method bytes.lstrip>".to_string(),
-                    NativeMethodKind::BytesStrip => "<bound method bytes.strip>".to_string(),
-                    NativeMethodKind::BytesRStrip => "<bound method bytes.rstrip>".to_string(),
-                    NativeMethodKind::ByteArrayAppend => {
-                        "<bound method bytearray.append>".to_string()
-                    }
-                    NativeMethodKind::ByteArrayExtend => {
-                        "<bound method bytearray.extend>".to_string()
-                    }
-                    NativeMethodKind::ByteArrayClear => {
-                        "<bound method bytearray.clear>".to_string()
-                    }
-                    NativeMethodKind::ByteArrayResize => {
-                        "<bound method bytearray.resize>".to_string()
-                    }
-                    NativeMethodKind::MemoryViewEnter => {
-                        "<bound method memoryview.__enter__>".to_string()
-                    }
-                    NativeMethodKind::MemoryViewExit => {
-                        "<bound method memoryview.__exit__>".to_string()
-                    }
-                    NativeMethodKind::MemoryViewToReadOnly => {
-                        "<bound method memoryview.toreadonly>".to_string()
-                    }
-                    NativeMethodKind::MemoryViewCast => {
-                        "<bound method memoryview.cast>".to_string()
-                    }
-                    NativeMethodKind::MemoryViewToList => {
-                        "<bound method memoryview.tolist>".to_string()
-                    }
-                    NativeMethodKind::MemoryViewRelease => {
-                        "<bound method memoryview.release>".to_string()
-                    }
-                    NativeMethodKind::StrRemovePrefix => {
-                        "<bound method str.removeprefix>".to_string()
-                    }
-                    NativeMethodKind::StrRemoveSuffix => {
-                        "<bound method str.removesuffix>".to_string()
-                    }
-                    NativeMethodKind::StrFormat => "<bound method str.format>".to_string(),
-                    NativeMethodKind::StrIsUpper => "<bound method str.isupper>".to_string(),
-                    NativeMethodKind::StrIsLower => "<bound method str.islower>".to_string(),
-                    NativeMethodKind::StrIsAscii => "<bound method str.isascii>".to_string(),
-                    NativeMethodKind::StrIsAlpha => "<bound method str.isalpha>".to_string(),
-                    NativeMethodKind::StrIsAlNum => "<bound method str.isalnum>".to_string(),
-                    NativeMethodKind::StrIsDigit => "<bound method str.isdigit>".to_string(),
-                    NativeMethodKind::StrIsSpace => "<bound method str.isspace>".to_string(),
-                    NativeMethodKind::StrIsIdentifier => {
-                        "<bound method str.isidentifier>".to_string()
-                    }
-                    NativeMethodKind::StrJoin => "<bound method str.join>".to_string(),
-                    NativeMethodKind::StrSplit => "<bound method str.split>".to_string(),
-                    NativeMethodKind::StrSplitLines => "<bound method str.splitlines>".to_string(),
-                    NativeMethodKind::StrRSplit => "<bound method str.rsplit>".to_string(),
-                    NativeMethodKind::StrPartition => "<bound method str.partition>".to_string(),
-                    NativeMethodKind::StrRPartition => "<bound method str.rpartition>".to_string(),
-                    NativeMethodKind::StrCount => "<bound method str.count>".to_string(),
-                    NativeMethodKind::StrFind => "<bound method str.find>".to_string(),
-                    NativeMethodKind::StrTranslate => "<bound method str.translate>".to_string(),
-                    NativeMethodKind::StrIndex => "<bound method str.index>".to_string(),
-                    NativeMethodKind::StrRFind => "<bound method str.rfind>".to_string(),
-                    NativeMethodKind::StrLStrip => "<bound method str.lstrip>".to_string(),
-                    NativeMethodKind::StrRStrip => "<bound method str.rstrip>".to_string(),
-                    NativeMethodKind::StrStrip => "<bound method str.strip>".to_string(),
-                    NativeMethodKind::StrLJust => "<bound method str.ljust>".to_string(),
-                    NativeMethodKind::StrCenter => "<bound method str.center>".to_string(),
-                    NativeMethodKind::StrExpandTabs => "<bound method str.expandtabs>".to_string(),
-                    NativeMethodKind::CodeReplace => "<bound method code.replace>".to_string(),
-                    NativeMethodKind::CodeCoPositions => {
-                        "<bound method code.co_positions>".to_string()
-                    }
-                    NativeMethodKind::CodeCoLines => "<bound method code.co_lines>".to_string(),
-                    NativeMethodKind::FrameClear => "<bound method frame.clear>".to_string(),
-                    NativeMethodKind::SetContains => "<bound method __contains__>".to_string(),
-                    NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),
-                    NativeMethodKind::SetDiscard => "<bound method set.discard>".to_string(),
-                    NativeMethodKind::SetRemove => "<bound method set.remove>".to_string(),
-                    NativeMethodKind::SetPop => "<bound method set.pop>".to_string(),
-                    NativeMethodKind::SetUpdate => "<bound method set.update>".to_string(),
-                    NativeMethodKind::SetUnion => "<bound method set.union>".to_string(),
-                    NativeMethodKind::SetIntersection => {
-                        "<bound method set.intersection>".to_string()
-                    }
-                    NativeMethodKind::SetDifference => "<bound method set.difference>".to_string(),
-                    NativeMethodKind::SetIsSuperset => "<bound method set.issuperset>".to_string(),
-                    NativeMethodKind::SetIsSubset => "<bound method set.issubset>".to_string(),
-                    NativeMethodKind::SetIsDisjoint => "<bound method set.isdisjoint>".to_string(),
-                    NativeMethodKind::RePatternSearch => {
-                        "<bound method Pattern.search>".to_string()
-                    }
-                    NativeMethodKind::RePatternMatch => "<bound method Pattern.match>".to_string(),
-                    NativeMethodKind::RePatternFullMatch => {
-                        "<bound method Pattern.fullmatch>".to_string()
-                    }
-                    NativeMethodKind::RePatternSub => "<bound method Pattern.sub>".to_string(),
-                    NativeMethodKind::RePatternSubN => "<bound method Pattern.subn>".to_string(),
-                    NativeMethodKind::RePatternRepr => {
-                        "<bound method Pattern.__repr__>".to_string()
-                    }
-                    NativeMethodKind::ReMatchGroup => "<bound method Match.group>".to_string(),
-                    NativeMethodKind::ReMatchGroups => "<bound method Match.groups>".to_string(),
-                    NativeMethodKind::ReMatchGroupDict => {
-                        "<bound method Match.groupdict>".to_string()
-                    }
-                    NativeMethodKind::ReMatchStart => "<bound method Match.start>".to_string(),
-                    NativeMethodKind::ReMatchEnd => "<bound method Match.end>".to_string(),
-                    NativeMethodKind::ReMatchSpan => "<bound method Match.span>".to_string(),
-                    NativeMethodKind::ReMatchRepr => "<bound method Match.__repr__>".to_string(),
-                    NativeMethodKind::ExceptionWithTraceback => {
-                        "<bound method BaseException.with_traceback>".to_string()
-                    }
-                    NativeMethodKind::ExceptionAddNote => {
-                        "<bound method BaseException.add_note>".to_string()
-                    }
-                    NativeMethodKind::DescriptorReduceTypeError => {
-                        "<bound method descriptor.__reduce_ex__>".to_string()
-                    }
-                    NativeMethodKind::BoundMethodDescriptorGet => {
-                        "<bound method method_descriptor.__get__>".to_string()
-                    }
-                    NativeMethodKind::FunctionDescriptorGet => {
-                        "<bound method function.__get__>".to_string()
-                    }
-                    NativeMethodKind::GetSetDescriptorGet => {
-                        "<bound method getset_descriptor.__get__>".to_string()
-                    }
-                    NativeMethodKind::ClassMethodDescriptorGet => {
-                        "<bound method classmethod.__get__>".to_string()
-                    }
-                    NativeMethodKind::StaticMethodDescriptorGet => {
-                        "<bound method staticmethod.__get__>".to_string()
-                    }
-                    NativeMethodKind::FunctionAnnotate => {
-                        "<bound method function.__annotate__>".to_string()
-                    }
-                    NativeMethodKind::ObjectReduceExBound => {
-                        "<bound method object.__reduce_ex__>".to_string()
-                    }
-                    NativeMethodKind::BoundMethodReduceEx => {
-                        "<bound method method.__reduce_ex__>".to_string()
-                    }
-                    NativeMethodKind::ComplexReduceEx => {
-                        "<bound method complex.__reduce_ex__>".to_string()
-                    }
-                    NativeMethodKind::GenericAliasRepr => {
-                        "<bound method GenericAlias.__repr__>".to_string()
-                    }
-                    NativeMethodKind::GenericAliasCall => {
-                        "<bound method GenericAlias.__call__>".to_string()
-                    }
-                    NativeMethodKind::GenericAliasReduceEx => {
-                        "<bound method GenericAlias.__reduce_ex__>".to_string()
-                    }
-                    NativeMethodKind::GenericAliasMroEntries => {
-                        "<bound method GenericAlias.__mro_entries__>".to_string()
-                    }
-                    NativeMethodKind::TypeParamRepr => {
-                        "<bound method type_parameter.__repr__>".to_string()
-                    }
-                    NativeMethodKind::TypeParamCopy => {
-                        "<bound method type_parameter.__copy__>".to_string()
-                    }
-                    NativeMethodKind::TypeParamReduceEx => {
-                        "<bound method type_parameter.__reduce_ex__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyContains => {
-                        "<bound method mappingproxy.__contains__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyGetItem => {
-                        "<bound method mappingproxy.__getitem__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyIor => {
-                        "<bound method mappingproxy.__ior__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyIter => {
-                        "<bound method mappingproxy.__iter__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyLen => {
-                        "<bound method mappingproxy.__len__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyOr => {
-                        "<bound method mappingproxy.__or__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyReversed => {
-                        "<bound method mappingproxy.__reversed__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyRor => {
-                        "<bound method mappingproxy.__ror__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyCopy => {
-                        "<bound method mappingproxy.copy>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyGet => {
-                        "<bound method mappingproxy.get>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyItems => {
-                        "<bound method mappingproxy.items>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyKeys => {
-                        "<bound method mappingproxy.keys>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyValues => {
-                        "<bound method mappingproxy.values>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyEq => {
-                        "<bound method mappingproxy.__eq__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyNe => {
-                        "<bound method mappingproxy.__ne__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyHash => {
-                        "<bound method mappingproxy.__hash__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyRepr => {
-                        "<bound method mappingproxy.__repr__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyClassGetItem => {
-                        "<bound method mappingproxy.__class_getitem__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyValuesViewIter => {
-                        "<bound method mappingproxy_values_view.__iter__>".to_string()
-                    }
-                    NativeMethodKind::MappingProxyItemsViewIter => {
-                        "<bound method mappingproxy_items_view.__iter__>".to_string()
-                    }
-                    NativeMethodKind::ClassRegister => "<bound method register>".to_string(),
-                    NativeMethodKind::PropertyGet => "<bound method property.__get__>".to_string(),
-                    NativeMethodKind::PropertySet => "<bound method property.__set__>".to_string(),
-                    NativeMethodKind::PropertyDelete => {
-                        "<bound method property.__delete__>".to_string()
-                    }
-                    NativeMethodKind::PropertySetName => {
-                        "<bound method property.__set_name__>".to_string()
-                    }
-                    NativeMethodKind::PropertyGetter => {
-                        "<bound method property.getter>".to_string()
-                    }
-                    NativeMethodKind::PropertySetter => {
-                        "<bound method property.setter>".to_string()
-                    }
-                    NativeMethodKind::PropertyDeleter => {
-                        "<bound method property.deleter>".to_string()
-                    }
-                    NativeMethodKind::CachedPropertyGet => {
-                        "<bound method cached_property.__get__>".to_string()
-                    }
-                    NativeMethodKind::CachedPropertySetName => {
-                        "<bound method cached_property.__set_name__>".to_string()
-                    }
-                    NativeMethodKind::OperatorItemGetterCall => {
-                        "<bound method operator.itemgetter-call>".to_string()
-                    }
-                    NativeMethodKind::OperatorAttrGetterCall => {
-                        "<bound method operator.attrgetter-call>".to_string()
-                    }
-                    NativeMethodKind::OperatorMethodCallerCall => {
-                        "<bound method operator.methodcaller-call>".to_string()
-                    }
-                    NativeMethodKind::FunctoolsWrapsDecorator => {
-                        "<bound method functools.wraps-decorator>".to_string()
-                    }
-                    NativeMethodKind::FunctoolsPartialCall => {
-                        "<bound method functools.partial-call>".to_string()
-                    }
-                    NativeMethodKind::FunctoolsCmpToKeyCall => {
-                        "<bound method functools.cmp_to_key-call>".to_string()
-                    }
-                    NativeMethodKind::ExtensionFunctionCall(id) => {
-                        format!("<bound method extension callable {}>", id)
-                    }
-                    NativeMethodKind::CodecsIncrementalEncoderFactoryCall => {
-                        "<bound method codecs.incrementalencoder-factory-call>".to_string()
-                    }
-                    NativeMethodKind::CodecsIncrementalDecoderFactoryCall => {
-                        "<bound method codecs.incrementaldecoder-factory-call>".to_string()
-                    }
-                    NativeMethodKind::CodecsIncrementalEncoderEncode => {
-                        "<bound method codecs.incrementalencoder.encode>".to_string()
-                    }
-                    NativeMethodKind::CodecsIncrementalEncoderReset => {
-                        "<bound method codecs.incrementalencoder.reset>".to_string()
-                    }
-                    NativeMethodKind::CodecsIncrementalEncoderGetState => {
-                        "<bound method codecs.incrementalencoder.getstate>".to_string()
-                    }
-                    NativeMethodKind::CodecsIncrementalEncoderSetState => {
-                        "<bound method codecs.incrementalencoder.setstate>".to_string()
-                    }
-                    NativeMethodKind::CodecsIncrementalDecoderDecode => {
-                        "<bound method codecs.incrementaldecoder.decode>".to_string()
-                    }
-                    NativeMethodKind::CodecsIncrementalDecoderReset => {
-                        "<bound method codecs.incrementaldecoder.reset>".to_string()
-                    }
-                    NativeMethodKind::CodecsIncrementalDecoderGetState => {
-                        "<bound method codecs.incrementaldecoder.getstate>".to_string()
-                    }
-                    NativeMethodKind::CodecsIncrementalDecoderSetState => {
-                        "<bound method codecs.incrementaldecoder.setstate>".to_string()
-                    }
-                },
-                _ => {
-                    if let Some(name) = bound_method_fallback_name(&method.function) {
-                        format!("<bound method {name}>")
-                    } else {
-                        "<bound method ?>".to_string()
+                    Object::Function(func) => format!("<bound method {}>", func.code.name),
+                    Object::NativeMethod(native) => match native.kind {
+                        NativeMethodKind::GeneratorIter => "<bound method __iter__>".to_string(),
+                        NativeMethodKind::Builtin(builtin) => {
+                            format!("<bound method {:?}>", builtin)
+                        }
+                        NativeMethodKind::GeneratorAwait => "<bound method __await__>".to_string(),
+                        NativeMethodKind::GeneratorANext => "<bound method __anext__>".to_string(),
+                        NativeMethodKind::GeneratorNext => "<bound method __next__>".to_string(),
+                        NativeMethodKind::GeneratorSend => "<bound method send>".to_string(),
+                        NativeMethodKind::GeneratorThrow => "<bound method throw>".to_string(),
+                        NativeMethodKind::GeneratorClose => "<bound method close>".to_string(),
+                        NativeMethodKind::IteratorIter => "<bound method __iter__>".to_string(),
+                        NativeMethodKind::IteratorNext => "<bound method __next__>".to_string(),
+                        NativeMethodKind::DictKeys => "<bound method dict.keys>".to_string(),
+                        NativeMethodKind::DictValues => "<bound method dict.values>".to_string(),
+                        NativeMethodKind::DictItems => "<bound method dict.items>".to_string(),
+                        NativeMethodKind::DictDunderReversed => {
+                            "<bound method dict.__reversed__>".to_string()
+                        }
+                        NativeMethodKind::DictViewDunderReversed(kind) => {
+                            format!("<bound method {}.__reversed__>", kind.type_name())
+                        }
+                        NativeMethodKind::DictClear => "<bound method dict.clear>".to_string(),
+                        NativeMethodKind::DictUpdateMethod => {
+                            "<bound method dict.update>".to_string()
+                        }
+                        NativeMethodKind::DictSetDefault => {
+                            "<bound method dict.setdefault>".to_string()
+                        }
+                        NativeMethodKind::DictGet => "<bound method dict.get>".to_string(),
+                        NativeMethodKind::DictGetItem => {
+                            "<bound method dict.__getitem__>".to_string()
+                        }
+                        NativeMethodKind::DictSetItem => {
+                            "<bound method dict.__setitem__>".to_string()
+                        }
+                        NativeMethodKind::DictDelItem => {
+                            "<bound method dict.__delitem__>".to_string()
+                        }
+                        NativeMethodKind::DictPop => "<bound method dict.pop>".to_string(),
+                        NativeMethodKind::DictPopItem => "<bound method dict.popitem>".to_string(),
+                        NativeMethodKind::DictMoveToEnd => {
+                            "<bound method OrderedDict.move_to_end>".to_string()
+                        }
+                        NativeMethodKind::DictCopy => "<bound method dict.copy>".to_string(),
+                        NativeMethodKind::DictInit => "<bound method dict.__init__>".to_string(),
+                        NativeMethodKind::ContextVarGetMethod => {
+                            "<bound method ContextVar.get>".to_string()
+                        }
+                        NativeMethodKind::ContextVarSetMethod => {
+                            "<bound method ContextVar.set>".to_string()
+                        }
+                        NativeMethodKind::ContextVarResetMethod => {
+                            "<bound method ContextVar.reset>".to_string()
+                        }
+                        NativeMethodKind::ListInit => "<bound method list.__init__>".to_string(),
+                        NativeMethodKind::ListAppend => "<bound method list.append>".to_string(),
+                        NativeMethodKind::ListExtend => "<bound method list.extend>".to_string(),
+                        NativeMethodKind::ListInsert => "<bound method list.insert>".to_string(),
+                        NativeMethodKind::ListRemove => "<bound method list.remove>".to_string(),
+                        NativeMethodKind::ListPop => "<bound method list.pop>".to_string(),
+                        NativeMethodKind::QueueSimpleQueuePut => {
+                            "<bound method SimpleQueue.put>".to_string()
+                        }
+                        NativeMethodKind::QueueSimpleQueueGet => {
+                            "<bound method SimpleQueue.get>".to_string()
+                        }
+                        NativeMethodKind::QueueSimpleQueueGetNowait => {
+                            "<bound method SimpleQueue.get_nowait>".to_string()
+                        }
+                        NativeMethodKind::QueueSimpleQueueEmpty => {
+                            "<bound method SimpleQueue.empty>".to_string()
+                        }
+                        NativeMethodKind::ListCount => "<bound method list.count>".to_string(),
+                        NativeMethodKind::ListCopy => "<bound method list.copy>".to_string(),
+                        NativeMethodKind::ListClear => "<bound method list.clear>".to_string(),
+                        NativeMethodKind::ListEq => "<bound method list.__eq__>".to_string(),
+                        NativeMethodKind::ListNe => "<bound method list.__ne__>".to_string(),
+                        NativeMethodKind::TupleCount => "<bound method tuple.count>".to_string(),
+                        NativeMethodKind::TupleIndex => "<bound method tuple.index>".to_string(),
+                        NativeMethodKind::TupleEq => "<bound method tuple.__eq__>".to_string(),
+                        NativeMethodKind::TupleNe => "<bound method tuple.__ne__>".to_string(),
+                        NativeMethodKind::ListIndex => "<bound method list.index>".to_string(),
+                        NativeMethodKind::ListReverse => "<bound method list.reverse>".to_string(),
+                        NativeMethodKind::ListDunderReversed => {
+                            "<bound method list.__reversed__>".to_string()
+                        }
+                        NativeMethodKind::ListSort => "<bound method list.sort>".to_string(),
+                        NativeMethodKind::RangeDunderReversed => {
+                            "<bound method range.__reversed__>".to_string()
+                        }
+                        NativeMethodKind::IntToBytes => "<bound method int.to_bytes>".to_string(),
+                        NativeMethodKind::IntBitLengthMethod => {
+                            "<bound method int.bit_length>".to_string()
+                        }
+                        NativeMethodKind::IntIndexMethod => {
+                            "<bound method int.__index__>".to_string()
+                        }
+                        NativeMethodKind::IntReprMethod => {
+                            "<bound method int.__repr__>".to_string()
+                        }
+                        NativeMethodKind::FloatAsIntegerRatioMethod => {
+                            "<bound method float.as_integer_ratio>".to_string()
+                        }
+                        NativeMethodKind::FloatIsIntegerMethod => {
+                            "<bound method float.is_integer>".to_string()
+                        }
+                        NativeMethodKind::FloatConjugateMethod => {
+                            "<bound method float.conjugate>".to_string()
+                        }
+                        NativeMethodKind::FloatReprMethod => {
+                            "<bound method float.__repr__>".to_string()
+                        }
+                        NativeMethodKind::StrStartsWith => {
+                            "<bound method str.startswith>".to_string()
+                        }
+                        NativeMethodKind::StrEndsWith => "<bound method str.endswith>".to_string(),
+                        NativeMethodKind::StrReplace => "<bound method str.replace>".to_string(),
+                        NativeMethodKind::StrUpper => "<bound method str.upper>".to_string(),
+                        NativeMethodKind::StrLower => "<bound method str.lower>".to_string(),
+                        NativeMethodKind::StrSwapCase => "<bound method str.swapcase>".to_string(),
+                        NativeMethodKind::StrCapitalize => {
+                            "<bound method str.capitalize>".to_string()
+                        }
+                        NativeMethodKind::StrTitle => "<bound method str.title>".to_string(),
+                        NativeMethodKind::StrEncode => "<bound method str.encode>".to_string(),
+                        NativeMethodKind::StrDecode => "<bound method str.decode>".to_string(),
+                        NativeMethodKind::BytesDecode => "<bound method bytes.decode>".to_string(),
+                        NativeMethodKind::BytesHex => "<bound method bytes.hex>".to_string(),
+                        NativeMethodKind::BytesStartsWith => {
+                            "<bound method bytes.startswith>".to_string()
+                        }
+                        NativeMethodKind::BytesEndsWith => {
+                            "<bound method bytes.endswith>".to_string()
+                        }
+                        NativeMethodKind::BytesCount => "<bound method bytes.count>".to_string(),
+                        NativeMethodKind::BytesFind => "<bound method bytes.find>".to_string(),
+                        NativeMethodKind::BytesIndex => "<bound method bytes.index>".to_string(),
+                        NativeMethodKind::BytesRFind => "<bound method bytes.rfind>".to_string(),
+                        NativeMethodKind::BytesRIndex => "<bound method bytes.rindex>".to_string(),
+                        NativeMethodKind::BytesSplit => "<bound method bytes.split>".to_string(),
+                        NativeMethodKind::BytesSplitLines => {
+                            "<bound method bytes.splitlines>".to_string()
+                        }
+                        NativeMethodKind::BytesTranslate => {
+                            "<bound method bytes.translate>".to_string()
+                        }
+                        NativeMethodKind::BytesJoin => "<bound method bytes.join>".to_string(),
+                        NativeMethodKind::BytesLJust => "<bound method bytes.ljust>".to_string(),
+                        NativeMethodKind::BytesLStrip => "<bound method bytes.lstrip>".to_string(),
+                        NativeMethodKind::BytesStrip => "<bound method bytes.strip>".to_string(),
+                        NativeMethodKind::BytesRStrip => "<bound method bytes.rstrip>".to_string(),
+                        NativeMethodKind::ByteArrayAppend => {
+                            "<bound method bytearray.append>".to_string()
+                        }
+                        NativeMethodKind::ByteArrayExtend => {
+                            "<bound method bytearray.extend>".to_string()
+                        }
+                        NativeMethodKind::ByteArrayClear => {
+                            "<bound method bytearray.clear>".to_string()
+                        }
+                        NativeMethodKind::ByteArrayResize => {
+                            "<bound method bytearray.resize>".to_string()
+                        }
+                        NativeMethodKind::MemoryViewEnter => {
+                            "<bound method memoryview.__enter__>".to_string()
+                        }
+                        NativeMethodKind::MemoryViewExit => {
+                            "<bound method memoryview.__exit__>".to_string()
+                        }
+                        NativeMethodKind::MemoryViewToReadOnly => {
+                            "<bound method memoryview.toreadonly>".to_string()
+                        }
+                        NativeMethodKind::MemoryViewCast => {
+                            "<bound method memoryview.cast>".to_string()
+                        }
+                        NativeMethodKind::MemoryViewToList => {
+                            "<bound method memoryview.tolist>".to_string()
+                        }
+                        NativeMethodKind::MemoryViewRelease => {
+                            "<bound method memoryview.release>".to_string()
+                        }
+                        NativeMethodKind::StrRemovePrefix => {
+                            "<bound method str.removeprefix>".to_string()
+                        }
+                        NativeMethodKind::StrRemoveSuffix => {
+                            "<bound method str.removesuffix>".to_string()
+                        }
+                        NativeMethodKind::StrFormat => "<bound method str.format>".to_string(),
+                        NativeMethodKind::StrIsUpper => "<bound method str.isupper>".to_string(),
+                        NativeMethodKind::StrIsLower => "<bound method str.islower>".to_string(),
+                        NativeMethodKind::StrIsAscii => "<bound method str.isascii>".to_string(),
+                        NativeMethodKind::StrIsAlpha => "<bound method str.isalpha>".to_string(),
+                        NativeMethodKind::StrIsAlNum => "<bound method str.isalnum>".to_string(),
+                        NativeMethodKind::StrIsDigit => "<bound method str.isdigit>".to_string(),
+                        NativeMethodKind::StrIsSpace => "<bound method str.isspace>".to_string(),
+                        NativeMethodKind::StrIsIdentifier => {
+                            "<bound method str.isidentifier>".to_string()
+                        }
+                        NativeMethodKind::StrJoin => "<bound method str.join>".to_string(),
+                        NativeMethodKind::StrSplit => "<bound method str.split>".to_string(),
+                        NativeMethodKind::StrSplitLines => {
+                            "<bound method str.splitlines>".to_string()
+                        }
+                        NativeMethodKind::StrRSplit => "<bound method str.rsplit>".to_string(),
+                        NativeMethodKind::StrPartition => {
+                            "<bound method str.partition>".to_string()
+                        }
+                        NativeMethodKind::StrRPartition => {
+                            "<bound method str.rpartition>".to_string()
+                        }
+                        NativeMethodKind::StrCount => "<bound method str.count>".to_string(),
+                        NativeMethodKind::StrFind => "<bound method str.find>".to_string(),
+                        NativeMethodKind::StrTranslate => {
+                            "<bound method str.translate>".to_string()
+                        }
+                        NativeMethodKind::StrIndex => "<bound method str.index>".to_string(),
+                        NativeMethodKind::StrRFind => "<bound method str.rfind>".to_string(),
+                        NativeMethodKind::StrLStrip => "<bound method str.lstrip>".to_string(),
+                        NativeMethodKind::StrRStrip => "<bound method str.rstrip>".to_string(),
+                        NativeMethodKind::StrStrip => "<bound method str.strip>".to_string(),
+                        NativeMethodKind::StrLJust => "<bound method str.ljust>".to_string(),
+                        NativeMethodKind::StrCenter => "<bound method str.center>".to_string(),
+                        NativeMethodKind::StrExpandTabs => {
+                            "<bound method str.expandtabs>".to_string()
+                        }
+                        NativeMethodKind::CodeReplace => "<bound method code.replace>".to_string(),
+                        NativeMethodKind::CodeCoPositions => {
+                            "<bound method code.co_positions>".to_string()
+                        }
+                        NativeMethodKind::CodeCoLines => "<bound method code.co_lines>".to_string(),
+                        NativeMethodKind::FrameClear => "<bound method frame.clear>".to_string(),
+                        NativeMethodKind::SetContains => "<bound method __contains__>".to_string(),
+                        NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),
+                        NativeMethodKind::SetDiscard => "<bound method set.discard>".to_string(),
+                        NativeMethodKind::SetRemove => "<bound method set.remove>".to_string(),
+                        NativeMethodKind::SetPop => "<bound method set.pop>".to_string(),
+                        NativeMethodKind::SetUpdate => "<bound method set.update>".to_string(),
+                        NativeMethodKind::SetUnion => "<bound method set.union>".to_string(),
+                        NativeMethodKind::SetIntersection => {
+                            "<bound method set.intersection>".to_string()
+                        }
+                        NativeMethodKind::SetDifference => {
+                            "<bound method set.difference>".to_string()
+                        }
+                        NativeMethodKind::SetIsSuperset => {
+                            "<bound method set.issuperset>".to_string()
+                        }
+                        NativeMethodKind::SetIsSubset => "<bound method set.issubset>".to_string(),
+                        NativeMethodKind::SetIsDisjoint => {
+                            "<bound method set.isdisjoint>".to_string()
+                        }
+                        NativeMethodKind::RePatternSearch => {
+                            "<bound method Pattern.search>".to_string()
+                        }
+                        NativeMethodKind::RePatternMatch => {
+                            "<bound method Pattern.match>".to_string()
+                        }
+                        NativeMethodKind::RePatternFullMatch => {
+                            "<bound method Pattern.fullmatch>".to_string()
+                        }
+                        NativeMethodKind::RePatternSub => "<bound method Pattern.sub>".to_string(),
+                        NativeMethodKind::RePatternSubN => {
+                            "<bound method Pattern.subn>".to_string()
+                        }
+                        NativeMethodKind::RePatternRepr => {
+                            "<bound method Pattern.__repr__>".to_string()
+                        }
+                        NativeMethodKind::ReMatchGroup => "<bound method Match.group>".to_string(),
+                        NativeMethodKind::ReMatchGroups => {
+                            "<bound method Match.groups>".to_string()
+                        }
+                        NativeMethodKind::ReMatchGroupDict => {
+                            "<bound method Match.groupdict>".to_string()
+                        }
+                        NativeMethodKind::ReMatchStart => "<bound method Match.start>".to_string(),
+                        NativeMethodKind::ReMatchEnd => "<bound method Match.end>".to_string(),
+                        NativeMethodKind::ReMatchSpan => "<bound method Match.span>".to_string(),
+                        NativeMethodKind::ReMatchRepr => {
+                            "<bound method Match.__repr__>".to_string()
+                        }
+                        NativeMethodKind::ExceptionWithTraceback => {
+                            "<bound method BaseException.with_traceback>".to_string()
+                        }
+                        NativeMethodKind::ExceptionAddNote => {
+                            "<bound method BaseException.add_note>".to_string()
+                        }
+                        NativeMethodKind::DescriptorReduceTypeError => {
+                            "<bound method descriptor.__reduce_ex__>".to_string()
+                        }
+                        NativeMethodKind::BoundMethodDescriptorGet => {
+                            "<bound method method_descriptor.__get__>".to_string()
+                        }
+                        NativeMethodKind::FunctionDescriptorGet => {
+                            "<bound method function.__get__>".to_string()
+                        }
+                        NativeMethodKind::GetSetDescriptorGet => {
+                            "<bound method getset_descriptor.__get__>".to_string()
+                        }
+                        NativeMethodKind::ClassMethodDescriptorGet => {
+                            "<bound method classmethod.__get__>".to_string()
+                        }
+                        NativeMethodKind::StaticMethodDescriptorGet => {
+                            "<bound method staticmethod.__get__>".to_string()
+                        }
+                        NativeMethodKind::FunctionAnnotate => {
+                            "<bound method function.__annotate__>".to_string()
+                        }
+                        NativeMethodKind::ObjectReduceExBound => {
+                            "<bound method object.__reduce_ex__>".to_string()
+                        }
+                        NativeMethodKind::BoundMethodReduceEx => {
+                            "<bound method method.__reduce_ex__>".to_string()
+                        }
+                        NativeMethodKind::ComplexReduceEx => {
+                            "<bound method complex.__reduce_ex__>".to_string()
+                        }
+                        NativeMethodKind::GenericAliasRepr => {
+                            "<bound method GenericAlias.__repr__>".to_string()
+                        }
+                        NativeMethodKind::GenericAliasCall => {
+                            "<bound method GenericAlias.__call__>".to_string()
+                        }
+                        NativeMethodKind::GenericAliasReduceEx => {
+                            "<bound method GenericAlias.__reduce_ex__>".to_string()
+                        }
+                        NativeMethodKind::GenericAliasMroEntries => {
+                            "<bound method GenericAlias.__mro_entries__>".to_string()
+                        }
+                        NativeMethodKind::TypeParamRepr => {
+                            "<bound method type_parameter.__repr__>".to_string()
+                        }
+                        NativeMethodKind::TypeParamCopy => {
+                            "<bound method type_parameter.__copy__>".to_string()
+                        }
+                        NativeMethodKind::TypeParamReduceEx => {
+                            "<bound method type_parameter.__reduce_ex__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyContains => {
+                            "<bound method mappingproxy.__contains__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyGetItem => {
+                            "<bound method mappingproxy.__getitem__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyIor => {
+                            "<bound method mappingproxy.__ior__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyIter => {
+                            "<bound method mappingproxy.__iter__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyLen => {
+                            "<bound method mappingproxy.__len__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyOr => {
+                            "<bound method mappingproxy.__or__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyReversed => {
+                            "<bound method mappingproxy.__reversed__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyRor => {
+                            "<bound method mappingproxy.__ror__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyCopy => {
+                            "<bound method mappingproxy.copy>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyGet => {
+                            "<bound method mappingproxy.get>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyItems => {
+                            "<bound method mappingproxy.items>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyKeys => {
+                            "<bound method mappingproxy.keys>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyValues => {
+                            "<bound method mappingproxy.values>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyEq => {
+                            "<bound method mappingproxy.__eq__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyNe => {
+                            "<bound method mappingproxy.__ne__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyHash => {
+                            "<bound method mappingproxy.__hash__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyRepr => {
+                            "<bound method mappingproxy.__repr__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyClassGetItem => {
+                            "<bound method mappingproxy.__class_getitem__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyValuesViewIter => {
+                            "<bound method mappingproxy_values_view.__iter__>".to_string()
+                        }
+                        NativeMethodKind::MappingProxyItemsViewIter => {
+                            "<bound method mappingproxy_items_view.__iter__>".to_string()
+                        }
+                        NativeMethodKind::ClassRegister => "<bound method register>".to_string(),
+                        NativeMethodKind::PropertyGet => {
+                            "<bound method property.__get__>".to_string()
+                        }
+                        NativeMethodKind::PropertySet => {
+                            "<bound method property.__set__>".to_string()
+                        }
+                        NativeMethodKind::PropertyDelete => {
+                            "<bound method property.__delete__>".to_string()
+                        }
+                        NativeMethodKind::PropertySetName => {
+                            "<bound method property.__set_name__>".to_string()
+                        }
+                        NativeMethodKind::PropertyGetter => {
+                            "<bound method property.getter>".to_string()
+                        }
+                        NativeMethodKind::PropertySetter => {
+                            "<bound method property.setter>".to_string()
+                        }
+                        NativeMethodKind::PropertyDeleter => {
+                            "<bound method property.deleter>".to_string()
+                        }
+                        NativeMethodKind::CachedPropertyGet => {
+                            "<bound method cached_property.__get__>".to_string()
+                        }
+                        NativeMethodKind::CachedPropertySetName => {
+                            "<bound method cached_property.__set_name__>".to_string()
+                        }
+                        NativeMethodKind::OperatorItemGetterCall => {
+                            "<bound method operator.itemgetter-call>".to_string()
+                        }
+                        NativeMethodKind::OperatorAttrGetterCall => {
+                            "<bound method operator.attrgetter-call>".to_string()
+                        }
+                        NativeMethodKind::OperatorMethodCallerCall => {
+                            "<bound method operator.methodcaller-call>".to_string()
+                        }
+                        NativeMethodKind::FunctoolsWrapsDecorator => {
+                            "<bound method functools.wraps-decorator>".to_string()
+                        }
+                        NativeMethodKind::FunctoolsPartialCall => {
+                            "<bound method functools.partial-call>".to_string()
+                        }
+                        NativeMethodKind::FunctoolsCmpToKeyCall => {
+                            "<bound method functools.cmp_to_key-call>".to_string()
+                        }
+                        NativeMethodKind::ExtensionFunctionCall(id) => {
+                            format!("<bound method extension callable {}>", id)
+                        }
+                        NativeMethodKind::CodecsIncrementalEncoderFactoryCall => {
+                            "<bound method codecs.incrementalencoder-factory-call>".to_string()
+                        }
+                        NativeMethodKind::CodecsIncrementalDecoderFactoryCall => {
+                            "<bound method codecs.incrementaldecoder-factory-call>".to_string()
+                        }
+                        NativeMethodKind::CodecsIncrementalEncoderEncode => {
+                            "<bound method codecs.incrementalencoder.encode>".to_string()
+                        }
+                        NativeMethodKind::CodecsIncrementalEncoderReset => {
+                            "<bound method codecs.incrementalencoder.reset>".to_string()
+                        }
+                        NativeMethodKind::CodecsIncrementalEncoderGetState => {
+                            "<bound method codecs.incrementalencoder.getstate>".to_string()
+                        }
+                        NativeMethodKind::CodecsIncrementalEncoderSetState => {
+                            "<bound method codecs.incrementalencoder.setstate>".to_string()
+                        }
+                        NativeMethodKind::CodecsIncrementalDecoderDecode => {
+                            "<bound method codecs.incrementaldecoder.decode>".to_string()
+                        }
+                        NativeMethodKind::CodecsIncrementalDecoderReset => {
+                            "<bound method codecs.incrementaldecoder.reset>".to_string()
+                        }
+                        NativeMethodKind::CodecsIncrementalDecoderGetState => {
+                            "<bound method codecs.incrementaldecoder.getstate>".to_string()
+                        }
+                        NativeMethodKind::CodecsIncrementalDecoderSetState => {
+                            "<bound method codecs.incrementaldecoder.setstate>".to_string()
+                        }
+                    },
+                    _ => {
+                        if let Some(name) = bound_method_fallback_name(&method.function) {
+                            format!("<bound method {name}>")
+                        } else {
+                            "<bound method ?>".to_string()
+                        }
                     }
                 }
-            }
             }
             _ => "<bound method ?>".to_string(),
         },
@@ -11564,7 +11612,11 @@ pub fn format_value(value: &Value) -> String {
         Value::Code(_) => "<code>".to_string(),
         Value::Function(obj) => match &*obj.kind() {
             Object::Function(function) => {
-                format!("<function {} at 0x{:x}>", function_qualname(function), obj.id())
+                format!(
+                    "<function {} at 0x{:x}>",
+                    function_qualname(function),
+                    obj.id()
+                )
             }
             _ => "<function>".to_string(),
         },
@@ -11694,7 +11746,7 @@ pub fn format_repr(value: &Value) -> String {
                         .type_name()
                 ),
             }
-        },
+        }
         Value::Set(obj) => match &*obj.kind() {
             Object::Set(values) => {
                 if values.is_empty() {

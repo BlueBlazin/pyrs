@@ -7,11 +7,10 @@
 use std::cell::Cell;
 
 use super::{
-    BigInt, BoundMethod, BuiltinFunction, CodeObject, ExceptionObject,
-    FormatterFieldKey, Frame, GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome,
-    HashMap, InstanceObject, Instruction, InternalCallOutcome, IteratorKind, IteratorObject,
-    MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object,
-    Opcode, Ordering,
+    BigInt, BoundMethod, BuiltinFunction, CodeObject, ExceptionObject, FormatterFieldKey, Frame,
+    GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome, HashMap, InstanceObject,
+    Instruction, InternalCallOutcome, IteratorKind, IteratorObject, MAPPING_PROXY_STORAGE_ATTR,
+    ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object, Opcode, Ordering,
     PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc, ReMode, RePatternValue, RuntimeError, Value, Vm,
     bigint_to_fixed_bytes, bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup,
     class_name_for_instance, decode_text_bytes, dict_get_value, dict_remove_value, dict_set_value,
@@ -556,13 +555,12 @@ impl Vm {
                         | BuiltinFunction::BytesMakeTrans
                         | BuiltinFunction::StrMakeTrans
                 );
-                let mut call_args = if let Some(slot_receiver) =
-                    self.extract_slot_wrapper_receiver_value(
+                let mut call_args = if let Some(slot_receiver) = self
+                    .extract_slot_wrapper_receiver_value(
                         &receiver,
                         &mut args,
                         self.slot_wrapper_method_name(builtin),
-                    )?
-                {
+                    )? {
                     let mut call_args = Vec::with_capacity(args.len() + 1);
                     call_args.push(slot_receiver);
                     call_args
@@ -2494,7 +2492,9 @@ impl Vm {
                         "__reversed__() expects no arguments",
                     ));
                 }
-                Ok(NativeCallResult::Value(self.list_reverse_iterator(receiver)?))
+                Ok(NativeCallResult::Value(
+                    self.list_reverse_iterator(receiver)?,
+                ))
             }
             NativeMethodKind::ListSort => {
                 if !args.is_empty() {
@@ -2552,7 +2552,9 @@ impl Vm {
                         "__reversed__() expects no arguments",
                     ));
                 }
-                Ok(NativeCallResult::Value(self.range_reverse_iterator(&receiver)?))
+                Ok(NativeCallResult::Value(
+                    self.range_reverse_iterator(&receiver)?,
+                ))
             }
             NativeMethodKind::DictDunderReversed => {
                 if !args.is_empty() {
@@ -2560,9 +2562,10 @@ impl Vm {
                         "__reversed__() expects no arguments",
                     ));
                 }
-                Ok(NativeCallResult::Value(
-                    self.dict_view_reverse_iterator(receiver, DictViewKind::Keys)?,
-                ))
+                Ok(NativeCallResult::Value(self.dict_view_reverse_iterator(
+                    receiver,
+                    DictViewKind::Keys,
+                )?))
             }
             NativeMethodKind::DictViewDunderReversed(kind) => {
                 if !args.is_empty() {
@@ -8183,23 +8186,31 @@ impl Vm {
         if matches!(target, Value::Dict(_)) {
             return Ok(None);
         }
-        let len_method = self
-            .lookup_bound_special_method(&target, "__len__")?
-            .or(if matches!(target, Value::Instance(_) | Value::Module(_) | Value::Class(_)) {
+        let len_method = self.lookup_bound_special_method(&target, "__len__")?.or(
+            if matches!(
+                target,
+                Value::Instance(_) | Value::Module(_) | Value::Class(_)
+            ) {
                 None
             } else {
                 self.optional_getattr_value(target.clone(), "__len__")?
-            });
+            },
+        );
         let Some(_len_method) = len_method else {
             return Ok(None);
         };
         let getitem = self
             .lookup_bound_special_method(&target, "__getitem__")?
-            .or(if matches!(target, Value::Instance(_) | Value::Module(_) | Value::Class(_)) {
-                None
-            } else {
-                self.optional_getattr_value(target.clone(), "__getitem__")?
-            });
+            .or(
+                if matches!(
+                    target,
+                    Value::Instance(_) | Value::Module(_) | Value::Class(_)
+                ) {
+                    None
+                } else {
+                    self.optional_getattr_value(target.clone(), "__getitem__")?
+                },
+            );
         let Some(getitem) = getitem else {
             return Ok(None);
         };
@@ -9221,12 +9232,12 @@ impl Vm {
                 }
             }
             Value::Generator(_) => Ok(source),
-            Value::DictKeys(view_obj) | Value::DictValues(view_obj) | Value::DictItems(view_obj) => {
-                match &*view_obj.kind() {
-                    Object::DictView(view) => self.dict_view_iterator(view.dict.clone(), view.kind),
-                    _ => Err(RuntimeError::type_error("yield from expects iterable")),
-                }
-            }
+            Value::DictKeys(view_obj)
+            | Value::DictValues(view_obj)
+            | Value::DictItems(view_obj) => match &*view_obj.kind() {
+                Object::DictView(view) => self.dict_view_iterator(view.dict.clone(), view.kind),
+                _ => Err(RuntimeError::type_error("yield from expects iterable")),
+            },
             Value::Instance(instance) => {
                 if let Some(values) = self.namedtuple_instance_values(&instance) {
                     return self.to_iterator_value(self.heap.alloc_tuple(values));
@@ -11852,9 +11863,8 @@ impl Vm {
                         {
                             let mut iter = iterator_ref.kind_mut();
                             if let Object::Iterator(state) = &mut *iter
-                                && let IteratorKind::ReversedSequenceGetItem {
-                                    next_index, ..
-                                } = &mut state.kind
+                                && let IteratorKind::ReversedSequenceGetItem { next_index, .. } =
+                                    &mut state.kind
                             {
                                 *next_index = index.saturating_sub(1);
                                 state.index = state.index.saturating_add(1);
@@ -11870,9 +11880,8 @@ impl Vm {
                             unsafe { PyErr_Clear() };
                             let mut iter = iterator_ref.kind_mut();
                             if let Object::Iterator(state) = &mut *iter
-                                && let IteratorKind::ReversedSequenceGetItem {
-                                    next_index, ..
-                                } = &mut state.kind
+                                && let IteratorKind::ReversedSequenceGetItem { next_index, .. } =
+                                    &mut state.kind
                             {
                                 *next_index = -1;
                             }
@@ -11891,9 +11900,8 @@ impl Vm {
                             unsafe { PyErr_Clear() };
                             let mut iter = iterator_ref.kind_mut();
                             if let Object::Iterator(state) = &mut *iter
-                                && let IteratorKind::ReversedSequenceGetItem {
-                                    next_index, ..
-                                } = &mut state.kind
+                                && let IteratorKind::ReversedSequenceGetItem { next_index, .. } =
+                                    &mut state.kind
                             {
                                 *next_index = -1;
                             }

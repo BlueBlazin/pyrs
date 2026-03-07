@@ -2211,7 +2211,7 @@ result = {
 }
 "#;
     let py = run_cpython_json(source).expect("CPython JSON should run");
-    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    let ours = run_pyrs_cli_json(source).expect("pyrs JSON should run");
     assert_eq!(py, ours, "{}", source);
 }
 
@@ -2232,7 +2232,7 @@ result = {
 }
 "#;
     let py = run_cpython_json(source).expect("CPython JSON should run");
-    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    let ours = run_pyrs_cli_json(source).expect("pyrs JSON should run");
     assert_eq!(py, ours, "{}", source);
 }
 

@@ -10,9 +10,9 @@ use super::{
     system_time_to_secs_f64, value_from_bigint, value_to_bigint, value_to_f64, value_to_int,
     value_to_process_text, value_to_sequence_items,
 };
-use crate::unicode::canonical_codepoint_for_internal_char;
 #[cfg(unix)]
 use super::{collect_env_entries, collect_process_argv, is_missing_attribute_error};
+use crate::unicode::canonical_codepoint_for_internal_char;
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 #[cfg(unix)]

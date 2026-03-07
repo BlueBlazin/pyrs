@@ -252,12 +252,8 @@ impl Vm {
         let default_callable = values[1].take().expect("validated default argument");
         let encoder_callable = values[2].take().expect("validated encoder argument");
         let indent_value = values[3].take().expect("validated indent argument");
-        let key_separator_value = values[4]
-            .take()
-            .expect("validated key separator argument");
-        let item_separator_value = values[5]
-            .take()
-            .expect("validated item separator argument");
+        let key_separator_value = values[4].take().expect("validated key separator argument");
+        let item_separator_value = values[5].take().expect("validated item separator argument");
         let sort_keys_value = values[6].take().expect("validated sort_keys argument");
         let skipkeys_value = values[7].take().expect("validated skipkeys argument");
         let allow_nan_value = values[8].take().expect("validated allow_nan argument");
@@ -320,9 +316,7 @@ impl Vm {
             module_data
                 .globals
                 .insert("encoder".to_string(), encoder_callable);
-            module_data
-                .globals
-                .insert("markers".to_string(), markers);
+            module_data.globals.insert("markers".to_string(), markers);
             module_data
                 .globals
                 .insert("indent".to_string(), indent_value);
@@ -400,7 +394,11 @@ impl Vm {
                     string_setting("item_separator", ", "),
                     string_setting("key_separator", ": "),
                     module_data.globals.get("default").cloned(),
-                    module_data.globals.get("encoder").cloned().unwrap_or(Value::None),
+                    module_data
+                        .globals
+                        .get("encoder")
+                        .cloned()
+                        .unwrap_or(Value::None),
                     module_data
                         .globals
                         .get("indent")
@@ -408,7 +406,11 @@ impl Vm {
                         .unwrap_or(Value::None),
                 )
             }
-            _ => return Err(RuntimeError::type_error("_iterencode() receiver is invalid")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "_iterencode() receiver is invalid",
+                ));
+            }
         };
 
         self.json_validate_encoder_for_value(&encoder_callable, &value)?;
@@ -440,7 +442,8 @@ impl Vm {
             && let Value::Str(indent_unit) = &indent
             && !indent_unit.is_empty()
         {
-            rendered = json_with_extra_indent(&rendered, indent_unit, current_indent_level as usize);
+            rendered =
+                json_with_extra_indent(&rendered, indent_unit, current_indent_level as usize);
         }
         Ok(self.heap.alloc_list(vec![Value::Str(rendered)]))
     }
@@ -486,13 +489,16 @@ impl Vm {
             _ => {}
         }
         for text in probe_strings {
-            let encoded =
-                match self.call_internal(encoder.clone(), vec![Value::Str(text)], HashMap::new())? {
-                    InternalCallOutcome::Value(value) => value,
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(self.runtime_error_from_active_exception("encoder() failed"));
-                    }
-                };
+            let encoded = match self.call_internal(
+                encoder.clone(),
+                vec![Value::Str(text)],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception("encoder() failed"));
+                }
+            };
             if !matches!(encoded, Value::Str(_)) {
                 return Err(RuntimeError::type_error(format!(
                     "encoder() must return a string, not {}",
@@ -526,14 +532,12 @@ impl Vm {
             .optional_getattr_value(context.clone(), "object_pairs_hook")?
             .unwrap_or(Value::None);
 
-        Ok(
-            !json_is_default_parse_float(&parse_float)
-                || !json_is_default_parse_int(&parse_int)
-                || !json_is_default_parse_constant(&parse_constant)
-                || !matches!(strict, Value::Bool(true))
-                || object_hook != Value::None
-                || object_pairs_hook != Value::None,
-        )
+        Ok(!json_is_default_parse_float(&parse_float)
+            || !json_is_default_parse_int(&parse_int)
+            || !json_is_default_parse_constant(&parse_constant)
+            || !matches!(strict, Value::Bool(true))
+            || object_hook != Value::None
+            || object_pairs_hook != Value::None)
     }
 
     pub(in crate::vm) fn builtin_json_scanner_make_scanner(
@@ -554,7 +558,8 @@ impl Vm {
             }
             let caller_depth = self.frames.len();
             if let Ok(scanner_module) = self.import_module_object("json.scanner")
-                && let Ok(scanner_module) = self.return_imported_module(scanner_module, caller_depth)
+                && let Ok(scanner_module) =
+                    self.return_imported_module(scanner_module, caller_depth)
                 && let Object::Module(module_data) = &*scanner_module.kind()
                 && let Some(py_make_scanner) = module_data.globals.get("py_make_scanner").cloned()
             {
@@ -596,17 +601,23 @@ impl Vm {
         }
         let idx = idx as usize;
         let depth_limit = json_parse_depth_limit(self);
-        let (node, end) = match parse_json_node_from_index_with_limit_detail(&source, idx, depth_limit)
-        {
-            Ok(result) => result,
-            Err(err) if err.message.contains("maximum recursion depth exceeded") => {
-                return Err(self.recursion_limit_error());
-            }
-            Err(err) if err.message == "Expecting value" => {
-                return Err(self.stop_iteration_runtime_error(Value::Int(err.pos as i64)));
-            }
-            Err(err) => return Err(json_decode_error_runtime_error(&err.message, &source, err.pos)),
-        };
+        let (node, end) =
+            match parse_json_node_from_index_with_limit_detail(&source, idx, depth_limit) {
+                Ok(result) => result,
+                Err(err) if err.message.contains("maximum recursion depth exceeded") => {
+                    return Err(self.recursion_limit_error());
+                }
+                Err(err) if err.message == "Expecting value" => {
+                    return Err(self.stop_iteration_runtime_error(Value::Int(err.pos as i64)));
+                }
+                Err(err) => {
+                    return Err(json_decode_error_runtime_error(
+                        &err.message,
+                        &source,
+                        err.pos,
+                    ));
+                }
+            };
         let value = json_node_to_value(node, &self.heap);
         Ok(self.heap.alloc_tuple(vec![value, Value::Int(end as i64)]))
     }
@@ -697,18 +708,16 @@ impl Vm {
         let start_quote_byte = utf8_char_index_to_byte(&source, start_quote_char)
             .ok_or_else(|| RuntimeError::new("scanstring() start index is out of range"))?;
         let depth_limit = json_parse_depth_limit(self);
-        let (node, end_byte) = parse_json_node_from_index_with_limit(
-            &source,
-            start_quote_byte,
-            depth_limit,
-        )
-        .map_err(|err| {
-                if json_parse_error_is_recursion_limit(&err) {
-                    self.recursion_limit_error()
-                } else {
-                    err
-                }
-            })?;
+        let (node, end_byte) =
+            parse_json_node_from_index_with_limit(&source, start_quote_byte, depth_limit).map_err(
+                |err| {
+                    if json_parse_error_is_recursion_limit(&err) {
+                        self.recursion_limit_error()
+                    } else {
+                        err
+                    }
+                },
+            )?;
         let value = match node {
             JsonNode::String(text) => text,
             _ => {
@@ -760,7 +769,8 @@ fn json_with_extra_indent(rendered: &str, indent_unit: &str, extra_levels: usize
         return rendered.to_string();
     }
     let prefix = indent_unit.repeat(extra_levels);
-    let mut out = String::with_capacity(rendered.len() + prefix.len() * rendered.matches('\n').count());
+    let mut out =
+        String::with_capacity(rendered.len() + prefix.len() * rendered.matches('\n').count());
     for (idx, line) in rendered.split('\n').enumerate() {
         if idx > 0 {
             out.push('\n');
@@ -1107,8 +1117,11 @@ fn json_serialize_via_default(
 ) -> Result<String, RuntimeError> {
     if let Some(default_callable) = default {
         let marker = json_enter_marker(markers, value)?;
-        let call_result =
-            vm.call_internal(default_callable.clone(), vec![value.clone()], HashMap::new());
+        let call_result = vm.call_internal(
+            default_callable.clone(),
+            vec![value.clone()],
+            HashMap::new(),
+        );
         let result = match call_result {
             Ok(InternalCallOutcome::Value(converted)) => {
                 match json_serialize_value_at_depth(
@@ -1128,8 +1141,8 @@ fn json_serialize_via_default(
                 }
             }
             Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                let mut err = vm
-                    .runtime_error_from_active_exception("dumps() default callback failed");
+                let mut err =
+                    vm.runtime_error_from_active_exception("dumps() default callback failed");
                 let note = json_serialization_note_for_value(vm, value);
                 json_append_exception_note(vm, &mut err, note);
                 Err(err)
@@ -1365,28 +1378,27 @@ fn json_serialize_value_at_depth(
                 let mut parts = Vec::with_capacity(mapped.len());
                 for (_raw_key, key, value) in mapped {
                     let encoded_key = json_escape_string(&key, options.ensure_ascii);
-                    let encoded_value =
-                        match json_serialize_value_at_depth(
-                            vm,
-                            &value,
-                            options,
-                            default,
-                            depth + 1,
-                            markers,
-                        ) {
-                            Ok(encoded) => encoded,
-                            Err(mut err) => {
-                                json_append_exception_note(
-                                    vm,
-                                    &mut err,
-                                    format!(
-                                        "when serializing dict item {}",
-                                        format_repr(&Value::Str(key.clone()))
-                                    ),
-                                );
-                                return Err(err);
-                            }
-                        };
+                    let encoded_value = match json_serialize_value_at_depth(
+                        vm,
+                        &value,
+                        options,
+                        default,
+                        depth + 1,
+                        markers,
+                    ) {
+                        Ok(encoded) => encoded,
+                        Err(mut err) => {
+                            json_append_exception_note(
+                                vm,
+                                &mut err,
+                                format!(
+                                    "when serializing dict item {}",
+                                    format_repr(&Value::Str(key.clone()))
+                                ),
+                            );
+                            return Err(err);
+                        }
+                    };
                     parts.push(format!(
                         "{}{sep}{}",
                         encoded_key,
@@ -1435,7 +1447,12 @@ fn json_serialize_value_at_depth(
             }
             if let Some(backing_int) = vm.instance_backing_int(instance) {
                 return json_serialize_value_at_depth(
-                    vm, &backing_int, options, default, depth, markers,
+                    vm,
+                    &backing_int,
+                    options,
+                    default,
+                    depth,
+                    markers,
                 );
             }
             if let Some(backing_float) = vm.instance_backing_float(instance) {
@@ -1673,14 +1690,16 @@ impl<'a> JsonParser<'a> {
                                     // Keep the trailing \uXXXX escape for the next loop pass.
                                     self.pos = pair_start;
                                 }
-                                let ch = internal_char_from_codepoint(code as u32).ok_or_else(
-                                    || JsonParseError::new("invalid unicode escape", self.pos),
-                                )?;
+                                let ch =
+                                    internal_char_from_codepoint(code as u32).ok_or_else(|| {
+                                        JsonParseError::new("invalid unicode escape", self.pos)
+                                    })?;
                                 out.push(ch);
                             } else if (0xDC00..=0xDFFF).contains(&code) {
-                                let ch = internal_char_from_codepoint(code as u32).ok_or_else(
-                                    || JsonParseError::new("invalid unicode escape", self.pos),
-                                )?;
+                                let ch =
+                                    internal_char_from_codepoint(code as u32).ok_or_else(|| {
+                                        JsonParseError::new("invalid unicode escape", self.pos)
+                                    })?;
                                 out.push(ch);
                             } else {
                                 let ch = char::from_u32(code as u32).ok_or_else(|| {
@@ -1716,7 +1735,10 @@ impl<'a> JsonParser<'a> {
         } else if first >> 3 == 0b11110 {
             4
         } else {
-            return Err(JsonParseError::new("invalid UTF-8 in JSON string", self.pos));
+            return Err(JsonParseError::new(
+                "invalid UTF-8 in JSON string",
+                self.pos,
+            ));
         };
         let mut bytes = vec![first];
         for _ in 1..width {
@@ -1724,7 +1746,10 @@ impl<'a> JsonParser<'a> {
                 .next()
                 .ok_or_else(|| JsonParseError::new("invalid UTF-8 in JSON string", self.pos))?;
             if (next & 0b1100_0000) != 0b1000_0000 {
-                return Err(JsonParseError::new("invalid UTF-8 in JSON string", self.pos));
+                return Err(JsonParseError::new(
+                    "invalid UTF-8 in JSON string",
+                    self.pos,
+                ));
             }
             bytes.push(next);
         }
@@ -1909,9 +1934,8 @@ impl<'a> JsonParser<'a> {
                 Some(rest) => (true, rest),
                 None => (false, text),
             };
-            json_validate_int_digits_limit(digits).map_err(|err| {
-                JsonParseError::new(err.message, self.pos)
-            })?;
+            json_validate_int_digits_limit(digits)
+                .map_err(|err| JsonParseError::new(err.message, self.pos))?;
             let mut value = BigInt::from_str_radix(digits, 10)
                 .ok_or_else(|| JsonParseError::new("invalid JSON number", self.pos))?;
             if negative {
@@ -2199,7 +2223,9 @@ mod tests {
         let high_surrogate = internal_char_from_codepoint(0xD800).expect("high surrogate");
         let low_surrogate = internal_char_from_codepoint(0xDC00).expect("low surrogate");
         let high_only = parse_json_node("\"\\ud800\"").expect("lone high surrogate");
-        assert!(matches!(high_only, JsonNode::String(value) if value == high_surrogate.to_string()));
+        assert!(
+            matches!(high_only, JsonNode::String(value) if value == high_surrogate.to_string())
+        );
 
         let low_only = parse_json_node("\"\\udc00\"").expect("lone low surrogate");
         assert!(matches!(low_only, JsonNode::String(value) if value == low_surrogate.to_string()));
@@ -2207,13 +2233,17 @@ mod tests {
         let high_then_non_low =
             parse_json_node("\"\\ud800\\u0041\"").expect("high surrogate followed by non-low");
         let expected_high_then_non_low = format!("{high_surrogate}A");
-        assert!(matches!(high_then_non_low, JsonNode::String(value) if value == expected_high_then_non_low));
+        assert!(
+            matches!(high_then_non_low, JsonNode::String(value) if value == expected_high_then_non_low)
+        );
 
         let invalid_following_escape =
             parse_json_node("\"\\ud800\\u00x1\"").expect_err("invalid trailing escape");
-        assert!(invalid_following_escape
-            .message
-            .contains("invalid unicode escape"));
+        assert!(
+            invalid_following_escape
+                .message
+                .contains("invalid unicode escape")
+        );
     }
 
     #[test]
@@ -2252,13 +2282,18 @@ mod tests {
             .expect_err("allow_nan=False should reject NaN");
         assert!(nan_err.message.contains("not JSON compliant: nan"));
 
-        let bad_key_dict = vm
-            .heap
-            .alloc_dict(vec![(vm.heap.alloc_bytes(b"x".to_vec()), Value::Str("y".to_string()))]);
+        let bad_key_dict = vm.heap.alloc_dict(vec![(
+            vm.heap.alloc_bytes(b"x".to_vec()),
+            Value::Str("y".to_string()),
+        )]);
         let key_err = vm
             .builtin_json_dumps(vec![bad_key_dict.clone()], HashMap::new())
             .expect_err("unsupported key should fail when skipkeys is false");
-        assert!(key_err.message.contains("keys must be str, int, float, bool or None, not bytes"));
+        assert!(
+            key_err
+                .message
+                .contains("keys must be str, int, float, bool or None, not bytes")
+        );
 
         let skipped = vm
             .builtin_json_dumps(
@@ -2270,15 +2305,18 @@ mod tests {
 
         let numeric_key = vm
             .builtin_json_dumps(
-                vec![vm
-                    .heap
-                    .alloc_dict(vec![(Value::Int(1), Value::Str("x".to_string()))])],
+                vec![
+                    vm.heap
+                        .alloc_dict(vec![(Value::Int(1), Value::Str("x".to_string()))]),
+                ],
                 HashMap::new(),
             )
             .expect("int keys should be serialized as JSON object-string keys");
         assert_eq!(numeric_key, Value::Str("{\"1\": \"x\"}".to_string()));
 
-        let nan_key_dict = vm.heap.alloc_dict(vec![(Value::Float(f64::NAN), Value::Int(1))]);
+        let nan_key_dict = vm
+            .heap
+            .alloc_dict(vec![(Value::Float(f64::NAN), Value::Int(1))]);
         let nan_key_err = vm
             .builtin_json_dumps(
                 vec![nan_key_dict.clone()],

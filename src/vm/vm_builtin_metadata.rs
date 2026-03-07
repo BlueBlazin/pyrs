@@ -44,6 +44,17 @@ impl Drop for CallInternalDepthGuard {
     }
 }
 
+enum InternalCallDispatch {
+    TailCall {
+        callable: Value,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
+    },
+    NeedsRun(bool),
+    Return(InternalCallOutcome),
+}
+
 struct LoadAttrSuperDepthGuard;
 
 impl LoadAttrSuperDepthGuard {
@@ -237,7 +248,11 @@ impl Vm {
         descriptor
     }
 
-    pub(super) fn getset_descriptor_value(&self, owner_class: Value, descriptor_name: &str) -> Value {
+    pub(super) fn getset_descriptor_value(
+        &self,
+        owner_class: Value,
+        descriptor_name: &str,
+    ) -> Value {
         let descriptor_class = self
             .types_module_or_private_class("GetSetDescriptorType")
             .unwrap_or_else(|| {
@@ -1297,13 +1312,12 @@ impl Vm {
             "__lt__" if builtin == BuiltinFunction::ObjectNew => {
                 Ok(Value::Builtin(BuiltinFunction::OperatorLt))
             }
-            "__lt__" if matches!(builtin, BuiltinFunction::Int | BuiltinFunction::Bool) => Ok(
-                self.alloc_builtin_slot_wrapper_method(
+            "__lt__" if matches!(builtin, BuiltinFunction::Int | BuiltinFunction::Bool) => Ok(self
+                .alloc_builtin_slot_wrapper_method(
                     Value::Builtin(BuiltinFunction::Int),
                     None,
                     BuiltinFunction::OperatorLt,
-                ),
-            ),
+                )),
             "__getformat__" if builtin == BuiltinFunction::Float => {
                 Ok(Value::Builtin(BuiltinFunction::FloatGetFormat))
             }
@@ -1397,14 +1411,13 @@ impl Vm {
                     BuiltinFunction::Str,
                 ))
             }
-            "__str__" if builtin == BuiltinFunction::Str => Ok(self.alloc_builtin_slot_wrapper_method(
-                Value::Builtin(BuiltinFunction::Str),
-                None,
-                BuiltinFunction::Str,
-            )),
-            "__str__"
-                if matches!(builtin, BuiltinFunction::Bytes | BuiltinFunction::ByteArray) =>
-            {
+            "__str__" if builtin == BuiltinFunction::Str => Ok(self
+                .alloc_builtin_slot_wrapper_method(
+                    Value::Builtin(BuiltinFunction::Str),
+                    None,
+                    BuiltinFunction::Str,
+                )),
+            "__str__" if matches!(builtin, BuiltinFunction::Bytes | BuiltinFunction::ByteArray) => {
                 Ok(self.alloc_builtin_slot_wrapper_method(
                     Value::Builtin(builtin),
                     None,
@@ -1429,13 +1442,13 @@ impl Vm {
             "bit_length" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::IntBitLength))
             }
-            "__add__" if matches!(builtin, BuiltinFunction::Int | BuiltinFunction::Bool) => Ok(
-                self.alloc_builtin_slot_wrapper_method(
+            "__add__" if matches!(builtin, BuiltinFunction::Int | BuiltinFunction::Bool) => {
+                Ok(self.alloc_builtin_slot_wrapper_method(
                     Value::Builtin(BuiltinFunction::Int),
                     None,
                     BuiltinFunction::OperatorAdd,
-                ),
-            ),
+                ))
+            }
             "from_bytes" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::IntFromBytes))
             }
@@ -2185,8 +2198,7 @@ impl Vm {
         {
             return Some(Value::Builtin(BuiltinFunction::ObjectReduceEx));
         }
-        if self.class_has_builtin_list_base(class) && attr_name == "__reversed__"
-        {
+        if self.class_has_builtin_list_base(class) && attr_name == "__reversed__" {
             return Some(Value::Builtin(BuiltinFunction::Reversed));
         }
         if self.class_has_builtin_tuple_base(class) && attr_name == "count" {
@@ -2293,10 +2305,7 @@ impl Vm {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Iter, list));
         }
         if attr_name == "__reversed__" {
-            return Ok(self.alloc_native_bound_method(
-                NativeMethodKind::ListDunderReversed,
-                list,
-            ));
+            return Ok(self.alloc_native_bound_method(NativeMethodKind::ListDunderReversed, list));
         }
         let kind = match attr_name {
             "__init__" => NativeMethodKind::ListInit,
@@ -2793,140 +2802,127 @@ impl Vm {
             allow_reduce,
             allow_next,
             allow_reversed,
-        ) =
-            match &*iterator.kind() {
-                Object::Iterator(state) => match &state.kind {
-                    IteratorKind::RangeObject { start, stop, step } => (
-                        "range",
-                        Some(start.clone()),
-                        Some(stop.clone()),
-                        Some(step.clone()),
-                        true,
-                        false,
-                        true,
-                    ),
-                    IteratorKind::Map { .. } => ("map", None, None, None, true, true, false),
-                    IteratorKind::Zip { .. } => ("zip", None, None, None, true, true, false),
-                    IteratorKind::Range { .. } => {
-                        ("range_iterator", None, None, None, false, true, false)
-                    }
-                    IteratorKind::List(_) => ("list_iterator", None, None, None, false, true, false),
-                    IteratorKind::ListReverse { .. } => (
-                        "list_reverseiterator",
-                        None,
-                        None,
-                        None,
-                        false,
-                        true,
-                        false,
-                    ),
-                    IteratorKind::Tuple(_) => ("tuple_iterator", None, None, None, false, true, false),
-                    IteratorKind::Str(_) => ("str_iterator", None, None, None, false, true, false),
-                    IteratorKind::DictView { kind, .. } => (
-                        kind.iterator_type_name(false),
-                        None,
-                        None,
-                        None,
-                        false,
-                        true,
-                        false,
-                    ),
-                    IteratorKind::DictReverse { kind, .. } => (
-                        kind.iterator_type_name(true),
-                        None,
-                        None,
-                        None,
-                        false,
-                        true,
-                        false,
-                    ),
-                    IteratorKind::Set(_) => ("set_iterator", None, None, None, false, true, false),
-                    IteratorKind::Bytes(_) => ("bytes_iterator", None, None, None, false, true, false),
-                    IteratorKind::ByteArray(_) => {
-                        ("bytearray_iterator", None, None, None, false, true, false)
-                    }
-                    IteratorKind::MemoryView(_) => {
-                        ("memory_iterator", None, None, None, false, true, false)
-                    }
-                    IteratorKind::Cycle { .. } => ("cycle", None, None, None, false, true, false),
-                    IteratorKind::Count { .. } => ("count", None, None, None, false, true, false),
-                    IteratorKind::Enumerate { .. } => {
-                        ("enumerate", None, None, None, false, true, false)
-                    }
-                    IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => {
-                        ("chain", None, None, None, false, true, false)
-                    }
-                    IteratorKind::Accumulate { .. } => {
-                        ("accumulate", None, None, None, false, true, false)
-                    }
-                    IteratorKind::Combinations { .. } => {
-                        ("combinations", None, None, None, false, true, false)
-                    }
-                    IteratorKind::CombinationsWithReplacement { .. } => (
-                        "combinations_with_replacement",
-                        None,
-                        None,
-                        None,
-                        false,
-                        true,
-                        false,
-                    ),
-                    IteratorKind::Permutations { .. } => {
-                        ("permutations", None, None, None, false, true, false)
-                    }
-                    IteratorKind::Product { .. } => ("product", None, None, None, false, true, false),
-                    IteratorKind::Compress { .. } => {
-                        ("compress", None, None, None, false, true, false)
-                    }
-                    IteratorKind::DropWhile { .. } => {
-                        ("dropwhile", None, None, None, false, true, false)
-                    }
-                    IteratorKind::Filter { .. } => ("filter", None, None, None, false, true, false),
-                    IteratorKind::FilterFalse { .. } => {
-                        ("filterfalse", None, None, None, false, true, false)
-                    }
-                    IteratorKind::Islice { .. } => ("islice", None, None, None, false, true, false),
-                    IteratorKind::Pairwise { .. } => {
-                        ("pairwise", None, None, None, false, true, false)
-                    }
-                    IteratorKind::StarMap { .. } => {
-                        ("starmap", None, None, None, false, true, false)
-                    }
-                    IteratorKind::TakeWhile { .. } => {
-                        ("takewhile", None, None, None, false, true, false)
-                    }
-                    IteratorKind::ZipLongest { .. } => {
-                        ("zip_longest", None, None, None, false, true, false)
-                    }
-                    IteratorKind::Tee { .. } => ("_tee", None, None, None, false, true, false),
-                    IteratorKind::Repeat { .. } => ("repeat", None, None, None, false, true, false),
-                    IteratorKind::Batched { .. } => ("batched", None, None, None, false, true, false),
-                    IteratorKind::GroupBy { .. } => ("groupby", None, None, None, false, true, false),
-                    IteratorKind::GroupByGrouper { .. } => {
-                        ("_grouper", None, None, None, false, true, false)
-                    }
-                    IteratorKind::ReversedSequenceGetItem { .. } => {
-                        ("reversed", None, None, None, false, true, false)
-                    }
-                    IteratorKind::ReversedCpythonSequence { .. } => {
-                        ("reversed", None, None, None, false, true, false)
-                    }
-                    IteratorKind::SequenceGetItem { .. } => {
-                        ("iterator", None, None, None, false, true, false)
-                    }
-                    IteratorKind::CpythonSequence { .. } => {
-                        ("iterator", None, None, None, false, true, false)
-                    }
-                    IteratorKind::CallIter { .. } => {
-                        ("callable_iterator", None, None, None, false, true, false)
-                    }
-                },
-                _ => {
-                    return Err(RuntimeError::attribute_error(
-                        "attribute access unsupported type",
-                    ));
+        ) = match &*iterator.kind() {
+            Object::Iterator(state) => match &state.kind {
+                IteratorKind::RangeObject { start, stop, step } => (
+                    "range",
+                    Some(start.clone()),
+                    Some(stop.clone()),
+                    Some(step.clone()),
+                    true,
+                    false,
+                    true,
+                ),
+                IteratorKind::Map { .. } => ("map", None, None, None, true, true, false),
+                IteratorKind::Zip { .. } => ("zip", None, None, None, true, true, false),
+                IteratorKind::Range { .. } => {
+                    ("range_iterator", None, None, None, false, true, false)
                 }
-            };
+                IteratorKind::List(_) => ("list_iterator", None, None, None, false, true, false),
+                IteratorKind::ListReverse { .. } => {
+                    ("list_reverseiterator", None, None, None, false, true, false)
+                }
+                IteratorKind::Tuple(_) => ("tuple_iterator", None, None, None, false, true, false),
+                IteratorKind::Str(_) => ("str_iterator", None, None, None, false, true, false),
+                IteratorKind::DictView { kind, .. } => (
+                    kind.iterator_type_name(false),
+                    None,
+                    None,
+                    None,
+                    false,
+                    true,
+                    false,
+                ),
+                IteratorKind::DictReverse { kind, .. } => (
+                    kind.iterator_type_name(true),
+                    None,
+                    None,
+                    None,
+                    false,
+                    true,
+                    false,
+                ),
+                IteratorKind::Set(_) => ("set_iterator", None, None, None, false, true, false),
+                IteratorKind::Bytes(_) => ("bytes_iterator", None, None, None, false, true, false),
+                IteratorKind::ByteArray(_) => {
+                    ("bytearray_iterator", None, None, None, false, true, false)
+                }
+                IteratorKind::MemoryView(_) => {
+                    ("memory_iterator", None, None, None, false, true, false)
+                }
+                IteratorKind::Cycle { .. } => ("cycle", None, None, None, false, true, false),
+                IteratorKind::Count { .. } => ("count", None, None, None, false, true, false),
+                IteratorKind::Enumerate { .. } => {
+                    ("enumerate", None, None, None, false, true, false)
+                }
+                IteratorKind::Chain { .. } | IteratorKind::ChainFromIterable { .. } => {
+                    ("chain", None, None, None, false, true, false)
+                }
+                IteratorKind::Accumulate { .. } => {
+                    ("accumulate", None, None, None, false, true, false)
+                }
+                IteratorKind::Combinations { .. } => {
+                    ("combinations", None, None, None, false, true, false)
+                }
+                IteratorKind::CombinationsWithReplacement { .. } => (
+                    "combinations_with_replacement",
+                    None,
+                    None,
+                    None,
+                    false,
+                    true,
+                    false,
+                ),
+                IteratorKind::Permutations { .. } => {
+                    ("permutations", None, None, None, false, true, false)
+                }
+                IteratorKind::Product { .. } => ("product", None, None, None, false, true, false),
+                IteratorKind::Compress { .. } => ("compress", None, None, None, false, true, false),
+                IteratorKind::DropWhile { .. } => {
+                    ("dropwhile", None, None, None, false, true, false)
+                }
+                IteratorKind::Filter { .. } => ("filter", None, None, None, false, true, false),
+                IteratorKind::FilterFalse { .. } => {
+                    ("filterfalse", None, None, None, false, true, false)
+                }
+                IteratorKind::Islice { .. } => ("islice", None, None, None, false, true, false),
+                IteratorKind::Pairwise { .. } => ("pairwise", None, None, None, false, true, false),
+                IteratorKind::StarMap { .. } => ("starmap", None, None, None, false, true, false),
+                IteratorKind::TakeWhile { .. } => {
+                    ("takewhile", None, None, None, false, true, false)
+                }
+                IteratorKind::ZipLongest { .. } => {
+                    ("zip_longest", None, None, None, false, true, false)
+                }
+                IteratorKind::Tee { .. } => ("_tee", None, None, None, false, true, false),
+                IteratorKind::Repeat { .. } => ("repeat", None, None, None, false, true, false),
+                IteratorKind::Batched { .. } => ("batched", None, None, None, false, true, false),
+                IteratorKind::GroupBy { .. } => ("groupby", None, None, None, false, true, false),
+                IteratorKind::GroupByGrouper { .. } => {
+                    ("_grouper", None, None, None, false, true, false)
+                }
+                IteratorKind::ReversedSequenceGetItem { .. } => {
+                    ("reversed", None, None, None, false, true, false)
+                }
+                IteratorKind::ReversedCpythonSequence { .. } => {
+                    ("reversed", None, None, None, false, true, false)
+                }
+                IteratorKind::SequenceGetItem { .. } => {
+                    ("iterator", None, None, None, false, true, false)
+                }
+                IteratorKind::CpythonSequence { .. } => {
+                    ("iterator", None, None, None, false, true, false)
+                }
+                IteratorKind::CallIter { .. } => {
+                    ("callable_iterator", None, None, None, false, true, false)
+                }
+            },
+            _ => {
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
+            }
+        };
         match attr_name {
             "__iter__" => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::IteratorIter, iterator))
@@ -2934,10 +2930,9 @@ impl Vm {
             "__next__" if allow_next => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::IteratorNext, iterator))
             }
-            "__reversed__" if allow_reversed => Ok(self.alloc_native_bound_method(
-                NativeMethodKind::RangeDunderReversed,
-                iterator,
-            )),
+            "__reversed__" if allow_reversed => {
+                Ok(self.alloc_native_bound_method(NativeMethodKind::RangeDunderReversed, iterator))
+            }
             "__reduce_ex__" | "__reduce__" if allow_reduce => {
                 Ok(self.alloc_reduce_ex_bound_method(Value::Iterator(iterator)))
             }
@@ -5133,6 +5128,978 @@ impl Vm {
         }
     }
 
+    #[inline(never)]
+    fn dispatch_internal_bound_method_call(
+        &mut self,
+        method: ObjRef,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
+        caller_depth: usize,
+        caller_ip: usize,
+    ) -> Result<InternalCallDispatch, RuntimeError> {
+        let method_data = match &*method.kind() {
+            Object::BoundMethod(data) => data.clone(),
+            _ => return Err(RuntimeError::type_error("attempted to call non-function")),
+        };
+        match &*method_data.function.kind() {
+            Object::Function(_) => {
+                let depth_before = self.frames.len();
+                let mut bound_args = Vec::with_capacity(args.len() + 1);
+                bound_args.push(self.receiver_value(&method_data.receiver)?);
+                bound_args.extend(args);
+                self.push_function_call_from_obj_with_kwarg_order(
+                    &method_data.function,
+                    bound_args,
+                    kwargs,
+                    kwargs_order,
+                )?;
+                Ok(InternalCallDispatch::NeedsRun(
+                    self.frames.len() > depth_before,
+                ))
+            }
+            Object::NativeMethod(native) => {
+                let native_call = self.call_native_method(
+                    native.kind,
+                    method_data.receiver.clone(),
+                    args,
+                    kwargs,
+                );
+                match native_call {
+                    Ok(NativeCallResult::Value(result)) => Ok(InternalCallDispatch::Return(
+                        InternalCallOutcome::Value(result),
+                    )),
+                    Ok(NativeCallResult::PropagatedException) => {
+                        self.propagate_pending_generator_exception()?;
+                        Ok(InternalCallDispatch::Return(
+                            InternalCallOutcome::CallerExceptionHandled,
+                        ))
+                    }
+                    Err(err) => {
+                        if self.caller_exception_handled(caller_depth, caller_ip) {
+                            Ok(InternalCallDispatch::Return(
+                                InternalCallOutcome::CallerExceptionHandled,
+                            ))
+                        } else {
+                            Err(err)
+                        }
+                    }
+                }
+            }
+            _ => {
+                let Some(callable) = value_from_object_ref(method_data.function.clone()) else {
+                    return Err(RuntimeError::type_error("attempted to call non-function"));
+                };
+                let receiver_value = self.receiver_value(&method_data.receiver)?;
+                let callable_is_proxy = Self::cpython_proxy_raw_ptr_from_value(&callable).is_some();
+                let receiver_is_proxy =
+                    Self::cpython_proxy_raw_ptr_from_value(&receiver_value).is_some();
+                let callable_type_name = self.value_type_name_for_error(&callable);
+                let proxy_callable_is_already_bound = callable_is_proxy
+                    && receiver_is_proxy
+                    && (matches!(
+                        callable_type_name.as_str(),
+                        "builtin_function_or_method" | "method"
+                    ) || self.cpython_proxy_callable_has_bound_self(&callable));
+                if env_var_present_cached("PYRS_TRACE_PROXY_BOUND_CALL") {
+                    let receiver_tag = format_repr(&receiver_value);
+                    let receiver_type = self.value_type_name_for_error(&receiver_value);
+                    let receiver_ptr = Vm::cpython_proxy_raw_ptr_from_value(&receiver_value)
+                        .map(|ptr| format!("{:p}", ptr))
+                        .unwrap_or_else(|| "<none>".to_string());
+                    let callable_repr = format_repr(&callable);
+                    let callable_ptr = Vm::cpython_proxy_raw_ptr_from_value(&callable)
+                        .map(|ptr| format!("{:p}", ptr))
+                        .unwrap_or_else(|| "<none>".to_string());
+                    let callable_name = self
+                        .load_cpython_proxy_attr_for_value(&callable, "__qualname__")
+                        .map(|value| format_repr(&value))
+                        .unwrap_or_else(|| "<missing>".to_string());
+                    let callable_has_self = self.cpython_proxy_callable_has_bound_self(&callable);
+                    eprintln!(
+                        "[proxy-bound-call] inline callable_type={} callable_is_proxy={} receiver_is_proxy={} already_bound={} args={} kwargs={} receiver_type={} receiver_ptr={} receiver_tag={} callable_ptr={} callable_repr={} callable_qualname={} callable_has_self={}",
+                        callable_type_name,
+                        callable_is_proxy,
+                        receiver_is_proxy,
+                        proxy_callable_is_already_bound,
+                        args.len(),
+                        kwargs.len(),
+                        receiver_type,
+                        receiver_ptr,
+                        receiver_tag,
+                        callable_ptr,
+                        callable_repr,
+                        callable_name,
+                        callable_has_self
+                    );
+                }
+                let call_args = if proxy_callable_is_already_bound {
+                    args
+                } else {
+                    let mut bound_args = Vec::with_capacity(args.len() + 1);
+                    bound_args.push(receiver_value);
+                    bound_args.extend(args);
+                    bound_args
+                };
+                Ok(InternalCallDispatch::TailCall {
+                    callable,
+                    args: call_args,
+                    kwargs,
+                    kwargs_order,
+                })
+            }
+        }
+    }
+
+    #[inline(never)]
+    fn dispatch_internal_instance_call(
+        &mut self,
+        instance: ObjRef,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
+    ) -> Result<InternalCallDispatch, RuntimeError> {
+        let receiver = Value::Instance(instance.clone());
+        if Self::cpython_proxy_raw_ptr_from_value(&receiver).is_some() {
+            let value = self.call_cpython_proxy_object(&receiver, args, kwargs)?;
+            return Ok(InternalCallDispatch::Return(
+                InternalCallOutcome::Value(value),
+            ));
+        }
+        match self.load_attr_instance(&instance, "__call__") {
+            Ok(AttrAccessOutcome::Value(call_target)) => {
+                return Ok(InternalCallDispatch::TailCall {
+                    callable: call_target,
+                    args,
+                    kwargs,
+                    kwargs_order,
+                });
+            }
+            Ok(AttrAccessOutcome::ExceptionHandled) => {
+                return Ok(InternalCallDispatch::Return(
+                    InternalCallOutcome::CallerExceptionHandled,
+                ));
+            }
+            Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {}
+            Err(err) => return Err(err),
+        }
+        if let Some(call_target) = self.lookup_bound_special_method(&receiver, "__call__")? {
+            return Ok(InternalCallDispatch::TailCall {
+                callable: call_target,
+                args,
+                kwargs,
+                kwargs_order,
+            });
+        }
+        Err(RuntimeError::type_error("attempted to call non-function"))
+    }
+
+    #[inline(never)]
+    fn dispatch_internal_class_call(
+        &mut self,
+        class: ObjRef,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
+        trace_class_call: bool,
+    ) -> Result<InternalCallDispatch, RuntimeError> {
+        let (class_name, metaclass_name) = match &*class.kind() {
+            Object::Class(class_data) => {
+                let metaclass_name = class_data.metaclass.as_ref().map(|meta| match &*meta.kind() {
+                    Object::Class(meta_data) => meta_data.name.clone(),
+                    _ => "<non-class-meta>".to_string(),
+                });
+                (class_data.name.clone(), metaclass_name)
+            }
+            _ => ("<non-class>".to_string(), None),
+        };
+        if trace_class_call {
+            eprintln!(
+                "[class-call] enter class={} metaclass={} args={} kwargs={}",
+                class_name,
+                metaclass_name.unwrap_or_else(|| "<none>".to_string()),
+                args.len(),
+                kwargs.len()
+            );
+        }
+        let proxy_value = Value::Class(class.clone());
+        if Self::cpython_proxy_raw_ptr_from_value(&proxy_value).is_some() {
+            let value = self.call_cpython_proxy_object(&proxy_value, args, kwargs)?;
+            if trace_class_call {
+                eprintln!(
+                    "[class-call] proxy-return class={} type={}",
+                    class_name,
+                    self.value_type_name_for_error(&value)
+                );
+            }
+            return Ok(InternalCallDispatch::Return(
+                InternalCallOutcome::Value(value),
+            ));
+        }
+        if self.suppress_metaclass_dispatch_depth == 0
+            && let Some(call_target) = self.resolve_metaclass_call_target(&class)?
+        {
+            if trace_class_call {
+                eprintln!(
+                    "[class-call] metaclass-dispatch class={} target_type={} target_repr={}",
+                    class_name,
+                    self.value_type_name_for_error(&call_target),
+                    format_repr(&call_target)
+                );
+            }
+            return Ok(InternalCallDispatch::TailCall {
+                callable: call_target,
+                args,
+                kwargs,
+                kwargs_order,
+            });
+        }
+        if let Some(message) = self.class_disallow_instantiation_message(&class) {
+            return Err(RuntimeError::type_error(message));
+        }
+        if self.class_is_exact_types_generic_alias(&class) {
+            let value = self.instantiate_generic_alias_class(class.clone(), args, kwargs)?;
+            return Ok(InternalCallDispatch::Return(
+                InternalCallOutcome::Value(value),
+            ));
+        }
+        if self.class_has_builtin_type_base(&class) {
+            let value = self.instantiate_type_derived_class(class, args, kwargs)?;
+            return Ok(InternalCallDispatch::Return(
+                InternalCallOutcome::Value(value),
+            ));
+        }
+
+        let class_value = Value::Class(class.clone());
+        let mut instance = self.alloc_instance_for_class(&class);
+        let mut used_custom_new = false;
+        if let Some(raw_new_callable) = class_attr_lookup(&class, "__new__") {
+            let new_callable = self
+                .unwrap_staticmethod_attr(&raw_new_callable)
+                .unwrap_or(raw_new_callable);
+            if !matches!(new_callable, Value::Builtin(BuiltinFunction::ObjectNew)) {
+                if trace_class_call {
+                    eprintln!(
+                        "[class-call] __new__ class={} callable_type={} callable_repr={}",
+                        class_name,
+                        self.value_type_name_for_error(&new_callable),
+                        format_repr(&new_callable)
+                    );
+                }
+                used_custom_new = true;
+                let prepend_class_arg = !matches!(new_callable, Value::BoundMethod(_));
+                let mut new_args =
+                    Vec::with_capacity(args.len() + if prepend_class_arg { 1 } else { 0 });
+                if prepend_class_arg {
+                    new_args.push(class_value.clone());
+                }
+                new_args.extend(args.clone());
+                match self.call_internal_with_kwarg_order(
+                    new_callable,
+                    new_args,
+                    kwargs.clone(),
+                    kwargs_order.clone(),
+                )? {
+                    InternalCallOutcome::Value(value) => {
+                        if !self.value_is_instance_of(&value, &class_value)? {
+                            if trace_class_call {
+                                eprintln!(
+                                    "[class-call] __new__ non-instance class={} value_type={} value_repr={}",
+                                    class_name,
+                                    self.value_type_name_for_error(&value),
+                                    format_repr(&value)
+                                );
+                            }
+                            return Ok(InternalCallDispatch::Return(
+                                InternalCallOutcome::Value(value),
+                            ));
+                        }
+                        let Value::Instance(created_instance) = value else {
+                            if trace_class_call {
+                                eprintln!(
+                                    "[class-call] __new__ non-instance-variant class={} value_type={}",
+                                    class_name,
+                                    self.value_type_name_for_error(&value)
+                                );
+                            }
+                            return Ok(InternalCallDispatch::Return(
+                                InternalCallOutcome::Value(value),
+                            ));
+                        };
+                        instance = created_instance;
+                    }
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Ok(InternalCallDispatch::Return(
+                            InternalCallOutcome::CallerExceptionHandled,
+                        ));
+                    }
+                }
+            }
+        }
+        let is_typing_paramspec_attr_class = match &*class.kind() {
+            Object::Class(class_data) => {
+                matches!(class_data.name.as_str(), "ParamSpecArgs" | "ParamSpecKwargs")
+                    && matches!(
+                        class_data.attrs.get("__module__"),
+                        Some(Value::Str(module_name)) if module_name == "typing" || module_name == "_typing"
+                    )
+            }
+            _ => false,
+        };
+        if is_typing_paramspec_attr_class && !used_custom_new && kwargs.is_empty() && args.len() == 1
+        {
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert("__origin__".to_string(), args[0].clone());
+            }
+            return Ok(InternalCallDispatch::Return(
+                InternalCallOutcome::Value(Value::Instance(instance)),
+            ));
+        }
+        let mut init = class_attr_lookup(&class, "__init__");
+        if matches!(init, Some(Value::Builtin(BuiltinFunction::ObjectInit)))
+            && !used_custom_new
+            && (self.class_has_builtin_list_base(&class)
+                || self.class_has_builtin_tuple_base(&class)
+                || self.class_has_builtin_str_base(&class)
+                || self.class_has_builtin_bytes_base(&class)
+                || self.class_has_builtin_bytearray_base(&class)
+                || self.class_has_builtin_int_base(&class)
+                || self.class_has_builtin_float_base(&class)
+                || self.class_has_builtin_complex_base(&class)
+                || self.class_has_builtin_dict_base(&class)
+                || self.class_has_builtin_set_base(&class)
+                || self.class_has_builtin_frozenset_base(&class)
+                || self.class_has_builtin_property_base(&class))
+        {
+            // For builtin-backed subclasses we need the constructor fallback path
+            // below to hydrate backing storage from user-provided args/kwargs.
+            init = None;
+        }
+        if let Some(init_callable) = init {
+            if trace_class_call {
+                eprintln!(
+                    "[class-call] __init__ class={} callable_type={} callable_repr={}",
+                    class_name,
+                    self.value_type_name_for_error(&init_callable),
+                    format_repr(&init_callable)
+                );
+            }
+            if matches!(init_callable, Value::Builtin(BuiltinFunction::ObjectInit)) {
+                if used_custom_new {
+                    if trace_class_call {
+                        eprintln!(
+                            "[class-call] return-used-custom-new class={} type=instance",
+                            class_name
+                        );
+                    }
+                    return Ok(InternalCallDispatch::Return(
+                        InternalCallOutcome::Value(Value::Instance(instance)),
+                    ));
+                }
+                if let Some(fields) = self.class_namedtuple_fields(&class) {
+                    self.bind_namedtuple_instance_fields(
+                        &instance,
+                        &fields,
+                        args.clone(),
+                        kwargs.clone(),
+                    )?;
+                    if trace_class_call {
+                        eprintln!(
+                            "[class-call] return-namedtuple-bind class={} type=instance",
+                            class_name
+                        );
+                    }
+                    return Ok(InternalCallDispatch::Return(
+                        InternalCallOutcome::Value(Value::Instance(instance)),
+                    ));
+                }
+            }
+            if let Value::Function(init_func) = init_callable {
+                let func_data = match &*init_func.kind() {
+                    Object::Function(data) => data.clone(),
+                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                };
+                let mut init_args = Vec::with_capacity(args.len() + 1);
+                init_args.push(Value::Instance(instance.clone()));
+                init_args.extend(args);
+                let bindings = match bind_arguments(
+                    &func_data,
+                    &self.heap,
+                    init_args,
+                    kwargs,
+                    kwargs_order.clone(),
+                ) {
+                    Ok(bindings) => bindings,
+                    Err(err) => {
+                        if env_var_present_cached("PYRS_TRACE_BIND_ARGS_STACK")
+                            && err.message.contains("argument count mismatch")
+                        {
+                            let stack = self
+                                .frames
+                                .iter()
+                                .rev()
+                                .take(12)
+                                .map(|frame| {
+                                    format!(
+                                        "{}@{}:{}",
+                                        frame.code.name,
+                                        frame.code.filename,
+                                        frame
+                                            .code
+                                            .locations
+                                            .get(frame.last_ip)
+                                            .map(|loc| loc.line)
+                                            .unwrap_or(0)
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" <- ");
+                            eprintln!(
+                                "[bind-args-stack] failing_fn={} file={} stack={}",
+                                func_data.code.name, func_data.code.filename, stack
+                            );
+                            if env_var_present_cached("PYRS_TRACE_BIND_ARGS_BT") {
+                                eprintln!(
+                                    "[bind-args-bt] failing_fn={} bt={}",
+                                    func_data.code.name,
+                                    std::backtrace::Backtrace::force_capture()
+                                );
+                            }
+                        }
+                        return Err(err);
+                    }
+                };
+                let cells = self.build_cells(&func_data.code, func_data.closure.clone());
+                let mut frame = Frame::new(
+                    func_data.code.clone(),
+                    func_data.module.clone(),
+                    false,
+                    false,
+                    cells,
+                    func_data.owner_class.clone(),
+                );
+                frame.active_exception = self
+                    .frames
+                    .last()
+                    .and_then(|caller| caller.active_exception.as_ref())
+                    .map(Self::clone_active_exception_for_call);
+                frame.return_instance = Some(instance);
+                frame.expect_none_return = true;
+                apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
+                let depth_before = self.frames.len();
+                self.push_frame_checked(Box::new(frame))?;
+                return Ok(InternalCallDispatch::NeedsRun(
+                    self.frames.len() > depth_before,
+                ));
+            }
+            let mut init_args = Vec::with_capacity(args.len() + 1);
+            init_args.push(Value::Instance(instance.clone()));
+            init_args.extend(args);
+            match self.call_internal_with_kwarg_order(
+                init_callable,
+                init_args,
+                kwargs,
+                kwargs_order.clone(),
+            )? {
+                InternalCallOutcome::Value(Value::None) => {
+                    if trace_class_call {
+                        eprintln!(
+                            "[class-call] return-init-none class={} type=instance",
+                            class_name
+                        );
+                    }
+                    Ok(InternalCallDispatch::Return(InternalCallOutcome::Value(
+                        Value::Instance(instance),
+                    )))
+                }
+                InternalCallOutcome::Value(_) => {
+                    Err(RuntimeError::new("__init__() should return None"))
+                }
+                InternalCallOutcome::CallerExceptionHandled => Ok(
+                    InternalCallDispatch::Return(InternalCallOutcome::CallerExceptionHandled),
+                ),
+            }
+        } else if used_custom_new {
+            if trace_class_call {
+                eprintln!(
+                    "[class-call] return-custom-new-no-init class={} type=instance",
+                    class_name
+                );
+            }
+            Ok(InternalCallDispatch::Return(InternalCallOutcome::Value(
+                Value::Instance(instance),
+            )))
+        } else if let Some(fields) = self.class_namedtuple_fields(&class) {
+            self.bind_namedtuple_instance_fields(&instance, &fields, args, kwargs)?;
+            if trace_class_call {
+                eprintln!(
+                    "[class-call] return-namedtuple-no-init class={} type=instance",
+                    class_name
+                );
+            }
+            Ok(InternalCallDispatch::Return(InternalCallOutcome::Value(
+                Value::Instance(instance),
+            )))
+        } else {
+            if self.class_is_exception_class(&class) {
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert("args".to_string(), self.heap.alloc_tuple(args.clone()));
+                    for (name, value) in kwargs {
+                        instance_data.attrs.insert(name, value);
+                    }
+                } else {
+                    return Err(RuntimeError::new("exception instance construction failed"));
+                }
+            } else if self.class_has_builtin_list_base(&class) {
+                let list_value = self.call_builtin(BuiltinFunction::List, args, kwargs)?;
+                let Value::List(_) = list_value else {
+                    return Err(RuntimeError::new("list constructor returned non-list"));
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(LIST_BACKING_STORAGE_ATTR.to_string(), list_value);
+                } else {
+                    return Err(RuntimeError::new("list instance construction failed"));
+                }
+            } else if self.class_has_builtin_tuple_base(&class) {
+                let tuple_value = self.call_builtin(BuiltinFunction::Tuple, args, kwargs)?;
+                let Value::Tuple(_) = tuple_value else {
+                    return Err(RuntimeError::new("tuple constructor returned non-tuple"));
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(TUPLE_BACKING_STORAGE_ATTR.to_string(), tuple_value);
+                } else {
+                    return Err(RuntimeError::new("tuple instance construction failed"));
+                }
+            } else if self.class_has_builtin_str_base(&class) {
+                let str_value = self.call_builtin(BuiltinFunction::Str, args, kwargs)?;
+                let Value::Str(_) = str_value else {
+                    return Err(RuntimeError::new("str constructor returned non-str"));
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(STR_BACKING_STORAGE_ATTR.to_string(), str_value);
+                } else {
+                    return Err(RuntimeError::new("str instance construction failed"));
+                }
+            } else if self.class_has_builtin_bytes_base(&class) {
+                let bytes_value = self.call_builtin(BuiltinFunction::Bytes, args, kwargs)?;
+                let Value::Bytes(_) = bytes_value else {
+                    return Err(RuntimeError::new("bytes constructor returned non-bytes"));
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(BYTES_BACKING_STORAGE_ATTR.to_string(), bytes_value);
+                } else {
+                    return Err(RuntimeError::new("bytes instance construction failed"));
+                }
+            } else if self.class_has_builtin_bytearray_base(&class) {
+                let bytearray_value = self.call_builtin(BuiltinFunction::ByteArray, args, kwargs)?;
+                let Value::ByteArray(_) = bytearray_value else {
+                    return Err(RuntimeError::new(
+                        "bytearray constructor returned non-bytearray",
+                    ));
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(BYTES_BACKING_STORAGE_ATTR.to_string(), bytearray_value);
+                } else {
+                    return Err(RuntimeError::new("bytearray instance construction failed"));
+                }
+            } else if self.class_has_builtin_int_base(&class) {
+                let int_value = self.builtin_int(args, kwargs)?;
+                let (Value::Int(_) | Value::BigInt(_) | Value::Bool(_)) = int_value else {
+                    return Err(RuntimeError::new("int constructor returned non-int"));
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(INT_BACKING_STORAGE_ATTR.to_string(), int_value);
+                } else {
+                    return Err(RuntimeError::new("int instance construction failed"));
+                }
+            } else if self.class_has_builtin_float_base(&class) {
+                let float_value = self.builtin_float(args, kwargs)?;
+                let Value::Float(_) = float_value else {
+                    return Err(RuntimeError::new("float constructor returned non-float"));
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(FLOAT_BACKING_STORAGE_ATTR.to_string(), float_value);
+                } else {
+                    return Err(RuntimeError::new("float instance construction failed"));
+                }
+            } else if self.class_has_builtin_complex_base(&class) {
+                let complex_value = self.builtin_complex(args, kwargs)?;
+                let Value::Complex { .. } = complex_value else {
+                    return Err(RuntimeError::new(
+                        "complex constructor returned non-complex",
+                    ));
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(COMPLEX_BACKING_STORAGE_ATTR.to_string(), complex_value);
+                } else {
+                    return Err(RuntimeError::new("complex instance construction failed"));
+                }
+            } else if self.class_has_builtin_dict_base(&class) {
+                let dict_value = self.call_builtin(BuiltinFunction::Dict, args, kwargs)?;
+                let Value::Dict(_) = dict_value else {
+                    return Err(RuntimeError::new("dict constructor returned non-dict"));
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(DICT_BACKING_STORAGE_ATTR.to_string(), dict_value);
+                } else {
+                    return Err(RuntimeError::new("dict instance construction failed"));
+                }
+            } else if self.class_has_builtin_set_base(&class) {
+                let set_value = self.call_builtin(BuiltinFunction::Set, args, kwargs)?;
+                let Value::Set(_) = set_value else {
+                    return Err(RuntimeError::new("set constructor returned non-set"));
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(SET_BACKING_STORAGE_ATTR.to_string(), set_value);
+                } else {
+                    return Err(RuntimeError::new("set instance construction failed"));
+                }
+            } else if self.class_has_builtin_frozenset_base(&class) {
+                let frozenset_value = self.call_builtin(BuiltinFunction::FrozenSet, args, kwargs)?;
+                let Value::FrozenSet(_) = frozenset_value else {
+                    return Err(RuntimeError::new(
+                        "frozenset constructor returned non-frozenset",
+                    ));
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data.attrs.insert(
+                        FROZENSET_BACKING_STORAGE_ATTR.to_string(),
+                        frozenset_value,
+                    );
+                } else {
+                    return Err(RuntimeError::new(
+                        "frozenset instance construction failed",
+                    ));
+                }
+            } else if self.class_has_builtin_property_base(&class) {
+                let descriptor_value = self.call_builtin(BuiltinFunction::Property, args, kwargs)?;
+                let Value::Instance(descriptor_instance) = descriptor_value else {
+                    return Err(RuntimeError::new(
+                        "property constructor returned non-property",
+                    ));
+                };
+                let descriptor_attrs = match &*descriptor_instance.kind() {
+                    Object::Instance(descriptor_data) => descriptor_data.attrs.clone(),
+                    _ => return Err(RuntimeError::new(
+                        "property descriptor construction failed",
+                    )),
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data.attrs.extend(descriptor_attrs);
+                } else {
+                    return Err(RuntimeError::new("property instance construction failed"));
+                }
+            } else if !kwargs.is_empty() || !args.is_empty() {
+                if env_var_present_cached("PYRS_TRACE_CLASS_CTOR_NOARGS") {
+                    let (filename, function_name, line, column) = self
+                        .frames
+                        .last()
+                        .map(|frame| {
+                            let location = frame.code.locations.get(frame.last_ip);
+                            (
+                                frame.code.filename.clone(),
+                                frame.code.name.clone(),
+                                location.map(|loc| loc.line).unwrap_or(0),
+                                location.map(|loc| loc.column).unwrap_or(0),
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            (
+                                "<no-frame>".to_string(),
+                                "<no-function>".to_string(),
+                                0,
+                                0,
+                            )
+                        });
+                    eprintln!(
+                        "[class-ctor-noargs] class={} args_len={} kwargs_len={} at {}:{}:{} in {}",
+                        class_name,
+                        args.len(),
+                        kwargs.len(),
+                        filename,
+                        line,
+                        column,
+                        function_name
+                    );
+                }
+                return Err(RuntimeError::new("class constructor takes no arguments"));
+            }
+            if trace_class_call {
+                eprintln!(
+                    "[class-call] return-default class={} type=instance",
+                    class_name
+                );
+            }
+            Ok(InternalCallDispatch::Return(InternalCallOutcome::Value(
+                Value::Instance(instance),
+            )))
+        }
+    }
+
+    #[inline(never)]
+    fn dispatch_internal_function_call(
+        &mut self,
+        func: ObjRef,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
+    ) -> Result<bool, RuntimeError> {
+        let depth_before = self.frames.len();
+        if kwargs.is_empty() {
+            match args.len() {
+                0 => self.push_function_call_from_obj(&func, Vec::new(), HashMap::new())?,
+                1 => {
+                    let arg0 = args.pop().expect("len checked");
+                    self.push_function_call_one_arg_from_obj(&func, arg0)?
+                }
+                2 => {
+                    let arg1 = args.pop().expect("len checked");
+                    let arg0 = args.pop().expect("len checked");
+                    self.push_function_call_two_args_from_obj(&func, arg0, arg1)?
+                }
+                3 => {
+                    let arg2 = args.pop().expect("len checked");
+                    let arg1 = args.pop().expect("len checked");
+                    let arg0 = args.pop().expect("len checked");
+                    self.push_function_call_three_args_from_obj(&func, arg0, arg1, arg2)?
+                }
+                _ => self.push_function_call_from_obj(&func, args, HashMap::new())?,
+            }
+        } else {
+            self.push_function_call_from_obj_with_kwarg_order(&func, args, kwargs, kwargs_order)?;
+        }
+        Ok(self.frames.len() > depth_before)
+    }
+
+    #[inline(never)]
+    fn trace_internal_call_depth(
+        &self,
+        call_depth: usize,
+        hard_limit: usize,
+        callable: &Value,
+        args_len: usize,
+        kwargs_len: usize,
+    ) {
+        let callable_type = self.value_type_name_for_error(callable);
+        let callable_detail = match callable {
+            Value::BoundMethod(method) => match &*method.kind() {
+                Object::BoundMethod(method_data) => {
+                    let receiver_type = match &*method_data.receiver.kind() {
+                        Object::Class(class_data) => format!("class:{}", class_data.name),
+                        Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                            Object::Class(class_data) => format!("instance:{}", class_data.name),
+                            _ => "instance:<unknown>".to_string(),
+                        },
+                        Object::Module(module_data) => format!("module:{}", module_data.name),
+                        _ => "<other>".to_string(),
+                    };
+                    let fn_type = match &*method_data.function.kind() {
+                        Object::Function(function_data) => {
+                            format!("function:{}", function_data.code.name)
+                        }
+                        Object::NativeMethod(kind) => format!("native:{kind:?}"),
+                        Object::Class(class_data) => format!("class:{}", class_data.name),
+                        Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                            Object::Class(class_data) => format!("instance:{}", class_data.name),
+                            _ => "instance:<unknown>".to_string(),
+                        },
+                        _ => "<other>".to_string(),
+                    };
+                    format!("bound receiver={receiver_type} fn={fn_type}")
+                }
+                _ => "<invalid-bound-method>".to_string(),
+            },
+            Value::Instance(instance) => match &*instance.kind() {
+                Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                    Object::Class(class_data) => {
+                        let mut keys = instance_data.attrs.keys().cloned().collect::<Vec<_>>();
+                        keys.sort();
+                        keys.truncate(6);
+                        format!("instance_class={} attrs={keys:?}", class_data.name)
+                    }
+                    _ => "instance_class=<unknown>".to_string(),
+                },
+                _ => "<invalid-instance>".to_string(),
+            },
+            _ => String::new(),
+        };
+        let frame_summary = self
+            .frames
+            .iter()
+            .rev()
+            .take(6)
+            .map(|frame| format!("{}@{}", frame.code.name, frame.code.filename))
+            .collect::<Vec<_>>()
+            .join(" <= ");
+        eprintln!(
+            "[call-depth] depth={} limit={} callable={} type={} detail={} argc={} kwargc={} frames={}",
+            call_depth,
+            hard_limit,
+            format_repr(callable),
+            callable_type,
+            callable_detail,
+            args_len,
+            kwargs_len,
+            frame_summary
+        );
+    }
+
+    #[inline(never)]
+    fn report_non_function_internal_call(
+        &self,
+        other: &Value,
+        args: &[Value],
+        kwargs: &HashMap<String, Value>,
+    ) {
+        if !env_var_present_cached("PYRS_TRACE_CALL_NON_FUNCTION") {
+            return;
+        }
+        if let Some(frame) = self.frames.last() {
+            let location = frame.code.locations.get(frame.last_ip);
+            let opcode = frame
+                .code
+                .instructions
+                .get(frame.last_ip)
+                .map(|instr| format!("{:?}", instr.opcode))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            eprintln!(
+                "[call-non-function] file={} func={} line={} col={} ip={} opcode={} value={}",
+                frame.code.filename,
+                frame.code.name,
+                location.map(|loc| loc.line).unwrap_or(0),
+                location.map(|loc| loc.column).unwrap_or(0),
+                frame.last_ip,
+                opcode,
+                format_repr(other),
+            );
+            if env_var_present_cached("PYRS_TRACE_CALL_NON_FUNCTION_ARGS") {
+                let args_summary = args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
+                let mut kw_entries = kwargs.iter().collect::<Vec<_>>();
+                kw_entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+                let kwargs_summary = kw_entries
+                    .into_iter()
+                    .map(|(key, value)| format!("{key}={}", format_repr(value)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                eprintln!(
+                    "[call-non-function-args] positional=[{}] kwargs=[{}]",
+                    args_summary, kwargs_summary
+                );
+            }
+            if env_var_present_cached("PYRS_TRACE_CALL_NON_FUNCTION_BT") {
+                eprintln!(
+                    "[call-non-function-bt]\n{:?}",
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+        } else {
+            eprintln!("[call-non-function] value={}", format_repr(other));
+        }
+    }
+
+    #[inline(never)]
+    fn finish_internal_call_after_run(
+        &mut self,
+        caller_depth: usize,
+        caller_ip: usize,
+        caller_active_exception_fingerprint: Option<(u64, usize, Option<u64>, Option<u64>, usize)>,
+        trace_class_call: bool,
+        callable_was_class: bool,
+        trace_callable_repr: &Option<String>,
+    ) -> Result<InternalCallOutcome, RuntimeError> {
+        let previous_stop = self.run_stop_depth;
+        self.run_stop_depth = Some(caller_depth);
+        let run_result = self.run();
+        self.run_stop_depth = previous_stop;
+        run_result?;
+
+        if self.frames.len() < caller_depth {
+            if trace_class_call
+                && callable_was_class
+                && let Some(callable_repr) = trace_callable_repr
+            {
+                eprintln!(
+                    "[class-call] caller-frame-dropped callable={} depth_before={} depth_now={}",
+                    callable_repr,
+                    caller_depth,
+                    self.frames.len()
+                );
+            }
+            return Ok(InternalCallOutcome::CallerExceptionHandled);
+        }
+
+        let caller = self
+            .frames
+            .get(caller_depth - 1)
+            .ok_or_else(|| RuntimeError::new("caller frame missing"))?;
+        if caller.ip != caller_ip {
+            if trace_class_call
+                && callable_was_class
+                && let Some(callable_repr) = trace_callable_repr
+            {
+                eprintln!(
+                    "[class-call] caller-ip-mismatch callable={} before={} after={}",
+                    callable_repr, caller_ip, caller.ip
+                );
+            }
+            return Ok(InternalCallOutcome::CallerExceptionHandled);
+        }
+        if Self::active_exception_fingerprint(caller.active_exception.as_ref())
+            != caller_active_exception_fingerprint
+        {
+            if trace_class_call
+                && callable_was_class
+                && let Some(callable_repr) = trace_callable_repr
+            {
+                eprintln!(
+                    "[class-call] caller-active-exception-changed callable={} before={:?} after={:?}",
+                    callable_repr,
+                    caller_active_exception_fingerprint,
+                    Self::active_exception_fingerprint(caller.active_exception.as_ref())
+                );
+            }
+            return Ok(InternalCallOutcome::CallerExceptionHandled);
+        }
+
+        let value = self.pop_value()?;
+        if trace_class_call
+            && callable_was_class
+            && let Some(callable_repr) = trace_callable_repr
+        {
+            eprintln!(
+                "[class-call] return callable={} value_type={} value_repr={}",
+                callable_repr,
+                self.value_type_name_for_error(&value),
+                format_repr(&value)
+            );
+        }
+        Ok(InternalCallOutcome::Value(value))
+    }
+
     pub(super) fn call_internal_with_kwarg_order(
         &mut self,
         callable: Value,
@@ -5174,74 +6141,7 @@ impl Vm {
         if env_var_present_cached("PYRS_TRACE_CALL_DEPTH")
             && call_depth >= hard_limit.saturating_sub(16)
         {
-            let callable_type = self.value_type_name_for_error(&callable);
-            let callable_detail = match &callable {
-                Value::BoundMethod(method) => match &*method.kind() {
-                    Object::BoundMethod(method_data) => {
-                        let receiver_type = match &*method_data.receiver.kind() {
-                            Object::Class(class_data) => format!("class:{}", class_data.name),
-                            Object::Instance(instance_data) => match &*instance_data.class.kind() {
-                                Object::Class(class_data) => {
-                                    format!("instance:{}", class_data.name)
-                                }
-                                _ => "instance:<unknown>".to_string(),
-                            },
-                            Object::Module(module_data) => {
-                                format!("module:{}", module_data.name)
-                            }
-                            _ => "<other>".to_string(),
-                        };
-                        let fn_type = match &*method_data.function.kind() {
-                            Object::Function(function_data) => {
-                                format!("function:{}", function_data.code.name)
-                            }
-                            Object::NativeMethod(kind) => format!("native:{kind:?}"),
-                            Object::Class(class_data) => format!("class:{}", class_data.name),
-                            Object::Instance(instance_data) => match &*instance_data.class.kind() {
-                                Object::Class(class_data) => {
-                                    format!("instance:{}", class_data.name)
-                                }
-                                _ => "instance:<unknown>".to_string(),
-                            },
-                            _ => "<other>".to_string(),
-                        };
-                        format!("bound receiver={receiver_type} fn={fn_type}")
-                    }
-                    _ => "<invalid-bound-method>".to_string(),
-                },
-                Value::Instance(instance) => match &*instance.kind() {
-                    Object::Instance(instance_data) => match &*instance_data.class.kind() {
-                        Object::Class(class_data) => {
-                            let mut keys = instance_data.attrs.keys().cloned().collect::<Vec<_>>();
-                            keys.sort();
-                            keys.truncate(6);
-                            format!("instance_class={} attrs={keys:?}", class_data.name)
-                        }
-                        _ => "instance_class=<unknown>".to_string(),
-                    },
-                    _ => "<invalid-instance>".to_string(),
-                },
-                _ => String::new(),
-            };
-            let frame_summary = self
-                .frames
-                .iter()
-                .rev()
-                .take(6)
-                .map(|frame| format!("{}@{}", frame.code.name, frame.code.filename))
-                .collect::<Vec<_>>()
-                .join(" <= ");
-            eprintln!(
-                "[call-depth] depth={} limit={} callable={} type={} detail={} argc={} kwargc={} frames={}",
-                call_depth,
-                hard_limit,
-                format_repr(&callable),
-                callable_type,
-                callable_detail,
-                args.len(),
-                kwargs.len(),
-                frame_summary
-            );
+            self.trace_internal_call_depth(call_depth, hard_limit, &callable, args.len(), kwargs.len());
         }
         if call_depth > hard_limit {
             return Err(self.recursion_limit_error());
@@ -5261,868 +6161,106 @@ impl Vm {
         let callable_was_class = matches!(&callable, Value::Class(_));
         let trace_callable_repr =
             (trace_class_call && callable_was_class).then(|| format_repr(&callable));
-
-        let needs_run = match callable {
-            Value::Function(func) => {
-                let depth_before = self.frames.len();
-                if kwargs.is_empty() {
-                    let mut args = args;
-                    match args.len() {
-                        0 => self.push_function_call_from_obj(&func, Vec::new(), HashMap::new())?,
-                        1 => {
-                            let arg0 = args.pop().expect("len checked");
-                            self.push_function_call_one_arg_from_obj(&func, arg0)?
-                        }
-                        2 => {
-                            let arg1 = args.pop().expect("len checked");
-                            let arg0 = args.pop().expect("len checked");
-                            self.push_function_call_two_args_from_obj(&func, arg0, arg1)?
-                        }
-                        3 => {
-                            let arg2 = args.pop().expect("len checked");
-                            let arg1 = args.pop().expect("len checked");
-                            let arg0 = args.pop().expect("len checked");
-                            self.push_function_call_three_args_from_obj(&func, arg0, arg1, arg2)?
-                        }
-                        _ => {
-                            self.push_function_call_from_obj(&func, args, HashMap::new())?;
-                        }
-                    }
-                } else {
-                    self.push_function_call_from_obj_with_kwarg_order(
-                        &func,
-                        args,
-                        kwargs,
-                        kwargs_order.clone(),
-                    )?;
+        let mut callable = callable;
+        let mut args = args;
+        let mut kwargs = kwargs;
+        let mut kwargs_order = kwargs_order;
+        let needs_run = loop {
+            match callable {
+                Value::Function(func) => {
+                    break self.dispatch_internal_function_call(func, args, kwargs, kwargs_order)?;
                 }
-                self.frames.len() > depth_before
-            }
-            Value::BoundMethod(method) => {
-                let method_data = match &*method.kind() {
-                    Object::BoundMethod(data) => data.clone(),
-                    _ => return Err(RuntimeError::type_error("attempted to call non-function")),
-                };
-                match &*method_data.function.kind() {
-                    Object::Function(_) => {
-                        let depth_before = self.frames.len();
-                        let mut bound_args = Vec::with_capacity(args.len() + 1);
-                        bound_args.push(self.receiver_value(&method_data.receiver)?);
-                        bound_args.extend(args);
-                        self.push_function_call_from_obj_with_kwarg_order(
-                            &method_data.function,
-                            bound_args,
-                            kwargs,
-                            kwargs_order.clone(),
-                        )?;
-                        self.frames.len() > depth_before
+                Value::BoundMethod(method) => match self.dispatch_internal_bound_method_call(
+                    method,
+                    args,
+                    kwargs,
+                    kwargs_order,
+                    caller_depth,
+                    caller_ip,
+                )? {
+                    InternalCallDispatch::TailCall {
+                        callable: next_callable,
+                        args: next_args,
+                        kwargs: next_kwargs,
+                        kwargs_order: next_kwargs_order,
+                    } => {
+                        callable = next_callable;
+                        args = next_args;
+                        kwargs = next_kwargs;
+                        kwargs_order = next_kwargs_order;
                     }
-                    Object::NativeMethod(native) => {
-                        let native_call = self.call_native_method(
-                            native.kind,
-                            method_data.receiver.clone(),
-                            args,
-                            kwargs,
-                        );
-                        match native_call {
-                            Ok(NativeCallResult::Value(result)) => {
-                                return Ok(InternalCallOutcome::Value(result));
-                            }
-                            Ok(NativeCallResult::PropagatedException) => {
-                                self.propagate_pending_generator_exception()?;
-                                return Ok(InternalCallOutcome::CallerExceptionHandled);
-                            }
-                            Err(err) => {
-                                if self.caller_exception_handled(caller_depth, caller_ip) {
-                                    return Ok(InternalCallOutcome::CallerExceptionHandled);
-                                }
-                                return Err(err);
+                    InternalCallDispatch::NeedsRun(needs_run) => break needs_run,
+                    InternalCallDispatch::Return(outcome) => return Ok(outcome),
+                },
+                Value::Builtin(builtin) => {
+                    return match self
+                        .call_builtin_with_kwarg_order(builtin, args, kwargs, kwargs_order)
+                    {
+                        Ok(result) => {
+                            if self.caller_exception_handled(caller_depth, caller_ip) {
+                                Ok(InternalCallOutcome::CallerExceptionHandled)
+                            } else {
+                                Ok(InternalCallOutcome::Value(result))
                             }
                         }
-                    }
-                    _ => {
-                        let Some(callable) = value_from_object_ref(method_data.function.clone())
-                        else {
-                            return Err(RuntimeError::type_error("attempted to call non-function"));
-                        };
-                        let receiver_value = self.receiver_value(&method_data.receiver)?;
-                        let callable_is_proxy =
-                            Self::cpython_proxy_raw_ptr_from_value(&callable).is_some();
-                        let receiver_is_proxy =
-                            Self::cpython_proxy_raw_ptr_from_value(&receiver_value).is_some();
-                        let callable_type_name = self.value_type_name_for_error(&callable);
-                        let proxy_callable_is_already_bound = callable_is_proxy
-                            && receiver_is_proxy
-                            && (matches!(
-                                callable_type_name.as_str(),
-                                "builtin_function_or_method" | "method"
-                            ) || self.cpython_proxy_callable_has_bound_self(&callable));
-                        if env_var_present_cached("PYRS_TRACE_PROXY_BOUND_CALL") {
-                            let receiver_tag = format_repr(&receiver_value);
-                            let receiver_type = self.value_type_name_for_error(&receiver_value);
-                            let receiver_ptr =
-                                Vm::cpython_proxy_raw_ptr_from_value(&receiver_value)
-                                    .map(|ptr| format!("{:p}", ptr))
-                                    .unwrap_or_else(|| "<none>".to_string());
-                            let callable_repr = format_repr(&callable);
-                            let callable_ptr = Vm::cpython_proxy_raw_ptr_from_value(&callable)
-                                .map(|ptr| format!("{:p}", ptr))
-                                .unwrap_or_else(|| "<none>".to_string());
-                            let callable_name = self
-                                .load_cpython_proxy_attr_for_value(&callable, "__qualname__")
-                                .map(|value| format_repr(&value))
-                                .unwrap_or_else(|| "<missing>".to_string());
-                            let callable_has_self =
-                                self.cpython_proxy_callable_has_bound_self(&callable);
-                            eprintln!(
-                                "[proxy-bound-call] inline callable_type={} callable_is_proxy={} receiver_is_proxy={} already_bound={} args={} kwargs={} receiver_type={} receiver_ptr={} receiver_tag={} callable_ptr={} callable_repr={} callable_qualname={} callable_has_self={}",
-                                callable_type_name,
-                                callable_is_proxy,
-                                receiver_is_proxy,
-                                proxy_callable_is_already_bound,
-                                args.len(),
-                                kwargs.len(),
-                                receiver_type,
-                                receiver_ptr,
-                                receiver_tag,
-                                callable_ptr,
-                                callable_repr,
-                                callable_name,
-                                callable_has_self
-                            );
-                        }
-                        let call_args = if proxy_callable_is_already_bound {
-                            args
-                        } else {
-                            let mut bound_args = Vec::with_capacity(args.len() + 1);
-                            bound_args.push(receiver_value);
-                            bound_args.extend(args);
-                            bound_args
-                        };
-                        return self.call_internal_with_kwarg_order(
-                            callable,
-                            call_args,
-                            kwargs,
-                            kwargs_order.clone(),
-                        );
-                    }
-                }
-            }
-            Value::Builtin(builtin) => {
-                return match self.call_builtin_with_kwarg_order(builtin, args, kwargs, kwargs_order)
-                {
-                    Ok(result) => {
-                        if self.caller_exception_handled(caller_depth, caller_ip) {
-                            Ok(InternalCallOutcome::CallerExceptionHandled)
-                        } else {
-                            Ok(InternalCallOutcome::Value(result))
-                        }
-                    }
-                    Err(err) => {
-                        if self.caller_exception_handled(caller_depth, caller_ip) {
-                            Ok(InternalCallOutcome::CallerExceptionHandled)
-                        } else {
-                            Err(err)
-                        }
-                    }
-                };
-            }
-            Value::Instance(instance) => {
-                let receiver = Value::Instance(instance.clone());
-                if Self::cpython_proxy_raw_ptr_from_value(&receiver).is_some() {
-                    let value = self.call_cpython_proxy_object(&receiver, args, kwargs)?;
-                    return Ok(InternalCallOutcome::Value(value));
-                }
-                match self.load_attr_instance(&instance, "__call__") {
-                    Ok(AttrAccessOutcome::Value(call_target)) => {
-                        return self.call_internal_with_kwarg_order(
-                            call_target,
-                            args,
-                            kwargs,
-                            kwargs_order.clone(),
-                        );
-                    }
-                    Ok(AttrAccessOutcome::ExceptionHandled) => {
-                        return Ok(InternalCallOutcome::CallerExceptionHandled);
-                    }
-                    Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {}
-                    Err(err) => return Err(err),
-                }
-                if let Some(call_target) =
-                    self.lookup_bound_special_method(&receiver, "__call__")?
-                {
-                    return self.call_internal_with_kwarg_order(
-                        call_target,
-                        args,
-                        kwargs,
-                        kwargs_order.clone(),
-                    );
-                }
-                return Err(RuntimeError::type_error("attempted to call non-function"));
-            }
-            Value::Class(class) => {
-                let (class_name, metaclass_name) = match &*class.kind() {
-                    Object::Class(class_data) => {
-                        let metaclass_name = class_data.metaclass.as_ref().map(|meta| match &*meta
-                            .kind()
-                        {
-                            Object::Class(meta_data) => meta_data.name.clone(),
-                            _ => "<non-class-meta>".to_string(),
-                        });
-                        (class_data.name.clone(), metaclass_name)
-                    }
-                    _ => ("<non-class>".to_string(), None),
-                };
-                if trace_class_call {
-                    eprintln!(
-                        "[class-call] enter class={} metaclass={} args={} kwargs={}",
-                        class_name,
-                        metaclass_name.unwrap_or_else(|| "<none>".to_string()),
-                        args.len(),
-                        kwargs.len()
-                    );
-                }
-                let proxy_value = Value::Class(class.clone());
-                if Self::cpython_proxy_raw_ptr_from_value(&proxy_value).is_some() {
-                    let value = self.call_cpython_proxy_object(&proxy_value, args, kwargs)?;
-                    if trace_class_call {
-                        eprintln!(
-                            "[class-call] proxy-return class={} type={}",
-                            class_name,
-                            self.value_type_name_for_error(&value)
-                        );
-                    }
-                    return Ok(InternalCallOutcome::Value(value));
-                }
-                if self.suppress_metaclass_dispatch_depth == 0 {
-                    if let Some(call_target) = self.resolve_metaclass_call_target(&class)? {
-                        if trace_class_call {
-                            eprintln!(
-                                "[class-call] metaclass-dispatch class={} target_type={} target_repr={}",
-                                class_name,
-                                self.value_type_name_for_error(&call_target),
-                                format_repr(&call_target)
-                            );
-                        }
-                        return self.call_internal_with_kwarg_order(
-                            call_target,
-                            args,
-                            kwargs,
-                            kwargs_order.clone(),
-                        );
-                    }
-                }
-                if let Some(message) = self.class_disallow_instantiation_message(&class) {
-                    return Err(RuntimeError::type_error(message));
-                }
-                if self.class_is_exact_types_generic_alias(&class) {
-                    let value =
-                        self.instantiate_generic_alias_class(class.clone(), args, kwargs)?;
-                    return Ok(InternalCallOutcome::Value(value));
-                }
-                if self.class_has_builtin_type_base(&class) {
-                    let class_value =
-                        self.instantiate_type_derived_class(class.clone(), args, kwargs)?;
-                    self.push_value(class_value);
-                    false
-                } else {
-                    let class_value = Value::Class(class.clone());
-                    let mut instance = self.alloc_instance_for_class(&class);
-                    let mut used_custom_new = false;
-                    if let Some(raw_new_callable) = class_attr_lookup(&class, "__new__") {
-                        let new_callable = self
-                            .unwrap_staticmethod_attr(&raw_new_callable)
-                            .unwrap_or(raw_new_callable);
-                        if !matches!(new_callable, Value::Builtin(BuiltinFunction::ObjectNew)) {
-                            if trace_class_call {
-                                eprintln!(
-                                    "[class-call] __new__ class={} callable_type={} callable_repr={}",
-                                    class_name,
-                                    self.value_type_name_for_error(&new_callable),
-                                    format_repr(&new_callable)
-                                );
-                            }
-                            used_custom_new = true;
-                            let prepend_class_arg = !matches!(new_callable, Value::BoundMethod(_));
-                            let mut new_args = Vec::with_capacity(
-                                args.len() + if prepend_class_arg { 1 } else { 0 },
-                            );
-                            if prepend_class_arg {
-                                new_args.push(class_value.clone());
-                            }
-                            new_args.extend(args.clone());
-                            match self.call_internal_with_kwarg_order(
-                                new_callable,
-                                new_args,
-                                kwargs.clone(),
-                                kwargs_order.clone(),
-                            )? {
-                                InternalCallOutcome::Value(value) => {
-                                    if !self.value_is_instance_of(&value, &class_value)? {
-                                        if trace_class_call {
-                                            eprintln!(
-                                                "[class-call] __new__ non-instance class={} value_type={} value_repr={}",
-                                                class_name,
-                                                self.value_type_name_for_error(&value),
-                                                format_repr(&value)
-                                            );
-                                        }
-                                        return Ok(InternalCallOutcome::Value(value));
-                                    }
-                                    let Value::Instance(created_instance) = value else {
-                                        if trace_class_call {
-                                            eprintln!(
-                                                "[class-call] __new__ non-instance-variant class={} value_type={}",
-                                                class_name,
-                                                self.value_type_name_for_error(&value)
-                                            );
-                                        }
-                                        return Ok(InternalCallOutcome::Value(value));
-                                    };
-                                    instance = created_instance;
-                                }
-                                InternalCallOutcome::CallerExceptionHandled => {
-                                    return Ok(InternalCallOutcome::CallerExceptionHandled);
-                                }
+                        Err(err) => {
+                            if self.caller_exception_handled(caller_depth, caller_ip) {
+                                Ok(InternalCallOutcome::CallerExceptionHandled)
+                            } else {
+                                Err(err)
                             }
                         }
-                    }
-                    let is_typing_paramspec_attr_class = match &*class.kind() {
-                        Object::Class(class_data) => {
-                            matches!(
-                                class_data.name.as_str(),
-                                "ParamSpecArgs" | "ParamSpecKwargs"
-                            ) && matches!(
-                                class_data.attrs.get("__module__"),
-                                Some(Value::Str(module_name))
-                                    if module_name == "typing" || module_name == "_typing"
-                            )
-                        }
-                        _ => false,
                     };
-                    if is_typing_paramspec_attr_class
-                        && !used_custom_new
-                        && kwargs.is_empty()
-                        && args.len() == 1
-                    {
-                        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                            instance_data
-                                .attrs
-                                .insert("__origin__".to_string(), args[0].clone());
-                        }
-                        return Ok(InternalCallOutcome::Value(Value::Instance(instance)));
-                    }
-                    let mut init = class_attr_lookup(&class, "__init__");
-                    if matches!(init, Some(Value::Builtin(BuiltinFunction::ObjectInit)))
-                        && !used_custom_new
-                        && (self.class_has_builtin_list_base(&class)
-                            || self.class_has_builtin_tuple_base(&class)
-                            || self.class_has_builtin_str_base(&class)
-                            || self.class_has_builtin_bytes_base(&class)
-                            || self.class_has_builtin_bytearray_base(&class)
-                            || self.class_has_builtin_int_base(&class)
-                            || self.class_has_builtin_float_base(&class)
-                            || self.class_has_builtin_complex_base(&class)
-                            || self.class_has_builtin_dict_base(&class)
-                            || self.class_has_builtin_set_base(&class)
-                            || self.class_has_builtin_frozenset_base(&class)
-                            || self.class_has_builtin_property_base(&class))
-                    {
-                        // For builtin-backed subclasses we need the constructor fallback path
-                        // below to hydrate backing storage from user-provided args/kwargs.
-                        init = None;
-                    }
-                    if let Some(init_callable) = init {
-                        if trace_class_call {
-                            eprintln!(
-                                "[class-call] __init__ class={} callable_type={} callable_repr={}",
-                                class_name,
-                                self.value_type_name_for_error(&init_callable),
-                                format_repr(&init_callable)
-                            );
-                        }
-                        if matches!(init_callable, Value::Builtin(BuiltinFunction::ObjectInit)) {
-                            if used_custom_new {
-                                if trace_class_call {
-                                    eprintln!(
-                                        "[class-call] return-used-custom-new class={} type=instance",
-                                        class_name
-                                    );
-                                }
-                                return Ok(InternalCallOutcome::Value(Value::Instance(instance)));
-                            }
-                            if let Some(fields) = self.class_namedtuple_fields(&class) {
-                                self.bind_namedtuple_instance_fields(
-                                    &instance,
-                                    &fields,
-                                    args.clone(),
-                                    kwargs.clone(),
-                                )?;
-                                if trace_class_call {
-                                    eprintln!(
-                                        "[class-call] return-namedtuple-bind class={} type=instance",
-                                        class_name
-                                    );
-                                }
-                                return Ok(InternalCallOutcome::Value(Value::Instance(instance)));
-                            }
-                        }
-                        if let Value::Function(init_func) = init_callable {
-                            let func_data = match &*init_func.kind() {
-                                Object::Function(data) => data.clone(),
-                                _ => {
-                                    return Err(RuntimeError::new(
-                                        "attempted to call non-function",
-                                    ));
-                                }
-                            };
-                            let mut init_args = Vec::with_capacity(args.len() + 1);
-                            init_args.push(Value::Instance(instance.clone()));
-                            init_args.extend(args);
-                            let bindings = match bind_arguments(
-                                &func_data,
-                                &self.heap,
-                                init_args,
-                                kwargs,
-                                kwargs_order.clone(),
-                            ) {
-                                Ok(bindings) => bindings,
-                                Err(err) => {
-                                    if env_var_present_cached("PYRS_TRACE_BIND_ARGS_STACK")
-                                        && err.message.contains("argument count mismatch")
-                                    {
-                                        let stack = self
-                                            .frames
-                                            .iter()
-                                            .rev()
-                                            .take(12)
-                                            .map(|frame| {
-                                                format!(
-                                                    "{}@{}:{}",
-                                                    frame.code.name,
-                                                    frame.code.filename,
-                                                    frame
-                                                        .code
-                                                        .locations
-                                                        .get(frame.last_ip)
-                                                        .map(|loc| loc.line)
-                                                        .unwrap_or(0)
-                                                )
-                                            })
-                                            .collect::<Vec<_>>()
-                                            .join(" <- ");
-                                        eprintln!(
-                                            "[bind-args-stack] failing_fn={} file={} stack={}",
-                                            func_data.code.name, func_data.code.filename, stack
-                                        );
-                                        if env_var_present_cached("PYRS_TRACE_BIND_ARGS_BT") {
-                                            eprintln!(
-                                                "[bind-args-bt] failing_fn={} bt={}",
-                                                func_data.code.name,
-                                                std::backtrace::Backtrace::force_capture()
-                                            );
-                                        }
-                                    }
-                                    return Err(err);
-                                }
-                            };
-                            let cells =
-                                self.build_cells(&func_data.code, func_data.closure.clone());
-                            let mut frame = Frame::new(
-                                func_data.code.clone(),
-                                func_data.module.clone(),
-                                false,
-                                false,
-                                cells,
-                                func_data.owner_class.clone(),
-                            );
-                            frame.active_exception = self
-                                .frames
-                                .last()
-                                .and_then(|caller| caller.active_exception.as_ref())
-                                .map(Self::clone_active_exception_for_call);
-                            frame.return_instance = Some(instance);
-                            frame.expect_none_return = true;
-                            apply_bindings(&mut frame, &func_data.code, bindings, &self.heap);
-                            let depth_before = self.frames.len();
-                            self.push_frame_checked(Box::new(frame))?;
-                            self.frames.len() > depth_before
-                        } else {
-                            let mut init_args = Vec::with_capacity(args.len() + 1);
-                            init_args.push(Value::Instance(instance.clone()));
-                            init_args.extend(args);
-                            match self.call_internal_with_kwarg_order(
-                                init_callable,
-                                init_args,
-                                kwargs,
-                                kwargs_order.clone(),
-                            )? {
-                                InternalCallOutcome::Value(Value::None) => {
-                                    if trace_class_call {
-                                        eprintln!(
-                                            "[class-call] return-init-none class={} type=instance",
-                                            class_name
-                                        );
-                                    }
-                                    self.push_value(Value::Instance(instance));
-                                    false
-                                }
-                                InternalCallOutcome::Value(_) => {
-                                    return Err(RuntimeError::new("__init__() should return None"));
-                                }
-                                InternalCallOutcome::CallerExceptionHandled => false,
-                            }
-                        }
-                    } else {
-                        if used_custom_new {
-                            if trace_class_call {
-                                eprintln!(
-                                    "[class-call] return-custom-new-no-init class={} type=instance",
-                                    class_name
-                                );
-                            }
-                            self.push_value(Value::Instance(instance));
-                            false
-                        } else if let Some(fields) = self.class_namedtuple_fields(&class) {
-                            self.bind_namedtuple_instance_fields(&instance, &fields, args, kwargs)?;
-                            if trace_class_call {
-                                eprintln!(
-                                    "[class-call] return-namedtuple-no-init class={} type=instance",
-                                    class_name
-                                );
-                            }
-                            self.push_value(Value::Instance(instance));
-                            false
-                        } else {
-                            if self.class_is_exception_class(&class) {
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data.attrs.insert(
-                                        "args".to_string(),
-                                        self.heap.alloc_tuple(args.clone()),
-                                    );
-                                    for (name, value) in kwargs {
-                                        instance_data.attrs.insert(name, value);
-                                    }
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "exception instance construction failed",
-                                    ));
-                                }
-                            } else if self.class_has_builtin_list_base(&class) {
-                                let list_value =
-                                    self.call_builtin(BuiltinFunction::List, args, kwargs)?;
-                                let Value::List(_) = list_value else {
-                                    return Err(RuntimeError::new(
-                                        "list constructor returned non-list",
-                                    ));
-                                };
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data
-                                        .attrs
-                                        .insert(LIST_BACKING_STORAGE_ATTR.to_string(), list_value);
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "list instance construction failed",
-                                    ));
-                                }
-                            } else if self.class_has_builtin_tuple_base(&class) {
-                                let tuple_value =
-                                    self.call_builtin(BuiltinFunction::Tuple, args, kwargs)?;
-                                let Value::Tuple(_) = tuple_value else {
-                                    return Err(RuntimeError::new(
-                                        "tuple constructor returned non-tuple",
-                                    ));
-                                };
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data.attrs.insert(
-                                        TUPLE_BACKING_STORAGE_ATTR.to_string(),
-                                        tuple_value,
-                                    );
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "tuple instance construction failed",
-                                    ));
-                                }
-                            } else if self.class_has_builtin_str_base(&class) {
-                                let str_value =
-                                    self.call_builtin(BuiltinFunction::Str, args, kwargs)?;
-                                let Value::Str(_) = str_value else {
-                                    return Err(RuntimeError::new(
-                                        "str constructor returned non-str",
-                                    ));
-                                };
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data
-                                        .attrs
-                                        .insert(STR_BACKING_STORAGE_ATTR.to_string(), str_value);
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "str instance construction failed",
-                                    ));
-                                }
-                            } else if self.class_has_builtin_bytes_base(&class) {
-                                let bytes_value =
-                                    self.call_builtin(BuiltinFunction::Bytes, args, kwargs)?;
-                                let Value::Bytes(_) = bytes_value else {
-                                    return Err(RuntimeError::new(
-                                        "bytes constructor returned non-bytes",
-                                    ));
-                                };
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data.attrs.insert(
-                                        BYTES_BACKING_STORAGE_ATTR.to_string(),
-                                        bytes_value,
-                                    );
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "bytes instance construction failed",
-                                    ));
-                                }
-                            } else if self.class_has_builtin_bytearray_base(&class) {
-                                let bytearray_value =
-                                    self.call_builtin(BuiltinFunction::ByteArray, args, kwargs)?;
-                                let Value::ByteArray(_) = bytearray_value else {
-                                    return Err(RuntimeError::new(
-                                        "bytearray constructor returned non-bytearray",
-                                    ));
-                                };
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data.attrs.insert(
-                                        BYTES_BACKING_STORAGE_ATTR.to_string(),
-                                        bytearray_value,
-                                    );
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "bytearray instance construction failed",
-                                    ));
-                                }
-                            } else if self.class_has_builtin_int_base(&class) {
-                                let int_value = self.builtin_int(args, kwargs)?;
-                                let (Value::Int(_) | Value::BigInt(_) | Value::Bool(_)) = int_value
-                                else {
-                                    return Err(RuntimeError::new(
-                                        "int constructor returned non-int",
-                                    ));
-                                };
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data
-                                        .attrs
-                                        .insert(INT_BACKING_STORAGE_ATTR.to_string(), int_value);
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "int instance construction failed",
-                                    ));
-                                }
-                            } else if self.class_has_builtin_float_base(&class) {
-                                let float_value = self.builtin_float(args, kwargs)?;
-                                let Value::Float(_) = float_value else {
-                                    return Err(RuntimeError::new(
-                                        "float constructor returned non-float",
-                                    ));
-                                };
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data.attrs.insert(
-                                        FLOAT_BACKING_STORAGE_ATTR.to_string(),
-                                        float_value,
-                                    );
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "float instance construction failed",
-                                    ));
-                                }
-                            } else if self.class_has_builtin_complex_base(&class) {
-                                let complex_value = self.builtin_complex(args, kwargs)?;
-                                let Value::Complex { .. } = complex_value else {
-                                    return Err(RuntimeError::new(
-                                        "complex constructor returned non-complex",
-                                    ));
-                                };
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data.attrs.insert(
-                                        COMPLEX_BACKING_STORAGE_ATTR.to_string(),
-                                        complex_value,
-                                    );
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "complex instance construction failed",
-                                    ));
-                                }
-                            } else if self.class_has_builtin_dict_base(&class) {
-                                let dict_value =
-                                    self.call_builtin(BuiltinFunction::Dict, args, kwargs)?;
-                                let Value::Dict(_) = dict_value else {
-                                    return Err(RuntimeError::new(
-                                        "dict constructor returned non-dict",
-                                    ));
-                                };
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data
-                                        .attrs
-                                        .insert(DICT_BACKING_STORAGE_ATTR.to_string(), dict_value);
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "dict instance construction failed",
-                                    ));
-                                }
-                            } else if self.class_has_builtin_set_base(&class) {
-                                let set_value =
-                                    self.call_builtin(BuiltinFunction::Set, args, kwargs)?;
-                                let Value::Set(_) = set_value else {
-                                    return Err(RuntimeError::new(
-                                        "set constructor returned non-set",
-                                    ));
-                                };
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data
-                                        .attrs
-                                        .insert(SET_BACKING_STORAGE_ATTR.to_string(), set_value);
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "set instance construction failed",
-                                    ));
-                                }
-                            } else if self.class_has_builtin_frozenset_base(&class) {
-                                let frozenset_value =
-                                    self.call_builtin(BuiltinFunction::FrozenSet, args, kwargs)?;
-                                let Value::FrozenSet(_) = frozenset_value else {
-                                    return Err(RuntimeError::new(
-                                        "frozenset constructor returned non-frozenset",
-                                    ));
-                                };
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data.attrs.insert(
-                                        FROZENSET_BACKING_STORAGE_ATTR.to_string(),
-                                        frozenset_value,
-                                    );
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "frozenset instance construction failed",
-                                    ));
-                                }
-                            } else if self.class_has_builtin_property_base(&class) {
-                                let descriptor_value =
-                                    self.call_builtin(BuiltinFunction::Property, args, kwargs)?;
-                                let Value::Instance(descriptor_instance) = descriptor_value else {
-                                    return Err(RuntimeError::new(
-                                        "property constructor returned non-property",
-                                    ));
-                                };
-                                let descriptor_attrs = match &*descriptor_instance.kind() {
-                                    Object::Instance(descriptor_data) => {
-                                        descriptor_data.attrs.clone()
-                                    }
-                                    _ => {
-                                        return Err(RuntimeError::new(
-                                            "property descriptor construction failed",
-                                        ));
-                                    }
-                                };
-                                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                                    instance_data.attrs.extend(descriptor_attrs);
-                                } else {
-                                    return Err(RuntimeError::new(
-                                        "property instance construction failed",
-                                    ));
-                                }
-                            } else if !kwargs.is_empty() || !args.is_empty() {
-                                if env_var_present_cached("PYRS_TRACE_CLASS_CTOR_NOARGS") {
-                                    let class_name = match &*class.kind() {
-                                        Object::Class(data) => data.name.clone(),
-                                        _ => "<non-class>".to_string(),
-                                    };
-                                    let (filename, function_name, line, column) = self
-                                        .frames
-                                        .last()
-                                        .map(|frame| {
-                                            let location = frame.code.locations.get(frame.last_ip);
-                                            (
-                                                frame.code.filename.clone(),
-                                                frame.code.name.clone(),
-                                                location.map(|loc| loc.line).unwrap_or(0),
-                                                location.map(|loc| loc.column).unwrap_or(0),
-                                            )
-                                        })
-                                        .unwrap_or_else(|| {
-                                            (
-                                                "<no-frame>".to_string(),
-                                                "<no-function>".to_string(),
-                                                0,
-                                                0,
-                                            )
-                                        });
-                                    eprintln!(
-                                        "[class-ctor-noargs] class={} args_len={} kwargs_len={} at {}:{}:{} in {}",
-                                        class_name,
-                                        args.len(),
-                                        kwargs.len(),
-                                        filename,
-                                        line,
-                                        column,
-                                        function_name
-                                    );
-                                }
-                                return Err(RuntimeError::new(
-                                    "class constructor takes no arguments",
-                                ));
-                            }
-                            if trace_class_call {
-                                eprintln!(
-                                    "[class-call] return-default class={} type=instance",
-                                    class_name
-                                );
-                            }
-                            self.push_value(Value::Instance(instance));
-                            false
-                        }
-                    }
                 }
-            }
-            other => {
-                if env_var_present_cached("PYRS_TRACE_CALL_NON_FUNCTION") {
-                    if let Some(frame) = self.frames.last() {
-                        let location = frame.code.locations.get(frame.last_ip);
-                        let opcode = frame
-                            .code
-                            .instructions
-                            .get(frame.last_ip)
-                            .map(|instr| format!("{:?}", instr.opcode))
-                            .unwrap_or_else(|| "<unknown>".to_string());
-                        eprintln!(
-                            "[call-non-function] file={} func={} line={} col={} ip={} opcode={} value={}",
-                            frame.code.filename,
-                            frame.code.name,
-                            location.map(|loc| loc.line).unwrap_or(0),
-                            location.map(|loc| loc.column).unwrap_or(0),
-                            frame.last_ip,
-                            opcode,
-                            format_repr(&other),
-                        );
-                        if env_var_present_cached("PYRS_TRACE_CALL_NON_FUNCTION_ARGS") {
-                            let args_summary =
-                                args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
-                            let mut kw_entries = kwargs.iter().collect::<Vec<_>>();
-                            kw_entries.sort_by(|(left, _), (right, _)| left.cmp(right));
-                            let kwargs_summary = kw_entries
-                                .into_iter()
-                                .map(|(key, value)| format!("{key}={}", format_repr(value)))
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            eprintln!(
-                                "[call-non-function-args] positional=[{}] kwargs=[{}]",
-                                args_summary, kwargs_summary
-                            );
-                        }
-                        if env_var_present_cached("PYRS_TRACE_CALL_NON_FUNCTION_BT") {
-                            eprintln!(
-                                "[call-non-function-bt]\n{:?}",
-                                std::backtrace::Backtrace::force_capture()
-                            );
-                        }
-                    } else {
-                        eprintln!("[call-non-function] value={}", format_repr(&other));
+                Value::Instance(instance) => match self.dispatch_internal_instance_call(
+                    instance,
+                    args,
+                    kwargs,
+                    kwargs_order,
+                )? {
+                    InternalCallDispatch::TailCall {
+                        callable: next_callable,
+                        args: next_args,
+                        kwargs: next_kwargs,
+                        kwargs_order: next_kwargs_order,
+                    } => {
+                        callable = next_callable;
+                        args = next_args;
+                        kwargs = next_kwargs;
+                        kwargs_order = next_kwargs_order;
                     }
+                    InternalCallDispatch::NeedsRun(needs_run) => break needs_run,
+                    InternalCallDispatch::Return(outcome) => return Ok(outcome),
+                },
+                Value::Class(class) => match self.dispatch_internal_class_call(
+                    class,
+                    args,
+                    kwargs,
+                    kwargs_order,
+                    trace_class_call,
+                )? {
+                    InternalCallDispatch::TailCall {
+                        callable: next_callable,
+                        args: next_args,
+                        kwargs: next_kwargs,
+                        kwargs_order: next_kwargs_order,
+                    } => {
+                        callable = next_callable;
+                        args = next_args;
+                        kwargs = next_kwargs;
+                        kwargs_order = next_kwargs_order;
+                    }
+                    InternalCallDispatch::NeedsRun(needs_run) => break needs_run,
+                    InternalCallDispatch::Return(outcome) => return Ok(outcome),
+                },
+                Value::ExceptionType(name) => {
+                    let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
+                    return Ok(InternalCallOutcome::Value(value));
                 }
-                return Err(RuntimeError::type_error("attempted to call non-function"));
+                other => {
+                    self.report_non_function_internal_call(&other, &args, &kwargs);
+                    return Err(RuntimeError::type_error("attempted to call non-function"));
+                }
             }
         };
 
@@ -6130,74 +6268,14 @@ impl Vm {
             let value = self.pop_value()?;
             return Ok(InternalCallOutcome::Value(value));
         }
-
-        let previous_stop = self.run_stop_depth;
-        self.run_stop_depth = Some(caller_depth);
-        let run_result = self.run();
-        self.run_stop_depth = previous_stop;
-        run_result?;
-
-        if self.frames.len() < caller_depth {
-            if trace_class_call
-                && callable_was_class
-                && let Some(callable_repr) = &trace_callable_repr
-            {
-                eprintln!(
-                    "[class-call] caller-frame-dropped callable={} depth_before={} depth_now={}",
-                    callable_repr,
-                    caller_depth,
-                    self.frames.len()
-                );
-            }
-            return Ok(InternalCallOutcome::CallerExceptionHandled);
-        }
-
-        let caller = self
-            .frames
-            .get(caller_depth - 1)
-            .ok_or_else(|| RuntimeError::new("caller frame missing"))?;
-        if caller.ip != caller_ip {
-            if trace_class_call
-                && callable_was_class
-                && let Some(callable_repr) = &trace_callable_repr
-            {
-                eprintln!(
-                    "[class-call] caller-ip-mismatch callable={} before={} after={}",
-                    callable_repr, caller_ip, caller.ip
-                );
-            }
-            return Ok(InternalCallOutcome::CallerExceptionHandled);
-        }
-        if Self::active_exception_fingerprint(caller.active_exception.as_ref())
-            != caller_active_exception_fingerprint
-        {
-            if trace_class_call
-                && callable_was_class
-                && let Some(callable_repr) = &trace_callable_repr
-            {
-                eprintln!(
-                    "[class-call] caller-active-exception-changed callable={} before={:?} after={:?}",
-                    callable_repr,
-                    caller_active_exception_fingerprint,
-                    Self::active_exception_fingerprint(caller.active_exception.as_ref())
-                );
-            }
-            return Ok(InternalCallOutcome::CallerExceptionHandled);
-        }
-
-        let value = self.pop_value()?;
-        if trace_class_call
-            && callable_was_class
-            && let Some(callable_repr) = &trace_callable_repr
-        {
-            eprintln!(
-                "[class-call] return callable={} value_type={} value_repr={}",
-                callable_repr,
-                self.value_type_name_for_error(&value),
-                format_repr(&value)
-            );
-        }
-        Ok(InternalCallOutcome::Value(value))
+        self.finish_internal_call_after_run(
+            caller_depth,
+            caller_ip,
+            caller_active_exception_fingerprint,
+            trace_class_call,
+            callable_was_class,
+            &trace_callable_repr,
+        )
     }
 
     pub(super) fn call_internal_preserving_caller(

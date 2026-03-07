@@ -14620,6 +14620,88 @@ impl Vm {
         }
     }
 
+    fn attr_access_outcome_to_option(
+        &mut self,
+        outcome: AttrAccessOutcome,
+        error_context: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        match outcome {
+            AttrAccessOutcome::Value(value) => Ok(Some(value)),
+            AttrAccessOutcome::ExceptionHandled => {
+                if self.active_exception_is("AttributeError") {
+                    self.clear_active_exception();
+                    Ok(None)
+                } else {
+                    Err(self.runtime_error_from_active_exception(error_context))
+                }
+            }
+        }
+    }
+
+    pub(super) fn optional_internal_getattr_value(
+        &mut self,
+        target: Value,
+        attr_name: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        match target {
+            Value::Builtin(builtin) => match self.load_attr_builtin(builtin, attr_name) {
+                Ok(value) => Ok(Some(value)),
+                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => Ok(None),
+                Err(err) => Err(err),
+            },
+            Value::Function(func) => match self.load_attr_function(&func, attr_name) {
+                Ok(value) => Ok(Some(value)),
+                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => Ok(None),
+                Err(err) => Err(err),
+            },
+            Value::BoundMethod(method) => match self.load_attr_bound_method(&method, attr_name) {
+                Ok(value) => Ok(Some(value)),
+                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => Ok(None),
+                Err(err) => Err(err),
+            },
+            Value::Class(class) => match self.load_attr_class(&class, attr_name) {
+                Ok(outcome) => {
+                    self.attr_access_outcome_to_option(outcome, "class attribute lookup failed")
+                }
+                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => Ok(None),
+                Err(err) => Err(err),
+            },
+            Value::Instance(instance) => match self.load_attr_instance(&instance, attr_name) {
+                Ok(outcome) => self.attr_access_outcome_to_option(
+                    outcome,
+                    "instance attribute lookup failed",
+                ),
+                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => Ok(None),
+                Err(err) => Err(err),
+            },
+            Value::Module(module) => match self.load_attr_module(&module, attr_name) {
+                Ok(value) => Ok(Some(value)),
+                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => Ok(None),
+                Err(err) => Err(err),
+            },
+            Value::ExceptionType(name) => match self.load_attr_exception_type(&name, attr_name) {
+                Ok(value) => Ok(Some(value)),
+                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => Ok(None),
+                Err(err) => Err(err),
+            },
+            Value::Code(code) => match self.load_attr_code(&code, attr_name) {
+                Ok(value) => Ok(Some(value)),
+                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => Ok(None),
+                Err(err) => Err(err),
+            },
+            other => self.optional_getattr_value(other, attr_name),
+        }
+    }
+
+    pub(super) fn object_is_abstract(&mut self, value: &Value) -> Result<bool, RuntimeError> {
+        let Some(flag) =
+            self.optional_internal_getattr_value(value.clone(), "__isabstractmethod__")?
+        else {
+            return Ok(false);
+        };
+        self.truthy_from_value(&flag)
+    }
+
     fn match_class_attr_names_from_tuple(
         &self,
         value: &Value,
@@ -15126,13 +15208,7 @@ impl Vm {
         fdel: &Value,
     ) -> Result<bool, RuntimeError> {
         for value in [fget, fset, fdel] {
-            if matches!(value, Value::None) {
-                continue;
-            }
-            if let Some(flag) =
-                self.optional_getattr_value(value.clone(), "__isabstractmethod__")?
-                && is_truthy(&flag)
-            {
+            if self.object_is_abstract(value)? {
                 return Ok(true);
             }
         }

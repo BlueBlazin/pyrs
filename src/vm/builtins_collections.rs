@@ -3,10 +3,9 @@ use super::{
     InternalCallOutcome, IteratorKind, IteratorObject, MAPPING_PROXY_STORAGE_ATTR, ModuleObject,
     NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values, and_values,
     binary_operator, bytes_like_from_value, class_attr_lookup, class_name_for_instance, compare_ge,
-    compare_gt, compare_le, compare_lt, dict_remove_value, dict_set_value_checked,
-    ensure_hashable, format_repr, is_missing_attribute_error, is_truthy, lshift_values,
-    pow_values, rshift_values, runtime_error_matches_exception, unary_predicate, value_to_int,
-    xor_values,
+    compare_gt, compare_le, compare_lt, dict_remove_value, dict_set_value_checked, ensure_hashable,
+    format_repr, is_missing_attribute_error, is_truthy, lshift_values, pow_values, rshift_values,
+    runtime_error_matches_exception, unary_predicate, value_to_int, xor_values,
 };
 use crate::runtime::FunctionObject;
 
@@ -4844,8 +4843,11 @@ impl Vm {
             return Ok(Value::Bool(false));
         };
         if let Some(abstract_methods) =
-            self.optional_getattr_value(Value::Class(class_ref.clone()), "__abstractmethods__")?
-            && is_truthy(&abstract_methods)
+            self.optional_internal_getattr_value(
+                Value::Class(class_ref.clone()),
+                "__abstractmethods__",
+            )?
+            && self.truthy_from_value(&abstract_methods)?
         {
             return Ok(Value::Bool(true));
         }
@@ -4854,10 +4856,7 @@ impl Vm {
             _ => Vec::new(),
         };
         for attr_value in class_attrs {
-            if let Some(is_abstract) =
-                self.optional_getattr_value(attr_value, "__isabstractmethod__")?
-                && is_truthy(&is_abstract)
-            {
+            if self.object_is_abstract(&attr_value)? {
                 return Ok(Value::Bool(true));
             }
         }

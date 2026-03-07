@@ -425,14 +425,17 @@ fn run_module(
         Value::Str(module_name.to_string()),
     );
     vm.cache_source_text(RESOLVE_MODULE_FILENAME, RESOLVE_MODULE_SOURCE);
-    let resolve_module = parser::parse_module(RESOLVE_MODULE_SOURCE).map_err(|err| {
-        format_syntax_error(RESOLVE_MODULE_FILENAME, RESOLVE_MODULE_SOURCE, &err)
-    })?;
+    let resolve_module = parser::parse_module(RESOLVE_MODULE_SOURCE)
+        .map_err(|err| format_syntax_error(RESOLVE_MODULE_FILENAME, RESOLVE_MODULE_SOURCE, &err))?;
     let resolve_code =
         compiler::compile_module_with_filename(&resolve_module, RESOLVE_MODULE_FILENAME).map_err(
             |err| format_compile_error(RESOLVE_MODULE_FILENAME, RESOLVE_MODULE_SOURCE, &err),
         )?;
-    vm.register_source_in_linecache(&resolve_code, RESOLVE_MODULE_SOURCE, RESOLVE_MODULE_FILENAME);
+    vm.register_source_in_linecache(
+        &resolve_code,
+        RESOLVE_MODULE_SOURCE,
+        RESOLVE_MODULE_FILENAME,
+    );
 
     let resolve_exec_result = vm.execute(&resolve_code);
     if let Err(err) = resolve_exec_result {
@@ -442,7 +445,8 @@ fn run_module(
         } else {
             return Err(err.message);
         };
-        shutdown_result.map_err(|shutdown_err| format!("shutdown error: {}", shutdown_err.message))?;
+        shutdown_result
+            .map_err(|shutdown_err| format!("shutdown error: {}", shutdown_err.message))?;
         if let Some(message) = stderr_message {
             eprintln!("{message}");
         }

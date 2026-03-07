@@ -1,13 +1,12 @@
 use super::{
-    BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome, HashMap,
-    InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, ModuleObject,
-    NativeMethodKind, ObjRef, Object, Ordering, RuntimeError, Value, Vm,
-    builtin_exception_parent, class_attr_lookup, class_name_for_instance, ensure_hashable,
-    format_repr, memoryview_bounds, memoryview_decode_element, memoryview_element_offset,
-    memoryview_format_for_view, memoryview_layout_1d, memoryview_logical_nbytes,
-    memoryview_shape_and_strides_from_parts, module_globals_version,
-    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
-    value_from_bigint, value_to_bytes_payload, value_to_int, with_bytes_like_source,
+    BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome, HashMap, InstanceObject,
+    InternalCallOutcome, IteratorKind, IteratorObject, ModuleObject, NativeMethodKind, ObjRef,
+    Object, Ordering, RuntimeError, Value, Vm, builtin_exception_parent, class_attr_lookup,
+    class_name_for_instance, ensure_hashable, format_repr, memoryview_bounds,
+    memoryview_decode_element, memoryview_element_offset, memoryview_format_for_view,
+    memoryview_layout_1d, memoryview_logical_nbytes, memoryview_shape_and_strides_from_parts,
+    module_globals_version, runtime_error_matches_exception, slice_bounds_for_step_one,
+    slice_indices, value_from_bigint, value_to_bytes_payload, value_to_int, with_bytes_like_source,
 };
 use crate::runtime::{DictViewKind, SliceValue};
 
@@ -427,7 +426,11 @@ impl Vm {
                     (values.len() - 1) as i64
                 }
             }
-            _ => return Err(RuntimeError::type_error("list.__reversed__ receiver must be list")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "list.__reversed__ receiver must be list",
+                ));
+            }
         };
         Ok(self.heap.alloc_iterator(IteratorObject {
             kind: IteratorKind::ListReverse { list, next_index },
@@ -491,7 +494,11 @@ impl Vm {
                     (values.len() - 1) as i64
                 }
             }
-            _ => return Err(RuntimeError::type_error("dict reverse iterator requires dict")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "dict reverse iterator requires dict",
+                ));
+            }
         };
         Ok(self.heap.alloc_iterator(IteratorObject {
             kind: IteratorKind::DictReverse {

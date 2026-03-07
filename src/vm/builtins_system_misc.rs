@@ -5,8 +5,8 @@ use super::{
     apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil, decode_text_bytes,
     dict_get_value, format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
     parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp,
-    unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes, value_from_bigint,
-    uuid_timestamp_100ns_since_gregorian, value_to_f64, value_to_int,
+    unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes,
+    uuid_timestamp_100ns_since_gregorian, value_from_bigint, value_to_f64, value_to_int,
 };
 
 const DATETIME_MIN_YEAR: i64 = 1;
@@ -820,10 +820,7 @@ impl Vm {
             .add(&BigInt::from_i64(microseconds)))
     }
 
-    fn timedelta_instance_arg(
-        &mut self,
-        value: &Value,
-    ) -> Result<Option<ObjRef>, RuntimeError> {
+    fn timedelta_instance_arg(&mut self, value: &Value) -> Result<Option<ObjRef>, RuntimeError> {
         let Value::Instance(instance) = value else {
             return Ok(None);
         };
@@ -903,7 +900,8 @@ impl Vm {
         factor: &Value,
     ) -> Result<Value, RuntimeError> {
         if let Some(factor) = Self::timedelta_integer_factor(factor) {
-            return self.timedelta_instance_from_total_microseconds(total_microseconds.mul(&factor));
+            return self
+                .timedelta_instance_from_total_microseconds(total_microseconds.mul(&factor));
         }
         if let Value::Float(value) = factor {
             let (numerator, denominator) = Self::timedelta_float_ratio(*value)?;
@@ -2394,18 +2392,15 @@ impl Vm {
         let total_microseconds = BigInt::from_i64(microseconds)
             .add(&BigInt::from_i64(milliseconds).mul(&BigInt::from_i64(1_000)))
             .add(
-                &BigInt::from_i64(seconds)
-                    .mul(&BigInt::from_i64(DATETIME_MICROSECONDS_PER_SECOND)),
+                &BigInt::from_i64(seconds).mul(&BigInt::from_i64(DATETIME_MICROSECONDS_PER_SECOND)),
             )
             .add(
-                &BigInt::from_i64(minutes).mul(&BigInt::from_i64(
-                    60 * DATETIME_MICROSECONDS_PER_SECOND,
-                )),
+                &BigInt::from_i64(minutes)
+                    .mul(&BigInt::from_i64(60 * DATETIME_MICROSECONDS_PER_SECOND)),
             )
             .add(
-                &BigInt::from_i64(hours).mul(&BigInt::from_i64(
-                    3_600 * DATETIME_MICROSECONDS_PER_SECOND,
-                )),
+                &BigInt::from_i64(hours)
+                    .mul(&BigInt::from_i64(3_600 * DATETIME_MICROSECONDS_PER_SECOND)),
             )
             .add(
                 &BigInt::from_i64(days)
@@ -2752,10 +2747,8 @@ impl Vm {
             return self.timedelta_instance_from_total_microseconds(quotient);
         }
         if let Some(other) = self.timedelta_instance_arg(&args[0])? {
-            let other_total = Self::timedelta_total_microseconds_from_instance(
-                &other,
-                "timedelta.__floordiv__",
-            )?;
+            let other_total =
+                Self::timedelta_total_microseconds_from_instance(&other, "timedelta.__floordiv__")?;
             let (quotient, _) = total_microseconds
                 .div_mod_floor(&other_total)
                 .ok_or_else(|| RuntimeError::zero_division_error("division by zero"))?;

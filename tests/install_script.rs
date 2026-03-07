@@ -59,7 +59,11 @@ fn sha256_of(path: &Path) -> String {
         .arg(path)
         .output()
         .expect("run shasum");
-    assert!(output.status.success(), "shasum failed: {:?}", output.status);
+    assert!(
+        output.status.success(),
+        "shasum failed: {:?}",
+        output.status
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     stdout
         .split_whitespace()
@@ -219,7 +223,11 @@ fn run_installer(
         .env_remove("PYTHONHOME")
         .env_remove("PYRS_CPYTHON_LIB")
         .current_dir(root)
-        .envs(extra_env.iter().map(|(name, value)| (*name, value.as_os_str())))
+        .envs(
+            extra_env
+                .iter()
+                .map(|(name, value)| (*name, value.as_os_str())),
+        )
         .output()
         .expect("run installer");
 
@@ -276,7 +284,10 @@ fn installer_force_bundled_stdlib_uses_xdg_data_home_and_uninstall_removes_files
     assert_eq!(code, 0, "stderr:\n{stderr}");
     assert!(!installed_bin.exists(), "binary should be removed");
     assert!(
-        !xdg.join("pyrs").join("stdlib").join(CPYTHON_STDLIB_VERSION).exists(),
+        !xdg.join("pyrs")
+            .join("stdlib")
+            .join(CPYTHON_STDLIB_VERSION)
+            .exists(),
         "managed stdlib should be removed"
     );
 }
@@ -335,13 +346,21 @@ fn installer_skips_bundled_stdlib_when_host_cpython_314_is_present() {
         stdout.contains("Using existing CPython 3.14 stdlib"),
         "stdout:\n{stdout}"
     );
-    assert!(home.join(".local/bin/pyrs").is_file(), "missing installed binary");
     assert!(
-        !xdg.join("pyrs").join("stdlib").join(CPYTHON_STDLIB_VERSION).exists(),
+        home.join(".local/bin/pyrs").is_file(),
+        "missing installed binary"
+    );
+    assert!(
+        !xdg.join("pyrs")
+            .join("stdlib")
+            .join(CPYTHON_STDLIB_VERSION)
+            .exists(),
         "installer should skip managed stdlib when host 3.14 is present"
     );
     assert!(
-        !curl_log.contains(&format!("pyrs-stdlib-cpython-{CPYTHON_STDLIB_VERSION}.tar.gz")),
+        !curl_log.contains(&format!(
+            "pyrs-stdlib-cpython-{CPYTHON_STDLIB_VERSION}.tar.gz"
+        )),
         "installer should not download the bundled stdlib when host 3.14 is present\ncurl log:\n{curl_log}"
     );
 }
@@ -355,9 +374,7 @@ fn installer_stable_channel_resolves_latest_published_prerelease_tag() {
     let api_response = root.join("releases.json");
     fs::write(
         &api_response,
-        format!(
-            "[\n  {{\n    \"tag_name\": \"{tag}\",\n    \"prerelease\": true\n  }}\n]\n"
-        ),
+        format!("[\n  {{\n    \"tag_name\": \"{tag}\",\n    \"prerelease\": true\n  }}\n]\n"),
     )
     .expect("write api response");
     let wrapper_bin_dir = make_curl_wrapper(&root);
@@ -428,7 +445,9 @@ fn installer_rejects_linux_arm64_native_target() {
     );
     assert_eq!(code, 1, "stderr:\n{stderr}");
     assert!(
-        stderr.contains("native Linux arm64/aarch64 binaries are not part of the current release matrix"),
+        stderr.contains(
+            "native Linux arm64/aarch64 binaries are not part of the current release matrix"
+        ),
         "stderr:\n{stderr}"
     );
     assert!(

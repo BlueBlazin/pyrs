@@ -41,8 +41,8 @@ pub(crate) fn contains_internal_surrogate(text: &str) -> bool {
 mod tests {
     use super::{
         canonical_codepoint_for_internal_char, contains_internal_surrogate,
-        internal_char_from_codepoint, surrogate_codepoint_from_internal_char,
-        surrogate_code_unit_from_internal_char,
+        internal_char_from_codepoint, surrogate_code_unit_from_internal_char,
+        surrogate_codepoint_from_internal_char,
     };
 
     #[test]

@@ -4,15 +4,15 @@ use crate::runtime::{BuiltinFunction, DictViewKind, IteratorKind, Object, Value}
 
 use super::{
     ObjRef, PyBaseObject_Type, PyBool_Type, PyByteArray_Type, PyByteArrayIter_Type, PyBytes_Type,
-    PyBytesIter_Type, PyCallIter_Type, PyComplex_Type, PyCoro_Type, PyDictItems_Type,
+    PyBytesIter_Type, PyCallIter_Type, PyComplex_Type, PyCoro_Type, PyDict_Type, PyDictItems_Type,
     PyDictIterItem_Type, PyDictIterKey_Type, PyDictIterValue_Type, PyDictKeys_Type,
-    PyDictRevIterItem_Type, PyDictRevIterKey_Type, PyDictRevIterValue_Type, PyDict_Type,
-    PyDictValues_Type, PyEnum_Type, PyFilter_Type, PyFloat_Type, PyFrozenSet_Type,
-    PyFunction_Type, PyGen_Type, PyListRevIter_Type, PyListIter_Type, PyList_Type, PyLong_Type,
-    PyMap_Type, PyMemoryView_Type, PyMethod_Type, PyModule_Type, PyNone_Type, PyRange_Type,
-    PyRangeIter_Type, PyReversed_Type, PySeqIter_Type, PySet_Type, PySetIter_Type,
-    PySlice_Type, PySuper_Type, PyTuple_Type, PyTupleIter_Type, PyType_Type, PyUnicode_Type,
-    PyUnicodeIter_Type, PyZip_Type, cpython_exception_ptr_for_name,
+    PyDictRevIterItem_Type, PyDictRevIterKey_Type, PyDictRevIterValue_Type, PyDictValues_Type,
+    PyEnum_Type, PyFilter_Type, PyFloat_Type, PyFrozenSet_Type, PyFunction_Type, PyGen_Type,
+    PyList_Type, PyListIter_Type, PyListRevIter_Type, PyLong_Type, PyMap_Type, PyMemoryView_Type,
+    PyMethod_Type, PyModule_Type, PyNone_Type, PyRange_Type, PyRangeIter_Type, PyReversed_Type,
+    PySeqIter_Type, PySet_Type, PySetIter_Type, PySlice_Type, PySuper_Type, PyTuple_Type,
+    PyTupleIter_Type, PyType_Type, PyUnicode_Type, PyUnicodeIter_Type, PyZip_Type,
+    cpython_exception_ptr_for_name,
 };
 
 pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {

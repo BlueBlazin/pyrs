@@ -8412,43 +8412,45 @@ impl Vm {
         let Object::NativeMethod(native) = &*method_data.function.kind() else {
             return false;
         };
-        let receiver_is_slot_wrapper = matches!(
-            &*method_data.receiver.kind(),
-            Object::Module(module_data)
-                if matches!(
-                    module_data.globals.get("__slot_wrapper__"),
-                    Some(Value::Bool(true))
-                ) && !module_data.globals.contains_key("value")
-        ) || matches!(&*method_data.receiver.kind(), Object::Class(_));
+        let receiver_is_slot_wrapper =
+            matches!(
+                &*method_data.receiver.kind(),
+                Object::Module(module_data)
+                    if matches!(
+                        module_data.globals.get("__slot_wrapper__"),
+                        Some(Value::Bool(true))
+                    ) && !module_data.globals.contains_key("value")
+            ) || matches!(&*method_data.receiver.kind(), Object::Class(_));
         receiver_is_slot_wrapper
             && matches!(
-            native.kind,
-            NativeMethodKind::Builtin(
-                BuiltinFunction::Repr
-                    | BuiltinFunction::Str
-                    | BuiltinFunction::ObjectInit
-                    | BuiltinFunction::OperatorLt
-                    | BuiltinFunction::OperatorAdd
-            ) | NativeMethodKind::IntReprMethod
-        )
+                native.kind,
+                NativeMethodKind::Builtin(
+                    BuiltinFunction::Repr
+                        | BuiltinFunction::Str
+                        | BuiltinFunction::ObjectInit
+                        | BuiltinFunction::OperatorLt
+                        | BuiltinFunction::OperatorAdd
+                ) | NativeMethodKind::IntReprMethod
+            )
     }
 
     fn bound_method_is_builtin_slot_wrapper(&self, method: &ObjRef) -> bool {
         let Object::BoundMethod(method_data) = &*method.kind() else {
             return false;
         };
-        let receiver_is_slot_wrapper = matches!(
-            &*method_data.receiver.kind(),
-            Object::Module(module_data)
-                if matches!(
-                    module_data.globals.get("__slot_wrapper__"),
-                    Some(Value::Bool(true))
-                ) && module_data.globals.contains_key("value")
-        ) || matches!(&*method_data.receiver.kind(), Object::Instance(_))
-            || matches!(
+        let receiver_is_slot_wrapper =
+            matches!(
                 &*method_data.receiver.kind(),
-                Object::Module(module_data) if module_data.name == "__int_method__"
-            );
+                Object::Module(module_data)
+                    if matches!(
+                        module_data.globals.get("__slot_wrapper__"),
+                        Some(Value::Bool(true))
+                    ) && module_data.globals.contains_key("value")
+            ) || matches!(&*method_data.receiver.kind(), Object::Instance(_))
+                || matches!(
+                    &*method_data.receiver.kind(),
+                    Object::Module(module_data) if module_data.name == "__int_method__"
+                );
         if !receiver_is_slot_wrapper {
             return false;
         }
@@ -8463,8 +8465,7 @@ impl Vm {
                     | BuiltinFunction::ObjectInit
                     | BuiltinFunction::OperatorLt
                     | BuiltinFunction::OperatorAdd
-            )
-                | NativeMethodKind::IntReprMethod
+            ) | NativeMethodKind::IntReprMethod
         )
     }
 
@@ -9694,10 +9695,7 @@ impl Vm {
         let base_classes = match &*cls_ref.kind() {
             Object::Class(class_data) => {
                 for (name, value) in &class_data.attrs {
-                    if let Some(is_abstract) =
-                        self.optional_getattr_value(value.clone(), "__isabstractmethod__")?
-                        && self.truthy_from_value(&is_abstract)?
-                    {
+                    if self.object_is_abstract(value)? {
                         if !abstract_names.contains(name) {
                             abstract_names.push(name.clone());
                         }
@@ -9709,21 +9707,17 @@ impl Vm {
         };
         for base in base_classes {
             let Some(base_methods_value) =
-                self.optional_getattr_value(Value::Class(base), "__abstractmethods__")?
+                self.optional_internal_getattr_value(Value::Class(base), "__abstractmethods__")?
             else {
                 continue;
             };
             for name in self.abc_abstract_method_names(&base_methods_value) {
                 let Some(attr_value) =
-                    self.optional_getattr_value(cls_value.clone(), name.as_str())?
+                    self.optional_internal_getattr_value(cls_value.clone(), name.as_str())?
                 else {
                     continue;
                 };
-                if let Some(is_abstract) =
-                    self.optional_getattr_value(attr_value, "__isabstractmethod__")?
-                    && self.truthy_from_value(&is_abstract)?
-                    && !abstract_names.contains(&name)
-                {
+                if self.object_is_abstract(&attr_value)? && !abstract_names.contains(&name) {
                     abstract_names.push(name);
                 }
             }
