@@ -4,19 +4,20 @@ use super::{
     INSTANCE_DICT_STORAGE_ATTR, ImportDirCacheEntry, ImportReturnPolicy, InstanceObject,
     InternalCallOutcome, LOCAL_SHIM_MODULES, LOCAL_SHIM_PRECEDENCE_MODULES, ModuleObject,
     ModuleSourceInfo, NAMESPACE_LOADER, NativeMethodKind, NativeMethodObject, ObjRef, Object,
-    PURE_STDLIB_ABC_MODULES, PURE_STDLIB_ASYNCIO_MODULES, PURE_STDLIB_CODECS_MODULES,
-    PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_COLORIZE_MODULES, PURE_STDLIB_DECIMAL_MODULES,
-    PURE_STDLIB_FUNCTOOLS_MODULES, PURE_STDLIB_FUTURE_MODULES, PURE_STDLIB_INSPECT_MODULES,
-    PURE_STDLIB_IO_MODULES, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_OPERATOR_MODULES,
-    PURE_STDLIB_OS_MODULES, PURE_STDLIB_OSX_SUPPORT_MODULES, PURE_STDLIB_PATHLIB_MODULES,
-    PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_PLATFORM_MODULES, PURE_STDLIB_RE_MODULES,
-    PURE_STDLIB_SIGNAL_MODULES, PURE_STDLIB_SOCKET_MODULES, PURE_STDLIB_SSL_MODULES,
-    PURE_STDLIB_SUBPROCESS_MODULES, PURE_STDLIB_SYSCONFIG_MODULES, PURE_STDLIB_TYPES_MODULES,
-    PURE_STDLIB_UUID_MODULES, PURE_STDLIB_WEAKREF_MODULES, Path, PathBuf, Rc, RuntimeError,
-    SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGKILL, SIGNAL_SIGTERM,
-    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm,
-    cached_module_path, compiler, cpython, dict_get_value, dict_remove_value, dict_set_value,
-    matches_finder_kind, parse_uuid_like_string, parser, source_path_from_cache_path,
+    PURE_STDLIB_ABC_MODULES, PURE_STDLIB_CODECS_MODULES, PURE_STDLIB_COLLECTIONS_MODULES,
+    PURE_STDLIB_COLORIZE_MODULES, PURE_STDLIB_DECIMAL_MODULES, PURE_STDLIB_FUNCTOOLS_MODULES,
+    PURE_STDLIB_FUTURE_MODULES, PURE_STDLIB_INSPECT_MODULES, PURE_STDLIB_IO_MODULES,
+    PURE_STDLIB_JSON_MODULES, PURE_STDLIB_OPERATOR_MODULES, PURE_STDLIB_OS_MODULES,
+    PURE_STDLIB_OSX_SUPPORT_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
+    PURE_STDLIB_PLATFORM_MODULES, PURE_STDLIB_RE_MODULES, PURE_STDLIB_SIGNAL_MODULES,
+    PURE_STDLIB_SOCKET_MODULES, PURE_STDLIB_SSL_MODULES, PURE_STDLIB_SUBPROCESS_MODULES,
+    PURE_STDLIB_SYSCONFIG_MODULES, PURE_STDLIB_TYPES_MODULES, PURE_STDLIB_UUID_MODULES,
+    PURE_STDLIB_ASYNCIO_MODULES,
+    PURE_STDLIB_WEAKREF_MODULES, Path, PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
+    SIGNAL_SIGINT, SIGNAL_SIGKILL, SIGNAL_SIGTERM, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
+    SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler, cpython, dict_get_value,
+    dict_remove_value, dict_set_value, matches_finder_kind, parse_uuid_like_string, parser,
+    source_path_from_cache_path,
 };
 use crate::extensions::{
     PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
@@ -605,40 +606,6 @@ impl Vm {
         frame.discard_result = true;
         self.push_frame_checked(Box::new(frame))?;
         Ok(())
-    }
-
-    fn execute_bootstrap_module_source_now(
-        &mut self,
-        module: &ObjRef,
-        name: &str,
-        source_filename: &str,
-        source: &str,
-    ) -> Result<(), RuntimeError> {
-        self.cache_source_text(source_filename, source);
-        let module_ast = parser::parse_module(source).map_err(|err| {
-            RuntimeError::new(format!(
-                "parse error in bootstrap module '{name}' at {}: {}",
-                err.offset, err.message
-            ))
-        })?;
-        let code = compiler::compile_module_with_filename(&module_ast, source_filename).map_err(
-            |err| {
-                let detail = if let Some(span) = err.span {
-                    format!("{} at {}:{}", err.message, span.line, span.column)
-                } else {
-                    err.message
-                };
-                RuntimeError::new(format!(
-                    "compile error in bootstrap module '{name}': {detail}"
-                ))
-            },
-        )?;
-        let code = Rc::new(code);
-        let cells = self.build_cells(&code, Vec::new());
-        let mut frame = Frame::new(code, module.clone(), true, false, cells, None);
-        frame.discard_result = true;
-        self.push_frame_checked(Box::new(frame))?;
-        self.run().map(|_| ())
     }
 
     pub(super) fn set_module_class_bases(
@@ -2780,32 +2747,6 @@ impl Vm {
             ],
             vec![
                 ("BOM_UTF8", self.heap.alloc_bytes(vec![0xEF, 0xBB, 0xBF])),
-                ("BOM_LE", self.heap.alloc_bytes(vec![0xFF, 0xFE])),
-                ("BOM_UTF16_LE", self.heap.alloc_bytes(vec![0xFF, 0xFE])),
-                ("BOM_BE", self.heap.alloc_bytes(vec![0xFE, 0xFF])),
-                ("BOM_UTF16_BE", self.heap.alloc_bytes(vec![0xFE, 0xFF])),
-                ("BOM_UTF32_LE", self.heap.alloc_bytes(vec![0xFF, 0xFE, 0x00, 0x00])),
-                ("BOM_UTF32_BE", self.heap.alloc_bytes(vec![0x00, 0x00, 0xFE, 0xFF])),
-                (
-                    "BOM_UTF16",
-                    if cfg!(target_endian = "little") {
-                        self.heap.alloc_bytes(vec![0xFF, 0xFE])
-                    } else {
-                        self.heap.alloc_bytes(vec![0xFE, 0xFF])
-                    },
-                ),
-                (
-                    "BOM_UTF32",
-                    if cfg!(target_endian = "little") {
-                        self.heap.alloc_bytes(vec![0xFF, 0xFE, 0x00, 0x00])
-                    } else {
-                        self.heap.alloc_bytes(vec![0x00, 0x00, 0xFE, 0xFF])
-                    },
-                ),
-                ("BOM32_LE", self.heap.alloc_bytes(vec![0xFF, 0xFE])),
-                ("BOM32_BE", self.heap.alloc_bytes(vec![0xFE, 0xFF])),
-                ("BOM64_LE", self.heap.alloc_bytes(vec![0xFF, 0xFE, 0x00, 0x00])),
-                ("BOM64_BE", self.heap.alloc_bytes(vec![0x00, 0x00, 0xFE, 0xFF])),
                 ("Codec", codec_class),
                 ("CodecInfo", codec_info_class),
                 ("IncrementalDecoder", incremental_decoder_class),
@@ -2815,66 +2756,6 @@ impl Vm {
                 ("__pyrs_codec_error_registry__", codec_error_registry),
             ],
         );
-        let codecs_module = self
-            .modules
-            .get("codecs")
-            .cloned()
-            .expect("codecs module unavailable during bootstrap");
-        self.execute_bootstrap_module_source_now(
-            &codecs_module,
-            "codecs",
-            "<bootstrap-codecs-buffered>",
-            r#"
-class BufferedIncrementalEncoder(IncrementalEncoder):
-    def __init__(self, errors='strict'):
-        IncrementalEncoder.__init__(self, errors)
-        self.buffer = ""
-
-    def _buffer_encode(self, input, errors, final):
-        raise NotImplementedError
-
-    def encode(self, input, final=False):
-        data = self.buffer + input
-        result, consumed = self._buffer_encode(data, self.errors, final)
-        self.buffer = data[consumed:]
-        return result
-
-    def reset(self):
-        IncrementalEncoder.reset(self)
-        self.buffer = ""
-
-    def getstate(self):
-        return self.buffer or 0
-
-    def setstate(self, state):
-        self.buffer = state or ""
-
-class BufferedIncrementalDecoder(IncrementalDecoder):
-    def __init__(self, errors='strict'):
-        IncrementalDecoder.__init__(self, errors)
-        self.buffer = b""
-
-    def _buffer_decode(self, input, errors, final):
-        raise NotImplementedError
-
-    def decode(self, input, final=False):
-        data = self.buffer + input
-        result, consumed = self._buffer_decode(data, self.errors, final)
-        self.buffer = data[consumed:]
-        return result
-
-    def reset(self):
-        IncrementalDecoder.reset(self)
-        self.buffer = b""
-
-    def getstate(self):
-        return (self.buffer, 0)
-
-    def setstate(self, state):
-        self.buffer = state[0]
-"#,
-        )
-        .expect("bootstrap codecs buffered classes should load");
         self.install_module_alias_from_existing("_codecs", "codecs");
         self.install_builtin_module(
             "unicodedata",
@@ -5900,10 +5781,7 @@ class BufferedIncrementalDecoder(IncrementalDecoder):
                 ("get_nb_ops", BuiltinFunction::OpcodeGetNbOps),
                 ("get_executor", BuiltinFunction::OpcodeGetExecutor),
             ],
-            vec![
-                ("ENABLE_SPECIALIZATION", Value::Int(0)),
-                ("ENABLE_SPECIALIZATION_FT", Value::Int(0)),
-            ],
+            Vec::new(),
         );
         self.install_builtin_module(
             "_abc",
@@ -9823,7 +9701,6 @@ class BufferedIncrementalDecoder(IncrementalDecoder):
     }
 
     fn install_json_accelerator_module(&mut self) {
-        let _scanner_class = self.ensure_json_scanner_class();
         self.install_builtin_module(
             "_json",
             &[
@@ -9906,10 +9783,6 @@ class BufferedIncrementalDecoder(IncrementalDecoder):
         }
     }
 
-    // Raw loader entry point used by the import subsystem. This may queue
-    // module execution and return an initializing placeholder; callers that
-    // need CPython-style synchronous import semantics must use
-    // `import_module_object`.
     pub(super) fn load_module(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
         if self.host.env_var_os("PYRS_TRACE_MODULE_LOAD").is_some() {
             eprintln!("[module-load] {name}");
@@ -11595,9 +11468,6 @@ class BufferedIncrementalDecoder(IncrementalDecoder):
     }
 
     pub(super) fn module_requires_realization(&mut self, name: &str, module: &ObjRef) -> bool {
-        if self.should_prefer_filesystem_module(name, module) {
-            return true;
-        }
         if Self::module_is_initializing(module) {
             return false;
         }

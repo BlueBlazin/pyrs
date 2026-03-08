@@ -52,10 +52,7 @@ pub unsafe extern "C" fn PyModule_Create2(module: *mut c_void, _apiver: i32) -> 
         if let Err(err) = unsafe { &mut *context.vm }
             .register_cpython_module_methods_from_def(&module_obj, module)
         {
-            context.set_error(format!(
-                "PyModule_Create2 failed to register methods: {}",
-                err.message
-            ));
+            context.set_error(format!("PyModule_Create2 failed to register methods: {}", err.message));
             return std::ptr::null_mut();
         }
         if let Err(err) = cpython_bind_module_def(context, &module_obj, module) {

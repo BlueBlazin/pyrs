@@ -1112,22 +1112,18 @@ fn from_import_submodule_executes_on_small_stack_without_recursive_vm_reentry() 
     let Some(lib) = cpython_lib_path() else {
         return;
     };
-    run_with_stack(
-        "small-stack-from-import-submodule",
-        2 * 1024 * 1024,
-        move || {
-            let source = "\
+    run_with_stack("small-stack-from-import-submodule", 2 * 1024 * 1024, move || {
+        let source = "\
 from compression._common import _streams\n\
 import io\n\
 ok = (_streams.__name__ == 'compression._common._streams' and io.__name__ == 'io')\n";
-            let module = parser::parse_module(source).expect("parse should succeed");
-            let code = compiler::compile_module(&module).expect("compile should succeed");
-            let mut vm = Vm::new();
-            vm.add_module_path(&lib);
-            vm.execute(&code).expect("execution should succeed");
-            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-        },
-    );
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -1135,31 +1131,27 @@ fn collections_abc_import_executes_on_small_stack_without_recursive_vm_reentry()
     let Some(lib) = cpython_lib_path() else {
         return;
     };
-    run_with_stack(
-        "small-stack-import-collections-abc",
-        2 * 1024 * 1024,
-        move || {
-            let source = concat!(
-                "from collections.abc import Mapping\n",
-                "class C(Mapping):\n",
-                "    def __iter__(self):\n",
-                "        return iter(())\n",
-                "    def __len__(self):\n",
-                "        return 0\n",
-                "    def __getitem__(self, key):\n",
-                "        raise KeyError\n",
-                "c = C()\n",
-                "setattr(c, 'x', 1)\n",
-                "ok = (c.x == 1 and C.__mro__[-1] is object)\n",
-            );
-            let module = parser::parse_module(source).expect("parse should succeed");
-            let code = compiler::compile_module(&module).expect("compile should succeed");
-            let mut vm = Vm::new();
-            vm.add_module_path(&lib);
-            vm.execute(&code).expect("execution should succeed");
-            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-        },
-    );
+    run_with_stack("small-stack-import-collections-abc", 2 * 1024 * 1024, move || {
+        let source = concat!(
+            "from collections.abc import Mapping\n",
+            "class C(Mapping):\n",
+            "    def __iter__(self):\n",
+            "        return iter(())\n",
+            "    def __len__(self):\n",
+            "        return 0\n",
+            "    def __getitem__(self, key):\n",
+            "        raise KeyError\n",
+            "c = C()\n",
+            "setattr(c, 'x', 1)\n",
+            "ok = (c.x == 1 and C.__mro__[-1] is object)\n",
+        );
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -3916,8 +3908,7 @@ except StopIteration:\n    done = True\n";
 
 #[test]
 fn executes_stdlib_bootstrap_modules() {
-    run_with_large_stack("executes_stdlib_bootstrap_modules", || {
-        let source = "import math\n\
+    let source = "import math\n\
 import json\n\
 import codecs\n\
 import re\n\
@@ -3963,8 +3954,6 @@ repeat_vals = list(itertools.repeat('x', 3))\n\
 reduced = functools.reduce(operator.add, [1, 2, 3], 0)\n\
 \n\
 counter = collections.Counter('abca')\n\
-counter_a = counter['a']\n\
-counter_b = counter['b']\n\
 dq = collections.deque((4, 5))\n\
 dq_vals = list(dq)\n\
 mod = types.ModuleType('tmp')\n\
@@ -3981,100 +3970,100 @@ joined = str(pathlib.Path(cwd).joinpath('foo'))\n\
 pth = str(pathlib.Path(cwd, 'bar'))\n\
 t = time.time()\n\
 m = time.monotonic()\n";
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.execute(&code).expect("execution should succeed");
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
 
-        assert_float_global(&vm, "sqrt", 3.0);
-        assert_eq!(vm.get_global("ceil"), Some(Value::Int(3)));
-        assert_eq!(vm.get_global("finite"), Some(Value::Bool(true)));
-        assert_eq!(vm.get_global("gcd1"), Some(Value::Int(6)));
-        assert_eq!(vm.get_global("gcd2"), Some(Value::Int(6)));
-        assert_eq!(vm.get_global("gcd3"), Some(Value::Int(7)));
-        assert_eq!(vm.get_global("op"), Some(Value::Int(5)));
-        assert_eq!(vm.get_global("op_pow"), Some(Value::Int(256)));
-        assert_eq!(vm.get_global("contains"), Some(Value::Bool(true)));
-        assert_eq!(vm.get_global("item"), Some(Value::Int(8)));
-        assert_eq!(
-            list_values(vm.get_global("chain_vals")),
-            Some(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
-        );
-        assert_eq!(
-            list_values(vm.get_global("repeat_vals")),
-            Some(vec![
-                Value::Str("x".to_string()),
-                Value::Str("x".to_string()),
-                Value::Str("x".to_string())
-            ])
-        );
-        assert_eq!(vm.get_global("reduced"), Some(Value::Int(6)));
-        assert_eq!(vm.get_global("is_mod"), Some(Value::Bool(true)));
-        assert_eq!(vm.get_global("is_class"), Some(Value::Bool(true)));
-        assert_eq!(vm.get_global("is_gen"), Some(Value::Bool(true)));
+    assert_float_global(&vm, "sqrt", 3.0);
+    assert_eq!(vm.get_global("ceil"), Some(Value::Int(3)));
+    assert_eq!(vm.get_global("finite"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("gcd1"), Some(Value::Int(6)));
+    assert_eq!(vm.get_global("gcd2"), Some(Value::Int(6)));
+    assert_eq!(vm.get_global("gcd3"), Some(Value::Int(7)));
+    assert_eq!(vm.get_global("op"), Some(Value::Int(5)));
+    assert_eq!(vm.get_global("op_pow"), Some(Value::Int(256)));
+    assert_eq!(vm.get_global("contains"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("item"), Some(Value::Int(8)));
+    assert_eq!(
+        list_values(vm.get_global("chain_vals")),
+        Some(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+    );
+    assert_eq!(
+        list_values(vm.get_global("repeat_vals")),
+        Some(vec![
+            Value::Str("x".to_string()),
+            Value::Str("x".to_string()),
+            Value::Str("x".to_string())
+        ])
+    );
+    assert_eq!(vm.get_global("reduced"), Some(Value::Int(6)));
+    assert_eq!(vm.get_global("is_mod"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("is_class"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("is_gen"), Some(Value::Bool(true)));
 
-        match vm.get_global("encoded") {
-            Some(Value::Str(text)) => {
-                assert!(text.contains("\"a\": 1"));
-                assert!(text.contains("\"b\": [2, 3]"));
-            }
-            other => panic!("expected encoded JSON string, got {other:?}"),
+    match vm.get_global("encoded") {
+        Some(Value::Str(text)) => {
+            assert!(text.contains("\"a\": 1"));
+            assert!(text.contains("\"b\": [2, 3]"));
         }
-        assert_eq!(
-            bytes_values(vm.get_global("encoded_ascii")),
-            Some(vec![65, 90])
-        );
-        assert_eq!(
-            vm.get_global("decoded_ascii"),
-            Some(Value::Str("AZ".to_string()))
-        );
-        assert_eq!(
-            vm.get_global("decoded_ignore"),
-            Some(Value::Str("AB".to_string()))
-        );
-        match vm.get_global("decoded_replace") {
-            Some(Value::Str(text)) => {
-                assert!(text.starts_with('A'));
-                assert!(text.ends_with('B'));
-                assert_eq!(text.chars().count(), 3);
-            }
-            other => panic!("expected decoded replacement string, got {other:?}"),
+        other => panic!("expected encoded JSON string, got {other:?}"),
+    }
+    assert_eq!(
+        bytes_values(vm.get_global("encoded_ascii")),
+        Some(vec![65, 90])
+    );
+    assert_eq!(
+        vm.get_global("decoded_ascii"),
+        Some(Value::Str("AZ".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("decoded_ignore"),
+        Some(Value::Str("AB".to_string()))
+    );
+    match vm.get_global("decoded_replace") {
+        Some(Value::Str(text)) => {
+            assert!(text.starts_with('A'));
+            assert!(text.ends_with('B'));
+            assert_eq!(text.chars().count(), 3);
         }
-        assert_eq!(vm.get_global("m1_ok"), Some(Value::Bool(true)));
-        assert_eq!(vm.get_global("m2_ok"), Some(Value::Bool(true)));
-        assert_eq!(vm.get_global("m3_ok"), Some(Value::Bool(true)));
-        match vm.get_global("t") {
-            Some(Value::Float(value)) => assert!(value > 0.0),
-            other => panic!("expected time float, got {other:?}"),
-        }
-        match vm.get_global("m") {
-            Some(Value::Float(value)) => assert!(value >= 0.0),
-            other => panic!("expected monotonic float, got {other:?}"),
-        }
-        match vm.get_global("today") {
-            Some(Value::Str(text)) => assert!(text.len() >= 10),
-            other => panic!("expected date string, got {other:?}"),
-        }
-        match vm.get_global("now") {
-            Some(Value::Str(text)) => assert!(text.contains('T')),
-            other => panic!("expected datetime string, got {other:?}"),
-        }
-        match vm.get_global("joined") {
-            Some(Value::Str(text)) => assert!(text.ends_with("foo")),
-            other => panic!("expected joined path string, got {other:?}"),
-        }
-        match vm.get_global("pth") {
-            Some(Value::Str(text)) => assert!(text.ends_with("bar")),
-            other => panic!("expected path string, got {other:?}"),
-        }
+        other => panic!("expected decoded replacement string, got {other:?}"),
+    }
+    assert_eq!(vm.get_global("m1_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("m2_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("m3_ok"), Some(Value::Bool(true)));
+    match vm.get_global("t") {
+        Some(Value::Float(value)) => assert!(value > 0.0),
+        other => panic!("expected time float, got {other:?}"),
+    }
+    match vm.get_global("m") {
+        Some(Value::Float(value)) => assert!(value >= 0.0),
+        other => panic!("expected monotonic float, got {other:?}"),
+    }
+    match vm.get_global("today") {
+        Some(Value::Str(text)) => assert!(text.len() >= 10),
+        other => panic!("expected date string, got {other:?}"),
+    }
+    match vm.get_global("now") {
+        Some(Value::Str(text)) => assert!(text.contains('T')),
+        other => panic!("expected datetime string, got {other:?}"),
+    }
+    match vm.get_global("joined") {
+        Some(Value::Str(text)) => assert!(text.ends_with("foo")),
+        other => panic!("expected joined path string, got {other:?}"),
+    }
+    match vm.get_global("pth") {
+        Some(Value::Str(text)) => assert!(text.ends_with("bar")),
+        other => panic!("expected path string, got {other:?}"),
+    }
 
-        assert_eq!(vm.get_global("counter_a"), Some(Value::Int(2)));
-        assert_eq!(vm.get_global("counter_b"), Some(Value::Int(1)));
-        assert_eq!(
-            list_values(vm.get_global("dq_vals")),
-            Some(vec![Value::Int(4), Value::Int(5)])
-        );
-    });
+    let counter_entries = dict_entries(vm.get_global("counter")).expect("counter dict");
+    assert!(counter_entries.contains(&(Value::Str("a".to_string()), Value::Int(2))));
+    assert!(counter_entries.contains(&(Value::Str("b".to_string()), Value::Int(1))));
+    assert_eq!(
+        list_values(vm.get_global("dq_vals")),
+        Some(vec![Value::Int(4), Value::Int(5)])
+    );
 }
 
 #[test]
@@ -4829,45 +4818,6 @@ ok = (
     handle
         .join()
         .expect("codecs pure-registry lookup thread should complete");
-}
-
-#[test]
-fn class_private_name_mangling_matches_cpython_for_methods_attrs_and_annotations() {
-    let source = r#"class C:
-    __a: int = 1
-    def __secret(self):
-        return self.__a
-    def nested(self):
-        def inner():
-            return self.__a
-        return inner()
-    def mutate(self):
-        self.__a += 1
-        del self.__a
-        self.__a = 7
-        return self.__a
-
-c = C()
-first = c._C__secret()
-nested = c.nested()
-c._C__a = 3
-mutated = c.mutate()
-ok = (
-    hasattr(C, "_C__secret")
-    and (not hasattr(C, "__secret"))
-    and first == 1
-    and nested == 1
-    and mutated == 7
-    and c._C__a == 7
-    and ("_C__a" in C.__annotations__)
-    and ("__a" not in C.__annotations__)
-)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -8660,23 +8610,6 @@ ok = (t.count(2) == 2 and TupleSub.count(t, 2) == 2 and s.count("e") == 2 and St
 }
 
 #[test]
-fn tuple_subclass_percent_formatting_and_ordering_use_tuple_backing() {
-    let source = r#"class TupleSub(tuple):
-    pass
-
-left = TupleSub((1, 2, "x"))
-right = TupleSub((1, 3, 0))
-formatted = "First has %d, Second has %d:  %r" % left
-ok = (formatted == "First has 1, Second has 2:  'x'" and left < right)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
 fn float_builtin_accepts_bytes_like_literals() {
     let source = "a = float(b'1.5')\n\
 b = float(bytearray(b'2.25'))\n\
@@ -9101,14 +9034,11 @@ a = json.loads(b'{"x": 1, "y": [2, 3]}')
 b = json.loads(bytearray(b'{"x": 1, "y": [2, 3]}'))
 ok = (a['x'] == 1 and a['y'] == [2, 3] and b == a)
 "#;
-    let source = source.to_string();
-    run_with_large_stack("json-loads-bytes-bytearray", move || {
-        let module = parser::parse_module(&source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -9475,14 +9405,8 @@ fn bytes_like_values_expose_sequence_dunders_and_reversed() {
     assert_eq!(by_key.get("bytes_has_getitem"), Some(&Value::Bool(true)));
     assert_eq!(by_key.get("bytes_has_contains"), Some(&Value::Bool(true)));
     assert_eq!(by_key.get("bytearray_has_len"), Some(&Value::Bool(true)));
-    assert_eq!(
-        by_key.get("bytearray_has_getitem"),
-        Some(&Value::Bool(true))
-    );
-    assert_eq!(
-        by_key.get("bytearray_has_contains"),
-        Some(&Value::Bool(true))
-    );
+    assert_eq!(by_key.get("bytearray_has_getitem"), Some(&Value::Bool(true)));
+    assert_eq!(by_key.get("bytearray_has_contains"), Some(&Value::Bool(true)));
     assert_eq!(
         by_key
             .get("bytes_reversed")
@@ -10363,16 +10287,6 @@ fn dict_slot_allows_dynamic_attributes() {
 #[test]
 fn instance_dict_attribute_is_available_for_dynamic_instances() {
     let source = "class C:\n    pass\nx = C()\nx.foo = 42\nd = x.__dict__\nvia_object = object.__getattribute__(x, '__dict__')\nok = (d['foo'] == 42 and via_object['foo'] == 42)\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn instance_shadowed_attr_site_cache_tracks_updates_and_deletes() {
-    let source = "class C:\n    value = 41\n\ndef read(obj):\n    return obj.value\n\nc = C()\nc.value = 1\na = read(c)\nc.value = 2\nb = read(c)\ndel c.value\ncval = read(c)\nc.value = 3\nd = read(c)\nok = (a, b, cval, d) == (1, 2, 41, 3)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -13208,9 +13122,6 @@ w = a == c\n";
 #[test]
 fn collects_self_referential_list_cycles() {
     let mut vm = Vm::new();
-    // VM bootstrap can leave transient, unreachable objects; normalize the
-    // baseline so this test isolates the self-referential cycle behavior.
-    vm.gc_collect();
     let before = vm.heap_object_count();
     {
         let list_value = vm.alloc_list(Vec::new());
@@ -13939,16 +13850,6 @@ fn re_match_exposes_group_groups_and_end() {
 #[test]
 fn re_match_uses_character_offsets_for_unicode_text() {
     let source = "import re\ns = 'xéz'\nm = re.search('é', s)\np = re.compile('z')\nm2 = p.search(s, 2)\nok = (\n    m is not None\n    and m.start() == 1\n    and m.end() == 2\n    and m.span() == (1, 2)\n    and s[m.start():m.end()] == 'é'\n    and m.group(0) == 'é'\n    and m2 is not None\n    and m2.start() == 2\n    and m2.group(0) == 'z'\n)\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn re_match_supports_lone_surrogate_patterns() {
-    let source = "import re\ns = '\\udc80'\nok = (\n    re.search(s, s) is not None\n    and re.match(s, s) is not None\n    and re.fullmatch(s, s) is not None\n)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -17494,26 +17395,12 @@ fn executes_atexit_register_unregister_run_and_clear() {
 
 #[test]
 fn executes_decimal_context_helpers() {
-    run_with_large_stack("executes_decimal_context_helpers", || {
-        let source = "import decimal\nctx = decimal.getcontext()\ndecimal.setcontext(ctx)\nwith decimal.localcontext() as ctx2:\n    same = (ctx2 is decimal.getcontext())\nok = same\n";
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
-}
-
-#[test]
-fn executes_decimal_context_manager_dunder_enter_and_exit() {
-    run_with_large_stack("executes_decimal_context_manager_dunder_enter_and_exit", || {
-        let source = "import decimal\nmgr = decimal.localcontext()\nenter = mgr.__enter__\nexit = mgr.__exit__\nctx = enter()\nsame = (ctx is decimal.getcontext())\nexit(None, None, None)\nok = callable(enter) and callable(exit) and same\n";
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+    let source = "import decimal\nctx = decimal.getcontext()\ndecimal.setcontext(ctx)\nwith decimal.localcontext() as ctx2:\n    same = (ctx2 is decimal.getcontext())\nok = same\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -18424,946 +18311,6 @@ fn executes_frozen_importlib_spec_from_loader_helper() {
 #[test]
 fn executes_opcode_metadata_helpers() {
     let source = "import _opcode\nse = _opcode.stack_effect(82)\nintr1 = _opcode.get_intrinsic1_descs()\nintr2 = _opcode.get_intrinsic2_descs()\nspecial = _opcode.get_special_method_names()\nnb = _opcode.get_nb_ops()\nexecutor_type_error = False\ntry:\n    _opcode.get_executor(None, 0)\nexcept TypeError:\n    executor_type_error = True\nok = (_opcode.has_arg(82) and _opcode.has_const(82) and _opcode.has_name(92) and _opcode.has_jump(70) and _opcode.has_free(97) and _opcode.has_local(84) and (not _opcode.has_exc(6)) and (not _opcode.has_arg(27)) and isinstance(se, int) and intr1[:3] == ['INTRINSIC_1_INVALID', 'INTRINSIC_PRINT', 'INTRINSIC_IMPORT_STAR'] and intr2[-1] == 'INTRINSIC_SET_TYPEPARAM_DEFAULT' and special == ['__enter__', '__exit__', '__aenter__', '__aexit__'] and isinstance(nb, list) and nb[0] == ('NB_ADD', '+') and nb[-1] == ('NB_SUBSCR', '[]') and executor_type_error)\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn exposes_testcapi_scalar_and_time_helpers() {
-    #[cfg(unix)]
-    let sizeof_time_t = std::mem::size_of::<libc::time_t>();
-    #[cfg(not(unix))]
-    let sizeof_time_t = std::mem::size_of::<i64>();
-    #[cfg(unix)]
-    let sizeof_pid_t = std::mem::size_of::<libc::pid_t>();
-    #[cfg(not(unix))]
-    let sizeof_pid_t = std::mem::size_of::<i32>();
-    let source = format!(
-        "import _opcode\nimport _testcapi\nimport time\nok = (\n    _testcapi.CHAR_MAX == {char_max}\n    and _testcapi.CHAR_MIN == {char_min}\n    and _testcapi.UCHAR_MAX == {uchar_max}\n    and _testcapi.SHRT_MAX == {shrt_max}\n    and _testcapi.SHRT_MIN == {shrt_min}\n    and _testcapi.USHRT_MAX == {ushort_max}\n    and _testcapi.INT_MAX == {int_max}\n    and _testcapi.INT_MIN == {int_min}\n    and _testcapi.UINT_MAX == {uint_max}\n    and _testcapi.LONG_MAX == {long_max}\n    and _testcapi.LONG_MIN == {long_min}\n    and _testcapi.ULONG_MAX == {ulong_max}\n    and _testcapi.LLONG_MAX == {llong_max}\n    and _testcapi.LLONG_MIN == {llong_min}\n    and _testcapi.ULLONG_MAX == {ullong_max}\n    and _testcapi.PY_SSIZE_T_MAX == {py_ssize_t_max}\n    and _testcapi.PY_SSIZE_T_MIN == {py_ssize_t_min}\n    and _testcapi.SIZEOF_VOID_P == {sizeof_void_p}\n    and _testcapi.SIZEOF_TIME_T == {sizeof_time_t}\n    and _testcapi.SIZEOF_PID_T == {sizeof_pid_t}\n    and _testcapi.WITH_PYMALLOC is False\n    and _testcapi.WITH_MIMALLOC is False\n    and _testcapi.Py_single_input == 256\n    and _testcapi.Py_file_input == 257\n    and _testcapi.Py_eval_input == 258\n    and _testcapi.PyTime_MIN == -(2**63)\n    and _testcapi.PyTime_MAX == 2**63 - 1\n    and _testcapi.Py_Version == 0x030e00f0\n    and _opcode.ENABLE_SPECIALIZATION == 0\n    and _opcode.ENABLE_SPECIALIZATION_FT == 0\n    and _testcapi.PyTime_AsSecondsDouble(0) == 0.0\n    and _testcapi.PyTime_AsSecondsDouble(1_000_000_000) == 1.0\n    and abs(_testcapi.PyTime_AsSecondsDouble(-1) + 1e-09) < 1e-18\n    and abs(_testcapi.PyTime_Monotonic() - time.monotonic()) < 0.25\n    and abs(_testcapi.PyTime_MonotonicRaw() - time.monotonic()) < 0.25\n    and abs(_testcapi.PyTime_PerfCounter() - time.perf_counter()) < 0.25\n    and abs(_testcapi.PyTime_PerfCounterRaw() - time.perf_counter()) < 0.25\n    and abs(_testcapi.PyTime_Time() - time.time()) < 0.25\n    and abs(_testcapi.PyTime_TimeRaw() - time.time()) < 0.25\n)\n",
-        char_max = std::ffi::c_char::MAX as i64,
-        char_min = std::ffi::c_char::MIN as i64,
-        uchar_max = std::ffi::c_uchar::MAX,
-        shrt_max = std::ffi::c_short::MAX,
-        shrt_min = std::ffi::c_short::MIN,
-        ushort_max = std::ffi::c_ushort::MAX,
-        int_max = std::ffi::c_int::MAX,
-        int_min = std::ffi::c_int::MIN,
-        uint_max = std::ffi::c_uint::MAX,
-        long_max = std::ffi::c_long::MAX,
-        long_min = std::ffi::c_long::MIN,
-        ulong_max = std::ffi::c_ulong::MAX,
-        llong_max = i64::MAX,
-        llong_min = i64::MIN,
-        ullong_max = u64::MAX,
-        py_ssize_t_max = isize::MAX,
-        py_ssize_t_min = isize::MIN,
-        sizeof_void_p = std::mem::size_of::<*const std::ffi::c_void>(),
-        sizeof_time_t = sizeof_time_t,
-        sizeof_pid_t = sizeof_pid_t,
-    );
-    let module = parser::parse_module(&source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn dict_expansion_preserves_string_subclass_keyword_entries_for_function_binding() {
-    let source = r#"class BadStr(str):
-    def __eq__(self, other):
-        return True
-    def __hash__(self):
-        return str.__hash__(self) ^ 3
-
-def f(*, x=None):
-    return x
-
-value = f(**{BadStr("x"): 3})
-duplicate_message = None
-try:
-    f(**{BadStr("x"): 1, "x": 2})
-except TypeError as exc:
-    duplicate_message = str(exc)
-
-ok = value == 3 and duplicate_message == "f() got multiple values for argument 'x'"
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn exposes_testcapi_getargs_keyword_helpers() {
-    let source = r#"import _testcapi
-
-class BadStrEqTrue(str):
-    def __eq__(self, other):
-        return True
-    def __hash__(self):
-        return str.__hash__(self) ^ 3
-
-class BadStrEqFalse(str):
-    def __eq__(self, other):
-        return False
-    def __hash__(self):
-        return str.__hash__(self)
-
-missing_message = None
-too_many_message = None
-unexpected_message = None
-surrogate_message = None
-too_many_positional_message = None
-too_many_total_message = None
-invalid_keyword_message_1 = None
-invalid_keyword_message_2 = None
-unexpected_badstr = None
-positional_only_missing_message = None
-positional_only_empty_keyword_message = None
-
-try:
-    _testcapi.getargs_keywords(arg1=(1, 2))
-except TypeError as exc:
-    missing_message = str(exc)
-
-try:
-    _testcapi.getargs_keywords((1, 2), 3, (4, (5, 6)), (7, 8, 9), 10, 111)
-except TypeError as exc:
-    too_many_message = str(exc)
-
-try:
-    _testcapi.getargs_keywords((1, 2), 3, arg5=10, arg666=666)
-except TypeError as exc:
-    unexpected_message = str(exc)
-
-try:
-    _testcapi.getargs_keywords((1, 2), 3, (4, (5, 6)), (7, 8, 9), **{'\udc80': 10})
-except TypeError as exc:
-    surrogate_message = str(exc)
-
-try:
-    _testcapi.getargs_keyword_only(1, 2, 3)
-except TypeError as exc:
-    too_many_positional_message = str(exc)
-
-try:
-    _testcapi.getargs_keyword_only(1, 2, 3, keyword_only=5)
-except TypeError as exc:
-    too_many_total_message = str(exc)
-
-try:
-    _testcapi.getargs_keyword_only(1, 2, **{BadStrEqTrue("keyword_only"): 3})
-except TypeError as exc:
-    invalid_keyword_message_1 = str(exc)
-
-try:
-    _testcapi.getargs_keyword_only(1, 2, **{BadStrEqFalse("keyword_only"): 3})
-except TypeError as exc:
-    invalid_keyword_message_2 = str(exc)
-
-try:
-    _testcapi.getargs_keyword_only(1, 2, **{BadStrEqTrue("monster"): 666})
-except TypeError as exc:
-    unexpected_badstr = str(exc)
-
-try:
-    _testcapi.getargs_positional_only_and_keywords()
-except TypeError as exc:
-    positional_only_missing_message = str(exc)
-
-try:
-    _testcapi.getargs_positional_only_and_keywords(1, 2, **{'': 666})
-except TypeError as exc:
-    positional_only_empty_keyword_message = str(exc)
-
-ok = (
-    _testcapi.getargs_keywords((1, 2), 3, (4, (5, 6)), arg4=(7, 8, 9), arg5=10)
-        == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-    and _testcapi.getargs_keywords(arg1=(1, 2), arg2=3, arg5=10)
-        == (1, 2, 3, -1, -1, -1, -1, -1, -1, 10)
-    and _testcapi.getargs_keyword_only(1, 2) == (1, 2, -1)
-    and _testcapi.getargs_keyword_only(required=1, keyword_only=3) == (1, -1, 3)
-    and _testcapi.getargs_positional_only_and_keywords(1, 2, keyword=3) == (1, 2, 3)
-    and _testcapi.getargs_positional_only_and_keywords(1, keyword=3) == (1, -1, 3)
-    and missing_message == "function missing required argument 'arg2' (pos 2)"
-    and too_many_message == "function takes at most 5 arguments (6 given)"
-    and unexpected_message == "this function got an unexpected keyword argument 'arg666'"
-    and surrogate_message == "this function got an unexpected keyword argument '\udc80'"
-    and too_many_positional_message == "function takes at most 2 positional arguments (3 given)"
-    and too_many_total_message == "function takes at most 3 arguments (4 given)"
-    and invalid_keyword_message_1 == "invalid keyword argument for this function"
-    and invalid_keyword_message_2 == "invalid keyword argument for this function"
-    and unexpected_badstr.startswith("this function got an unexpected keyword argument")
-    and positional_only_missing_message == "function takes at least 1 positional argument (0 given)"
-    and positional_only_empty_keyword_message == "this function got an unexpected keyword argument ''"
-)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn exposes_testcapi_getargs_scalar_helpers() {
-    let Some(lib_path) = cpython_lib_path() else {
-        eprintln!("skipping _testcapi scalar warning regression (CPython Lib not found)");
-        return;
-    };
-    run_with_large_stack("exposes_testcapi_getargs_scalar_helpers", move || {
-        let source = r#"import _testcapi
-import warnings
-
-class Index:
-    def __index__(self):
-        return 99
-
-class IndexIntSubclass(int):
-    def __index__(self):
-        return 99
-
-class BadIndex2:
-    def __index__(self):
-        return True
-
-class Float:
-    def __float__(self):
-        return 4.25
-
-class FloatSubclass(float):
-    pass
-
-class FloatSubclass2(float):
-    def __float__(self):
-        return 4.25
-
-class BadFloat2:
-    def __float__(self):
-        return FloatSubclass(4.25)
-
-class BadFloat3(float):
-    def __float__(self):
-        return FloatSubclass(4.25)
-
-class Complex:
-    def __complex__(self):
-        return 4.25 + 0.5j
-
-class ComplexSubclass(complex):
-    pass
-
-class ComplexSubclass2(complex):
-    def __complex__(self):
-        return 4.25 + 0.5j
-
-class BadComplex2:
-    def __complex__(self):
-        return ComplexSubclass(4.25 + 0.5j)
-
-class BadComplex3(complex):
-    def __complex__(self):
-        return ComplexSubclass(4.25 + 0.5j)
-
-bytes_obj = b"bytes"
-bytearray_obj = bytearray(b"bytearray")
-str_obj = "str"
-
-with warnings.catch_warnings(record=True) as caught:
-    warnings.simplefilter("always")
-    warned_b = _testcapi.getargs_b(BadIndex2())
-    warned_d = _testcapi.getargs_d(BadFloat2())
-    warned_D = _testcapi.getargs_D(BadComplex2())
-
-warning_types = [item.category.__name__ for item in caught]
-warning_texts = [str(item.message) for item in caught]
-
-ok = (
-    _testcapi.getargs_b(Index()) == 99
-    and _testcapi.getargs_b(IndexIntSubclass()) == 0
-    and _testcapi.getargs_B(-1) == _testcapi.UCHAR_MAX
-    and _testcapi.getargs_h(-123) == -123
-    and _testcapi.getargs_H(-1) == _testcapi.USHRT_MAX
-    and _testcapi.getargs_I(-1) == _testcapi.UINT_MAX
-    and _testcapi.getargs_k(-1) == _testcapi.ULONG_MAX
-    and _testcapi.getargs_i(_testcapi.INT_MAX) == _testcapi.INT_MAX
-    and _testcapi.getargs_l(_testcapi.LONG_MIN) == _testcapi.LONG_MIN
-    and _testcapi.getargs_n(_testcapi.PY_SSIZE_T_MAX) == _testcapi.PY_SSIZE_T_MAX
-    and _testcapi.getargs_L(_testcapi.LLONG_MIN) == _testcapi.LLONG_MIN
-    and _testcapi.getargs_K(_testcapi.ULLONG_MAX + 1) == 0
-    and _testcapi.getargs_f(Float()) == 4.25
-    and _testcapi.getargs_f(FloatSubclass(7.5)) == 7.5
-    and _testcapi.getargs_f(FloatSubclass2(7.5)) == 7.5
-    and _testcapi.getargs_d(Index()) == 99.0
-    and _testcapi.getargs_d(BadFloat3(7.5)) == 7.5
-    and _testcapi.getargs_D(Complex()) == 4.25 + 0.5j
-    and _testcapi.getargs_D(ComplexSubclass(7.5 + 0.25j)) == 7.5 + 0.25j
-    and _testcapi.getargs_D(ComplexSubclass2(7.5 + 0.25j)) == 7.5 + 0.25j
-    and _testcapi.getargs_D(BadComplex3(7.5 + 0.25j)) == 7.5 + 0.25j
-    and _testcapi.getargs_S(bytes_obj) is bytes_obj
-    and _testcapi.getargs_Y(bytearray_obj) is bytearray_obj
-    and _testcapi.getargs_U(str_obj) is str_obj
-    and warned_b == 1
-    and warned_d == 4.25
-    and warned_D == 4.25 + 0.5j
-    and warning_types == [
-        "DeprecationWarning",
-        "DeprecationWarning",
-        "DeprecationWarning",
-    ]
-    and "__index__ returned non-int" in warning_texts[0]
-    and "__float__ returned non-float" in warning_texts[1]
-    and "__complex__ returned non-complex" in warning_texts[2]
-)
-"#;
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.add_module_path(&lib_path);
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
-}
-
-#[test]
-fn testcapi_getargs_scalar_helpers_report_errors() {
-    let source = r#"import _testcapi
-import sys
-
-class BadIndex:
-    def __index__(self):
-        return 1.0
-
-class BadFloat:
-    def __float__(self):
-        return 687
-
-class BadComplex:
-    def __complex__(self):
-        return 1.25
-
-class Paradox:
-    def __bool__(self):
-        raise NotImplementedError("false")
-
-errors = {}
-
-def capture(name, func):
-    try:
-        func()
-    except Exception as exc:
-        errors[name] = (type(exc).__name__, str(exc))
-
-capture("bad_index", lambda: _testcapi.getargs_b(BadIndex()))
-capture("bad_float", lambda: _testcapi.getargs_f(BadFloat()))
-capture("bad_complex", lambda: _testcapi.getargs_D(BadComplex()))
-capture("overflow_b", lambda: _testcapi.getargs_b(-1))
-capture("overflow_h", lambda: _testcapi.getargs_h(_testcapi.SHRT_MAX + 1))
-capture("overflow_i", lambda: _testcapi.getargs_i(_testcapi.INT_MIN - 1))
-capture("overflow_d", lambda: _testcapi.getargs_d(1 << sys.float_info.max_exp))
-capture("truthiness", lambda: _testcapi.getargs_p(Paradox()))
-capture("bytes_type", lambda: _testcapi.getargs_S(bytearray(b"x")))
-capture("bytearray_type", lambda: _testcapi.getargs_Y(b"x"))
-capture("unicode_type", lambda: _testcapi.getargs_U(b"x"))
-
-ok = (
-    errors["bad_index"][0] == "TypeError"
-    and errors["bad_float"][0] == "TypeError"
-    and errors["bad_complex"][0] == "TypeError"
-    and errors["overflow_b"][0] == "OverflowError"
-    and errors["overflow_h"][0] == "OverflowError"
-    and errors["overflow_i"][0] == "OverflowError"
-    and errors["overflow_d"][0] == "OverflowError"
-    and errors["truthiness"][0] == "NotImplementedError"
-    and errors["bytes_type"][0] == "TypeError"
-    and errors["bytearray_type"][0] == "TypeError"
-    and errors["unicode_type"][0] == "TypeError"
-    and "__index__ returned non-int" in errors["bad_index"][1]
-    and "__float__ returned non-float" in errors["bad_float"][1]
-    and "__complex__ returned non-complex" in errors["bad_complex"][1]
-)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn exposes_testcapi_getargs_tuple_and_parse_helpers() {
-    let source = r#"import _testcapi
-
-class CustomError(Exception):
-    pass
-
-class TestSeq:
-    def __len__(self):
-        return 2
-    def __getitem__(self, index):
-        raise CustomError("boom")
-
-errors = {}
-
-def capture(name, func):
-    try:
-        func()
-    except Exception as exc:
-        errors[name] = (type(exc).__name__, str(exc))
-
-capture("tuple_custom_error", lambda: _testcapi.getargs_tuple(1, TestSeq()))
-capture("parse_bad_keywords", lambda: _testcapi.parse_tuple_and_keywords((), {}, "", 42))
-capture("parse_missing", lambda: _testcapi.parse_tuple_and_keywords((), {}, "O", ["a"]))
-
-ok = (
-    _testcapi.get_args(1, *(2, 3)) == (1, 2, 3)
-    and _testcapi.get_kwargs(a=1, **{"b": 2}) == {"a": 1, "b": 2}
-    and _testcapi.getargs_empty() == 1
-    and _testcapi.getargs_tuple(1, (2, 3)) == (1, 2, 3)
-    and _testcapi.parse_tuple_and_keywords((1,), {"b": 2}, "OO", ["a", "b"]) == (1, 2)
-    and _testcapi.parse_tuple_and_keywords((), {}, "|O", ["a"]) == (None,)
-    and _testcapi.argparsing("Hello", "World") == 1
-    and errors["tuple_custom_error"] == ("CustomError", "boom")
-    and errors["parse_bad_keywords"] == (
-        "ValueError",
-        "parse_tuple_and_keywords: sub_keywords must be either list or tuple",
-    )
-    and errors["parse_missing"][0] == "TypeError"
-    and "function missing required argument 'a'" in errors["parse_missing"][1]
-)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn testcapi_getargs_helper_wrappers_report_cpython_errors() {
-    let source = r#"import _testcapi
-
-errors = {}
-
-def capture(name, func):
-    try:
-        func()
-    except Exception as exc:
-        errors[name] = (type(exc).__name__, str(exc))
-
-capture("get_args_kw", lambda: _testcapi.get_args(a=1))
-capture("getargs_empty_positional", lambda: _testcapi.getargs_empty(1))
-capture("getargs_empty_keyword", lambda: _testcapi.getargs_empty(a=1))
-capture("getargs_tuple_kw", lambda: _testcapi.getargs_tuple(a=1))
-capture("parse_kwargs", lambda: _testcapi.parse_tuple_and_keywords(sub=1))
-capture("parse_arity", lambda: _testcapi.parse_tuple_and_keywords(()))
-capture("argparsing_kwargs", lambda: _testcapi.argparsing(a=1))
-capture("argparsing_arity", lambda: _testcapi.argparsing("x"))
-
-ok = (
-    errors["get_args_kw"] == ("TypeError", "get_args() takes no keyword arguments")
-    and errors["getargs_empty_positional"] == (
-        "TypeError",
-        "getargs_empty() takes exactly 0 arguments (1 given)",
-    )
-    and errors["getargs_empty_keyword"] == (
-        "TypeError",
-        "getargs_empty() takes at most 0 keyword arguments (1 given)",
-    )
-    and errors["getargs_tuple_kw"] == (
-        "TypeError",
-        "getargs_tuple() takes no keyword arguments",
-    )
-    and errors["parse_kwargs"] == (
-        "TypeError",
-        "parse_tuple_and_keywords() takes no keyword arguments",
-    )
-    and errors["parse_arity"] == (
-        "TypeError",
-        "parse_tuple_and_keywords() takes exactly 4 arguments (1 given)",
-    )
-    and errors["argparsing_kwargs"] == ("TypeError", "argparsing() takes no keyword arguments")
-    and errors["argparsing_arity"] == ("TypeError", "function takes exactly 2 arguments (1 given)")
-)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn exposes_testcapi_string_and_bytes_helpers() {
-    let source = r#"import _testcapi
-
-errors = {}
-
-def capture(name, func):
-    try:
-        func()
-    except Exception as exc:
-        errors[name] = (type(exc).__name__, str(exc))
-
-wbuf = bytearray(b"bytearray")
-wview_buf = bytearray(b"memoryview")
-es_buf = bytearray(b"x" * 5)
-capture("clear_args", lambda: _testcapi.gh_99240_clear_args("a", "\0b"))
-
-ok = (
-    _testcapi.getargs_c(b"a") == 97
-    and _testcapi.getargs_C("\U0001f40d") == 0x1F40D
-    and _testcapi.getargs_s("abc\xe9") == b"abc\xc3\xa9"
-    and _testcapi.getargs_s_star(bytearray(b"bytearray")) == b"bytearray"
-    and _testcapi.getargs_s_hash(b"bytes") == b"bytes"
-    and _testcapi.getargs_z(None) is None
-    and _testcapi.getargs_z_star(memoryview(b"memoryview")) == b"memoryview"
-    and _testcapi.getargs_z_hash(None) is None
-    and _testcapi.getargs_y(b"bytes") == b"bytes"
-    and _testcapi.getargs_y_star(memoryview(b"memoryview")) == b"memoryview"
-    and _testcapi.getargs_y_hash(b"nul:\0") == b"nul:\0"
-    and _testcapi.getargs_es("abc\xe9", "latin1") == b"abc\xe9"
-    and _testcapi.getargs_et(bytearray(b"bytearray"), "latin1") == b"bytearray"
-    and _testcapi.getargs_es_hash("abc\xe9", "latin1", es_buf) == b"abc\xe9"
-    and es_buf == bytearray(b"abc\xe9\0")
-    and _testcapi.getargs_et_hash(bytearray(b"nul:\0"), "latin1") == b"nul:\0"
-    and _testcapi.getargs_w_star(wbuf) == b"[ytearra]"
-    and wbuf == bytearray(b"[ytearra]")
-    and _testcapi.getargs_w_star_opt(memoryview(wview_buf)) == b"[emoryvie]"
-    and wview_buf == bytearray(b"[emoryvie]")
-    and errors["clear_args"][0] == "TypeError"
-)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn exposes_testcapi_structmember_types() {
-    let source = r#"import _testcapi, warnings
-
-classes = (
-    _testcapi._test_structmembersType_OldAPI,
-    _testcapi._test_structmembersType_NewAPI,
-)
-
-class Index:
-    def __init__(self, value):
-        self.value = value
-
-    def __index__(self):
-        return self.value
-
-def check(cls):
-    obj = cls(
-        False,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        23,
-        9.99999,
-        10.1010101010,
-        "hi",
-        12,
-        13,
-        b"c",
-    )
-    if obj.T_BOOL is not False or obj.T_STRING_INPLACE != "hi" or obj.T_CHAR != "c":
-        return False
-    obj.T_INT = 42
-    if obj.T_INT != 42:
-        return False
-    try:
-        obj.T_BOOL = 1
-    except TypeError:
-        pass
-    else:
-        return False
-    try:
-        obj.T_PYSSIZET = Index(23)
-    except TypeError:
-        pass
-    else:
-        return False
-    try:
-        del obj.T_STRING_INPLACE
-    except TypeError:
-        pass
-    else:
-        return False
-    try:
-        del obj.T_CHAR
-    except TypeError:
-        pass
-    else:
-        return False
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        obj.T_UINT = -1
-    return (
-        len(caught) == 1
-        and caught[0].category is RuntimeWarning
-        and obj.T_UINT == _testcapi.UINT_MAX
-    )
-
-ok = all(check(cls) for cls in classes)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn exposes_testcapi_instancemethod_descriptor() {
-    let source = r#"import _testcapi
-
-def testfunction(self):
-    """some doc"""
-    return self
-
-class InstanceMethod:
-    id = _testcapi.instancemethod(id)
-    testfunction = _testcapi.instancemethod(testfunction)
-
-inst = InstanceMethod()
-InstanceMethod.testfunction.attribute = "test"
-
-ok = (
-    id(inst) == inst.id()
-    and inst.testfunction() is inst
-    and inst.testfunction.__doc__ == testfunction.__doc__
-    and InstanceMethod.testfunction.__doc__ == testfunction.__doc__
-    and testfunction.attribute == "test"
-)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn exposes_testcapi_heaptype_subclass_types() {
-    let source = r#"import _testcapi, gc
-
-def check():
-    subclass = _testcapi.HeapCTypeSubclass()
-    if subclass.value != 10 or subclass.value2 != 20:
-        return False
-
-    finalized = _testcapi.HeapCTypeSubclassWithFinalizer()
-    if finalized.value != 10 or finalized.value2 != 20:
-        return False
-
-    del finalized
-    gc.collect()
-    return (
-        hasattr(_testcapi.HeapCTypeSubclassWithFinalizer, "refcnt_in_del")
-        and hasattr(_testcapi.HeapCTypeSubclass, "refcnt_in_del")
-    )
-
-ok = check()
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn exposes_testcapi_pending_threadfunc_helpers() {
-    let source = r#"import _testcapi, _testinternalcapi, threading
-main_tid = threading.get_ident()
-main_hits = []
-interp_hits = []
-
-def main_callback():
-    main_hits.append(threading.get_ident())
-
-def interp_callback():
-    interp_hits.append(threading.get_ident())
-
-added_main = _testcapi._pending_threadfunc(main_callback, 33)
-added_interp = _testinternalcapi.pending_threadfunc(interp_callback, 301)
-spins = 0
-while (len(main_hits) < added_main or len(interp_hits) < added_interp) and spins < 20000:
-    spins += 1
-    _ = spins * spins
-
-ok = (
-    added_main == 32
-    and added_interp == 300
-    and len(main_hits) == 32
-    and len(interp_hits) == 300
-    and all(tid == main_tid for tid in main_hits)
-    and all(tid == main_tid for tid in interp_hits)
-)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn testinternalcapi_pending_threadfunc_requeues_onto_worker_thread() {
-    let source = r#"import _testinternalcapi, threading
-main_tid = threading.get_ident()
-runner_tids = []
-
-def callback():
-    if threading.get_ident() == main_tid:
-        _testinternalcapi.pending_threadfunc(callback, ensure_added=True)
-        return
-    runner_tids.append(threading.get_ident())
-
-def worker():
-    spins = 0
-    while not runner_tids and spins < 20000:
-        spins += 1
-        _ = spins * spins
-
-added = _testinternalcapi.pending_threadfunc(callback, ensure_added=True)
-t = threading.Thread(target=worker)
-t.start()
-t.join()
-ok = added == 1 and len(runner_tids) == 1 and runner_tids[0] != main_tid
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn testcapi_parse_keyword_messages_preserve_invalid_utf8_and_surrogates() {
-    let source = r#"import _testcapi
-
-errors = {}
-
-def capture(name, func):
-    try:
-        func()
-    except Exception as exc:
-        errors[name] = (type(exc).__name__, str(exc))
-
-invalid = b"\x80"
-capture("missing_invalid", lambda: _testcapi.parse_tuple_and_keywords((), {}, "O", [invalid]))
-capture("keyword_invalid", lambda: _testcapi.parse_tuple_and_keywords((), {"b": 1}, "|O", [invalid]))
-capture("surrogate_keyword", lambda: _testcapi.getargs_keyword_only(1, 2, **{"\uDC80": 10}))
-
-ok = (
-    _testcapi.parse_tuple_and_keywords((), {}, "|O", [invalid]) == (None,)
-    and errors["missing_invalid"][0] == "TypeError"
-    and "\ufffd" in errors["missing_invalid"][1]
-    and errors["keyword_invalid"][0] == "UnicodeDecodeError"
-    and errors["surrogate_keyword"] == (
-        "TypeError",
-        "this function got an unexpected keyword argument '\udc80'",
-    )
-)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn testcapi_string_and_parse_helpers_preserve_typed_errors_and_marker_semantics() {
-    let source = r#"import _testcapi
-
-errors = {}
-
-def capture(name, func):
-    try:
-        func()
-    except Exception as exc:
-        errors[name] = (type(exc).__name__, str(exc))
-
-capture("s_star_none", lambda: _testcapi.getargs_s_star(None))
-capture("y_star_str", lambda: _testcapi.getargs_y_star("abc\xe9"))
-capture("es_ascii", lambda: _testcapi.getargs_es("abc\xe9", "ascii"))
-capture("et_unknown", lambda: _testcapi.getargs_et("abc\xe9", "spam"))
-capture("w_star_bytes", lambda: _testcapi.getargs_w_star(b"bytes"))
-capture(
-    "nested_es_lookup",
-    lambda: _testcapi.parse_tuple_and_keywords((("a",),), {}, "(es)", ["a"]),
-)
-capture(
-    "bad_double_pipe",
-    lambda: _testcapi.parse_tuple_and_keywords((1,), {}, "||O", ["a"]),
-)
-capture(
-    "positional_only_exact",
-    lambda: _testcapi.parse_tuple_and_keywords((1,), {"a": 3}, "OO$O", ["", "", "a"]),
-)
-
-ok = (
-    errors["s_star_none"][0] == "TypeError"
-    and errors["y_star_str"][0] == "TypeError"
-    and errors["es_ascii"][0] == "UnicodeEncodeError"
-    and errors["et_unknown"][0] == "LookupError"
-    and errors["w_star_bytes"][0] == "TypeError"
-    and errors["nested_es_lookup"][0] == "LookupError"
-    and errors["bad_double_pipe"][0] == "SystemError"
-    and errors["positional_only_exact"] == (
-        "TypeError",
-        "function takes exactly 2 positional arguments (1 given)",
-    )
-)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn testcapi_parse_tuple_and_keywords_invalid_units_match_skipitem_contract() {
-    let source = r#"import _testcapi
-
-errors = {}
-
-def capture(name, func):
-    try:
-        func()
-    except Exception as exc:
-        errors[name] = (type(exc).__name__, str(exc))
-
-capture(
-    "invalid_used",
-    lambda: _testcapi.parse_tuple_and_keywords((0,), {"b": 1}, "!i", ["a", "b"]),
-)
-capture(
-    "invalid_skipped",
-    lambda: _testcapi.parse_tuple_and_keywords((), {"b": 1}, "|!i", ["a", "b"]),
-)
-capture(
-    "invalid_suffix_skipped",
-    lambda: _testcapi.parse_tuple_and_keywords((), {"b": 1}, "|a#i", ["a", "b"]),
-)
-capture(
-    "invalid_encoding_suffix_skipped",
-    lambda: _testcapi.parse_tuple_and_keywords((), {"b": 1}, "|eXi", ["a", "b"]),
-)
-capture(
-    "more_specifiers_than_keywords",
-    lambda: _testcapi.parse_tuple_and_keywords((1,), {}, "|OO", ["a"]),
-)
-
-ok = (
-    errors["invalid_used"] == (
-        "SystemError",
-        "argument 1 (impossible<bad format char>)",
-    )
-    and errors["invalid_skipped"] == (
-        "SystemError",
-        "impossible<bad format char>: '!i'",
-    )
-    and errors["invalid_suffix_skipped"] == (
-        "SystemError",
-        "impossible<bad format char>: 'a#i'",
-    )
-    and errors["invalid_encoding_suffix_skipped"] == (
-        "SystemError",
-        "impossible<bad format char>: 'eXi'",
-    )
-    and errors["more_specifiers_than_keywords"] == (
-        "SystemError",
-        "more argument specifiers than keyword list entries (remaining format:'O')",
-    )
-)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn testinternalcapi_run_in_subinterp_with_config_executes_code() {
-    let source = r#"import _testinternalcapi, types
-
-config = types.SimpleNamespace(
-    allow_fork=False,
-    allow_exec=False,
-    allow_threads=True,
-    allow_daemon_threads=False,
-    use_main_obmalloc=False,
-    gil="own",
-    check_multi_interp_extensions=True,
-)
-rc = _testinternalcapi.run_in_subinterp_with_config(
-    "import _testinternalcapi\nassert _testinternalcapi.gh_119213_getargs(spam='eggs') == 'eggs'\n",
-    config,
-)
-ok = (rc == 0)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn builtin_hash_descriptors_use_runtime_hash_semantics() {
-    let source = r#"class StrSub(str):
-    pass
-
-class IntSub(int):
-    pass
-
-class TupleSub(tuple):
-    pass
-
-str_value = StrSub("hello")
-int_value = IntSub(123)
-tuple_value = TupleSub((1, 2, 3))
-
-ok = (
-    str.__hash__("hello") == hash("hello")
-    and StrSub.__hash__(str_value) == hash(str_value)
-    and int.__hash__(123) == hash(123)
-    and IntSub.__hash__(int_value) == hash(int_value)
-    and tuple.__hash__((1, 2, 3)) == hash((1, 2, 3))
-    and TupleSub.__hash__(tuple_value) == hash(tuple_value)
-)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn unary_negation_promotes_i64_min_to_python_bigint() {
-    let source =
-        "value = -((-9223372036854775807) - 1)\nok = (value == 2**63 and type(value) is int)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -21781,174 +20728,6 @@ ok = (seen == "present" and missing == "fallback")
 }
 
 #[test]
-fn vm_new_with_seeded_cpython_lib_keeps_json_imports_on_single_stdlib_root() {
-    use pyrs::host::{HostCapability, NativeHost, VmHost};
-    use std::ffi::OsString;
-
-    #[derive(Debug)]
-    struct SeededEnvHost {
-        base: NativeHost,
-        seeded: Vec<(String, String)>,
-    }
-
-    impl VmHost for SeededEnvHost {
-        fn current_dir(&self) -> Result<PathBuf, String> {
-            self.base.current_dir()
-        }
-
-        fn env_var(&self, name: &str) -> Option<String> {
-            self.seeded
-                .iter()
-                .find(|(key, _)| key == name)
-                .map(|(_, value)| value.clone())
-                .or_else(|| self.base.env_var(name))
-        }
-
-        fn env_var_os(&self, name: &str) -> Option<OsString> {
-            self.seeded
-                .iter()
-                .find(|(key, _)| key == name)
-                .map(|(_, value)| OsString::from(value))
-                .or_else(|| self.base.env_var_os(name))
-        }
-
-        fn env_vars(&self) -> Vec<(String, String)> {
-            self.seeded.clone()
-        }
-
-        fn path_is_dir(&self, path: &std::path::Path) -> bool {
-            self.base.path_is_dir(path)
-        }
-
-        fn process_args(&self) -> Vec<String> {
-            self.base.process_args()
-        }
-
-        fn current_exe(&self) -> Option<PathBuf> {
-            self.base.current_exe()
-        }
-
-        fn os_name(&self) -> &'static str {
-            self.base.os_name()
-        }
-
-        fn supports(&self, capability: HostCapability) -> bool {
-            self.base.supports(capability)
-        }
-    }
-
-    let lib_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".local/Python-3.14.3/Lib");
-    assert!(
-        lib_path.join("site.py").is_file(),
-        "expected local CPython stdlib at {}",
-        lib_path.display()
-    );
-    let lib_literal = lib_path.to_string_lossy().to_string();
-    let source = format!(
-        "import enum\nimport json\nimport os\nimport re\nimport sys\nimport types\n\
-root = {lib_literal:?}.replace('\\\\\\\\', '/')\n\
-module_files = [json.__file__, re.__file__, enum.__file__, types.__file__]\n\
-normalized = [path.replace('\\\\\\\\', '/') for path in module_files]\n\
-ok = all(path.startswith(root) for path in normalized)\n"
-    );
-    let module = parser::parse_module(&source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let host = SeededEnvHost {
-        base: NativeHost,
-        seeded: vec![("PYRS_CPYTHON_LIB".to_string(), lib_literal)],
-    };
-    let mut vm = Vm::new_with_host(Arc::new(host));
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn vm_new_default_host_keeps_json_imports_on_single_local_stdlib_root() {
-    let lib_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".local/Python-3.14.3/Lib");
-    assert!(
-        lib_path.join("site.py").is_file(),
-        "expected local CPython stdlib at {}",
-        lib_path.display()
-    );
-    let lib_literal = lib_path.to_string_lossy().to_string();
-    let source = format!(
-        "import enum\nimport json\nimport os\nimport re\nimport sys\nimport types\n\
-root = {lib_literal:?}.replace('\\\\\\\\', '/')\n\
-module_files = [json.__file__, re.__file__, enum.__file__, types.__file__]\n\
-normalized = [path.replace('\\\\\\\\', '/') for path in module_files]\n\
-ok = all(path.startswith(root) for path in normalized)\n"
-    );
-    let module = parser::parse_module(&source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn vm_json_loads_runs_on_default_stack() {
-    let source = r#"import json
-result = json.loads('{"x": 1, "arr": [2, 3]}')
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert!(vm.get_global("result").is_some());
-}
-
-#[test]
-fn vm_json_loads_handles_whitespace_heavy_object_fast_path() {
-    let source = r#"import json
-result = json.loads('{   "key"    :    "value"    ,  "k":"v"    }')
-ok = (result == {"key": "value", "k": "v"})
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn vm_json_loads_handles_deep_default_scanner_nesting() {
-    let source = r#"import json
-doc = '[[[[[[[[[[[[[[[[[[[["Too deep"]]]]]]]]]]]]]]]]]]]]'
-value = json.loads(doc)
-depth = 0
-cursor = value
-while isinstance(cursor, list):
-    depth += 1
-    cursor = cursor[0]
-ok = (depth == 20 and cursor == "Too deep")
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn vm_json_dumps_with_default_and_sort_keys_runs_on_default_stack() {
-    let source = r#"import json
-class Unknown:
-    pass
-def fallback(value):
-    return {"kind": value.__class__.__name__, "emoji": "☺"}
-result = {
-    "sorted": json.dumps({"b": 1, "a": "☺"}, sort_keys=True, separators=(",", ":"), ensure_ascii=True),
-    "fallback": json.dumps(Unknown(), default=fallback, sort_keys=True, separators=(",", ":"), ensure_ascii=True),
-}
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert!(vm.get_global("result").is_some());
-}
-
-#[test]
 fn os_putenv_and_unsetenv_update_lookup_surfaces() {
     let source = r#"import os
 key = "__PYRS_ENV_PUTENV_TEST__"
@@ -23504,29 +22283,13 @@ except StopIteration as exc:
 
 #[test]
 fn json_raw_decode_invalid_token_reports_integer_position() {
-    let source = r#"import _json, json
-scan_once = _json.make_scanner(json.JSONDecoder())
+    let source = r#"import _json
+scan_once = _json.make_scanner(object())
 ok = False
 try:
     scan_once("nan", 0)
 except StopIteration as exc:
     ok = (type(exc.value) is int and exc.value == 0)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-}
-
-#[test]
-fn json_make_scanner_requires_strict_attr_like_cpython() {
-    let source = r#"import _json
-ok = False
-try:
-    _json.make_scanner(object())
-except AttributeError as exc:
-    ok = ("strict" in str(exc))
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

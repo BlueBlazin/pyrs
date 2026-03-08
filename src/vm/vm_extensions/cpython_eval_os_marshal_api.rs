@@ -11,13 +11,14 @@ use super::{
     Py_DecRef, PyEval_GetFrameGlobals, PyEval_GetFrameLocals, PyExc_KeyboardInterrupt,
     PyExc_SystemError, PyExc_ValueError, PyFrame_GetCode, PyObject_Call, PyThreadState_Get,
     cpython_current_thread_state_ptr, cpython_current_thread_state_ptr_unchecked,
+    cpython_gilstate_visible_thread_state_ptr,
     cpython_gil_acquire_for_current_thread, cpython_gil_current_thread_holds,
-    cpython_gil_release_for_current_thread, cpython_gilstate_visible_thread_state_ptr,
-    cpython_is_known_thread_state_ptr, cpython_main_interpreter_state_ptr,
-    cpython_mark_thread_runtime_initialized, cpython_marshal_object_to_value,
-    cpython_set_current_thread_state_ptr, cpython_set_error, cpython_set_typed_error,
-    cpython_take_pending_interrupt_signum, cpython_thread_runtime_initialized,
-    value_to_cpython_marshal_object, with_active_cpython_context_mut,
+    cpython_gil_release_for_current_thread, cpython_is_known_thread_state_ptr,
+    cpython_main_interpreter_state_ptr, cpython_mark_thread_runtime_initialized,
+    cpython_marshal_object_to_value, cpython_set_current_thread_state_ptr, cpython_set_error,
+    cpython_set_typed_error, cpython_take_pending_interrupt_signum,
+    cpython_thread_runtime_initialized, value_to_cpython_marshal_object,
+    with_active_cpython_context_mut,
 };
 
 #[cfg(target_arch = "wasm32")]

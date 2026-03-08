@@ -107,11 +107,8 @@ fn create_synthetic_test_lib(root: &Path, cpython_lib: &Path) -> PathBuf {
     fs::write(test_dir.join("__init__.py"), "").expect("write synthetic test package init");
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(
-            cpython_lib.join("test/libregrtest"),
-            test_dir.join("libregrtest"),
-        )
-        .expect("symlink libregrtest package");
+        std::os::unix::fs::symlink(cpython_lib.join("test/libregrtest"), test_dir.join("libregrtest"))
+            .expect("symlink libregrtest package");
         std::os::unix::fs::symlink(cpython_lib.join("test/support"), test_dir.join("support"))
             .expect("symlink support package");
     }
@@ -135,7 +132,11 @@ class OrchestratorSuite(unittest.TestCase):
 }
 
 fn create_sleep_runner(path: &Path) {
-    fs::write(path, "#!/bin/sh\nsleep 2\n").expect("write sleep runner");
+    fs::write(
+        path,
+        "#!/bin/sh\nsleep 2\n",
+    )
+    .expect("write sleep runner");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -279,10 +280,7 @@ class SampleBenchmarkSuite(unittest.TestCase):
         r#""outcome": "expected_failure""#,
         r#""outcome": "unexpected_success""#,
     ] {
-        assert!(
-            run.contains(needle),
-            "missing expected outcome {needle}: {run}"
-        );
+        assert!(run.contains(needle), "missing expected outcome {needle}: {run}");
     }
     assert!(
         run.contains(r#""subtest_outcome_counts": {"#),
@@ -413,8 +411,9 @@ fn orchestrator_emits_manifest_summary_and_shards_for_synthetic_suite() {
         );
     }
 
-    let result = fs::read_to_string(out_dir.join("results/test.test_benchmark_orchestrator.json"))
-        .expect("read result shard");
+    let result =
+        fs::read_to_string(out_dir.join("results/test.test_benchmark_orchestrator.json"))
+            .expect("read result shard");
     for needle in [
         r#""status": "failed""#,
         r#""outcome": "passed""#,
@@ -501,8 +500,7 @@ fn orchestrator_entry_file_selection_is_strict_by_default_and_records_unmatched_
     );
     let allow_stderr = String::from_utf8_lossy(&allow_output.stderr);
     assert!(
-        allow_stderr
-            .contains("warning: requested benchmark entries are not discoverable on this host"),
+        allow_stderr.contains("warning: requested benchmark entries are not discoverable on this host"),
         "allow-missing orchestrator selection should warn about the unmatched entry\nstderr:\n{allow_stderr}"
     );
 
@@ -616,8 +614,7 @@ class DispatchExtraSuite(unittest.TestCase):
         );
     }
 
-    let summary =
-        fs::read_to_string(out_dir.join("summary.json")).expect("read dispatcher summary");
+    let summary = fs::read_to_string(out_dir.join("summary.json")).expect("read dispatcher summary");
     for needle in [
         r#""planned_batch_count": 2"#,
         r#""completed_batch_count": 2"#,
@@ -635,8 +632,8 @@ class DispatchExtraSuite(unittest.TestCase):
         );
     }
 
-    let derived = fs::read_to_string(out_dir.join("derived_summary.json"))
-        .expect("read dispatcher derived summary");
+    let derived =
+        fs::read_to_string(out_dir.join("derived_summary.json")).expect("read dispatcher derived summary");
     for needle in [
         r#""discoverable_case_count": 3"#,
         r#""executed_case_count": 3"#,
@@ -699,8 +696,9 @@ fn orchestrator_timeout_payloads_remain_json_serializable() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let result = fs::read_to_string(out_dir.join("results/test.test_benchmark_orchestrator.json"))
-        .expect("read timeout result shard");
+    let result =
+        fs::read_to_string(out_dir.join("results/test.test_benchmark_orchestrator.json"))
+            .expect("read timeout result shard");
     for needle in [
         r#""status": "process_timeout""#,
         r#""timeout": true"#,
@@ -791,8 +789,9 @@ fn orchestrator_invalidates_cached_results_when_runner_binary_changes() {
         String::from_utf8_lossy(&second.stderr)
     );
 
-    let result = fs::read_to_string(out_dir.join("results/test.test_benchmark_orchestrator.json"))
-        .expect("read invalidated result shard");
+    let result =
+        fs::read_to_string(out_dir.join("results/test.test_benchmark_orchestrator.json"))
+            .expect("read invalidated result shard");
     assert!(
         result.contains(r#""status": "process_timeout""#),
         "changed runner binary should invalidate the old cache entry: {result}"
@@ -851,13 +850,12 @@ class DispatchCacheSuite(unittest.TestCase):
     );
     let first_summary =
         fs::read_to_string(out_dir.join("summary.json")).expect("read baseline dispatcher summary");
-    let first_manifest = fs::read_to_string(out_dir.join("manifest.json"))
-        .expect("read baseline dispatcher manifest");
+    let first_manifest =
+        fs::read_to_string(out_dir.join("manifest.json")).expect("read baseline dispatcher manifest");
     let first_generated_at = extract_json_string_value(&first_summary, "generated_at_utc");
     let first_run_state = extract_json_object_block(&first_summary, "run_state");
     let first_results = extract_json_object_block(&first_summary, "results");
-    let first_manifest_completed_at =
-        extract_json_string_value(&first_manifest, "completed_at_utc");
+    let first_manifest_completed_at = extract_json_string_value(&first_manifest, "completed_at_utc");
 
     std::thread::sleep(std::time::Duration::from_secs(1));
 
@@ -927,9 +925,7 @@ class DispatchCacheSuite(unittest.TestCase):
         "cached rerun should preserve original manifest generation time\nfirst:\n{first_manifest}\nsecond:\n{second_manifest}"
     );
     assert!(
-        second_manifest.contains(&format!(
-            r#""completed_at_utc": "{first_manifest_completed_at}""#
-        )),
+        second_manifest.contains(&format!(r#""completed_at_utc": "{first_manifest_completed_at}""#)),
         "cached rerun should preserve original manifest completion time\nfirst:\n{first_manifest}\nsecond:\n{second_manifest}"
     );
 }

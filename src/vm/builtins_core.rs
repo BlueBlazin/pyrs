@@ -1170,7 +1170,7 @@ impl Vm {
                 out.push(ch);
                 continue;
             }
-            let code = crate::unicode::canonical_codepoint_for_internal_char(ch);
+            let code = ch as u32;
             if code <= 0xFF {
                 out.push_str(&format!("\\x{code:02x}"));
             } else if code <= 0xFFFF {
@@ -8468,7 +8468,6 @@ impl Vm {
                         | BuiltinFunction::OperatorAdd
                 ) | NativeMethodKind::IntReprMethod
                     | NativeMethodKind::BuiltinBaseReprMethod
-                    | NativeMethodKind::BuiltinBaseHashMethod
             )
     }
 
@@ -8505,7 +8504,6 @@ impl Vm {
                     | BuiltinFunction::OperatorAdd
             ) | NativeMethodKind::IntReprMethod
                 | NativeMethodKind::BuiltinBaseReprMethod
-                | NativeMethodKind::BuiltinBaseHashMethod
         )
     }
 

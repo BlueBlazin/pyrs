@@ -3544,7 +3544,7 @@ mod tests {
     }
 
     #[test]
-    fn pickle_module_public_symbols_match_accelerator_exports_like_cpython() {
+    fn pickle_module_getattr_maps_accelerator_names_to_pure_pickle_symbols() {
         let mut vm = Vm::new();
         let Ok(pickle_module) = vm.import_module_object("pickle") else {
             eprintln!("skipping _pickle getattr mapping test (pickle module unavailable)");
@@ -3567,11 +3567,11 @@ mod tests {
             .builtin_getattr(
                 vec![
                     Value::Module(pickle_module.clone()),
-                    Value::Str("Pickler".to_string()),
+                    Value::Str("_Pickler".to_string()),
                 ],
                 HashMap::new(),
             )
-            .expect("pickle.Pickler should resolve");
+            .expect("pickle._Pickler should resolve");
         assert_eq!(pickler_attr, expected_pickler);
 
         let dumps_attr = vm
@@ -3584,11 +3584,11 @@ mod tests {
             .builtin_getattr(
                 vec![
                     Value::Module(pickle_module),
-                    Value::Str("dumps".to_string()),
+                    Value::Str("_dumps".to_string()),
                 ],
                 HashMap::new(),
             )
-            .expect("pickle.dumps should resolve");
+            .expect("pickle._dumps should resolve");
         assert_eq!(dumps_attr, expected_dumps);
     }
 

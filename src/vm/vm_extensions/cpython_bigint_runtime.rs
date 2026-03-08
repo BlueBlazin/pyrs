@@ -1,5 +1,29 @@
 use crate::runtime::{BigInt, Value};
 
+pub(super) fn cpython_bigint_to_u64(value: &BigInt) -> Option<u64> {
+    if value.is_negative() {
+        return None;
+    }
+    let bytes = value.to_abs_le_bytes();
+    if bytes.len() > std::mem::size_of::<u64>() {
+        return None;
+    }
+    let mut acc = 0u64;
+    for (idx, byte) in bytes.iter().enumerate() {
+        acc |= (*byte as u64) << (idx * 8);
+    }
+    Some(acc)
+}
+
+pub(super) fn cpython_bigint_low_u64(value: &BigInt) -> u64 {
+    let bytes = value.to_abs_le_bytes();
+    let mut acc = 0u64;
+    for (idx, byte) in bytes.iter().take(std::mem::size_of::<u64>()).enumerate() {
+        acc |= (*byte as u64) << (idx * 8);
+    }
+    acc
+}
+
 pub(super) fn cpython_bigint_from_value(value: Value) -> Result<BigInt, String> {
     match value {
         Value::Int(v) => Ok(BigInt::from_i64(v)),

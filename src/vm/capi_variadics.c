@@ -18,7 +18,6 @@
 #include <limits.h>
 #if defined(__unix__) || defined(__APPLE__)
 #include <dlfcn.h>
-#include <pthread.h>
 #define PYRS_HAVE_DLADDR 1
 #endif
 #include <wchar.h>
@@ -29,6 +28,16 @@
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#endif
+
+#if defined(_WIN32) && defined(_MSC_VER)
+#pragma section(".CRT$XCU", read)
+#define PYRS_CONSTRUCTOR_FUNC(func_name) \
+    static void __cdecl func_name(void); \
+    __declspec(allocate(".CRT$XCU")) void (__cdecl *func_name##_init_)(void) = func_name; \
+    static void __cdecl func_name(void)
+#else
+#define PYRS_CONSTRUCTOR_FUNC(func_name) static void __attribute__((constructor)) func_name(void)
 #endif
 
 static int pyrs_clock_gettime_monotonic(struct timespec *ts);
@@ -43,61 +52,6 @@ typedef struct {
     double imag;
 } Py_complex;
 typedef void (*PyOS_sighandler_t)(int);
-typedef struct {
-    Py_ssize_t ob_refcnt;
-    void *ob_type;
-} PyObject;
-typedef struct {
-    const char *name;
-    int member_type;
-    Py_ssize_t offset;
-    int flags;
-    const char *doc;
-} PyMemberDef;
-typedef struct {
-    int slot;
-    void *pfunc;
-} PyType_Slot;
-typedef struct {
-    const char *name;
-    int basicsize;
-    int itemsize;
-    unsigned int flags;
-    PyType_Slot *slots;
-} PyType_Spec;
-
-typedef struct pyrs_pytypeobject PyTypeObject;
-
-#define Py_TPFLAGS_DEFAULT 0u
-#define Py_TPFLAGS_HAVE_FINALIZE (1u << 0)
-#define Py_TPFLAGS_BASETYPE (1u << 10)
-
-#define Py_tp_base 48
-#define Py_tp_dealloc 52
-#define Py_tp_doc 56
-#define Py_tp_init 60
-#define Py_tp_new 65
-#define Py_tp_members 72
-#define Py_tp_finalize 80
-
-#define Py_READONLY 1
-
-#define Py_T_SHORT 0
-#define Py_T_INT 1
-#define Py_T_LONG 2
-#define Py_T_FLOAT 3
-#define Py_T_DOUBLE 4
-#define Py_T_CHAR 7
-#define Py_T_BYTE 8
-#define Py_T_UBYTE 9
-#define Py_T_USHORT 10
-#define Py_T_UINT 11
-#define Py_T_ULONG 12
-#define Py_T_STRING_INPLACE 13
-#define Py_T_BOOL 14
-#define Py_T_LONGLONG 17
-#define Py_T_ULONGLONG 18
-#define Py_T_PYSSIZET 19
 
 #ifndef PY_SSIZE_T_MAX
 #define PY_SSIZE_T_MAX INTPTR_MAX
@@ -123,7 +77,6 @@ extern int PyList_Append(void *list, void *item);
 extern int PyList_Extend(void *list, void *iterable);
 extern void *PyDict_New(void);
 extern Py_ssize_t PyDict_Size(void *dict);
-extern void *PyDict_GetItem(void *dict, void *key);
 extern void *PyDict_Keys(void *dict);
 extern int PyDict_SetItem(void *dict, void *key, void *value);
 extern void *PyDict_GetItemString(void *dict, const char *key);
@@ -134,56 +87,39 @@ extern void *PyLong_FromUnsignedLongLong(unsigned long long value);
 extern void *PyLong_FromSsize_t(Py_ssize_t value);
 extern long PyLong_AsLong(void *value);
 extern unsigned long PyLong_AsUnsignedLong(void *value);
-extern unsigned long PyLong_AsUnsignedLongMask(void *value);
 extern unsigned long long PyLong_AsUnsignedLongLong(void *value);
-extern unsigned long long PyLong_AsUnsignedLongLongMask(void *value);
 extern long long PyLong_AsLongLong(void *value);
 extern Py_ssize_t PyLong_AsSsize_t(void *value);
 extern Py_ssize_t PyLong_AsNativeBytes(void *v, void *buffer, Py_ssize_t n_bytes, int flags);
 extern void *PyLong_FromNativeBytes(const void *buffer, size_t n_bytes, int flags);
 extern void *PyFloat_FromDouble(double value);
 extern double PyFloat_AsDouble(void *value);
-extern Py_complex PyComplex_AsCComplex(void *value);
 extern void *PyBool_FromLong(long value);
 extern void *PyUnicode_FromString(const char *value);
 extern void *PyUnicode_FromStringAndSize(const char *value, Py_ssize_t size);
 extern void *PyUnicode_FromWideChar(const wchar_t *value, Py_ssize_t len);
-extern const char *PyUnicode_AsUTF8AndSize(void *object, Py_ssize_t *size);
 extern void *PyUnicode_AsUTF8String(void *object);
-extern void *PyUnicode_AsEncodedString(void *unicode, const char *encoding, const char *errors);
-extern const char *PyUnicode_GetDefaultEncoding(void);
 extern void *PyUnicode_FromOrdinal(int ordinal);
 extern void *PyUnicode_Concat(void *left, void *right);
 extern Py_ssize_t PyUnicode_GetLength(void *object);
 extern void *PyUnicode_Substring(void *object, Py_ssize_t start, Py_ssize_t end);
 extern int PyBytes_AsStringAndSize(void *obj, char **buffer, Py_ssize_t *len);
 extern void *PyBytes_FromStringAndSize(const char *value, Py_ssize_t size);
-extern Py_ssize_t PyByteArray_Size(void *object);
-extern char *PyByteArray_AsString(void *object);
 extern void *PyImport_ImportModule(const char *name);
 extern void *PyObject_Call(void *callable, void *args, void *kwargs);
 extern void *PyObject_CallObject(void *callable, void *args);
 extern void *PyObject_CallMethod(void *object, const char *name, const char *format, ...);
 extern void *PyObject_GetAttr(void *object, void *name);
 extern void *PyObject_GetAttrString(void *object, const char *name);
-extern int PyObject_SetAttrString(void *object, const char *name, void *value);
-extern int PyObject_GetBuffer(void *object, void *view, int flags);
-extern void *PyObject_Type(void *object);
 extern void *PyObject_GenericHash(void *object);
 extern void *_PyType_Lookup(void *type, void *name);
+extern void *PyObject_Type(void *object);
 extern void *PyObject_Str(void *object);
 extern void *PyObject_Repr(void *object);
 extern void *PyObject_ASCII(void *object);
 extern Py_hash_t PyObject_Hash(void *object);
 extern int PyObject_IsTrue(void *object);
 extern int PyType_IsSubtype(void *subtype, void *type);
-extern void *PyType_FromSpec(void *spec);
-extern void *PyType_FromSpecWithBases(void *spec, void *bases);
-extern void *PyType_FromModuleAndSpec(void *module, void *spec, void *bases);
-extern void *PyType_GetSlot(void *type, int slot);
-extern int PyModule_AddType(void *module, void *type_obj);
-extern void *PyType_GenericAlloc(void *subtype, Py_ssize_t nitems);
-extern void PyObject_Free(void *ptr);
 extern int PyErr_ExceptionMatches(void *exception);
 extern const char *PyUnicode_AsUTF8(void *object);
 extern void *PyThreadState_GetUnchecked(void);
@@ -204,22 +140,9 @@ extern void PyErr_SetRaisedException(void *exception);
 extern void PyException_SetContext(void *exception, void *context);
 extern void *PyErr_NoMemory(void);
 extern void PyErr_Clear(void);
-extern int PyErr_WarnEx(void *category, const char *message, int stacklevel);
-extern int PyErr_WarnFormat(void *category, int stacklevel, const char *format, ...);
 extern void PyErr_WriteUnraisable(void *object);
 extern void Py_IncRef(void *object);
 extern void Py_DecRef(void *object);
-extern int PyUnicode_FSConverter(void *arg, void *addr);
-extern int PyUnicode_EqualToUTF8(void *unicode, const char *text);
-extern Py_ssize_t PySequence_Size(void *object);
-extern void *PySequence_GetItem(void *object, Py_ssize_t index);
-extern void *PySequence_Tuple(void *object);
-extern void *PySequence_Fast(void *object, const char *message);
-extern int PyBuffer_FillInfo(void *view, void *object, void *buf, Py_ssize_t len, int readonly, int flags);
-extern int PyBuffer_IsContiguous(const void *view, char order);
-extern void PyBuffer_Release(void *view);
-extern void *PyMem_Malloc(size_t size);
-extern void PyMem_Free(void *ptr);
 extern char _Py_NoneStruct;
 
 // Some lightweight test binaries don't pull every Rust-exported C-API symbol
@@ -282,21 +205,16 @@ __attribute__((weak)) void Py_DecRef(void *object)
 {
     (void)object;
 }
-extern char PyList_Type;
 extern char PyDict_Type;
 extern char PyTuple_Type;
 extern char PyUnicode_Type;
 extern char PyBytes_Type;
-extern char PyByteArray_Type;
 extern char PyLong_Type;
 extern char PyExc_TypeError;
 extern char PyExc_OverflowError;
 extern char PyExc_AttributeError;
-extern char PyExc_AssertionError;
-extern char PyExc_BufferError;
 extern char PyExc_ValueError;
 extern char PyExc_SystemError;
-extern char PyExc_DeprecationWarning;
 
 static void pyrs_sys_vwrite(void (*sink)(const char *), const char *format, va_list ap)
 {
@@ -756,23 +674,6 @@ typedef struct {
     Py_ssize_t ob_refcnt;
     void *ob_type;
 } PyObjectHeadCompat;
-
-#define PYBUF_SIMPLE 0
-#define PYBUF_WRITABLE 0x0001
-
-typedef struct {
-    void *buf;
-    void *obj;
-    Py_ssize_t len;
-    Py_ssize_t itemsize;
-    int readonly;
-    int ndim;
-    char *format;
-    Py_ssize_t *shape;
-    Py_ssize_t *strides;
-    Py_ssize_t *suboffsets;
-    void *internal;
-} PyrsPyBuffer;
 
 static int is_tuple_object(void *object)
 {
@@ -2052,1289 +1953,6 @@ void *PyObject_CallMethodObjArgs(void *object, void *name, ...)
 }
 
 typedef int (*arg_converter_fn)(void *value, void *output);
-#ifndef Py_CLEANUP_SUPPORTED
-#define Py_CLEANUP_SUPPORTED 0x20000
-#endif
-typedef enum {
-    PYRS_ARG_CLEANUP_CONVERTER = 0,
-    PYRS_ARG_CLEANUP_BUFFER = 1,
-    PYRS_ARG_CLEANUP_PTR = 2,
-} PyrsArgCleanupKind;
-
-typedef struct {
-    PyrsArgCleanupKind kind;
-    arg_converter_fn converter;
-    void *target;
-} PyArgCleanupEntry;
-
-static void pyrs_run_arg_cleanups(PyArgCleanupEntry *entries, size_t count)
-{
-    while (count > 0) {
-        PyArgCleanupEntry entry = entries[--count];
-        switch (entry.kind) {
-            case PYRS_ARG_CLEANUP_CONVERTER:
-                if (entry.converter != NULL) {
-                    entry.converter(NULL, entry.target);
-                }
-                break;
-            case PYRS_ARG_CLEANUP_BUFFER:
-                if (entry.target != NULL) {
-                    PyBuffer_Release(entry.target);
-                }
-                break;
-            case PYRS_ARG_CLEANUP_PTR:
-                if (entry.target != NULL) {
-                    char **slot = (char **)entry.target;
-                    if (*slot != NULL) {
-                        PyMem_Free(*slot);
-                        *slot = NULL;
-                    }
-                }
-                break;
-            default:
-                break;
-        }
-    }
-}
-
-static int pyrs_push_converter_cleanup(
-    PyArgCleanupEntry *entries,
-    size_t *count,
-    arg_converter_fn converter,
-    void *target
-)
-{
-    if (*count >= 16) {
-        pyrs_capi_set_error_message("PyArg_ParseTupleAndKeywords cleanup stack overflow");
-        return 0;
-    }
-    entries[*count].kind = PYRS_ARG_CLEANUP_CONVERTER;
-    entries[*count].converter = converter;
-    entries[*count].target = target;
-    (*count)++;
-    return 1;
-}
-
-static int pyrs_push_buffer_cleanup(
-    PyArgCleanupEntry *entries,
-    size_t *count,
-    void *target
-)
-{
-    if (*count >= 16) {
-        pyrs_capi_set_error_message("PyArg_ParseTupleAndKeywords cleanup stack overflow");
-        return 0;
-    }
-    entries[*count].kind = PYRS_ARG_CLEANUP_BUFFER;
-    entries[*count].converter = NULL;
-    entries[*count].target = target;
-    (*count)++;
-    return 1;
-}
-
-static int pyrs_push_ptr_cleanup(
-    PyArgCleanupEntry *entries,
-    size_t *count,
-    char **target
-)
-{
-    if (*count >= 16) {
-        pyrs_capi_set_error_message("PyArg_ParseTupleAndKeywords cleanup stack overflow");
-        return 0;
-    }
-    entries[*count].kind = PYRS_ARG_CLEANUP_PTR;
-    entries[*count].converter = NULL;
-    entries[*count].target = target;
-    (*count)++;
-    return 1;
-}
-
-static int count_old_style_format_args(const char *format, int *min_count, int *max_count);
-static int parse_args_and_keywords_va(
-    void *args,
-    void *kwargs,
-    const char *format,
-    const char *const *keywords,
-    va_list *ap
-);
-
-static const char *pyrs_tuple_error_type_name(void *value)
-{
-    if (value == (void *)&_Py_NoneStruct) {
-        return "None";
-    }
-    if (object_is_instance_of_type(value, (void *)&PyLong_Type)) {
-        return "int";
-    }
-    if (object_is_instance_of_type(value, (void *)&PyUnicode_Type)) {
-        return "str";
-    }
-    if (object_is_instance_of_type(value, (void *)&PyBytes_Type)) {
-        return "bytes";
-    }
-    if (object_is_instance_of_type(value, (void *)&PyByteArray_Type)) {
-        return "bytearray";
-    }
-    if (object_is_instance_of_type(value, (void *)&PyList_Type)) {
-        return "list";
-    }
-    if (object_is_instance_of_type(value, (void *)&PyDict_Type)) {
-        return "dict";
-    }
-    return "object";
-}
-
-static const char *pyrs_find_matching_paren(const char *format)
-{
-    int depth = 0;
-    for (const char *cursor = format; *cursor != '\0'; cursor++) {
-        if (*cursor == '(') {
-            depth++;
-        } else if (*cursor == ')') {
-            depth--;
-            if (depth == 0) {
-                return cursor;
-            }
-        }
-    }
-    return NULL;
-}
-
-static void pyrs_zero_buffer(PyrsPyBuffer *view)
-{
-    if (view != NULL) {
-        memset(view, 0, sizeof(*view));
-    }
-}
-
-static void pyrs_skip_ignorable_format_chars(const char **p_format)
-{
-    const char *format = *p_format;
-    while (*format == ' ' || *format == '\t' || *format == ',') {
-        format++;
-    }
-    *p_format = format;
-}
-
-static int pyrs_require_c_contiguous(PyrsPyBuffer *view)
-{
-    if (view == NULL) {
-        return 0;
-    }
-    if (PyBuffer_IsContiguous(view, 'C') != 0) {
-        return 1;
-    }
-    PyBuffer_Release(view);
-    pyrs_zero_buffer(view);
-    PyErr_SetString((void *)&PyExc_BufferError, "object is not C-contiguous");
-    return 0;
-}
-
-static int pyrs_get_unicode_utf8_data(void *value, const char **out, Py_ssize_t *out_len)
-{
-    Py_ssize_t len = 0;
-    const char *text = PyUnicode_AsUTF8AndSize(value, &len);
-    if (text == NULL) {
-        return 0;
-    }
-    if (out != NULL) {
-        *out = text;
-    }
-    if (out_len != NULL) {
-        *out_len = len;
-    }
-    return 1;
-}
-
-static int pyrs_get_bytes_data(void *value, char **out, Py_ssize_t *out_len)
-{
-    char *data = NULL;
-    Py_ssize_t len = 0;
-    if (PyBytes_AsStringAndSize(value, &data, &len) != 0) {
-        return 0;
-    }
-    if (out != NULL) {
-        *out = data;
-    }
-    if (out_len != NULL) {
-        *out_len = len;
-    }
-    return 1;
-}
-
-static int pyrs_get_bytearray_data(void *value, char **out, Py_ssize_t *out_len)
-{
-    Py_ssize_t len = PyByteArray_Size(value);
-    if (len < 0) {
-        return 0;
-    }
-    char *data = PyByteArray_AsString(value);
-    if (data == NULL) {
-        return 0;
-    }
-    if (out != NULL) {
-        *out = data;
-    }
-    if (out_len != NULL) {
-        *out_len = len;
-    }
-    return 1;
-}
-
-static int pyrs_fill_unicode_buffer(void *value, PyrsPyBuffer *view)
-{
-    const char *text = NULL;
-    Py_ssize_t len = 0;
-    pyrs_zero_buffer(view);
-    if (!pyrs_get_unicode_utf8_data(value, &text, &len)) {
-        return 0;
-    }
-    return PyBuffer_FillInfo(view, value, (void *)text, len, 1, PYBUF_SIMPLE) == 0;
-}
-
-static int pyrs_get_simple_buffer(void *value, PyrsPyBuffer *view)
-{
-    pyrs_zero_buffer(view);
-    if (PyObject_GetBuffer(value, view, PYBUF_SIMPLE) != 0) {
-        return 0;
-    }
-    return pyrs_require_c_contiguous(view);
-}
-
-static int pyrs_get_writable_buffer(void *value, PyrsPyBuffer *view)
-{
-    pyrs_zero_buffer(view);
-    if (PyObject_GetBuffer(value, view, PYBUF_WRITABLE) != 0) {
-        return 0;
-    }
-    if (PyBuffer_IsContiguous(view, 'C') != 0) {
-        return 1;
-    }
-    PyBuffer_Release(view);
-    pyrs_zero_buffer(view);
-    return 0;
-}
-
-static int pyrs_decode_utf8_codepoint(const char *text, Py_ssize_t len, int *out)
-{
-    if (text == NULL || len <= 0 || out == NULL) {
-        return 0;
-    }
-    const unsigned char *bytes = (const unsigned char *)text;
-    if ((bytes[0] & 0x80u) == 0) {
-        *out = bytes[0];
-        return 1;
-    }
-    if ((bytes[0] & 0xE0u) == 0xC0u && len >= 2) {
-        *out = ((bytes[0] & 0x1Fu) << 6) | (bytes[1] & 0x3Fu);
-        return 1;
-    }
-    if ((bytes[0] & 0xF0u) == 0xE0u && len >= 3) {
-        *out = ((bytes[0] & 0x0Fu) << 12) | ((bytes[1] & 0x3Fu) << 6) | (bytes[2] & 0x3Fu);
-        return 1;
-    }
-    if ((bytes[0] & 0xF8u) == 0xF0u && len >= 4) {
-        *out = ((bytes[0] & 0x07u) << 18)
-            | ((bytes[1] & 0x3Fu) << 12)
-            | ((bytes[2] & 0x3Fu) << 6)
-            | (bytes[3] & 0x3Fu);
-        return 1;
-    }
-    return 0;
-}
-
-static int pyrs_nested_tuple_requires_tuple(const char *group_start, const char *group_end)
-{
-    for (const char *cursor = group_start + 1; cursor < group_end; cursor++) {
-        switch (*cursor) {
-            case '(':
-                return 1;
-            case 'S':
-            case 'Y':
-            case 'U':
-                return 1;
-            case 'O':
-                if (cursor[1] != '&') {
-                    return 1;
-                }
-                cursor++;
-                break;
-            default:
-                break;
-        }
-    }
-    return 0;
-}
-
-static int pyrs_lookup_keyword_value(
-    void *kwargs,
-    const char *keyword_name,
-    void **out_value
-)
-{
-    if (out_value != NULL) {
-        *out_value = NULL;
-    }
-    if (kwargs == NULL || keyword_name == NULL || keyword_name[0] == '\0') {
-        return 1;
-    }
-    void *key_obj = PyUnicode_FromString(keyword_name);
-    if (key_obj == NULL) {
-        return 0;
-    }
-    void *value = PyDict_GetItem(kwargs, key_obj);
-    Py_DecRef(key_obj);
-    if (out_value != NULL) {
-        *out_value = value;
-    }
-    return 1;
-}
-
-static int pyrs_parse_nested_tuple_item(
-    void *value,
-    Py_ssize_t argument_index,
-    const char *group_start,
-    const char **group_end_out,
-    va_list *ap
-)
-{
-    const char *group_end = pyrs_find_matching_paren(group_start);
-    if (group_end == NULL) {
-        pyrs_capi_set_error_message("unmatched paren in format");
-        return 0;
-    }
-
-    size_t inner_len = (size_t)(group_end - group_start - 1);
-    char *inner_format = (char *)malloc(inner_len + 1);
-    if (inner_format == NULL) {
-        pyrs_capi_set_error_message("PyArg_ParseTupleAndKeywords failed allocating format copy");
-        return 0;
-    }
-    memcpy(inner_format, group_start + 1, inner_len);
-    inner_format[inner_len] = '\0';
-
-    int expected_min = 0;
-    int expected_max = 0;
-    if (!count_old_style_format_args(inner_format, &expected_min, &expected_max)) {
-        free(inner_format);
-        return 0;
-    }
-
-    void *nested_args = NULL;
-    int release_nested_args = 0;
-    if (object_is_instance_of_type(value, (void *)&PyTuple_Type)) {
-        Py_ssize_t tuple_len = PyTuple_Size(value);
-        if (tuple_len < 0) {
-            free(inner_format);
-            return 0;
-        }
-        if (tuple_len != expected_max) {
-            free(inner_format);
-            PyErr_Format(
-                (void *)&PyExc_TypeError,
-                "argument %zd must be tuple of length %d, not %zd",
-                argument_index,
-                expected_max,
-                tuple_len
-            );
-            return 0;
-        }
-        nested_args = value;
-        Py_IncRef(nested_args);
-        release_nested_args = 1;
-    } else {
-        int must_be_tuple = pyrs_nested_tuple_requires_tuple(group_start, group_end);
-        if (object_is_instance_of_type(value, (void *)&PyUnicode_Type) ||
-            object_is_instance_of_type(value, (void *)&PyBytes_Type) ||
-            object_is_instance_of_type(value, (void *)&PyByteArray_Type) ||
-            object_is_instance_of_type(value, (void *)&PyDict_Type) ||
-            object_is_instance_of_type(value, (void *)&PyLong_Type) ||
-            value == (void *)&_Py_NoneStruct) {
-            free(inner_format);
-            PyErr_Format(
-                (void *)&PyExc_TypeError,
-                "argument %zd must be %d-item tuple, not %s",
-                argument_index,
-                expected_max,
-                pyrs_tuple_error_type_name(value)
-            );
-            return 0;
-        }
-        void *fast = PySequence_Fast(value, "");
-        if (fast == NULL) {
-            free(inner_format);
-            return 0;
-        }
-        Py_ssize_t sequence_len = PySequence_Size(fast);
-        if (sequence_len < 0) {
-            Py_DecRef(fast);
-            free(inner_format);
-            return 0;
-        }
-        if (must_be_tuple) {
-            char warning_message[160];
-            snprintf(
-                warning_message,
-                sizeof(warning_message),
-                "argument must be %d-item tuple, not %s",
-                expected_max,
-                pyrs_tuple_error_type_name(value)
-            );
-            if (PyErr_WarnEx(
-                    (void *)&PyExc_DeprecationWarning,
-                    warning_message,
-                    1
-                ) != 0) {
-                Py_DecRef(fast);
-                free(inner_format);
-                return 0;
-            }
-        }
-        if (sequence_len != expected_max) {
-            Py_DecRef(fast);
-            free(inner_format);
-            PyErr_Format(
-                (void *)&PyExc_TypeError,
-                "argument %zd must be %s of length %d, not %zd",
-                argument_index,
-                must_be_tuple ? "tuple" : "sequence",
-                expected_max,
-                sequence_len
-            );
-            return 0;
-        }
-        nested_args = PySequence_Tuple(fast);
-        Py_DecRef(fast);
-        if (nested_args == NULL) {
-            free(inner_format);
-            return 0;
-        }
-        release_nested_args = 1;
-    }
-
-    int ok = parse_args_and_keywords_va(nested_args, NULL, inner_format, NULL, ap);
-    if (release_nested_args) {
-        Py_DecRef(nested_args);
-    }
-    free(inner_format);
-    if (group_end_out != NULL) {
-        *group_end_out = group_end;
-    }
-    return ok;
-}
-
-#define PYRS_IS_END_OF_FORMAT(ch) ((ch) == '\0' || (ch) == ':' || (ch) == ';')
-
-static const char *pyrs_skip_format_unit(const char **p_format, va_list *p_va)
-{
-    const char *format = *p_format;
-    pyrs_skip_ignorable_format_chars(&format);
-    char token = *format++;
-    switch (token) {
-        case '(':
-            while (*format != ')') {
-                if (PYRS_IS_END_OF_FORMAT(*format)) {
-                    return "unmatched paren in format";
-                }
-                const char *msg = pyrs_skip_format_unit(&format, p_va);
-                if (msg != NULL) {
-                    return msg;
-                }
-            }
-            format++;
-            break;
-        case 'O':
-            if (*format == '!' || *format == '&') {
-                if (p_va != NULL) {
-                    (void)va_arg(*p_va, void *);
-                    (void)va_arg(*p_va, void *);
-                }
-                format++;
-            } else if (p_va != NULL) {
-                (void)va_arg(*p_va, void *);
-            }
-            break;
-        case 'e':
-            if (*format != 's' && *format != 't') {
-                return "impossible<bad format char>";
-            }
-            if (p_va != NULL) {
-                (void)va_arg(*p_va, void *);
-                (void)va_arg(*p_va, void *);
-            }
-            format++;
-            if (*format == '#') {
-                if (p_va != NULL) {
-                    (void)va_arg(*p_va, void *);
-                }
-                format++;
-            }
-            break;
-        case 's':
-        case 'z':
-        case 'y':
-            if (*format == '#' ) {
-                if (p_va != NULL) {
-                    (void)va_arg(*p_va, void *);
-                    (void)va_arg(*p_va, void *);
-                }
-                format++;
-            } else if (*format == '*') {
-                if (p_va != NULL) {
-                    (void)va_arg(*p_va, void *);
-                }
-                format++;
-            } else if (p_va != NULL) {
-                (void)va_arg(*p_va, void *);
-            }
-            break;
-        case 'w':
-            if (*format != '*') {
-                return "impossible<bad format char>";
-            }
-            if (p_va != NULL) {
-                (void)va_arg(*p_va, void *);
-            }
-            format++;
-            break;
-        case 'S':
-        case 'Y':
-        case 'U':
-        case 'p':
-        case 'b':
-        case 'B':
-        case 'h':
-        case 'H':
-        case 'i':
-        case 'I':
-        case 'k':
-        case 'l':
-        case 'n':
-        case 'L':
-        case 'K':
-        case 'f':
-        case 'd':
-        case 'D':
-        case 'c':
-        case 'C':
-            if (p_va != NULL) {
-                (void)va_arg(*p_va, void *);
-            }
-            break;
-        default:
-            return "impossible<bad format char>";
-    }
-    *p_format = format;
-    return NULL;
-}
-
-static int count_old_style_format_args(const char *format, int *min_count, int *max_count)
-{
-    int min = -1;
-    int max = 0;
-    const char *cursor = format;
-    while (!PYRS_IS_END_OF_FORMAT(*cursor)) {
-        pyrs_skip_ignorable_format_chars(&cursor);
-        if (*cursor == '|') {
-            if (min < 0) {
-                min = max;
-            }
-            cursor++;
-            continue;
-        }
-        const char *msg = pyrs_skip_format_unit(&cursor, NULL);
-        if (msg != NULL) {
-            pyrs_capi_set_error_message(msg);
-            return 0;
-        }
-        max++;
-    }
-    if (min < 0) {
-        min = max;
-    }
-    *min_count = min;
-    *max_count = max;
-    return 1;
-}
-
-static int pyrs_scan_keywords(
-    const char *const *keywords,
-    Py_ssize_t *total_out,
-    Py_ssize_t *positional_only_out
-)
-{
-    Py_ssize_t positional_only = 0;
-    while (keywords[positional_only] != NULL && keywords[positional_only][0] == '\0') {
-        positional_only++;
-    }
-    Py_ssize_t total = positional_only;
-    while (keywords[total] != NULL) {
-        if (keywords[total][0] == '\0') {
-            PyErr_SetString((void *)&PyExc_SystemError, "Empty keyword parameter name");
-            return 0;
-        }
-        total++;
-    }
-
-    *total_out = total;
-    *positional_only_out = positional_only;
-    return 1;
-}
-
-static int pyrs_convert_encoded_string(
-    void *value,
-    int recode_strings,
-    const char *encoding,
-    char **buffer,
-    Py_ssize_t *buffer_len,
-    int use_hash,
-    PyArgCleanupEntry *cleanups,
-    size_t *cleanup_count
-)
-{
-    if (encoding == NULL) {
-        encoding = PyUnicode_GetDefaultEncoding();
-    }
-
-    void *encoded_owner = NULL;
-    const char *ptr = NULL;
-    Py_ssize_t size = 0;
-    if (!recode_strings &&
-        (object_is_instance_of_type(value, (void *)&PyBytes_Type) ||
-         object_is_instance_of_type(value, (void *)&PyByteArray_Type))) {
-        encoded_owner = value;
-        Py_IncRef(encoded_owner);
-        if (object_is_instance_of_type(value, (void *)&PyBytes_Type)) {
-            if (!pyrs_get_bytes_data(value, (char **)&ptr, &size)) {
-                Py_DecRef(encoded_owner);
-                return 0;
-            }
-        } else {
-            if (!pyrs_get_bytearray_data(value, (char **)&ptr, &size)) {
-                Py_DecRef(encoded_owner);
-                return 0;
-            }
-        }
-    } else if (object_is_instance_of_type(value, (void *)&PyUnicode_Type)) {
-        encoded_owner = PyUnicode_AsEncodedString(value, encoding, NULL);
-        if (encoded_owner == NULL) {
-            return 0;
-        }
-        if (!pyrs_get_bytes_data(encoded_owner, (char **)&ptr, &size)) {
-            Py_DecRef(encoded_owner);
-            return 0;
-        }
-    } else {
-        PyErr_SetString(
-            (void *)&PyExc_TypeError,
-            recode_strings ? "expected str" : "expected str, bytes or bytearray"
-        );
-        return 0;
-    }
-
-    if (use_hash) {
-        if (buffer_len == NULL) {
-            Py_DecRef(encoded_owner);
-            PyErr_SetString((void *)&PyExc_SystemError, "buffer_len is NULL");
-            return 0;
-        }
-        if (*buffer == NULL) {
-            *buffer = (char *)PyMem_Malloc((size_t)size + 1);
-            if (*buffer == NULL) {
-                Py_DecRef(encoded_owner);
-                PyErr_NoMemory();
-                return 0;
-            }
-            if (!pyrs_push_ptr_cleanup(cleanups, cleanup_count, buffer)) {
-                Py_DecRef(encoded_owner);
-                PyMem_Free(*buffer);
-                *buffer = NULL;
-                return 0;
-            }
-        } else if (size + 1 > *buffer_len) {
-            Py_DecRef(encoded_owner);
-            PyErr_Format(
-                (void *)&PyExc_ValueError,
-                "encoded string too long (%zd, maximum length %zd)",
-                size,
-                *buffer_len - 1
-            );
-            return 0;
-        }
-        memcpy(*buffer, ptr, (size_t)size);
-        (*buffer)[size] = '\0';
-        *buffer_len = size;
-    } else {
-        if (memchr(ptr, '\0', (size_t)size) != NULL) {
-            Py_DecRef(encoded_owner);
-            PyErr_SetString((void *)&PyExc_TypeError, "encoded string without null bytes");
-            return 0;
-        }
-        *buffer = (char *)PyMem_Malloc((size_t)size + 1);
-        if (*buffer == NULL) {
-            Py_DecRef(encoded_owner);
-            PyErr_NoMemory();
-            return 0;
-        }
-        if (!pyrs_push_ptr_cleanup(cleanups, cleanup_count, buffer)) {
-            Py_DecRef(encoded_owner);
-            PyMem_Free(*buffer);
-            *buffer = NULL;
-            return 0;
-        }
-        memcpy(*buffer, ptr, (size_t)size);
-        (*buffer)[size] = '\0';
-    }
-
-    Py_DecRef(encoded_owner);
-    return 1;
-}
-
-static int pyrs_convert_value_for_format_unit(
-    void *value,
-    const char **p_format,
-    va_list *ap,
-    Py_ssize_t argument_index,
-    PyArgCleanupEntry *cleanups,
-    size_t *cleanup_count
-)
-{
-    const char *format = *p_format;
-    char token = *format++;
-    switch (token) {
-        case 'p': {
-            int *output = va_arg(*ap, int *);
-            int truth = PyObject_IsTrue(value);
-            if (truth < 0) {
-                return 0;
-            }
-            if (output != NULL) {
-                *output = truth ? 1 : 0;
-            }
-            break;
-        }
-        case 'b': {
-            unsigned char *output = va_arg(*ap, unsigned char *);
-            long parsed = PyLong_AsLong(value);
-            if (parsed == -1 && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (parsed < 0) {
-                PyErr_SetString((void *)&PyExc_OverflowError, "unsigned byte integer is less than minimum");
-                return 0;
-            }
-            if ((unsigned long)parsed > UCHAR_MAX) {
-                PyErr_SetString((void *)&PyExc_OverflowError, "unsigned byte integer is greater than maximum");
-                return 0;
-            }
-            if (output != NULL) {
-                *output = (unsigned char)parsed;
-            }
-            break;
-        }
-        case 'B': {
-            unsigned char *output = va_arg(*ap, unsigned char *);
-            unsigned long parsed = PyLong_AsUnsignedLongMask(value);
-            if (parsed == ULONG_MAX && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (output != NULL) {
-                *output = (unsigned char)parsed;
-            }
-            break;
-        }
-        case 'h': {
-            short *output = va_arg(*ap, short *);
-            long parsed = PyLong_AsLong(value);
-            if (parsed == -1 && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (parsed < SHRT_MIN) {
-                PyErr_SetString((void *)&PyExc_OverflowError, "signed short integer is less than minimum");
-                return 0;
-            }
-            if (parsed > SHRT_MAX) {
-                PyErr_SetString((void *)&PyExc_OverflowError, "signed short integer is greater than maximum");
-                return 0;
-            }
-            if (output != NULL) {
-                *output = (short)parsed;
-            }
-            break;
-        }
-        case 'H': {
-            unsigned short *output = va_arg(*ap, unsigned short *);
-            unsigned long parsed = PyLong_AsUnsignedLongMask(value);
-            if (parsed == ULONG_MAX && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (output != NULL) {
-                *output = (unsigned short)parsed;
-            }
-            break;
-        }
-        case 'i': {
-            int *output = va_arg(*ap, int *);
-            long parsed = PyLong_AsLong(value);
-            if (parsed == -1 && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (parsed < INT_MIN || parsed > INT_MAX) {
-                PyErr_SetString(
-                    (void *)&PyExc_OverflowError,
-                    parsed < INT_MIN ? "signed integer is less than minimum" : "signed integer is greater than maximum"
-                );
-                return 0;
-            }
-            if (output != NULL) {
-                *output = (int)parsed;
-            }
-            break;
-        }
-        case 'I': {
-            unsigned int *output = va_arg(*ap, unsigned int *);
-            unsigned long parsed = PyLong_AsUnsignedLongMask(value);
-            if (parsed == ULONG_MAX && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (output != NULL) {
-                *output = (unsigned int)parsed;
-            }
-            break;
-        }
-        case 'k': {
-            unsigned long *output = va_arg(*ap, unsigned long *);
-            unsigned long parsed = PyLong_AsUnsignedLongMask(value);
-            if (parsed == ULONG_MAX && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (output != NULL) {
-                *output = parsed;
-            }
-            break;
-        }
-        case 'l': {
-            long *output = va_arg(*ap, long *);
-            long parsed = PyLong_AsLong(value);
-            if (parsed == -1 && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (output != NULL) {
-                *output = parsed;
-            }
-            break;
-        }
-        case 'n': {
-            Py_ssize_t *output = va_arg(*ap, Py_ssize_t *);
-            Py_ssize_t parsed = PyLong_AsSsize_t(value);
-            if (parsed == -1 && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (output != NULL) {
-                *output = parsed;
-            }
-            break;
-        }
-        case 'L': {
-            long long *output = va_arg(*ap, long long *);
-            long long parsed = PyLong_AsLongLong(value);
-            if (parsed == -1 && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (output != NULL) {
-                *output = parsed;
-            }
-            break;
-        }
-        case 'K': {
-            unsigned long long *output = va_arg(*ap, unsigned long long *);
-            unsigned long long parsed = PyLong_AsUnsignedLongLongMask(value);
-            if (parsed == ULLONG_MAX && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (output != NULL) {
-                *output = parsed;
-            }
-            break;
-        }
-        case 'f': {
-            float *output = va_arg(*ap, float *);
-            double parsed = PyFloat_AsDouble(value);
-            if (parsed == -1.0 && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (output != NULL) {
-                *output = (float)parsed;
-            }
-            break;
-        }
-        case 'd': {
-            double *output = va_arg(*ap, double *);
-            double parsed = PyFloat_AsDouble(value);
-            if (parsed == -1.0 && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (output != NULL) {
-                *output = parsed;
-            }
-            break;
-        }
-        case 'D': {
-            Py_complex *output = va_arg(*ap, Py_complex *);
-            Py_complex parsed = PyComplex_AsCComplex(value);
-            if (parsed.real == -1.0 && parsed.imag == 0.0 && PyErr_Occurred() != NULL) {
-                return 0;
-            }
-            if (output != NULL) {
-                *output = parsed;
-            }
-            break;
-        }
-        case 'c': {
-            char *output = va_arg(*ap, char *);
-            char *data = NULL;
-            Py_ssize_t len = 0;
-            if (object_is_instance_of_type(value, (void *)&PyBytes_Type)) {
-                if (!pyrs_get_bytes_data(value, &data, &len)) {
-                    return 0;
-                }
-            } else if (object_is_instance_of_type(value, (void *)&PyByteArray_Type)) {
-                if (!pyrs_get_bytearray_data(value, &data, &len)) {
-                    return 0;
-                }
-            } else {
-                PyErr_SetString((void *)&PyExc_TypeError, "expected a byte string of length 1");
-                return 0;
-            }
-            if (len != 1) {
-                PyErr_SetString((void *)&PyExc_TypeError, "expected a byte string of length 1");
-                return 0;
-            }
-            if (output != NULL) {
-                *output = data[0];
-            }
-            break;
-        }
-        case 'C': {
-            int *output = va_arg(*ap, int *);
-            const char *data = NULL;
-            Py_ssize_t len = 0;
-            int codepoint = 0;
-            if (!object_is_instance_of_type(value, (void *)&PyUnicode_Type)) {
-                PyErr_SetString((void *)&PyExc_TypeError, "expected a unicode character");
-                return 0;
-            }
-            if (PyUnicode_GetLength(value) != 1) {
-                PyErr_SetString((void *)&PyExc_TypeError, "expected a unicode character");
-                return 0;
-            }
-            if (!pyrs_get_unicode_utf8_data(value, &data, &len) ||
-                !pyrs_decode_utf8_codepoint(data, len, &codepoint)) {
-                PyErr_SetString((void *)&PyExc_TypeError, "expected a unicode character");
-                return 0;
-            }
-            if (output != NULL) {
-                *output = codepoint;
-            }
-            break;
-        }
-        case 's':
-        case 'z': {
-            char suffix = *format;
-            if (suffix == '*') {
-                PyrsPyBuffer *output = va_arg(*ap, PyrsPyBuffer *);
-                if (token == 'z' && value == (void *)&_Py_NoneStruct) {
-                    pyrs_zero_buffer(output);
-                    if (PyBuffer_FillInfo(output, NULL, NULL, 0, 1, PYBUF_SIMPLE) != 0) {
-                        return 0;
-                    }
-                } else if (object_is_instance_of_type(value, (void *)&PyUnicode_Type)) {
-                    if (!pyrs_fill_unicode_buffer(value, output)) {
-                        return 0;
-                    }
-                } else if (!pyrs_get_simple_buffer(value, output)) {
-                    return 0;
-                }
-                if (!pyrs_push_buffer_cleanup(cleanups, cleanup_count, output)) {
-                    PyBuffer_Release(output);
-                    return 0;
-                }
-                format++;
-            } else if (suffix == '#') {
-                char **output = va_arg(*ap, char **);
-                Py_ssize_t *output_len = va_arg(*ap, Py_ssize_t *);
-                if (token == 'z' && value == (void *)&_Py_NoneStruct) {
-                    if (output != NULL) {
-                        *output = NULL;
-                    }
-                    if (output_len != NULL) {
-                        *output_len = 0;
-                    }
-                } else if (object_is_instance_of_type(value, (void *)&PyUnicode_Type)) {
-                    const char *text = NULL;
-                    Py_ssize_t len = 0;
-                    if (!pyrs_get_unicode_utf8_data(value, &text, &len)) {
-                        return 0;
-                    }
-                    if (output != NULL) {
-                        *output = (char *)text;
-                    }
-                    if (output_len != NULL) {
-                        *output_len = len;
-                    }
-                } else if (object_is_instance_of_type(value, (void *)&PyBytes_Type)) {
-                    char *text = NULL;
-                    Py_ssize_t len = 0;
-                    if (!pyrs_get_bytes_data(value, &text, &len)) {
-                        return 0;
-                    }
-                    if (output != NULL) {
-                        *output = text;
-                    }
-                    if (output_len != NULL) {
-                        *output_len = len;
-                    }
-                } else {
-                    PyErr_SetString(
-                        (void *)&PyExc_TypeError,
-                        token == 'z' ? "expected str or None" : "expected str or bytes"
-                    );
-                    return 0;
-                }
-                format++;
-            } else {
-                char **output = va_arg(*ap, char **);
-                if (token == 'z' && value == (void *)&_Py_NoneStruct) {
-                    if (output != NULL) {
-                        *output = NULL;
-                    }
-                } else if (object_is_instance_of_type(value, (void *)&PyUnicode_Type)) {
-                    const char *text = NULL;
-                    Py_ssize_t len = 0;
-                    if (!pyrs_get_unicode_utf8_data(value, &text, &len)) {
-                        return 0;
-                    }
-                    if (memchr(text, '\0', (size_t)len) != NULL) {
-                        PyErr_SetString((void *)&PyExc_ValueError, "embedded null character");
-                        return 0;
-                    }
-                    if (output != NULL) {
-                        *output = (char *)text;
-                    }
-                } else {
-                    PyErr_SetString(
-                        (void *)&PyExc_TypeError,
-                        token == 'z' ? "expected str or None" : "expected str"
-                    );
-                    return 0;
-                }
-            }
-            break;
-        }
-        case 'y': {
-            char suffix = *format;
-            if (suffix == '*') {
-                PyrsPyBuffer *output = va_arg(*ap, PyrsPyBuffer *);
-                if (!pyrs_get_simple_buffer(value, output)) {
-                    return 0;
-                }
-                if (!pyrs_push_buffer_cleanup(cleanups, cleanup_count, output)) {
-                    PyBuffer_Release(output);
-                    return 0;
-                }
-                format++;
-            } else if (suffix == '#') {
-                char **output = va_arg(*ap, char **);
-                Py_ssize_t *output_len = va_arg(*ap, Py_ssize_t *);
-                char *text = NULL;
-                Py_ssize_t len = 0;
-                if (!object_is_instance_of_type(value, (void *)&PyBytes_Type) ||
-                    !pyrs_get_bytes_data(value, &text, &len)) {
-                    PyErr_SetString((void *)&PyExc_TypeError, "expected bytes");
-                    return 0;
-                }
-                if (output != NULL) {
-                    *output = text;
-                }
-                if (output_len != NULL) {
-                    *output_len = len;
-                }
-                format++;
-            } else {
-                char **output = va_arg(*ap, char **);
-                char *text = NULL;
-                Py_ssize_t len = 0;
-                if (!object_is_instance_of_type(value, (void *)&PyBytes_Type) ||
-                    !pyrs_get_bytes_data(value, &text, &len)) {
-                    PyErr_SetString((void *)&PyExc_TypeError, "expected bytes");
-                    return 0;
-                }
-                if (memchr(text, '\0', (size_t)len) != NULL) {
-                    PyErr_SetString((void *)&PyExc_ValueError, "embedded null byte");
-                    return 0;
-                }
-                if (output != NULL) {
-                    *output = text;
-                }
-            }
-            break;
-        }
-        case 'e': {
-            const char *encoding = (const char *)va_arg(*ap, void *);
-            int recode_strings = 0;
-            if (*format == 's') {
-                recode_strings = 1;
-            } else if (*format == 't') {
-                recode_strings = 0;
-            } else {
-                PyErr_Format(
-                    (void *)&PyExc_SystemError,
-                    "argument %zd (impossible<bad format char>)",
-                    argument_index
-                );
-                return 0;
-            }
-            char **buffer = va_arg(*ap, char **);
-            format++;
-            if (*format == '#') {
-                Py_ssize_t *buffer_len = va_arg(*ap, Py_ssize_t *);
-                if (!pyrs_convert_encoded_string(
-                        value,
-                        recode_strings,
-                        encoding,
-                        buffer,
-                        buffer_len,
-                        1,
-                        cleanups,
-                        cleanup_count
-                    )) {
-                    return 0;
-                }
-                format++;
-            } else if (!pyrs_convert_encoded_string(
-                           value,
-                           recode_strings,
-                           encoding,
-                           buffer,
-                           NULL,
-                           0,
-                           cleanups,
-                           cleanup_count
-                       )) {
-                return 0;
-            }
-            break;
-        }
-        case 'w': {
-            if (*format != '*') {
-                PyErr_Format(
-                    (void *)&PyExc_SystemError,
-                    "argument %zd (impossible<bad format char>)",
-                    argument_index
-                );
-                return 0;
-            }
-            PyrsPyBuffer *output = va_arg(*ap, PyrsPyBuffer *);
-            if (!pyrs_get_writable_buffer(value, output)) {
-                PyErr_Clear();
-                PyErr_SetString((void *)&PyExc_TypeError, "expected read-write bytes-like object");
-                return 0;
-            }
-            if (!pyrs_push_buffer_cleanup(cleanups, cleanup_count, output)) {
-                PyBuffer_Release(output);
-                return 0;
-            }
-            format++;
-            break;
-        }
-        case '(':
-            if (!pyrs_parse_nested_tuple_item(value, argument_index, format - 1, &format, ap)) {
-                return 0;
-            }
-            format++;
-            break;
-        case 'O':
-            if (*format == '!') {
-                void *expected_type = va_arg(*ap, void *);
-                void **output = va_arg(*ap, void **);
-                if (!object_is_instance_of_type(value, expected_type)) {
-                    PyErr_SetString(
-                        (void *)&PyExc_TypeError,
-                        "PyArg_ParseTupleAndKeywords argument has incorrect type"
-                    );
-                    return 0;
-                }
-                if (output != NULL) {
-                    *output = value;
-                }
-                format++;
-            } else if (*format == '&') {
-                arg_converter_fn converter = va_arg(*ap, arg_converter_fn);
-                void *output = va_arg(*ap, void *);
-                int converted = converter != NULL ? converter(value, output) : 0;
-                if (converter == NULL || converted == 0) {
-                    if (PyErr_Occurred() == NULL) {
-                        pyrs_capi_set_error_message("PyArg_ParseTupleAndKeywords converter failed");
-                    }
-                    return 0;
-                }
-                if (converted == Py_CLEANUP_SUPPORTED &&
-                    !pyrs_push_converter_cleanup(cleanups, cleanup_count, converter, output)) {
-                    return 0;
-                }
-                format++;
-            } else {
-                void **output = va_arg(*ap, void **);
-                if (output != NULL) {
-                    *output = value;
-                }
-            }
-            break;
-        case 'S': {
-            void **output = va_arg(*ap, void **);
-            if (!object_is_instance_of_type(value, (void *)&PyBytes_Type)) {
-                PyErr_SetString((void *)&PyExc_TypeError, "expected bytes");
-                return 0;
-            }
-            if (output != NULL) {
-                *output = value;
-            }
-            break;
-        }
-        case 'Y': {
-            void **output = va_arg(*ap, void **);
-            if (!object_is_instance_of_type(value, (void *)&PyByteArray_Type)) {
-                PyErr_SetString((void *)&PyExc_TypeError, "expected bytearray");
-                return 0;
-            }
-            if (output != NULL) {
-                *output = value;
-            }
-            break;
-        }
-        case 'U': {
-            void **output = va_arg(*ap, void **);
-            if (!object_is_instance_of_type(value, (void *)&PyUnicode_Type)) {
-                PyErr_SetString((void *)&PyExc_TypeError, "expected str");
-                return 0;
-            }
-            if (output != NULL) {
-                *output = value;
-            }
-            break;
-        }
-        default:
-            PyErr_Format(
-                (void *)&PyExc_SystemError,
-                "argument %zd (impossible<bad format char>)",
-                argument_index
-            );
-            return 0;
-    }
-
-    *p_format = format;
-    return 1;
-}
 
 static int parse_args_and_keywords_va(
     void *args,
@@ -3362,12 +1980,8 @@ static int parse_args_and_keywords_va(
     }
 
     const char *cursor = format;
-    const char *function_name = "function";
     while (*cursor != '\0' && *cursor != ':' && *cursor != ';') {
         cursor++;
-    }
-    if (*cursor == ':' && cursor[1] != '\0') {
-        function_name = cursor + 1;
     }
     size_t format_len = (size_t)(cursor - format);
     char *spec = (char *)malloc(format_len + 1);
@@ -3378,392 +1992,293 @@ static int parse_args_and_keywords_va(
     memcpy(spec, format, format_len);
     spec[format_len] = '\0';
 
-    if (args != NULL && !is_tuple_object(args)) {
-        free(spec);
-        PyErr_BadInternalCall();
-        return 0;
-    }
-    if (kwargs != NULL && !object_is_instance_of_type(kwargs, (void *)&PyDict_Type)) {
-        free(spec);
-        PyErr_BadInternalCall();
-        return 0;
+    Py_ssize_t positional_total = 0;
+    if (args != NULL) {
+        positional_total = PyTuple_Size(args);
+        if (positional_total < 0) {
+            free(spec);
+            return 0;
+        }
     }
 
-    Py_ssize_t positional_total = args == NULL ? 0 : PyTuple_Size(args);
-    if (positional_total < 0) {
-        free(spec);
-        return 0;
-    }
-    PyArgCleanupEntry cleanups[16];
-    size_t cleanup_count = 0;
+    int optional = 0;
+    int keyword_only = 0;
+    Py_ssize_t positional_index = 0;
+    Py_ssize_t token_index = 0;
+    for (const char *p = spec; *p != '\0'; p++) {
+        char token = *p;
+        if (token == ' ' || token == '\t' || token == ',' || token == ':') {
+            continue;
+        }
+        if (token == '|') {
+            optional = 1;
+            continue;
+        }
+        if (token == '$') {
+            keyword_only = 1;
+            continue;
+        }
 
-    if (keywords == NULL) {
-        int optional = 0;
-        Py_ssize_t positional_index = 0;
-        Py_ssize_t arg_index = 0;
-        const char *format_cursor = spec;
-        while (!PYRS_IS_END_OF_FORMAT(*format_cursor)) {
-            if (*format_cursor == ' ' || *format_cursor == '\t' || *format_cursor == ',') {
-                format_cursor++;
-                continue;
-            }
-            if (*format_cursor == '|') {
-                optional = 1;
-                format_cursor++;
-                continue;
-            }
-            if (*format_cursor == '$') {
-                format_cursor++;
-                continue;
-            }
-            arg_index++;
-            if (positional_index < positional_total) {
-                void *value = PyTuple_GetItem(args, positional_index++);
-                if (!pyrs_convert_value_for_format_unit(
-                        value,
-                        &format_cursor,
-                        ap,
-                        arg_index,
-                        cleanups,
-                        &cleanup_count
-                    )) {
-                    pyrs_run_arg_cleanups(cleanups, cleanup_count);
+        const char *keyword_name = NULL;
+        if (keywords != NULL) {
+            keyword_name = keywords[token_index];
+        }
+
+        void *value = NULL;
+        int present = 0;
+        if (!keyword_only && positional_index < positional_total) {
+            value = PyTuple_GetItem(args, positional_index++);
+            present = 1;
+            if (kwargs != NULL && keyword_name != NULL) {
+                void *duplicate = PyDict_GetItemString(kwargs, keyword_name);
+                if (duplicate != NULL) {
                     free(spec);
+                    pyrs_capi_set_error_message(
+                        "PyArg_ParseTupleAndKeywords received duplicate positional/keyword argument"
+                    );
                     return 0;
                 }
+            }
+        } else if (kwargs != NULL && keyword_name != NULL) {
+            value = PyDict_GetItemString(kwargs, keyword_name);
+            if (value != NULL) {
+                present = 1;
+            }
+        }
+
+        if (token == 'O' && p[1] == '!') {
+            p++;
+            void *expected_type = va_arg(*ap, void *);
+            void **output = va_arg(*ap, void **);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
                 continue;
             }
-            if (!optional) {
-                pyrs_run_arg_cleanups(cleanups, cleanup_count);
+            if (!object_is_instance_of_type(value, expected_type)) {
                 free(spec);
-                PyErr_Format(
-                    (void *)&PyExc_TypeError,
-                    "%s missing required argument '' (pos %zd)",
-                    function_name,
-                    arg_index
+                pyrs_capi_set_error_message(
+                    "PyArg_ParseTupleAndKeywords argument has incorrect type"
                 );
                 return 0;
             }
-            const char *remaining = format_cursor;
-            const char *msg = pyrs_skip_format_unit(&format_cursor, ap);
-            if (msg != NULL) {
-                pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                PyErr_Format((void *)&PyExc_SystemError, "%s: '%s'", msg, remaining);
+            if (output != NULL) {
+                *output = value;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'O' && p[1] == '&') {
+            p++;
+            arg_converter_fn converter = va_arg(*ap, arg_converter_fn);
+            void *output = va_arg(*ap, void *);
+            if (getenv("PYRS_TRACE_PYARG_VA") != NULL) {
+                fprintf(
+                    stderr,
+                    "[pyarg-va] O& token present=%d optional=%d converter=%p output=%p\n",
+                    present,
+                    optional,
+                    (const void *)converter,
+                    output
+                );
+            }
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            int converted = 0;
+            if (converter != NULL) {
+                converted = converter(value, output);
+            }
+            if (getenv("PYRS_TRACE_PYARG_VA") != NULL) {
+                fprintf(
+                    stderr,
+                    "[pyarg-va] O& converter result=%d value=%p\n",
+                    converted,
+                    value
+                );
+            }
+            if (converter == NULL || converted == 0) {
+                free(spec);
+                if (PyErr_Occurred() == NULL) {
+                    pyrs_capi_set_error_message("PyArg_ParseTupleAndKeywords converter failed");
+                }
+                return 0;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'p') {
+            int *output = va_arg(*ap, int *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            int truth = PyObject_IsTrue(value);
+            if (truth < 0) {
                 free(spec);
                 return 0;
             }
+            if (output != NULL) {
+                *output = truth ? 1 : 0;
+            }
+            token_index++;
+            continue;
         }
-        if (positional_index < positional_total) {
-            pyrs_run_arg_cleanups(cleanups, cleanup_count);
-            free(spec);
-            PyErr_Format(
-                (void *)&PyExc_TypeError,
-                "%s takes at most %zd positional argument%s (%zd given)",
-                function_name,
-                arg_index,
-                arg_index == 1 ? "" : "s",
-                positional_total
+
+        if (token == 'i') {
+            int *output = va_arg(*ap, int *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            long parsed = PyLong_AsLong(value);
+            if (parsed == -1 && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (parsed < INT_MIN || parsed > INT_MAX) {
+                free(spec);
+                pyrs_capi_set_error_message(
+                    "PyArg_ParseTupleAndKeywords integer out of range for 'i'"
+                );
+                return 0;
+            }
+            if (output != NULL) {
+                *output = (int)parsed;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'O') {
+            void **output = va_arg(*ap, void **);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            if (output != NULL) {
+                *output = value;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'U') {
+            void **output = va_arg(*ap, void **);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            if (!object_is_instance_of_type(value, (void *)&PyUnicode_Type)) {
+                free(spec);
+                pyrs_capi_set_error_message(
+                    "PyArg_ParseTupleAndKeywords argument has incorrect type"
+                );
+                return 0;
+            }
+            if (output != NULL) {
+                *output = value;
+            }
+            token_index++;
+            continue;
+        }
+
+        {
+            char message[160];
+            snprintf(
+                message,
+                sizeof(message),
+                "PyArg_ParseTupleAndKeywords token '%c' is not implemented (spec=\"%s\")",
+                token,
+                spec
             );
-            return 0;
-        }
-        free(spec);
-        return 1;
-    }
-
-    Py_ssize_t positional_only = 0;
-    Py_ssize_t total = 0;
-    if (!pyrs_scan_keywords(keywords, &total, &positional_only)) {
-        free(spec);
-        return 0;
-    }
-
-    Py_ssize_t keyword_count = kwargs == NULL ? 0 : PyDict_Size(kwargs);
-    if (keyword_count < 0) {
-        free(spec);
-        return 0;
-    }
-    if (positional_total + keyword_count > total) {
-        free(spec);
-        PyErr_Format(
-            (void *)&PyExc_TypeError,
-            "%s takes at most %zd %sargument%s (%zd given)",
-            function_name,
-            total,
-            positional_total == 0 ? "keyword " : "",
-            total == 1 ? "" : "s",
-            positional_total + keyword_count
-        );
-        return 0;
-    }
-
-    int skip = 0;
-    Py_ssize_t min_required = PY_SSIZE_T_MAX;
-    Py_ssize_t max_positional = PY_SSIZE_T_MAX;
-    Py_ssize_t i = 0;
-    Py_ssize_t remaining_keywords = keyword_count;
-    const char *format_cursor = spec;
-    for (i = 0; i < total; i++) {
-        pyrs_skip_ignorable_format_chars(&format_cursor);
-        if (*format_cursor == '|') {
-            if (min_required != PY_SSIZE_T_MAX) {
-                pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                free(spec);
-                PyErr_SetString(
-                    (void *)&PyExc_SystemError,
-                    "Invalid format string (| specified twice)"
-                );
-                return 0;
-            }
-            min_required = i;
-            format_cursor++;
-            pyrs_skip_ignorable_format_chars(&format_cursor);
-            if (max_positional != PY_SSIZE_T_MAX) {
-                pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                free(spec);
-                PyErr_SetString(
-                    (void *)&PyExc_SystemError,
-                    "Invalid format string ($ before |)"
-                );
-                return 0;
-            }
-        }
-        if (*format_cursor == '$') {
-            if (max_positional != PY_SSIZE_T_MAX) {
-                pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                free(spec);
-                PyErr_SetString(
-                    (void *)&PyExc_SystemError,
-                    "Invalid format string ($ specified twice)"
-                );
-                return 0;
-            }
-            max_positional = i;
-            format_cursor++;
-            pyrs_skip_ignorable_format_chars(&format_cursor);
-            if (skip) {
-                break;
-            }
-            if (max_positional < positional_only) {
-                pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                free(spec);
-                PyErr_SetString((void *)&PyExc_SystemError, "Empty parameter name after $");
-                return 0;
-            }
-            if (max_positional < positional_total) {
-                pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                free(spec);
-                if (max_positional == 0) {
-                    PyErr_Format(
-                        (void *)&PyExc_TypeError,
-                        "%s takes no positional arguments",
-                        function_name
-                    );
-                } else {
-                    PyErr_Format(
-                        (void *)&PyExc_TypeError,
-                        "%s takes %s %zd positional argument%s (%zd given)",
-                        function_name,
-                        min_required != PY_SSIZE_T_MAX ? "at most" : "exactly",
-                        max_positional,
-                        max_positional == 1 ? "" : "s",
-                        positional_total
-                    );
-                }
-                return 0;
-            }
-        }
-        if (PYRS_IS_END_OF_FORMAT(*format_cursor)) {
-            pyrs_run_arg_cleanups(cleanups, cleanup_count);
             free(spec);
-            PyErr_Format(
-                (void *)&PyExc_SystemError,
-                "More keyword list entries (%zd) than format specifiers (%zd)",
-                total,
-                i
-            );
-            return 0;
+            pyrs_capi_set_error_message(message);
         }
-
-        if (!skip) {
-            void *current_arg = NULL;
-            if (i < positional_total) {
-                current_arg = PyTuple_GetItem(args, i);
-            } else if (remaining_keywords > 0 && i >= positional_only) {
-                if (!pyrs_lookup_keyword_value(kwargs, keywords[i], &current_arg)) {
-                    pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                    free(spec);
-                    return 0;
-                }
-                if (current_arg != NULL) {
-                    remaining_keywords--;
-                }
-            }
-
-            if (current_arg != NULL) {
-                if (!pyrs_convert_value_for_format_unit(
-                        current_arg,
-                        &format_cursor,
-                        ap,
-                        i + 1,
-                        cleanups,
-                        &cleanup_count
-                    )) {
-                    pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                    free(spec);
-                    return 0;
-                }
-                continue;
-            }
-
-            if (i < min_required) {
-                if (i < positional_only) {
-                    skip = 1;
-                } else {
-                    pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                    free(spec);
-                    PyErr_Format(
-                        (void *)&PyExc_TypeError,
-                        "%s missing required argument '%s' (pos %zd)",
-                        function_name,
-                        keywords[i],
-                        i + 1
-                    );
-                    return 0;
-                }
-            }
-
-            if (remaining_keywords == 0 && !skip) {
-                free(spec);
-                return 1;
-            }
-        }
-
-        const char *remaining = format_cursor;
-        const char *msg = pyrs_skip_format_unit(&format_cursor, ap);
-        if (msg != NULL) {
-            pyrs_run_arg_cleanups(cleanups, cleanup_count);
-            PyErr_Format((void *)&PyExc_SystemError, "%s: '%s'", msg, remaining);
-            free(spec);
-            return 0;
-        }
-    }
-
-    if (skip) {
-        Py_ssize_t required = positional_only < min_required
-            ? positional_only
-            : min_required;
-        pyrs_run_arg_cleanups(cleanups, cleanup_count);
-        free(spec);
-        PyErr_Format(
-            (void *)&PyExc_TypeError,
-            "%s takes %s %zd positional argument%s (%zd given)",
-            function_name,
-            required < i ? "at least" : "exactly",
-            required,
-            required == 1 ? "" : "s",
-            positional_total
-        );
         return 0;
     }
 
-    pyrs_skip_ignorable_format_chars(&format_cursor);
-    if (!PYRS_IS_END_OF_FORMAT(*format_cursor) &&
-        *format_cursor != '|' &&
-        *format_cursor != '$') {
-        pyrs_run_arg_cleanups(cleanups, cleanup_count);
-        PyErr_Format(
-            (void *)&PyExc_SystemError,
-            "more argument specifiers than keyword list entries (remaining format:'%s')",
-            format_cursor
-        );
+    if (positional_index < positional_total) {
         free(spec);
+        pyrs_capi_set_error_message("too many positional arguments");
         return 0;
-    }
-
-    if (remaining_keywords > 0) {
-        for (Py_ssize_t dup_index = positional_only;
-             dup_index < positional_total && dup_index < total;
-             dup_index++) {
-            void *duplicate = NULL;
-            if (!pyrs_lookup_keyword_value(kwargs, keywords[dup_index], &duplicate)) {
-                pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                free(spec);
-                return 0;
-            }
-            if (duplicate != NULL) {
-                pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                free(spec);
-                PyErr_Format(
-                    (void *)&PyExc_TypeError,
-                    "argument for %s given by name ('%s') and position (%zd)",
-                    function_name,
-                    keywords[dup_index],
-                    dup_index + 1
-                );
-                return 0;
-            }
-        }
-
-        void *keys = PyDict_Keys(kwargs);
-        if (keys == NULL) {
-            pyrs_run_arg_cleanups(cleanups, cleanup_count);
-            free(spec);
-            return 0;
-        }
-        Py_ssize_t key_count = PyList_Size(keys);
-        if (key_count < 0) {
-            Py_DecRef(keys);
-            pyrs_run_arg_cleanups(cleanups, cleanup_count);
-            free(spec);
-            return 0;
-        }
-        for (Py_ssize_t key_index = 0; key_index < key_count; key_index++) {
-            void *key_obj = PyList_GetItem(keys, key_index);
-            if (key_obj == NULL) {
-                Py_DecRef(keys);
-                pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                free(spec);
-                return 0;
-            }
-            if (!object_is_instance_of_type(key_obj, (void *)&PyUnicode_Type)) {
-                Py_DecRef(keys);
-                pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                free(spec);
-                PyErr_SetString((void *)&PyExc_TypeError, "keywords must be strings");
-                return 0;
-            }
-            int matched = 0;
-            for (Py_ssize_t keyword_index = positional_only;
-                 keyword_index < total;
-                 keyword_index++) {
-                int eq = PyUnicode_EqualToUTF8(key_obj, keywords[keyword_index]);
-                if (eq < 0) {
-                    Py_DecRef(keys);
-                    pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                    free(spec);
-                    return 0;
-                }
-                if (eq > 0) {
-                    matched = 1;
-                    break;
-                }
-            }
-            if (!matched) {
-                Py_DecRef(keys);
-                pyrs_run_arg_cleanups(cleanups, cleanup_count);
-                free(spec);
-                PyErr_Format(
-                    (void *)&PyExc_TypeError,
-                    "this function got an unexpected keyword argument '%S'",
-                    key_obj
-                );
-                return 0;
-            }
-        }
-        Py_DecRef(keys);
     }
 
     free(spec);
+    return 1;
+}
+
+static int count_old_style_format_args(const char *format, int *min_count, int *max_count)
+{
+    int min = -1;
+    int max = 0;
+    int level = 0;
+    const char *cursor = format;
+    while (*cursor != '\0' && *cursor != ':' && *cursor != ';') {
+        char token = *cursor++;
+        switch (token) {
+            case '(':
+                if (level == 0) {
+                    max++;
+                }
+                level++;
+                break;
+            case ')':
+                if (level > 0) {
+                    level--;
+                }
+                break;
+            case '|':
+                if (level == 0) {
+                    min = max;
+                }
+                break;
+            default:
+                if (level == 0 && ((token >= 'A' && token <= 'Z') || (token >= 'a' && token <= 'z'))) {
+                    if (token != 'e') {
+                        max++;
+                    }
+                }
+                break;
+        }
+    }
+    if (min < 0) {
+        min = max;
+    }
+    *min_count = min;
+    *max_count = max;
     return 1;
 }
 
@@ -4211,988 +2726,6 @@ int _PyArg_NoKeywords(const char *funcname, void *kwargs)
     }
     PyErr_Format((void *)&PyExc_TypeError, "%s() takes no keyword arguments", funcname);
     return 0;
-}
-
-static int object_type_is_exact(void *object, void *type_obj)
-{
-    if (object == NULL || type_obj == NULL) {
-        return 0;
-    }
-    PyObjectHeadCompat *head = (PyObjectHeadCompat *)object;
-    return head->ob_type == type_obj;
-}
-
-void *pyrs_testcapi_get_args(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("get_args", kwargs)) {
-        return NULL;
-    }
-    if (args == NULL) {
-        return build_none();
-    }
-    Py_IncRef(args);
-    return args;
-}
-
-void *pyrs_testcapi_get_kwargs(void *args, void *kwargs)
-{
-    (void)args;
-    if (kwargs == NULL) {
-        return build_none();
-    }
-    Py_IncRef(kwargs);
-    return kwargs;
-}
-
-void *pyrs_testcapi_getargs_empty(void *args, void *kwargs)
-{
-    Py_ssize_t positional = args == NULL ? 0 : PyTuple_Size(args);
-    if (positional < 0) {
-        return NULL;
-    }
-    if (positional != 0) {
-        PyErr_Format(
-            (void *)&PyExc_TypeError,
-            "getargs_empty() takes exactly 0 arguments (%zd given)",
-            positional
-        );
-        return NULL;
-    }
-    Py_ssize_t keyword_count = kwargs == NULL ? 0 : PyDict_Size(kwargs);
-    if (keyword_count < 0) {
-        return NULL;
-    }
-    if (keyword_count != 0) {
-        PyErr_Format(
-            (void *)&PyExc_TypeError,
-            "getargs_empty() takes at most 0 keyword arguments (%zd given)",
-            keyword_count
-        );
-        return NULL;
-    }
-    int result;
-    if (kwargs != NULL && keyword_count > 0) {
-        const char *kwlist[] = {NULL};
-        result = PyArg_ParseTupleAndKeywords(args, kwargs, "|:getargs_empty", kwlist);
-    } else {
-        result = PyArg_ParseTuple(args, "|:getargs_empty");
-    }
-    if (!result) {
-        return NULL;
-    }
-    return PyLong_FromLong((long)result);
-}
-
-void *pyrs_testcapi_getargs_tuple(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_tuple", kwargs)) {
-        return NULL;
-    }
-    int a;
-    int b;
-    int c;
-    if (!PyArg_ParseTuple(args, "i(ii)", &a, &b, &c)) {
-        return NULL;
-    }
-    return Py_BuildValue("iii", a, b, c);
-}
-
-void *pyrs_testcapi_getargs_c(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_c", kwargs)) {
-        return NULL;
-    }
-    char c;
-    if (!PyArg_ParseTuple(args, "c", &c)) {
-        return NULL;
-    }
-    return PyLong_FromLong((unsigned char)c);
-}
-
-void *pyrs_testcapi_getargs_C(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_C", kwargs)) {
-        return NULL;
-    }
-    int c;
-    if (!PyArg_ParseTuple(args, "C", &c)) {
-        return NULL;
-    }
-    return PyLong_FromLong(c);
-}
-
-void *pyrs_testcapi_getargs_s(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_s", kwargs)) {
-        return NULL;
-    }
-    char *text;
-    if (!PyArg_ParseTuple(args, "s", &text)) {
-        return NULL;
-    }
-    return PyBytes_FromStringAndSize(text, (Py_ssize_t)strlen(text));
-}
-
-void *pyrs_testcapi_getargs_s_star(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_s_star", kwargs)) {
-        return NULL;
-    }
-    PyrsPyBuffer buffer;
-    if (!PyArg_ParseTuple(args, "s*", &buffer)) {
-        return NULL;
-    }
-    void *bytes = PyBytes_FromStringAndSize(buffer.buf, buffer.len);
-    PyBuffer_Release(&buffer);
-    return bytes;
-}
-
-void *pyrs_testcapi_getargs_s_hash(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_s_hash", kwargs)) {
-        return NULL;
-    }
-    char *text;
-    Py_ssize_t size;
-    if (!PyArg_ParseTuple(args, "s#", &text, &size)) {
-        return NULL;
-    }
-    return PyBytes_FromStringAndSize(text, size);
-}
-
-void *pyrs_testcapi_getargs_z(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_z", kwargs)) {
-        return NULL;
-    }
-    char *text;
-    if (!PyArg_ParseTuple(args, "z", &text)) {
-        return NULL;
-    }
-    if (text == NULL) {
-        return build_none();
-    }
-    return PyBytes_FromStringAndSize(text, (Py_ssize_t)strlen(text));
-}
-
-void *pyrs_testcapi_getargs_z_star(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_z_star", kwargs)) {
-        return NULL;
-    }
-    PyrsPyBuffer buffer;
-    if (!PyArg_ParseTuple(args, "z*", &buffer)) {
-        return NULL;
-    }
-    void *result = NULL;
-    if (buffer.buf != NULL) {
-        result = PyBytes_FromStringAndSize(buffer.buf, buffer.len);
-    } else {
-        result = build_none();
-    }
-    PyBuffer_Release(&buffer);
-    return result;
-}
-
-void *pyrs_testcapi_getargs_z_hash(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_z_hash", kwargs)) {
-        return NULL;
-    }
-    char *text;
-    Py_ssize_t size;
-    if (!PyArg_ParseTuple(args, "z#", &text, &size)) {
-        return NULL;
-    }
-    if (text == NULL) {
-        return build_none();
-    }
-    return PyBytes_FromStringAndSize(text, size);
-}
-
-void *pyrs_testcapi_getargs_y(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_y", kwargs)) {
-        return NULL;
-    }
-    char *text;
-    if (!PyArg_ParseTuple(args, "y", &text)) {
-        return NULL;
-    }
-    return PyBytes_FromStringAndSize(text, (Py_ssize_t)strlen(text));
-}
-
-void *pyrs_testcapi_getargs_y_star(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_y_star", kwargs)) {
-        return NULL;
-    }
-    PyrsPyBuffer buffer;
-    if (!PyArg_ParseTuple(args, "y*", &buffer)) {
-        return NULL;
-    }
-    void *result = PyBytes_FromStringAndSize(buffer.buf, buffer.len);
-    PyBuffer_Release(&buffer);
-    return result;
-}
-
-void *pyrs_testcapi_getargs_y_hash(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_y_hash", kwargs)) {
-        return NULL;
-    }
-    char *text;
-    Py_ssize_t size;
-    if (!PyArg_ParseTuple(args, "y#", &text, &size)) {
-        return NULL;
-    }
-    return PyBytes_FromStringAndSize(text, size);
-}
-
-void *pyrs_testcapi_getargs_es(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_es", kwargs)) {
-        return NULL;
-    }
-    void *arg;
-    const char *encoding = NULL;
-    char *text = NULL;
-    if (!PyArg_ParseTuple(args, "O|s", &arg, &encoding)) {
-        return NULL;
-    }
-    if (!PyArg_Parse(arg, "es", encoding, &text)) {
-        return NULL;
-    }
-    void *result = PyBytes_FromStringAndSize(text, (Py_ssize_t)strlen(text));
-    PyMem_Free(text);
-    return result;
-}
-
-void *pyrs_testcapi_getargs_et(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_et", kwargs)) {
-        return NULL;
-    }
-    void *arg;
-    const char *encoding = NULL;
-    char *text = NULL;
-    if (!PyArg_ParseTuple(args, "O|s", &arg, &encoding)) {
-        return NULL;
-    }
-    if (!PyArg_Parse(arg, "et", encoding, &text)) {
-        return NULL;
-    }
-    void *result = PyBytes_FromStringAndSize(text, (Py_ssize_t)strlen(text));
-    PyMem_Free(text);
-    return result;
-}
-
-void *pyrs_testcapi_getargs_es_hash(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_es_hash", kwargs)) {
-        return NULL;
-    }
-    void *arg;
-    const char *encoding = NULL;
-    void *buffer_obj = NULL;
-    char *text = NULL;
-    Py_ssize_t size = 0;
-    if (!PyArg_ParseTuple(args, "O|sY", &arg, &encoding, &buffer_obj)) {
-        return NULL;
-    }
-    if (buffer_obj != NULL) {
-        text = PyByteArray_AsString(buffer_obj);
-        size = PyByteArray_Size(buffer_obj);
-        if (text == NULL || size < 0) {
-            return NULL;
-        }
-    }
-    if (!PyArg_Parse(arg, "es#", encoding, &text, &size)) {
-        return NULL;
-    }
-    void *result = PyBytes_FromStringAndSize(text, size);
-    if (buffer_obj == NULL) {
-        PyMem_Free(text);
-    }
-    return result;
-}
-
-void *pyrs_testcapi_getargs_et_hash(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_et_hash", kwargs)) {
-        return NULL;
-    }
-    void *arg;
-    const char *encoding = NULL;
-    void *buffer_obj = NULL;
-    char *text = NULL;
-    Py_ssize_t size = 0;
-    if (!PyArg_ParseTuple(args, "O|sY", &arg, &encoding, &buffer_obj)) {
-        return NULL;
-    }
-    if (buffer_obj != NULL) {
-        text = PyByteArray_AsString(buffer_obj);
-        size = PyByteArray_Size(buffer_obj);
-        if (text == NULL || size < 0) {
-            return NULL;
-        }
-    }
-    if (!PyArg_Parse(arg, "et#", encoding, &text, &size)) {
-        return NULL;
-    }
-    void *result = PyBytes_FromStringAndSize(text, size);
-    if (buffer_obj == NULL) {
-        PyMem_Free(text);
-    }
-    return result;
-}
-
-void *pyrs_testcapi_getargs_w_star(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_w_star", kwargs)) {
-        return NULL;
-    }
-    PyrsPyBuffer buffer;
-    if (!PyArg_ParseTuple(args, "w*:getargs_w_star", &buffer)) {
-        return NULL;
-    }
-    if (buffer.len >= 2) {
-        char *text = (char *)buffer.buf;
-        text[0] = '[';
-        text[buffer.len - 1] = ']';
-    }
-    void *result = PyBytes_FromStringAndSize(buffer.buf, buffer.len);
-    PyBuffer_Release(&buffer);
-    return result;
-}
-
-void *pyrs_testcapi_getargs_w_star_opt(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("getargs_w_star_opt", kwargs)) {
-        return NULL;
-    }
-    PyrsPyBuffer buffer;
-    PyrsPyBuffer buffer2;
-    pyrs_zero_buffer(&buffer2);
-    int number = 1;
-    if (!PyArg_ParseTuple(args, "w*|w*i:getargs_w_star", &buffer, &buffer2, &number)) {
-        return NULL;
-    }
-    if (buffer.len >= 2) {
-        char *text = (char *)buffer.buf;
-        text[0] = '[';
-        text[buffer.len - 1] = ']';
-    }
-    void *result = PyBytes_FromStringAndSize(buffer.buf, buffer.len);
-    PyBuffer_Release(&buffer);
-    if (buffer2.obj != NULL || buffer2.buf != NULL) {
-        PyBuffer_Release(&buffer2);
-    }
-    (void)number;
-    return result;
-}
-
-void *pyrs_testcapi_gh_99240_clear_args(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("gh_99240_clear_args", kwargs)) {
-        return NULL;
-    }
-    char *a = NULL;
-    char *b = NULL;
-    if (!PyArg_ParseTuple(args, "eses", "idna", &a, "idna", &b)) {
-        if (a != NULL || b != NULL) {
-            PyErr_Clear();
-            PyErr_SetString((void *)&PyExc_AssertionError, "Arguments are not cleared.");
-        }
-        return NULL;
-    }
-    PyMem_Free(a);
-    PyMem_Free(b);
-    return build_none();
-}
-
-void *pyrs_testcapi_parse_tuple_and_keywords(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("parse_tuple_and_keywords", kwargs)) {
-        return NULL;
-    }
-    Py_ssize_t positional = args == NULL ? 0 : PyTuple_Size(args);
-    if (positional < 0) {
-        return NULL;
-    }
-    if (positional != 4) {
-        PyErr_Format(
-            (void *)&PyExc_TypeError,
-            "parse_tuple_and_keywords() takes exactly 4 arguments (%zd given)",
-            positional
-        );
-        return NULL;
-    }
-
-    void *sub_args = NULL;
-    void *sub_kwargs = NULL;
-    const char *sub_format = NULL;
-    void *sub_keywords = NULL;
-
-#define PYRS_TESTCAPI_MAX_PARAMS 8
-    double buffers[PYRS_TESTCAPI_MAX_PARAMS][4];
-    const char *keywords[PYRS_TESTCAPI_MAX_PARAMS + 1];
-
-    if (!PyArg_ParseTuple(
-            args,
-            "OOsO:parse_tuple_and_keywords",
-            &sub_args,
-            &sub_kwargs,
-            &sub_format,
-            &sub_keywords
-        )) {
-        return NULL;
-    }
-
-    int keywords_is_exact_list = object_type_is_exact(sub_keywords, (void *)&PyList_Type);
-    int keywords_is_exact_tuple = object_type_is_exact(sub_keywords, (void *)&PyTuple_Type);
-    if (!keywords_is_exact_list && !keywords_is_exact_tuple) {
-        PyErr_SetString(
-            (void *)&PyExc_ValueError,
-            "parse_tuple_and_keywords: sub_keywords must be either list or tuple"
-        );
-        return NULL;
-    }
-
-    memset(buffers, 0, sizeof(buffers));
-    memset(keywords, 0, sizeof(keywords));
-
-    Py_ssize_t size = keywords_is_exact_list ? PyList_Size(sub_keywords) : PyTuple_Size(sub_keywords);
-    if (size > PYRS_TESTCAPI_MAX_PARAMS) {
-        PyErr_SetString(
-            (void *)&PyExc_ValueError,
-            "parse_tuple_and_keywords: too many keywords in sub_keywords"
-        );
-        return NULL;
-    }
-
-    for (Py_ssize_t i = 0; i < size; i++) {
-        void *item = keywords_is_exact_list ? PyList_GetItem(sub_keywords, i) : PyTuple_GetItem(sub_keywords, i);
-        if (item == NULL) {
-            return NULL;
-        }
-        if (object_is_instance_of_type(item, (void *)&PyUnicode_Type)) {
-            keywords[i] = (char *)PyUnicode_AsUTF8(item);
-            if (keywords[i] == NULL) {
-                return NULL;
-            }
-        } else if (object_is_instance_of_type(item, (void *)&PyBytes_Type)) {
-            char *buffer = NULL;
-            if (PyBytes_AsStringAndSize(item, &buffer, NULL) < 0) {
-                return NULL;
-            }
-            keywords[i] = buffer;
-        } else {
-            PyErr_SetString(
-                (void *)&PyExc_ValueError,
-                "parse_tuple_and_keywords: keywords must be str or bytes"
-            );
-            return NULL;
-        }
-    }
-
-    int result = PyArg_ParseTupleAndKeywords(
-        sub_args,
-        sub_kwargs,
-        sub_format,
-        keywords,
-        buffers + 0,
-        buffers + 1,
-        buffers + 2,
-        buffers + 3,
-        buffers + 4,
-        buffers + 5,
-        buffers + 6,
-        buffers + 7
-    );
-    if (!result) {
-        return NULL;
-    }
-
-    int objects_only = 1;
-    int count = 0;
-    for (const char *cursor = sub_format; *cursor != '\0'; cursor++) {
-        if (isalnum((unsigned char)*cursor)) {
-            if (strchr("OSUY", *cursor) == NULL) {
-                objects_only = 0;
-                break;
-            }
-            count++;
-        }
-    }
-    if (!objects_only) {
-        return build_none();
-    }
-
-    void *return_value = PyTuple_New((Py_ssize_t)count);
-    if (return_value == NULL) {
-        return NULL;
-    }
-    for (Py_ssize_t i = 0; i < count; i++) {
-        void *arg = *(void **)(buffers + i);
-        if (arg == NULL) {
-            arg = build_none();
-        } else {
-            Py_IncRef(arg);
-        }
-        if (PyTuple_SetItem(return_value, i, arg) < 0) {
-            Py_DecRef(arg);
-            Py_DecRef(return_value);
-            return NULL;
-        }
-    }
-    return return_value;
-}
-
-static void *pyrs_testcapi_argparsing_str1 = NULL;
-static void *pyrs_testcapi_argparsing_str2 = NULL;
-
-static int pyrs_testcapi_failing_converter(void *obj, void *arg)
-{
-    (void)obj;
-    (void)arg;
-    if (pyrs_testcapi_argparsing_str1 == NULL) {
-        return 0;
-    }
-    Py_IncRef(pyrs_testcapi_argparsing_str1);
-    pyrs_testcapi_argparsing_str2 = pyrs_testcapi_argparsing_str1;
-    return 0;
-}
-
-void *pyrs_testcapi_argparsing(void *args, void *kwargs)
-{
-    if (!_PyArg_NoKeywords("argparsing", kwargs)) {
-        return NULL;
-    }
-    Py_ssize_t positional = args == NULL ? 0 : PyTuple_Size(args);
-    if (positional < 0) {
-        return NULL;
-    }
-    if (positional != 2) {
-        PyErr_Format(
-            (void *)&PyExc_TypeError,
-            "function takes exactly 2 arguments (%zd given)",
-            positional
-        );
-        return NULL;
-    }
-    pyrs_testcapi_argparsing_str1 = NULL;
-    pyrs_testcapi_argparsing_str2 = NULL;
-    if (!PyArg_ParseTuple(
-            args,
-            "O&O&",
-            PyUnicode_FSConverter,
-            &pyrs_testcapi_argparsing_str1,
-            pyrs_testcapi_failing_converter,
-            &pyrs_testcapi_argparsing_str2
-        )) {
-        if (pyrs_testcapi_argparsing_str2 == NULL) {
-            return NULL;
-        }
-        Py_ssize_t refcnt = ((PyObjectHeadCompat *)pyrs_testcapi_argparsing_str2)->ob_refcnt;
-        void *result = PyLong_FromSsize_t(refcnt);
-        Py_DecRef(pyrs_testcapi_argparsing_str2);
-        pyrs_testcapi_argparsing_str2 = NULL;
-        PyErr_Clear();
-        return result;
-    }
-    return build_none();
-}
-
-typedef struct {
-    char bool_member;
-    char byte_member;
-    unsigned char ubyte_member;
-    short short_member;
-    unsigned short ushort_member;
-    int int_member;
-    unsigned int uint_member;
-    long long_member;
-    unsigned long ulong_member;
-    Py_ssize_t pyssizet_member;
-    float float_member;
-    double double_member;
-    char inplace_member[6];
-    long long longlong_member;
-    unsigned long long ulonglong_member;
-    char char_member;
-} pyrs_all_structmembers;
-
-typedef struct {
-    PyObject ob_base;
-    pyrs_all_structmembers structmembers;
-} pyrs_test_structmembers;
-
-static PyMemberDef pyrs_test_structmembers_members[] = {
-    {"T_BOOL", Py_T_BOOL, offsetof(pyrs_test_structmembers, structmembers.bool_member), 0, NULL},
-    {"T_BYTE", Py_T_BYTE, offsetof(pyrs_test_structmembers, structmembers.byte_member), 0, NULL},
-    {"T_UBYTE", Py_T_UBYTE, offsetof(pyrs_test_structmembers, structmembers.ubyte_member), 0, NULL},
-    {"T_SHORT", Py_T_SHORT, offsetof(pyrs_test_structmembers, structmembers.short_member), 0, NULL},
-    {"T_USHORT", Py_T_USHORT, offsetof(pyrs_test_structmembers, structmembers.ushort_member), 0, NULL},
-    {"T_INT", Py_T_INT, offsetof(pyrs_test_structmembers, structmembers.int_member), 0, NULL},
-    {"T_UINT", Py_T_UINT, offsetof(pyrs_test_structmembers, structmembers.uint_member), 0, NULL},
-    {"T_LONG", Py_T_LONG, offsetof(pyrs_test_structmembers, structmembers.long_member), 0, NULL},
-    {"T_ULONG", Py_T_ULONG, offsetof(pyrs_test_structmembers, structmembers.ulong_member), 0, NULL},
-    {"T_PYSSIZET", Py_T_PYSSIZET, offsetof(pyrs_test_structmembers, structmembers.pyssizet_member), 0, NULL},
-    {"T_FLOAT", Py_T_FLOAT, offsetof(pyrs_test_structmembers, structmembers.float_member), 0, NULL},
-    {"T_DOUBLE", Py_T_DOUBLE, offsetof(pyrs_test_structmembers, structmembers.double_member), 0, NULL},
-    {"T_STRING_INPLACE", Py_T_STRING_INPLACE, offsetof(pyrs_test_structmembers, structmembers.inplace_member), 0, NULL},
-    {"T_LONGLONG", Py_T_LONGLONG, offsetof(pyrs_test_structmembers, structmembers.longlong_member), 0, NULL},
-    {"T_ULONGLONG", Py_T_ULONGLONG, offsetof(pyrs_test_structmembers, structmembers.ulonglong_member), 0, NULL},
-    {"T_CHAR", Py_T_CHAR, offsetof(pyrs_test_structmembers, structmembers.char_member), 0, NULL},
-    {NULL, 0, 0, 0, NULL},
-};
-
-static void *
-pyrs_test_structmembers_new(PyTypeObject *type, void *args, void *kwargs)
-{
-    static const char *keywords[] = {
-        "T_BOOL", "T_BYTE", "T_UBYTE", "T_SHORT", "T_USHORT",
-        "T_INT", "T_UINT", "T_LONG", "T_ULONG", "T_PYSSIZET",
-        "T_FLOAT", "T_DOUBLE", "T_STRING_INPLACE",
-        "T_LONGLONG", "T_ULONGLONG", "T_CHAR",
-        NULL
-    };
-    static const char fmt[] = "|bbBhHiIlknfds#LKc";
-    const char *inplace_src = NULL;
-    Py_ssize_t inplace_len = 0;
-    pyrs_test_structmembers *self =
-        (pyrs_test_structmembers *)PyType_GenericAlloc((void *)type, 0);
-    if (self == NULL) {
-        return NULL;
-    }
-    memset(&self->structmembers, 0, sizeof(self->structmembers));
-    if (!PyArg_ParseTupleAndKeywords(
-            args,
-            kwargs,
-            fmt,
-            keywords,
-            &self->structmembers.bool_member,
-            &self->structmembers.byte_member,
-            &self->structmembers.ubyte_member,
-            &self->structmembers.short_member,
-            &self->structmembers.ushort_member,
-            &self->structmembers.int_member,
-            &self->structmembers.uint_member,
-            &self->structmembers.long_member,
-            &self->structmembers.ulong_member,
-            &self->structmembers.pyssizet_member,
-            &self->structmembers.float_member,
-            &self->structmembers.double_member,
-            &inplace_src,
-            &inplace_len,
-            &self->structmembers.longlong_member,
-            &self->structmembers.ulonglong_member,
-            &self->structmembers.char_member)) {
-        Py_DecRef(self);
-        return NULL;
-    }
-    if (inplace_src != NULL) {
-        if (inplace_len > 5) {
-            Py_DecRef(self);
-            PyErr_SetString((void *)&PyExc_ValueError, "string too long");
-            return NULL;
-        }
-        memcpy(self->structmembers.inplace_member, inplace_src, (size_t)inplace_len);
-        self->structmembers.inplace_member[inplace_len] = '\0';
-    }
-    return (void *)self;
-}
-
-static PyType_Slot pyrs_test_structmembers_slots[] = {
-    {Py_tp_new, pyrs_test_structmembers_new},
-    {Py_tp_members, pyrs_test_structmembers_members},
-    {0, NULL},
-};
-
-static PyType_Spec pyrs_test_structmembers_old_spec = {
-    "_testcapi._test_structmembersType_OldAPI",
-    (int)sizeof(pyrs_test_structmembers),
-    0,
-    Py_TPFLAGS_DEFAULT,
-    pyrs_test_structmembers_slots,
-};
-
-static PyType_Spec pyrs_test_structmembers_new_spec = {
-    "_testcapi._test_structmembersType_NewAPI",
-    (int)sizeof(pyrs_test_structmembers),
-    0,
-    Py_TPFLAGS_DEFAULT,
-    pyrs_test_structmembers_slots,
-};
-
-int pyrs_testcapi_init_structmember_types(void *module)
-{
-    void *type_obj = PyType_FromModuleAndSpec(module, &pyrs_test_structmembers_old_spec, NULL);
-    if (type_obj == NULL) {
-        return -1;
-    }
-    if (PyModule_AddType(module, type_obj) < 0) {
-        Py_DecRef(type_obj);
-        return -1;
-    }
-    Py_DecRef(type_obj);
-
-    type_obj = PyType_FromModuleAndSpec(module, &pyrs_test_structmembers_new_spec, NULL);
-    if (type_obj == NULL) {
-        return -1;
-    }
-    if (PyModule_AddType(module, type_obj) < 0) {
-        Py_DecRef(type_obj);
-        return -1;
-    }
-    Py_DecRef(type_obj);
-    return 0;
-}
-
-typedef int (*pyrs_initproc)(void *self, void *args, void *kwargs);
-
-typedef struct {
-    PyObject ob_base;
-    int value;
-} pyrs_heapctype_object;
-
-typedef struct {
-    pyrs_heapctype_object base;
-    int value2;
-} pyrs_heapctypesubclass_object;
-
-static void *pyrs_testcapi_heaptype_module = NULL;
-
-static int
-pyrs_heapctype_init(void *self, void *args, void *kwargs)
-{
-    (void)args;
-    (void)kwargs;
-    ((pyrs_heapctype_object *)self)->value = 10;
-    return 0;
-}
-
-static void
-pyrs_heapctype_dealloc(void *op)
-{
-    PyTypeObject *type_obj = (PyTypeObject *)((PyObject *)op)->ob_type;
-    PyObject_Free(op);
-    if (type_obj != NULL) {
-        Py_DecRef(type_obj);
-    }
-}
-
-static PyMemberDef pyrs_heapctype_members[] = {
-    {"value", Py_T_INT, offsetof(pyrs_heapctype_object, value), 0, NULL},
-    {NULL, 0, 0, 0, NULL},
-};
-
-static PyType_Slot pyrs_heapctype_slots[] = {
-    {Py_tp_init, pyrs_heapctype_init},
-    {Py_tp_members, pyrs_heapctype_members},
-    {Py_tp_dealloc, pyrs_heapctype_dealloc},
-    {Py_tp_doc, "Heap type without GC; __init__ sets value to 10."},
-    {0, NULL},
-};
-
-static PyType_Spec pyrs_heapctype_spec = {
-    "_testcapi.HeapCType",
-    (int)sizeof(pyrs_heapctype_object),
-    0,
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
-    pyrs_heapctype_slots,
-};
-
-static int
-pyrs_heapctypesubclass_init(void *self, void *args, void *kwargs)
-{
-    if (pyrs_heapctype_init(self, args, kwargs) < 0) {
-        return -1;
-    }
-    ((pyrs_heapctypesubclass_object *)self)->value2 = 20;
-    return 0;
-}
-
-static PyMemberDef pyrs_heapctypesubclass_members[] = {
-    {"value2", Py_T_INT, offsetof(pyrs_heapctypesubclass_object, value2), 0, NULL},
-    {NULL, 0, 0, 0, NULL},
-};
-
-static PyType_Slot pyrs_heapctypesubclass_slots[] = {
-    {Py_tp_init, pyrs_heapctypesubclass_init},
-    {Py_tp_members, pyrs_heapctypesubclass_members},
-    {Py_tp_doc, "HeapCType subclass; __init__ sets value=10 and value2=20."},
-    {0, NULL},
-};
-
-static PyType_Spec pyrs_heapctypesubclass_spec = {
-    "_testcapi.HeapCTypeSubclass",
-    (int)sizeof(pyrs_heapctypesubclass_object),
-    0,
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
-    pyrs_heapctypesubclass_slots,
-};
-
-static int
-pyrs_heapctypesubclass_with_finalizer_init(void *self, void *args, void *kwargs)
-{
-    PyTypeObject *self_type = (PyTypeObject *)((PyObject *)self)->ob_type;
-    PyTypeObject *base = (PyTypeObject *)PyType_GetSlot((void *)self_type, Py_tp_base);
-    pyrs_initproc base_init = NULL;
-    if (base != NULL) {
-        base_init = (pyrs_initproc)PyType_GetSlot((void *)base, Py_tp_init);
-    }
-    if (base_init != NULL && base_init(self, args, kwargs) < 0) {
-        return -1;
-    }
-    return 0;
-}
-
-static void
-pyrs_heapctypesubclass_with_finalizer_finalize(void *self)
-{
-    void *old_type = NULL;
-    void *new_type = NULL;
-    void *refcnt = NULL;
-    void *saved_exception = PyErr_GetRaisedException();
-
-    if (pyrs_testcapi_heaptype_module == NULL) {
-        goto cleanup;
-    }
-
-    old_type = PyObject_GetAttrString(
-        pyrs_testcapi_heaptype_module,
-        "HeapCTypeSubclassWithFinalizer"
-    );
-    if (old_type == NULL) {
-        goto cleanup;
-    }
-    new_type = PyObject_GetAttrString(
-        pyrs_testcapi_heaptype_module,
-        "HeapCTypeSubclass"
-    );
-    if (new_type == NULL) {
-        goto cleanup;
-    }
-
-    if (PyObject_SetAttrString(self, "__class__", new_type) < 0) {
-        goto cleanup;
-    }
-
-    refcnt = PyLong_FromSsize_t(((PyObject *)old_type)->ob_refcnt);
-    if (refcnt == NULL) {
-        goto cleanup;
-    }
-    if (PyObject_SetAttrString(old_type, "refcnt_in_del", refcnt) < 0) {
-        goto cleanup;
-    }
-    Py_DecRef(refcnt);
-    refcnt = PyLong_FromSsize_t(((PyObject *)new_type)->ob_refcnt);
-    if (refcnt == NULL) {
-        goto cleanup;
-    }
-    if (PyObject_SetAttrString(new_type, "refcnt_in_del", refcnt) < 0) {
-        goto cleanup;
-    }
-
-cleanup:
-    if (old_type != NULL) {
-        Py_DecRef(old_type);
-    }
-    if (new_type != NULL) {
-        Py_DecRef(new_type);
-    }
-    if (refcnt != NULL) {
-        Py_DecRef(refcnt);
-    }
-    PyErr_SetRaisedException(saved_exception);
-}
-
-static PyType_Slot pyrs_heapctypesubclass_with_finalizer_slots[] = {
-    {Py_tp_init, pyrs_heapctypesubclass_with_finalizer_init},
-    {Py_tp_members, pyrs_heapctypesubclass_members},
-    {Py_tp_finalize, pyrs_heapctypesubclass_with_finalizer_finalize},
-    {Py_tp_doc, "HeapCType subclass whose finalizer reassigns __class__."},
-    {0, NULL},
-};
-
-static PyType_Spec pyrs_heapctypesubclass_with_finalizer_spec = {
-    "_testcapi.HeapCTypeSubclassWithFinalizer",
-    (int)sizeof(pyrs_heapctypesubclass_object),
-    0,
-    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_FINALIZE,
-    pyrs_heapctypesubclass_with_finalizer_slots,
-};
-
-int pyrs_testcapi_init_heaptype_types(void *module)
-{
-    void *base_type = NULL;
-    void *subclass_bases = NULL;
-    void *subclass_type = NULL;
-    void *finalizer_bases = NULL;
-    void *finalizer_type = NULL;
-
-    pyrs_testcapi_heaptype_module = module;
-
-    base_type = PyType_FromSpec(&pyrs_heapctype_spec);
-    if (base_type == NULL) {
-        goto error;
-    }
-    subclass_bases = PyTuple_Pack(1, base_type);
-    Py_DecRef(base_type);
-    base_type = NULL;
-    if (subclass_bases == NULL) {
-        goto error;
-    }
-    subclass_type = PyType_FromSpecWithBases(&pyrs_heapctypesubclass_spec, subclass_bases);
-    Py_DecRef(subclass_bases);
-    subclass_bases = NULL;
-    if (subclass_type == NULL) {
-        goto error;
-    }
-    if (PyModule_AddType(module, subclass_type) < 0) {
-        goto error;
-    }
-
-    finalizer_bases = PyTuple_Pack(1, subclass_type);
-    if (finalizer_bases == NULL) {
-        goto error;
-    }
-    finalizer_type = PyType_FromSpecWithBases(
-        &pyrs_heapctypesubclass_with_finalizer_spec,
-        finalizer_bases
-    );
-    Py_DecRef(finalizer_bases);
-    finalizer_bases = NULL;
-    if (finalizer_type == NULL) {
-        goto error;
-    }
-    if (PyModule_AddType(module, finalizer_type) < 0) {
-        goto error;
-    }
-
-    Py_DecRef(subclass_type);
-    Py_DecRef(finalizer_type);
-    return 0;
-
-error:
-    if (base_type != NULL) {
-        Py_DecRef(base_type);
-    }
-    if (subclass_bases != NULL) {
-        Py_DecRef(subclass_bases);
-    }
-    if (subclass_type != NULL) {
-        Py_DecRef(subclass_type);
-    }
-    if (finalizer_bases != NULL) {
-        Py_DecRef(finalizer_bases);
-    }
-    if (finalizer_type != NULL) {
-        Py_DecRef(finalizer_type);
-    }
-    return -1;
 }
 
 int _PyArg_CheckPositional(const char *name, Py_ssize_t nargs, Py_ssize_t min, Py_ssize_t max)
@@ -7043,7 +4576,7 @@ static int pyrs_clock_gettime_realtime(struct timespec *ts)
 #endif
 }
 
-static void pyrs_init_pyctype_tables_impl(void)
+PYRS_CONSTRUCTOR_FUNC(pyrs_init_pyctype_tables)
 {
     for (int i = 0; i < 256; i++) {
         if (i >= 'A' && i <= 'Z') {
@@ -7064,29 +4597,4 @@ static void pyrs_init_pyctype_tables_impl(void)
         _Py_HashSecret.siphash.k1 = ((uint64_t)ts.tv_nsec << 32) ^ (uint64_t)(uintptr_t)&_Py_HashSecret;
         _Py_HashSecret.expat.hashsalt = (Py_hash_t)(_Py_HashSecret.siphash.k0 ^ _Py_HashSecret.siphash.k1);
     }
-}
-
-#if defined(_WIN32)
-static INIT_ONCE pyrs_pyctype_tables_once = INIT_ONCE_STATIC_INIT;
-
-static BOOL CALLBACK pyrs_init_pyctype_tables_once(PINIT_ONCE init_once, PVOID param, PVOID *context)
-{
-    (void)init_once;
-    (void)param;
-    (void)context;
-    pyrs_init_pyctype_tables_impl();
-    return TRUE;
-}
-#else
-static pthread_once_t pyrs_pyctype_tables_once = PTHREAD_ONCE_INIT;
-#endif
-
-__attribute__((used, visibility("default")))
-void pyrs_capi_ensure_runtime_tables(void)
-{
-#if defined(_WIN32)
-    InitOnceExecuteOnce(&pyrs_pyctype_tables_once, pyrs_init_pyctype_tables_once, NULL, NULL);
-#else
-    pthread_once(&pyrs_pyctype_tables_once, pyrs_init_pyctype_tables_impl);
-#endif
 }

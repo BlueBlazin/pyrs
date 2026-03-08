@@ -11,7 +11,6 @@ use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_uint, c_ulong, 
 use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, Once, OnceLock};
 
-use self::cpython_context_runtime::ActiveCpythonContextGuard;
 use super::capi_registry::{BorrowedRef, CapiPtrProvenance, CapiRefKind, OwnedRef, StolenRef};
 use super::{
     BYTES_BACKING_STORAGE_ATTR, ExtensionCallableKind, GeneratorResumeOutcome, InternalCallOutcome,
@@ -28,8 +27,7 @@ use crate::extensions::{
 };
 use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, DictViewKind, InstanceObject,
-    NativeMethodKind, NativeMethodObject, ObjDropHook, Object, RuntimeError,
-    TestCapiStringParseKind, Value, register_obj_drop_hook, value_lookup_hash,
+    NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value, value_lookup_hash,
 };
 use crate::vm::ExtensionModuleStateEntry;
 
@@ -138,8 +136,9 @@ use self::cpython_args_runtime::{
 };
 use self::cpython_bigint_runtime::{
     cpython_asnativebytes_resolve_endian, cpython_bigint_from_twos_complement_le,
-    cpython_bigint_from_value, cpython_bigint_to_twos_complement_le,
-    cpython_required_signed_bytes_for_bigint, cpython_required_unsigned_bytes_for_bigint,
+    cpython_bigint_from_value, cpython_bigint_low_u64, cpython_bigint_to_twos_complement_le,
+    cpython_bigint_to_u64, cpython_required_signed_bytes_for_bigint,
+    cpython_required_unsigned_bytes_for_bigint,
 };
 use self::cpython_bytes_api::{
     _PyBytes_Join, _PyBytes_Resize, PyByteArray_AsString, PyByteArray_Concat,
@@ -392,7 +391,7 @@ use self::cpython_slot_runtime::{
     cpython_unicode_text_from_value, cpython_valid_type_ptr,
 };
 use self::cpython_string_runtime::{
-    c_name_to_bytes, c_name_to_string, c_wide_name_to_string, cpython_string_to_wide_units,
+    c_name_to_string, c_wide_name_to_string, cpython_string_to_wide_units,
     cpython_wide_ptr_to_string,
 };
 use self::cpython_sys_thread_api::{
@@ -426,13 +425,14 @@ use self::cpython_thread_runtime::{
     cpython_get_or_init_constant_ptr, cpython_get_or_init_wide_storage,
     cpython_gil_acquire_for_current_thread, cpython_gil_current_thread_holds,
     cpython_gil_release_for_current_thread, cpython_gilstate_visible_thread_state_ptr,
-    cpython_heap_type_registry, cpython_init_thread_state_compat,
-    cpython_interpreter_state_allocations, cpython_is_interned_unicode_ptr,
-    cpython_is_known_interpreter_state_ptr, cpython_is_known_thread_state_ptr,
-    cpython_lookup_interned_unicode_ptr, cpython_lookup_interned_unicode_text,
-    cpython_main_interpreter_state_ptr, cpython_main_thread_state_ptr,
-    cpython_mark_pending_interrupt, cpython_mark_thread_runtime_initialized, cpython_pending_calls,
-    cpython_read_sys_path_string, cpython_read_sys_string, cpython_register_interned_unicode,
+    cpython_heap_type_registry,
+    cpython_init_thread_state_compat, cpython_interpreter_state_allocations,
+    cpython_is_interned_unicode_ptr, cpython_is_known_interpreter_state_ptr,
+    cpython_is_known_thread_state_ptr, cpython_lookup_interned_unicode_ptr,
+    cpython_lookup_interned_unicode_text, cpython_main_interpreter_state_ptr,
+    cpython_main_thread_state_ptr, cpython_mark_pending_interrupt,
+    cpython_mark_thread_runtime_initialized, cpython_pending_calls, cpython_read_sys_path_string,
+    cpython_read_sys_string, cpython_register_interned_unicode,
     cpython_set_current_thread_state_ptr, cpython_set_wide_storage, cpython_store_argv_wide,
     cpython_structseq_registry, cpython_take_pending_interrupt_signum,
     cpython_thread_lock_registry, cpython_thread_runtime_initialized,
@@ -618,182 +618,6 @@ fn is_cpython_proxy_class(class_data: &ClassObject) -> bool {
         class_data.attrs.get(CPY_PROXY_MARKER_ATTR),
         Some(Value::Bool(true))
     ) || class_data.name == CPY_PROXY_CLASS_NAME
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CpythonProxyPtrOwnership {
-    ExternalBorrowed,
-    ExternalOwnedRef,
-    OwnedCompat,
-}
-
-impl CpythonProxyPtrOwnership {
-    fn drop_provenance(self) -> usize {
-        match self {
-            Self::ExternalBorrowed => 0,
-            Self::ExternalOwnedRef => 1,
-            Self::OwnedCompat => 2,
-        }
-    }
-
-    fn from_drop_provenance(provenance: usize) -> Option<Self> {
-        match provenance {
-            0 => Some(Self::ExternalBorrowed),
-            1 => Some(Self::ExternalOwnedRef),
-            2 => Some(Self::OwnedCompat),
-            _ => None,
-        }
-    }
-
-    fn is_owned_compat(self) -> bool {
-        matches!(self, Self::OwnedCompat)
-    }
-}
-
-unsafe fn cpython_proxy_instance_drop_hook(
-    _heap_instance_id: u64,
-    object_id: u64,
-    vm_ptr: usize,
-    raw_ptr: usize,
-    provenance: usize,
-) {
-    if super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_DROP") {
-        let raw_type_name = unsafe {
-            (raw_ptr as *mut c_void)
-                .cast::<CpythonObjectHead>()
-                .as_ref()
-                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
-                .filter(|type_ptr| !type_ptr.is_null())
-                .and_then(|type_ptr| c_name_to_string((*type_ptr).tp_name).ok())
-                .unwrap_or_else(|| "<unknown>".to_string())
-        };
-        eprintln!(
-            "[cpy-proxy-drop] hook-fire object_id={} raw_ptr={:p} provenance={} raw_type={}",
-            object_id, raw_ptr as *mut c_void, provenance, raw_type_name
-        );
-    }
-    let vm_ptr = vm_ptr as *mut Vm;
-    if vm_ptr.is_null() {
-        return;
-    }
-    let Some(ownership) = CpythonProxyPtrOwnership::from_drop_provenance(provenance) else {
-        return;
-    };
-    unsafe {
-        (&mut *vm_ptr).release_cpython_proxy_instance_from_drop(
-            raw_ptr as *mut c_void,
-            object_id,
-            ownership,
-        );
-    }
-}
-
-impl Vm {
-    fn register_cpython_proxy_instance_drop_hook(
-        &mut self,
-        proxy: &Value,
-        raw_ptr: *mut c_void,
-        ownership: CpythonProxyPtrOwnership,
-    ) {
-        let Value::Instance(instance_obj) = proxy else {
-            return;
-        };
-        if super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_DROP") {
-            let class_name = match &*instance_obj.kind() {
-                Object::Instance(instance_data) => match &*instance_data.class.kind() {
-                    Object::Class(class_data) => class_data.name.clone(),
-                    _ => "<non-class>".to_string(),
-                },
-                _ => "<non-instance>".to_string(),
-            };
-            let raw_type_name = unsafe {
-                raw_ptr
-                    .cast::<CpythonObjectHead>()
-                    .as_ref()
-                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
-                    .filter(|type_ptr| !type_ptr.is_null())
-                    .and_then(|type_ptr| c_name_to_string((*type_ptr).tp_name).ok())
-                    .unwrap_or_else(|| "<unknown>".to_string())
-            };
-            eprintln!(
-                "[cpy-proxy-drop] register object_id={} class={} raw_ptr={:p} ownership={:?} raw_type={}",
-                instance_obj.id(),
-                class_name,
-                raw_ptr,
-                ownership,
-                raw_type_name
-            );
-        }
-        register_obj_drop_hook(
-            instance_obj.heap_instance_id(),
-            instance_obj.id(),
-            ObjDropHook {
-                callback: cpython_proxy_instance_drop_hook,
-                arg0: self as *mut Vm as usize,
-                arg1: raw_ptr as usize,
-                arg2: ownership.drop_provenance(),
-            },
-        );
-    }
-
-    fn release_cpython_proxy_instance_from_drop(
-        &mut self,
-        raw_ptr: *mut c_void,
-        object_id: u64,
-        ownership: CpythonProxyPtrOwnership,
-    ) {
-        if raw_ptr.is_null() || self.is_finalizing {
-            return;
-        }
-        self.extension_cpython_ptr_value_remove(raw_ptr as usize);
-        if self
-            .extension_cpython_ptr_by_object_id
-            .get(&object_id)
-            .copied()
-            == Some(raw_ptr as usize)
-        {
-            self.extension_cpython_ptr_by_object_id.remove(&object_id);
-        }
-        if ownership.is_owned_compat() {
-            self.capi_unpin_owned_ptr(raw_ptr as usize);
-        } else {
-            self.capi_registry_unpin_external(raw_ptr as usize);
-        }
-        // SAFETY: `raw_ptr` remains live for the duration of the refcount release path.
-        let current_refcount =
-            unsafe { (*raw_ptr.cast::<CpythonObjectHead>()).ob_refcnt.max(0) as usize };
-        if super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_DROP") {
-            let raw_type_name = unsafe {
-                raw_ptr
-                    .cast::<CpythonObjectHead>()
-                    .as_ref()
-                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
-                    .filter(|type_ptr| !type_ptr.is_null())
-                    .and_then(|type_ptr| c_name_to_string((*type_ptr).tp_name).ok())
-                    .unwrap_or_else(|| "<unknown>".to_string())
-            };
-            eprintln!(
-                "[cpy-proxy-drop] release object_id={} raw_ptr={:p} ownership={:?} refcnt={} raw_type={}",
-                object_id, raw_ptr, ownership, current_refcount, raw_type_name
-            );
-        }
-        if current_refcount == 0 {
-            return;
-        }
-        let mut release_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        release_ctx.suppress_vm_proxy_persistence = true;
-        let _active_context_guard =
-            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(release_ctx));
-        let _ = release_ctx.cpython_value_from_ptr_or_proxy(raw_ptr);
-        if let Some(handle) = release_ctx.cpython_handle_from_ptr(raw_ptr) {
-            release_ctx.set_object_refcount(handle, current_refcount);
-            release_ctx.sync_cpython_header_refcount(handle);
-        }
-        // SAFETY: the temporary context above is active for the duration of the decref.
-        unsafe {
-            Py_DecRef(raw_ptr);
-        }
-    }
 }
 
 struct CapiObjectSlot {
@@ -1939,8 +1763,7 @@ fn cpython_exception_value_from_ptr(raw: usize) -> Option<Value> {
             // SAFETY: exception symbol pointers are process-global and stable.
             unsafe {
                 let symbol = $symbol as usize;
-                let symbol_storage = std::ptr::addr_of_mut!($symbol) as usize;
-                if raw == symbol_storage || (symbol != 0 && raw == symbol) {
+                if symbol != 0 && raw == symbol {
                     return Some(Value::ExceptionType($name.to_string()));
                 }
             }
@@ -3674,7 +3497,7 @@ fn cpython_call_noargs_attr_on_self(self_obj: *mut c_void, attr_name: &str) -> *
             match cpython_call_internal_in_context(context, callable, Vec::new(), HashMap::new()) {
                 Ok(value) => value,
                 Err(err) => {
-                    context.set_error_from_runtime_error(err);
+                    context.set_error(err);
                     return std::ptr::null_mut();
                 }
             };
@@ -4239,7 +4062,6 @@ struct ModuleCapiContext {
     run_capsule_destructors_on_drop: bool,
     strict_capsule_refcount: bool,
     keep_cpython_allocations_on_drop: bool,
-    suppress_vm_proxy_persistence: bool,
     next_object_handle: PyrsObjectHandle,
     objects: HashMap<PyrsObjectHandle, CapiObjectSlot>,
     capsules: HashMap<PyrsObjectHandle, CapiCapsuleSlot>,
@@ -4496,7 +4318,7 @@ impl Drop for ModuleCapiContext {
             if !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for context lifetime.
                 let vm = unsafe { &mut *self.vm };
-                if let Some(value) = vm.extension_cpython_ptr_value_remove(raw as usize)
+                if let Some(value) = vm.extension_cpython_ptr_values.remove(&(raw as usize))
                     && let Some(object_id) = Self::identity_object_id(&value)
                     && vm
                         .extension_cpython_ptr_by_object_id
@@ -4880,10 +4702,8 @@ impl ModuleCapiContext {
         if child_ptr.is_null() || !self.owns_cpython_allocation_ptr(child_ptr) {
             return;
         }
-        let mut newly_pinned = false;
         if vm.capi_pin_owned_ptr(child_ptr as usize) {
             vm.capi_registry_mark_alive(child_ptr as usize);
-            newly_pinned = true;
         }
         if let Some(handle) = self
             .cpython_objects_by_ptr
@@ -4891,14 +4711,12 @@ impl ModuleCapiContext {
             .copied()
             && let Some(value) = self.object_value(handle)
         {
-            vm.extension_cpython_ptr_value_set(child_ptr as usize, &value);
+            vm.extension_cpython_ptr_values
+                .insert(child_ptr as usize, value.clone());
             if let Some(object_id) = Self::identity_object_id(&value) {
                 vm.extension_cpython_ptr_by_object_id
                     .insert(object_id, child_ptr as usize);
             }
-        }
-        if newly_pinned {
-            self.pin_container_children_for_vm(vm, child_ptr.cast::<CpythonCompatObject>());
         }
     }
 
@@ -4916,17 +4734,6 @@ impl ModuleCapiContext {
             // Without this, objects that survive across active C-API contexts can end up with a
             // dangling `ob_type` pointer once the owning context frees heap-type allocations.
             self.pin_owned_child_pointer_for_vm(vm, head_ref.ob_type);
-            if cpython_is_type_object_ptr(raw.cast()) {
-                let type_ptr = raw.cast::<CpythonTypeObject>();
-                self.pin_owned_child_pointer_for_vm(vm, (*type_ptr).tp_base.cast::<c_void>());
-                self.pin_owned_child_pointer_for_vm(vm, (*type_ptr).tp_dict);
-                self.pin_owned_child_pointer_for_vm(vm, (*type_ptr).tp_bases);
-                self.pin_owned_child_pointer_for_vm(vm, (*type_ptr).tp_mro);
-                if ((*type_ptr).tp_flags & PY_TPFLAGS_HEAPTYPE) != 0 {
-                    let heap_type = type_ptr.cast::<CpythonHeapTypeObject>();
-                    self.pin_owned_child_pointer_for_vm(vm, (*heap_type).ht_module);
-                }
-            }
             if head_ref.ob_type == std::ptr::addr_of_mut!(PyTuple_Type).cast() {
                 let len = (*raw.cast::<CpythonVarObjectHead>()).ob_size.max(0) as usize;
                 let items_ptr = cpython_tuple_items_ptr(raw.cast());
@@ -4967,7 +4774,6 @@ impl ModuleCapiContext {
             run_capsule_destructors_on_drop: true,
             strict_capsule_refcount: true,
             keep_cpython_allocations_on_drop: false,
-            suppress_vm_proxy_persistence: false,
             next_object_handle: 1,
             objects: HashMap::new(),
             capsules: HashMap::new(),
@@ -5047,31 +4853,20 @@ impl ModuleCapiContext {
         }
         match self.cpython_value_from_ptr(value) {
             Some(Value::Str(message)) => message,
-            Some(Value::Exception(err)) => err.message.unwrap_or(err.name),
-            Some(Value::Instance(instance)) if self.vm.is_null() => "error".to_string(),
-            Some(Value::Instance(instance)) => {
-                // SAFETY: VM pointer is valid while CPython init context is active.
-                let vm = unsafe { &mut *self.vm };
-                if !cpython_is_exception_instance(self, &instance) {
-                    if let Ok(text) = vm.call_builtin(
-                        BuiltinFunction::Str,
-                        vec![Value::Instance(instance.clone())],
-                        HashMap::new(),
-                    ) && let Value::Str(message) = text
-                        && !message.is_empty()
-                    {
-                        return message;
-                    }
-                    return format!(
-                        "{} object",
-                        vm.value_type_name_for_error(&Value::Instance(instance))
-                    );
+            Some(Value::Exception(err)) => {
+                if err
+                    .message
+                    .as_deref()
+                    .map_or(true, |message| message.is_empty())
+                {
+                    err.name
+                } else {
+                    format!(
+                        "{}: {}",
+                        err.name,
+                        err.message.unwrap_or_else(|| "error".to_string())
+                    )
                 }
-                vm.exception_message_for_instance(&instance)
-                    .unwrap_or_else(|| {
-                        vm.exception_class_name_for_instance(&instance)
-                            .unwrap_or_else(|| "error".to_string())
-                    })
             }
             Some(other) => {
                 if self.vm.is_null() {
@@ -5453,49 +5248,6 @@ impl ModuleCapiContext {
         self.set_error_message(message);
     }
 
-    fn set_error_from_runtime_error(&mut self, err: RuntimeError) {
-        let RuntimeError { message, exception } = err;
-        let exception = exception.or_else(|| RuntimeError::new(message.clone()).exception);
-        if let Some(exception_obj) = exception {
-            let exception_name = exception_obj.name.clone();
-            let exception_class_value = exception_obj
-                .attrs
-                .borrow()
-                .get("__class__")
-                .cloned()
-                .and_then(|value| match value {
-                    Value::Class(class) => Some(Value::Class(class)),
-                    Value::ExceptionType(name) => Some(Value::ExceptionType(name)),
-                    _ => None,
-                });
-            let ptype = exception_class_value
-                .map(|value| self.alloc_cpython_ptr_for_value(value))
-                .filter(|ptr| !ptr.is_null())
-                .or_else(|| cpython_exception_ptr_for_name(&exception_name))
-                .unwrap_or(std::ptr::null_mut());
-            let pvalue = self.alloc_cpython_ptr_for_value(Value::Exception(exception_obj));
-            if !pvalue.is_null() {
-                let resolved_ptype = if ptype.is_null() {
-                    cpython_exception_type_ptr(pvalue).cast()
-                } else {
-                    ptype
-                };
-                self.set_error_state(
-                    if resolved_ptype.is_null() {
-                        unsafe { PyExc_RuntimeError }
-                    } else {
-                        resolved_ptype
-                    },
-                    pvalue,
-                    std::ptr::null_mut(),
-                    message,
-                );
-                return;
-            }
-        }
-        self.set_error(message);
-    }
-
     fn exception_name_from_value(&self, value: &Value) -> Option<String> {
         match value {
             Value::Exception(exception_obj) => Some(exception_obj.name.clone()),
@@ -5728,12 +5480,6 @@ impl ModuleCapiContext {
         handle
     }
 
-    fn set_object_refcount(&mut self, handle: PyrsObjectHandle, refcount: usize) {
-        if let Some(slot) = self.objects.get_mut(&handle) {
-            slot.refcount = refcount;
-        }
-    }
-
     fn register_owned_compat_allocation(
         &mut self,
         handle: PyrsObjectHandle,
@@ -5771,7 +5517,8 @@ impl ModuleCapiContext {
             let vm = unsafe { &mut *self.vm };
             let mut object_id = None;
             if let Some(value) = self.object_value(handle) {
-                vm.extension_cpython_ptr_value_set(raw as usize, &value);
+                vm.extension_cpython_ptr_values
+                    .insert(raw as usize, value.clone());
                 if let Some(id) = Self::identity_object_id(&value) {
                     object_id = Some(id);
                     vm.extension_cpython_ptr_by_object_id
@@ -7049,13 +6796,14 @@ impl ModuleCapiContext {
                         object_id,
                         raw_ptr as *mut c_void,
                         vm.capi_owned_ptr_is_pinned(raw_ptr),
-                        vm.extension_cpython_ptr_contains_live(raw_ptr)
+                        vm.extension_cpython_ptr_values.contains_key(&raw_ptr)
                     );
                 }
                 if vm.capi_owned_ptr_is_pinned(raw_ptr)
-                    && vm.extension_cpython_ptr_contains_live(raw_ptr)
+                    && vm.extension_cpython_ptr_values.contains_key(&raw_ptr)
                 {
-                    vm.extension_cpython_ptr_value_set(raw_ptr, &value);
+                    vm.extension_cpython_ptr_values
+                        .insert(raw_ptr, value.clone());
                     if trace_bound_ptr && is_bound_method {
                         eprintln!(
                             "[bound-method-ptr] reuse object_id={} ptr={:p}",
@@ -7258,7 +7006,7 @@ impl ModuleCapiContext {
                     if !self.vm.is_null() {
                         // SAFETY: VM pointer is valid for active C-API context lifetime.
                         let vm = unsafe { &mut *self.vm };
-                        vm.extension_cpython_ptr_value_remove(object as usize);
+                        vm.extension_cpython_ptr_values.remove(&(object as usize));
                         if let Some(object_id) = Self::identity_object_id(&value)
                             && vm
                                 .extension_cpython_ptr_by_object_id
@@ -7277,7 +7025,7 @@ impl ModuleCapiContext {
         if !self.vm.is_null() {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             let vm = unsafe { &mut *self.vm };
-            if let Some(value) = vm.extension_cpython_ptr_value(raw) {
+            if let Some(value) = vm.extension_cpython_ptr_values.get(&raw).cloned() {
                 if super::env_var_present_cached("PYRS_TRACE_METHOD_MAP_SOURCE")
                     && matches!(value, Value::BoundMethod(_))
                 {
@@ -7299,7 +7047,7 @@ impl ModuleCapiContext {
                             cpython_value_debug_tag(&value)
                         );
                     }
-                    vm.extension_cpython_ptr_value_remove(raw);
+                    vm.extension_cpython_ptr_values.remove(&raw);
                     if let Some(object_id) = Self::identity_object_id(&value)
                         && vm
                             .extension_cpython_ptr_by_object_id
@@ -7339,10 +7087,7 @@ impl ModuleCapiContext {
             let vm = unsafe { &mut *self.vm };
             vm.capi_registry_record_ref_kind(borrowed.ptr(), CapiRefKind::Borrowed);
         }
-        self.cpython_value_from_ptr_or_proxy_with_external_ref_kind(
-            object,
-            CpythonProxyPtrOwnership::ExternalBorrowed,
-        )
+        self.cpython_value_from_ptr_or_proxy(object)
     }
 
     fn cpython_value_from_owned_ptr(&mut self, object: *mut c_void) -> Option<Value> {
@@ -7352,10 +7097,11 @@ impl ModuleCapiContext {
             let vm = unsafe { &mut *self.vm };
             vm.capi_registry_record_ref_kind(owned.ptr(), CapiRefKind::Owned);
         }
-        self.cpython_value_from_ptr_or_proxy_with_external_ref_kind(
-            object,
-            CpythonProxyPtrOwnership::ExternalOwnedRef,
-        )
+        // Owned references can escape a short-lived C-API call context (for example
+        // return values cached in runtime objects). Pin compat-owned pointers at the
+        // VM level before conversion so context teardown cannot reclaim escaped objects.
+        self.pin_owned_cpython_allocation_for_vm(object);
+        self.cpython_value_from_ptr_or_proxy(object)
     }
 
     fn cpython_value_from_stolen_ptr(&mut self, object: *mut c_void) -> Option<Value> {
@@ -7365,10 +7111,10 @@ impl ModuleCapiContext {
             let vm = unsafe { &mut *self.vm };
             vm.capi_registry_record_ref_kind(stolen.ptr(), CapiRefKind::Stolen);
         }
-        self.cpython_value_from_ptr_or_proxy_with_external_ref_kind(
-            object,
-            CpythonProxyPtrOwnership::ExternalOwnedRef,
-        )
+        // Stolen references transfer ownership to the callee; pin compat-owned pointers
+        // to avoid use-after-free when the originating C-API context is dropped.
+        self.pin_owned_cpython_allocation_for_vm(object);
+        self.cpython_value_from_ptr_or_proxy(object)
     }
 
     fn refresh_external_proxy_instance_type(
@@ -7867,12 +7613,6 @@ impl ModuleCapiContext {
             );
         }
         if is_type_object {
-            let seeded_value = Value::Class(proxy_class.clone());
-            vm.extension_cpython_ptr_value_set(object as usize, &seeded_value);
-            if let Some(object_id) = Self::identity_object_id(&seeded_value) {
-                vm.extension_cpython_ptr_by_object_id
-                    .insert(object_id, object as usize);
-            }
             self.populate_proxy_class_layout_attrs_from_type_object(&proxy_class, object);
             self.populate_proxy_class_attrs_from_type_dict(&proxy_class, object);
             if let Object::Class(class_data) = &mut *proxy_class.kind_mut() {
@@ -7907,18 +7647,6 @@ impl ModuleCapiContext {
 
     #[track_caller]
     fn cpython_value_from_ptr_or_proxy(&mut self, object: *mut c_void) -> Option<Value> {
-        self.cpython_value_from_ptr_or_proxy_with_external_ref_kind(
-            object,
-            CpythonProxyPtrOwnership::ExternalBorrowed,
-        )
-    }
-
-    #[track_caller]
-    fn cpython_value_from_ptr_or_proxy_with_external_ref_kind(
-        &mut self,
-        object: *mut c_void,
-        external_ref_kind: CpythonProxyPtrOwnership,
-    ) -> Option<Value> {
         let depth = CPY_PTR_MAP_DEPTH.with(|depth| {
             let next = depth.get().saturating_add(1);
             depth.set(next);
@@ -7939,16 +7667,6 @@ impl ModuleCapiContext {
             );
         }
         if let Some(value) = self.cpython_value_from_ptr(object) {
-            if !self.owns_cpython_allocation_ptr(object)
-                && matches!(
-                    external_ref_kind,
-                    CpythonProxyPtrOwnership::ExternalOwnedRef
-                )
-            {
-                unsafe {
-                    Py_DecRef(object);
-                }
-            }
             return Some(value);
         }
         if object.is_null() || self.vm.is_null() {
@@ -8022,12 +7740,8 @@ impl ModuleCapiContext {
                 }
             };
             if likely_type_object && let Some(proxy) = self.cpython_external_proxy_value(object) {
-                let ownership = if owns_allocation {
-                    CpythonProxyPtrOwnership::OwnedCompat
-                } else {
-                    external_ref_kind
-                };
-                let proxy = self.cache_cpython_proxy_value_for_ptr(object, proxy, ownership, true);
+                let proxy =
+                    self.cache_cpython_proxy_value_for_ptr(object, proxy, owns_allocation, true);
                 if super::env_var_present_cached("PYRS_TRACE_CPY_UNKNOWN_PTR") {
                     eprintln!(
                         "[cpy-proxy-type-fallback] ptr={:p} owns={} probable=false type_like={}",
@@ -8058,15 +7772,10 @@ impl ModuleCapiContext {
             return None;
         }
         let proxy = self.cpython_external_proxy_value(object)?;
-        let ownership = if owns_allocation {
-            CpythonProxyPtrOwnership::OwnedCompat
-        } else {
-            external_ref_kind
-        };
         Some(self.cache_cpython_proxy_value_for_ptr(
             object,
             proxy,
-            ownership,
+            owns_allocation,
             registry_known_live && !probable_external,
         ))
     }
@@ -8075,49 +7784,39 @@ impl ModuleCapiContext {
         &mut self,
         object: *mut c_void,
         proxy: Value,
-        ownership: CpythonProxyPtrOwnership,
+        owns_allocation: bool,
         force_trace_fallback: bool,
     ) -> Value {
         let proxy_object_id = Self::identity_object_id(&proxy);
-        if !self.suppress_vm_proxy_persistence {
-            match ownership {
-                CpythonProxyPtrOwnership::ExternalBorrowed
-                | CpythonProxyPtrOwnership::ExternalOwnedRef => {
-                    self.capi_registry_register_external_ptr(object, proxy_object_id);
-                    let inserted = self.capi_registry_pin_external_once_ptr(object);
-                    if super::env_var_present_cached("PYRS_TRACE_CPY_PIN") || force_trace_fallback {
-                        eprintln!(
-                            "[cpy-pin] ptr={:p} branch=external ownership={:?} inserted={}",
-                            object, ownership, inserted
-                        );
-                    }
-                    if inserted {
-                        if matches!(ownership, CpythonProxyPtrOwnership::ExternalBorrowed) {
-                            // SAFETY: borrowed external proxies need one VM-owned incref so the
-                            // runtime wrapper can hold them alive across C-API context teardown.
-                            unsafe {
-                                Py_IncRef(object);
-                            }
-                        }
-                    } else if matches!(ownership, CpythonProxyPtrOwnership::ExternalOwnedRef) {
-                        // SAFETY: an existing live proxy already owns the canonical external
-                        // reference for this pointer; consume the extra owned ref now.
-                        unsafe {
-                            Py_DecRef(object);
-                        }
-                    }
-                }
-                CpythonProxyPtrOwnership::OwnedCompat => {
-                    self.capi_registry_register_owned_ptr(object, proxy_object_id);
-                    self.pin_owned_cpython_allocation_for_vm(object);
+        if !owns_allocation {
+            self.capi_registry_register_external_ptr(object, proxy_object_id);
+            // Keep external PyObject* proxies alive for the VM lifetime once they are
+            // materialized into runtime values. Context-scoped incref/decref churn can
+            // leave escaped proxy values pointing at reclaimed CPython objects.
+            let inserted = self.capi_registry_pin_external_once_ptr(object);
+            if super::env_var_present_cached("PYRS_TRACE_CPY_PIN") || force_trace_fallback {
+                eprintln!(
+                    "[cpy-pin] ptr={:p} branch=external inserted={}",
+                    object, inserted
+                );
+            }
+            if inserted {
+                // SAFETY: the pointer passed probability checks above and is now pinned
+                // for one matching decref in Vm::drop.
+                unsafe {
+                    Py_IncRef(object);
                 }
             }
-            if !self.vm.is_null() {
-                // SAFETY: VM pointer is valid for active C-API context lifetime.
-                let vm = unsafe { &mut *self.vm };
-                vm.extension_cpython_ptr_value_cache_if_absent(object as usize, &proxy);
-                vm.register_cpython_proxy_instance_drop_hook(&proxy, object, ownership);
-            }
+        } else {
+            self.capi_registry_register_owned_ptr(object, proxy_object_id);
+            self.pin_owned_cpython_allocation_for_vm(object);
+        }
+        if !self.vm.is_null() {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.extension_cpython_ptr_values
+                .entry(object as usize)
+                .or_insert_with(|| proxy.clone());
         }
         let handle = self.alloc_object(proxy.clone());
         if super::env_var_present_cached("PYRS_TRACE_CPY_PTRS") {
@@ -8913,26 +8612,6 @@ impl ModuleCapiContext {
                 let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<u8>()) };
                 Some(self.alloc_cpython_ptr_for_value(Value::Bool(raw != 0)))
             }
-            PY_MEMBER_T_BYTE => {
-                // SAFETY: BYTE members store a signed 8-bit integer.
-                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<i8>()) };
-                Some(self.alloc_cpython_ptr_for_value(Value::Int(raw as i64)))
-            }
-            PY_MEMBER_T_UBYTE => {
-                // SAFETY: UBYTE members store an unsigned 8-bit integer.
-                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<u8>()) };
-                Some(self.alloc_cpython_ptr_for_value(Value::Int(raw as i64)))
-            }
-            PY_MEMBER_T_SHORT => {
-                // SAFETY: SHORT members store a signed 16-bit integer.
-                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<i16>()) };
-                Some(self.alloc_cpython_ptr_for_value(Value::Int(raw as i64)))
-            }
-            PY_MEMBER_T_USHORT => {
-                // SAFETY: USHORT members store an unsigned 16-bit integer.
-                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<u16>()) };
-                Some(self.alloc_cpython_ptr_for_value(Value::Int(raw as i64)))
-            }
             PY_MEMBER_T_INT => {
                 // SAFETY: INT members store a native c_int.
                 let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<c_int>()) };
@@ -8979,34 +8658,6 @@ impl ModuleCapiContext {
                 // SAFETY: PYSSIZET members store a native `isize`.
                 let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<isize>()) };
                 Some(self.alloc_cpython_ptr_for_value(Value::Int(raw as i64)))
-            }
-            PY_MEMBER_T_FLOAT => {
-                // SAFETY: FLOAT members store an f32 payload.
-                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<f32>()) };
-                Some(self.alloc_cpython_ptr_for_value(Value::Float(raw as f64)))
-            }
-            PY_MEMBER_T_DOUBLE => {
-                // SAFETY: DOUBLE members store an f64 payload.
-                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<f64>()) };
-                Some(self.alloc_cpython_ptr_for_value(Value::Float(raw)))
-            }
-            PY_MEMBER_T_STRING => {
-                // SAFETY: STRING members store a `const char*`.
-                let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<*const c_char>()) };
-                if raw.is_null() {
-                    Some(self.alloc_cpython_ptr_for_value(Value::None))
-                } else {
-                    let text = unsafe { CStr::from_ptr(raw) }.to_str().ok()?.to_string();
-                    Some(self.alloc_cpython_ptr_for_value(Value::Str(text)))
-                }
-            }
-            PY_MEMBER_T_STRING_INPLACE => {
-                // SAFETY: STRING_INPLACE members are stored inline as a NUL-terminated buffer.
-                let text = unsafe { CStr::from_ptr(field_ptr.cast::<c_char>()) }
-                    .to_str()
-                    .ok()?
-                    .to_string();
-                Some(self.alloc_cpython_ptr_for_value(Value::Str(text)))
             }
             _ => None,
         }
@@ -9442,7 +9093,7 @@ impl ModuleCapiContext {
                                                     if trace_attr_max {
                                                         eprintln!(
                                                             "[cpy-lookup-max] runtime descriptor __get__ call failed err={}",
-                                                            err.message
+                                                            err
                                                         );
                                                     }
                                                 }
@@ -10515,7 +10166,6 @@ impl ModuleCapiContext {
             // SAFETY: kwnames tuple is call-local materialization and no longer needed after call.
             unsafe { Py_DecRef(kwnames_ptr) };
         }
-        self.sync_owned_compat_storage_from_raw();
         Some(result)
     }
 
@@ -10726,7 +10376,6 @@ impl ModuleCapiContext {
             );
         }
         let result = unsafe { call(callable, args_ptr, kwargs_ptr) };
-        self.sync_owned_compat_storage_from_raw();
         if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
             let type_name = unsafe {
                 c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
@@ -10860,12 +10509,8 @@ impl ModuleCapiContext {
         // `Value::Code` carries `Rc<CodeObject>` references that are frame-scoped and
         // should not be published into cross-context pointer caches.
         if !matches!(slot.value, Value::Code(_)) {
-            vm.extension_cpython_ptr_value_set(raw_ptr, &slot.value);
-            vm.register_cpython_proxy_instance_drop_hook(
-                &slot.value,
-                raw_ptr as *mut c_void,
-                CpythonProxyPtrOwnership::OwnedCompat,
-            );
+            vm.extension_cpython_ptr_values
+                .insert(raw_ptr, slot.value.clone());
         }
     }
 
@@ -11031,7 +10676,7 @@ impl ModuleCapiContext {
             if frame_freed && !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for active C-API context lifetime.
                 let vm = unsafe { &mut *self.vm };
-                vm.extension_cpython_ptr_value_remove(ptr_addr);
+                vm.extension_cpython_ptr_values.remove(&ptr_addr);
                 if let Some(object_id) = Self::identity_object_id(&slot.value)
                     && vm
                         .extension_cpython_ptr_by_object_id
@@ -11043,176 +10688,6 @@ impl ModuleCapiContext {
                 }
             }
         }
-    }
-
-    fn forget_released_object_handle(
-        &mut self,
-        handle: PyrsObjectHandle,
-    ) -> Option<(CapiObjectSlot, *mut c_void)> {
-        let slot = self.objects.remove(&handle)?;
-        if let Some(object_id) = Self::identity_object_id(&slot.value)
-            && self.cpython_object_handles_by_id.get(&object_id).copied() == Some(handle)
-        {
-            self.cpython_object_handles_by_id.remove(&object_id);
-        }
-        self.cpython_sync_in_progress.remove(&handle);
-        self.cpython_list_items_cache_by_handle.remove(&handle);
-        self.cpython_tuple_items_cache_by_handle.remove(&handle);
-        self.module_dict_handles.remove(&handle);
-        if self.thread_state_dict_handle == Some(handle) {
-            self.thread_state_dict_handle = None;
-        }
-        if self.interpreter_state_dict_handle == Some(handle) {
-            self.interpreter_state_dict_handle = None;
-        }
-        let ptr = self
-            .cpython_ptr_by_handle
-            .remove(&handle)
-            .unwrap_or(std::ptr::null_mut());
-        if !ptr.is_null() {
-            let ptr_addr = ptr as usize;
-            self.cpython_objects_by_ptr.remove(&ptr_addr);
-            if let Some(index) = self
-                .cpython_allocations
-                .iter()
-                .position(|owned| owned.cast::<c_void>() == ptr)
-            {
-                self.cpython_allocations.swap_remove(index);
-            }
-            self.cpython_known_type_ptrs.remove(&ptr_addr);
-            self.cpython_descriptors.remove(&ptr_addr);
-            if let Some((buffer, _)) = self.cpython_list_buffers.remove(&handle)
-                && !buffer.is_null()
-                && self.capi_owned_ptr_prepare_for_free(buffer.cast())
-            {
-                unsafe {
-                    free(buffer.cast());
-                }
-                self.capi_owned_ptr_mark_freed(buffer.cast(), "released-object list-buffer");
-            }
-            if let Some((buffer, _)) = self.cpython_bytearray_buffers.remove(&handle)
-                && !buffer.is_null()
-                && self.capi_owned_ptr_prepare_for_free(buffer.cast())
-            {
-                unsafe {
-                    free(buffer.cast());
-                }
-                self.capi_owned_ptr_mark_freed(buffer.cast(), "released-object bytearray-buffer");
-            }
-            if !self.vm.is_null() {
-                let vm = unsafe { &mut *self.vm };
-                vm.extension_cpython_ptr_value_remove(ptr_addr);
-                if let Some(object_id) = Self::identity_object_id(&slot.value)
-                    && vm
-                        .extension_cpython_ptr_by_object_id
-                        .get(&object_id)
-                        .copied()
-                        == Some(ptr_addr)
-                {
-                    vm.extension_cpython_ptr_by_object_id.remove(&object_id);
-                }
-            }
-        }
-        Some((slot, ptr))
-    }
-
-    fn release_object_handle_after_zero_ref(
-        &mut self,
-        handle: PyrsObjectHandle,
-    ) -> Result<(), String> {
-        let Some(ptr) = self.cpython_ptr_by_handle.get(&handle).copied() else {
-            let _ = self.forget_released_object_handle(handle);
-            return Ok(());
-        };
-        if ptr.is_null() {
-            let _ = self.forget_released_object_handle(handle);
-            return Ok(());
-        }
-        let header_refcount = unsafe { ptr.cast::<CpythonObjectHead>().as_ref() }
-            .map(|head| head.ob_refcnt.max(0) as usize)
-            .unwrap_or(0);
-        if header_refcount > 0 {
-            self.set_object_refcount(handle, header_refcount);
-            self.sync_cpython_header_refcount(handle);
-            return Ok(());
-        }
-        if !self.vm.is_null() {
-            let vm = unsafe { &mut *self.vm };
-            if !vm.capi_registry_is_gc_finalized(ptr as usize) {
-                unsafe {
-                    PyObject_CallFinalizerFromDealloc(ptr);
-                }
-                let _ = vm.capi_registry_set_gc_finalized(ptr as usize, true);
-            }
-        }
-        if self.owns_cpython_allocation_ptr(ptr) {
-            self.sync_cpython_storage_from_value(handle);
-        }
-        let resurrected = unsafe {
-            ptr.cast::<CpythonObjectHead>()
-                .as_ref()
-                .is_some_and(|head| head.ob_refcnt > 0)
-        };
-        if resurrected {
-            let resurrected_refcount = unsafe {
-                ptr.cast::<CpythonObjectHead>()
-                    .as_ref()
-                    .map(|head| head.ob_refcnt.max(0) as usize)
-                    .unwrap_or(1)
-            };
-            self.set_object_refcount(handle, resurrected_refcount);
-            self.sync_cpython_header_refcount(handle);
-            if !self.vm.is_null() {
-                let vm = unsafe { &mut *self.vm };
-                vm.capi_registry_mark_alive(ptr as usize);
-            }
-            return Ok(());
-        }
-
-        let type_ptr = unsafe {
-            ptr.cast::<CpythonObjectHead>()
-                .as_ref()
-                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
-                .unwrap_or(std::ptr::null_mut())
-        };
-        if !type_ptr.is_null() {
-            let tp_dealloc = unsafe { (*type_ptr).tp_dealloc };
-            if !tp_dealloc.is_null() {
-                let dealloc: unsafe extern "C" fn(*mut c_void) =
-                    unsafe { std::mem::transmute(tp_dealloc) };
-                unsafe {
-                    dealloc(ptr);
-                }
-            } else {
-                let tp_free = unsafe { (*type_ptr).tp_free };
-                if !tp_free.is_null() {
-                    let free_fn: unsafe extern "C" fn(*mut c_void) =
-                        unsafe { std::mem::transmute(tp_free) };
-                    unsafe {
-                        free_fn(ptr);
-                    }
-                } else {
-                    unsafe {
-                        free(ptr);
-                    }
-                }
-                if unsafe { ((*type_ptr).tp_flags & PY_TPFLAGS_HEAPTYPE) != 0 } {
-                    unsafe {
-                        Py_DecRef(type_ptr.cast::<c_void>());
-                    }
-                }
-            }
-        } else {
-            unsafe {
-                free(ptr);
-            }
-        }
-
-        let _ = self.forget_released_object_handle(handle);
-        if self.owns_cpython_allocation_ptr(ptr) {
-            self.capi_owned_ptr_mark_freed(ptr, "released-object compat");
-        }
-        Ok(())
     }
 
     fn decref(&mut self, handle: PyrsObjectHandle) -> Result<(), String> {
@@ -11236,17 +10711,14 @@ impl ModuleCapiContext {
             return Ok(());
         }
         if let Some(slot) = self.objects.get_mut(&handle) {
-            if slot.refcount > 0 {
+            // CPython ABI callers can keep raw pointers alive across opaque C paths where we
+            // cannot accurately mirror ownership in this shim. Keep handles pinned for the
+            // entire C-API context lifetime to preserve pointer stability.
+            if slot.refcount > 1 {
                 slot.refcount -= 1;
             }
-            let should_release = slot.refcount == 0;
-            if !should_release {
-                self.sync_cpython_header_refcount(handle);
-                return Ok(());
-            }
-        }
-        if self.objects.contains_key(&handle) {
-            return self.release_object_handle_after_zero_ref(handle);
+            self.sync_cpython_header_refcount(handle);
+            return Ok(());
         }
         if let Some(slot) = self.capsules.get_mut(&handle) {
             if !self.strict_capsule_refcount {
@@ -11881,21 +11353,6 @@ impl ModuleCapiContext {
         self.sync_cpython_storage_inner(handle, false);
     }
 
-    fn sync_owned_compat_storage_from_raw(&mut self) {
-        let handles = self
-            .cpython_ptr_by_handle
-            .iter()
-            .map(|(handle, ptr)| (*handle, *ptr))
-            .collect::<Vec<_>>();
-        for (handle, ptr) in handles {
-            if self.owns_cpython_allocation_ptr(ptr)
-                && self.cpython_handle_requires_storage_sync(handle)
-            {
-                self.sync_value_from_cpython_storage(handle, ptr);
-            }
-        }
-    }
-
     fn sync_cpython_storage_inner(&mut self, handle: PyrsObjectHandle, pull_from_raw: bool) {
         let Some(ptr) = self.cpython_ptr_by_handle.get(&handle).copied() else {
             return;
@@ -12427,7 +11884,8 @@ impl ModuleCapiContext {
         if !self.vm.is_null() {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             let vm = unsafe { &mut *self.vm };
-            vm.extension_cpython_ptr_value_set(ptr as usize, &Value::Class(updated_class));
+            vm.extension_cpython_ptr_values
+                .insert(ptr as usize, Value::Class(updated_class));
         }
     }
 
@@ -12614,18 +12072,19 @@ impl ModuleCapiContext {
         let mut object = {
             // SAFETY: VM pointer is valid for the context lifetime.
             let vm = unsafe { &mut *self.vm };
-            vm.import_module_value_sync(module_name).map_err(|_| {
-                if trace_capsule_import {
-                    eprintln!(
-                        "[capsule-import] import-fail module={} requested={}",
-                        module_name, requested_name
-                    );
-                }
-                format!(
-                    "PyCapsule_Import could not import module \"{}\"",
-                    module_name
-                )
-            })?
+            vm.import_module_value_sync(module_name)
+                .map_err(|_| {
+                    if trace_capsule_import {
+                        eprintln!(
+                            "[capsule-import] import-fail module={} requested={}",
+                            module_name, requested_name
+                        );
+                    }
+                    format!(
+                        "PyCapsule_Import could not import module \"{}\"",
+                        module_name
+                    )
+                })?
         };
         for part in parts {
             object = {
@@ -14479,35 +13938,6 @@ unsafe extern "C" {
         keywords: *mut *const c_char,
         vargs: *mut c_void,
     ) -> i32;
-    fn pyrs_testcapi_get_args(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_get_kwargs(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_empty(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_tuple(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_c(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_C(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_s(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_s_star(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_s_hash(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_z(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_z_star(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_z_hash(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_y(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_y_star(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_y_hash(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_es(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_et(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_es_hash(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_et_hash(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_w_star(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_getargs_w_star_opt(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_gh_99240_clear_args(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_parse_tuple_and_keywords(
-        args: *mut c_void,
-        kwargs: *mut c_void,
-    ) -> *mut c_void;
-    fn pyrs_testcapi_argparsing(args: *mut c_void, kwargs: *mut c_void) -> *mut c_void;
-    fn pyrs_testcapi_init_heaptype_types(module: *mut c_void) -> i32;
-    fn pyrs_testcapi_init_structmember_types(module: *mut c_void) -> i32;
     fn PyErr_Format(exception: *mut c_void, format: *const c_char, ...) -> *mut c_void;
     fn PyErr_FormatV(
         exception: *mut c_void,
@@ -14563,259 +13993,4 @@ unsafe fn capi_module_insert_value(
     };
     module_data.globals.insert(name, value);
     0
-}
-
-impl Vm {
-    fn call_testcapi_capi_helper(
-        &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-        helper: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void,
-        failure_label: &str,
-    ) -> Result<Value, RuntimeError> {
-        let args_tuple = self.heap.alloc_tuple(args);
-        let kwargs_value = if kwargs.is_empty() {
-            None
-        } else {
-            Some(
-                self.heap.alloc_dict(
-                    kwargs
-                        .into_iter()
-                        .map(|(name, value)| (Value::Str(name), value))
-                        .collect(),
-                ),
-            )
-        };
-        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let _active_context_guard =
-            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
-        let args_ptr = call_ctx.alloc_cpython_ptr_for_value(args_tuple);
-        if args_ptr.is_null() {
-            return Err(RuntimeError::new(format!(
-                "{failure_label}: failed to materialize args tuple",
-            )));
-        }
-        let kwargs_ptr = match kwargs_value {
-            Some(kwargs_value) => {
-                let ptr = call_ctx.alloc_cpython_ptr_for_value(kwargs_value);
-                if ptr.is_null() {
-                    return Err(RuntimeError::new(format!(
-                        "{failure_label}: failed to materialize kwargs dict",
-                    )));
-                }
-                ptr
-            }
-            None => std::ptr::null_mut(),
-        };
-        let result_ptr = unsafe { helper(args_ptr, kwargs_ptr) };
-        call_ctx.sync_owned_compat_storage_from_raw();
-        if result_ptr.is_null() {
-            if let Some(err) = call_ctx.runtime_error_from_current_error_state(failure_label) {
-                return Err(err);
-            }
-            return Err(RuntimeError::new(failure_label));
-        }
-        call_ctx
-            .cpython_value_from_owned_ptr(result_ptr)
-            .ok_or_else(|| RuntimeError::new(format!("{failure_label}: unknown result pointer")))
-    }
-
-    pub(in crate::vm) fn builtin_testcapi_get_args_via_capi(
-        &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-    ) -> Result<Value, RuntimeError> {
-        self.call_testcapi_capi_helper(args, kwargs, pyrs_testcapi_get_args, "get_args failed")
-    }
-
-    pub(in crate::vm) fn builtin_testcapi_get_kwargs_via_capi(
-        &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-    ) -> Result<Value, RuntimeError> {
-        self.call_testcapi_capi_helper(args, kwargs, pyrs_testcapi_get_kwargs, "get_kwargs failed")
-    }
-
-    pub(in crate::vm) fn builtin_testcapi_getargs_empty_via_capi(
-        &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-    ) -> Result<Value, RuntimeError> {
-        self.call_testcapi_capi_helper(
-            args,
-            kwargs,
-            pyrs_testcapi_getargs_empty,
-            "getargs_empty failed",
-        )
-    }
-
-    pub(in crate::vm) fn builtin_testcapi_getargs_tuple_via_capi(
-        &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-    ) -> Result<Value, RuntimeError> {
-        self.call_testcapi_capi_helper(
-            args,
-            kwargs,
-            pyrs_testcapi_getargs_tuple,
-            "getargs_tuple failed",
-        )
-    }
-
-    pub(in crate::vm) fn builtin_testcapi_getargs_string_via_capi(
-        &mut self,
-        kind: TestCapiStringParseKind,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-    ) -> Result<Value, RuntimeError> {
-        type TestCapiHelper = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
-        let (helper, label) = match kind {
-            TestCapiStringParseKind::LowerC => (
-                pyrs_testcapi_getargs_c as TestCapiHelper,
-                "getargs_c failed",
-            ),
-            TestCapiStringParseKind::UpperC => (
-                pyrs_testcapi_getargs_C as TestCapiHelper,
-                "getargs_C failed",
-            ),
-            TestCapiStringParseKind::LowerS => (
-                pyrs_testcapi_getargs_s as TestCapiHelper,
-                "getargs_s failed",
-            ),
-            TestCapiStringParseKind::LowerSStar => (
-                pyrs_testcapi_getargs_s_star as TestCapiHelper,
-                "getargs_s_star failed",
-            ),
-            TestCapiStringParseKind::LowerSHash => (
-                pyrs_testcapi_getargs_s_hash as TestCapiHelper,
-                "getargs_s_hash failed",
-            ),
-            TestCapiStringParseKind::LowerZ => (
-                pyrs_testcapi_getargs_z as TestCapiHelper,
-                "getargs_z failed",
-            ),
-            TestCapiStringParseKind::LowerZStar => (
-                pyrs_testcapi_getargs_z_star as TestCapiHelper,
-                "getargs_z_star failed",
-            ),
-            TestCapiStringParseKind::LowerZHash => (
-                pyrs_testcapi_getargs_z_hash as TestCapiHelper,
-                "getargs_z_hash failed",
-            ),
-            TestCapiStringParseKind::LowerY => (
-                pyrs_testcapi_getargs_y as TestCapiHelper,
-                "getargs_y failed",
-            ),
-            TestCapiStringParseKind::LowerYStar => (
-                pyrs_testcapi_getargs_y_star as TestCapiHelper,
-                "getargs_y_star failed",
-            ),
-            TestCapiStringParseKind::LowerYHash => (
-                pyrs_testcapi_getargs_y_hash as TestCapiHelper,
-                "getargs_y_hash failed",
-            ),
-            TestCapiStringParseKind::LowerEs => (
-                pyrs_testcapi_getargs_es as TestCapiHelper,
-                "getargs_es failed",
-            ),
-            TestCapiStringParseKind::LowerEt => (
-                pyrs_testcapi_getargs_et as TestCapiHelper,
-                "getargs_et failed",
-            ),
-            TestCapiStringParseKind::LowerEsHash => (
-                pyrs_testcapi_getargs_es_hash as TestCapiHelper,
-                "getargs_es_hash failed",
-            ),
-            TestCapiStringParseKind::LowerEtHash => (
-                pyrs_testcapi_getargs_et_hash as TestCapiHelper,
-                "getargs_et_hash failed",
-            ),
-            TestCapiStringParseKind::WStar => (
-                pyrs_testcapi_getargs_w_star as TestCapiHelper,
-                "getargs_w_star failed",
-            ),
-            TestCapiStringParseKind::WStarOpt => (
-                pyrs_testcapi_getargs_w_star_opt as TestCapiHelper,
-                "getargs_w_star_opt failed",
-            ),
-            TestCapiStringParseKind::Gh99240ClearArgs => (
-                pyrs_testcapi_gh_99240_clear_args as TestCapiHelper,
-                "gh_99240_clear_args failed",
-            ),
-        };
-        self.call_testcapi_capi_helper(args, kwargs, helper, label)
-    }
-
-    pub(in crate::vm) fn builtin_testcapi_parse_tuple_and_keywords_via_capi(
-        &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-    ) -> Result<Value, RuntimeError> {
-        self.call_testcapi_capi_helper(
-            args,
-            kwargs,
-            pyrs_testcapi_parse_tuple_and_keywords,
-            "parse_tuple_and_keywords failed",
-        )
-    }
-
-    pub(in crate::vm) fn builtin_testcapi_argparsing_via_capi(
-        &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-    ) -> Result<Value, RuntimeError> {
-        self.call_testcapi_capi_helper(args, kwargs, pyrs_testcapi_argparsing, "argparsing failed")
-    }
-
-    pub(in crate::vm) fn init_testcapi_structmember_types_via_capi(
-        &mut self,
-        module: ObjRef,
-    ) -> Result<(), RuntimeError> {
-        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, module.clone());
-        let _active_context_guard =
-            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
-        let module_ptr = call_ctx.alloc_cpython_ptr_for_value(Value::Module(module));
-        if module_ptr.is_null() {
-            return Err(RuntimeError::new(
-                "testcapi structmember init failed: failed to materialize module",
-            ));
-        }
-        let status = unsafe { pyrs_testcapi_init_structmember_types(module_ptr) };
-        call_ctx.sync_owned_compat_storage_from_raw();
-        if status == 0 {
-            return Ok(());
-        }
-        if let Some(err) =
-            call_ctx.runtime_error_from_current_error_state("testcapi structmember init failed")
-        {
-            return Err(err);
-        }
-        Err(RuntimeError::new("testcapi structmember init failed"))
-    }
-
-    pub(in crate::vm) fn init_testcapi_heaptype_types_via_capi(
-        &mut self,
-        module: ObjRef,
-    ) -> Result<(), RuntimeError> {
-        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, module.clone());
-        let _active_context_guard =
-            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
-        let module_ptr = call_ctx.alloc_cpython_ptr_for_value(Value::Module(module));
-        if module_ptr.is_null() {
-            return Err(RuntimeError::new(
-                "testcapi heaptype init failed: failed to materialize module",
-            ));
-        }
-        let status = unsafe { pyrs_testcapi_init_heaptype_types(module_ptr) };
-        call_ctx.sync_owned_compat_storage_from_raw();
-        if status == 0 {
-            return Ok(());
-        }
-        if let Some(err) =
-            call_ctx.runtime_error_from_current_error_state("testcapi heaptype init failed")
-        {
-            return Err(err);
-        }
-        Err(RuntimeError::new("testcapi heaptype init failed"))
-    }
 }

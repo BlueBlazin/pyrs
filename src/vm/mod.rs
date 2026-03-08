@@ -29,8 +29,8 @@ mod wasm_libc_shim;
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::ffi::{CString, OsString, c_int, c_void};
+use std::collections::{HashMap, HashSet};
+use std::ffi::{CString, OsString, c_void};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{IsTerminal, Read, Seek, SeekFrom, Write};
@@ -74,18 +74,12 @@ use crate::extensions::{
 use crate::host::{HostCapability, NativeHost, VmHost};
 use crate::parser;
 use crate::runtime::{
-    BigInt, BoundMethod, BuiltinFunction, CallKeywordArgs, ClassObject, DictViewKind,
-    ExceptionObject, FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind,
-    IteratorObject, MemoryViewObject, ModuleObject, NativeMethodKind, NativeMethodObject, Obj,
-    ObjRef, Object, RuntimeError, SuperObject, TestCapiScalarParseKind, TestCapiStringParseKind,
-    Value, clear_obj_drop_hooks_for_heap, format_repr, format_value,
-    runtime_get_int_max_str_digits,
+    BigInt, BoundMethod, BuiltinFunction, ClassObject, DictViewKind, ExceptionObject,
+    FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject,
+    MemoryViewObject, ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object,
+    RuntimeError, SuperObject, Value, format_repr, format_value, runtime_get_int_max_str_digits,
 };
-use crate::stdlib_paths::detect_cpython_stdlib_paths as detect_shared_cpython_stdlib_paths;
-use crate::unicode::{
-    canonical_codepoint_for_internal_char, internal_char_from_codepoint,
-    surrogate_codepoint_from_internal_char,
-};
+use crate::unicode::{internal_char_from_codepoint, surrogate_codepoint_from_internal_char};
 
 #[derive(Debug, Clone)]
 struct Block {
@@ -95,8 +89,6 @@ struct Block {
 
 unsafe extern "C" {
     fn free(ptr: *mut c_void);
-    fn Py_MakePendingCalls() -> c_int;
-    fn pyrs_capi_ensure_runtime_tables();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -251,8 +243,6 @@ const SIGNAL_SIGINT: i64 = 2;
 const SIGNAL_SIGKILL: i64 = 9;
 const SIGNAL_SIGTERM: i64 = 15;
 const SYNTHETIC_THREAD_IDENT_START: i64 = 1_i64 << 60;
-const TESTCAPI_MAIN_PENDING_CALLS_MAX: usize = 32;
-const TESTINTERNALCAPI_PENDING_CALLS_MAX: usize = 300;
 const PY_TPFLAGS_DISALLOW_INSTANTIATION: i64 = 1 << 7;
 const PY_TPFLAGS_IMMUTABLETYPE: i64 = 1 << 8;
 const PY_TPFLAGS_HEAPTYPE: i64 = 1 << 9;
@@ -493,7 +483,6 @@ struct LoadFastSiteCacheEntry {
 
 #[derive(Clone)]
 enum LoadAttrSiteCacheKind {
-    InstanceShadow,
     InstanceValue { value: Value },
     InstanceFunction { function: ObjRef },
     InstanceBuiltin { builtin: BuiltinFunction },
@@ -1161,12 +1150,6 @@ impl Frame {
     }
 }
 
-#[derive(Clone)]
-enum ExtensionCpythonPtrValueEntry {
-    Strong(Value),
-    WeakObject(Weak<Obj>),
-}
-
 /// Root interpreter state for a single pyrs process.
 ///
 /// `Vm` owns heap/runtime objects, active and pooled frames, import/module state,
@@ -1265,7 +1248,7 @@ pub struct Vm {
     extension_pinned_cpython_allocations: Vec<*mut c_void>,
     extension_pinned_cpython_allocation_set: HashSet<usize>,
     extension_pinned_capsule_names: HashMap<usize, CString>,
-    extension_cpython_ptr_values: HashMap<usize, ExtensionCpythonPtrValueEntry>,
+    extension_cpython_ptr_values: HashMap<usize, Value>,
     extension_cpython_ptr_by_object_id: HashMap<u64, usize>,
     capi_object_registry: CapiObjectRegistry,
     extension_module_def_registry: HashMap<u64, usize>,
@@ -1275,7 +1258,6 @@ pub struct Vm {
     extension_init_failures: HashMap<String, String>,
     next_extension_callable_id: u64,
     local_shim_fallback_enabled: bool,
-    is_main_interpreter: bool,
     prefer_pure_json_when_available: bool,
     prefer_pure_pickle_when_available: bool,
     prefer_pure_re_when_available: bool,
@@ -1298,13 +1280,7 @@ pub struct Vm {
     tracemalloc_enabled: bool,
     tracemalloc_traceback_limit: usize,
     tracemalloc_object_traces: HashMap<u64, Vec<(String, usize)>>,
-    main_thread_ident: i64,
     next_synthetic_thread_ident: i64,
-    pending_main_thread_python_calls: VecDeque<Value>,
-    pending_main_thread_python_call_overflow: VecDeque<Value>,
-    pending_interp_python_calls: VecDeque<Value>,
-    pending_interp_python_call_overflow: VecDeque<Value>,
-    pending_callback_drain_depth: usize,
     builtins_version: u64,
     class_attr_versions: HashMap<u64, u64>,
     type_cache_version_tag: u32,
@@ -1328,7 +1304,6 @@ pub struct Vm {
 
 impl Drop for Vm {
     fn drop(&mut self) {
-        clear_obj_drop_hooks_for_heap(self.heap.instance_id());
         // Reclaim Python-level cycles before extension/native teardown mutates
         // pointer-backed proxy state.
         self.heap.collect_cycles(&[]);
@@ -1443,144 +1418,12 @@ impl Default for Vm {
 }
 
 impl Vm {
-    fn extension_cpython_ptr_value_entry(value: &Value) -> ExtensionCpythonPtrValueEntry {
-        if matches!(value, Value::Instance(_))
-            && Self::cpython_proxy_raw_ptr_from_value(value).is_some()
-            && let Value::Instance(instance_obj) = value
-        {
-            return ExtensionCpythonPtrValueEntry::WeakObject(instance_obj.downgrade());
-        }
-        ExtensionCpythonPtrValueEntry::Strong(value.clone())
-    }
-
-    fn extension_cpython_ptr_value_from_weak_object(weak: &Weak<Obj>) -> Option<Value> {
-        let obj = ObjRef::from_rc(weak.upgrade()?);
-        enum WeakObjectValueKind {
-            List,
-            Tuple,
-            Dict,
-            DictKeys,
-            DictValues,
-            DictItems,
-            Set,
-            FrozenSet,
-            Bytes,
-            ByteArray,
-            MemoryView,
-            Iterator,
-            Generator,
-            Module,
-            Class,
-            Instance,
-            Super,
-            BoundMethod,
-            Function,
-            Cell,
-        }
-        let value_kind = {
-            let borrowed = obj.kind();
-            match &*borrowed {
-                Object::List(_) => WeakObjectValueKind::List,
-                Object::Tuple(_) => WeakObjectValueKind::Tuple,
-                Object::Dict(_) => WeakObjectValueKind::Dict,
-                Object::DictView(view) => match view.kind {
-                    DictViewKind::Keys => WeakObjectValueKind::DictKeys,
-                    DictViewKind::Values => WeakObjectValueKind::DictValues,
-                    DictViewKind::Items => WeakObjectValueKind::DictItems,
-                },
-                Object::Set(_) => WeakObjectValueKind::Set,
-                Object::FrozenSet(_) => WeakObjectValueKind::FrozenSet,
-                Object::Bytes(_) => WeakObjectValueKind::Bytes,
-                Object::ByteArray(_) => WeakObjectValueKind::ByteArray,
-                Object::MemoryView(_) => WeakObjectValueKind::MemoryView,
-                Object::Iterator(_) => WeakObjectValueKind::Iterator,
-                Object::Generator(_) => WeakObjectValueKind::Generator,
-                Object::Module(_) => WeakObjectValueKind::Module,
-                Object::Class(_) => WeakObjectValueKind::Class,
-                Object::Instance(_) => WeakObjectValueKind::Instance,
-                Object::Super(_) => WeakObjectValueKind::Super,
-                Object::BoundMethod(_) => WeakObjectValueKind::BoundMethod,
-                Object::Function(_) => WeakObjectValueKind::Function,
-                Object::Cell(_) => WeakObjectValueKind::Cell,
-                Object::NativeMethod(_) => return None,
-            }
-        };
-        Some(match value_kind {
-            WeakObjectValueKind::List => Value::List(obj),
-            WeakObjectValueKind::Tuple => Value::Tuple(obj),
-            WeakObjectValueKind::Dict => Value::Dict(obj),
-            WeakObjectValueKind::DictKeys => Value::DictKeys(obj),
-            WeakObjectValueKind::DictValues => Value::DictValues(obj),
-            WeakObjectValueKind::DictItems => Value::DictItems(obj),
-            WeakObjectValueKind::Set => Value::Set(obj),
-            WeakObjectValueKind::FrozenSet => Value::FrozenSet(obj),
-            WeakObjectValueKind::Bytes => Value::Bytes(obj),
-            WeakObjectValueKind::ByteArray => Value::ByteArray(obj),
-            WeakObjectValueKind::MemoryView => Value::MemoryView(obj),
-            WeakObjectValueKind::Iterator => Value::Iterator(obj),
-            WeakObjectValueKind::Generator => Value::Generator(obj),
-            WeakObjectValueKind::Module => Value::Module(obj),
-            WeakObjectValueKind::Class => Value::Class(obj),
-            WeakObjectValueKind::Instance => Value::Instance(obj),
-            WeakObjectValueKind::Super => Value::Super(obj),
-            WeakObjectValueKind::BoundMethod => Value::BoundMethod(obj),
-            WeakObjectValueKind::Function => Value::Function(obj),
-            WeakObjectValueKind::Cell => Value::Cell(obj),
-        })
-    }
-
-    pub(super) fn extension_cpython_ptr_value(&mut self, ptr: usize) -> Option<Value> {
-        let entry = self.extension_cpython_ptr_values.get(&ptr).cloned()?;
-        match entry {
-            ExtensionCpythonPtrValueEntry::Strong(value) => Some(value),
-            ExtensionCpythonPtrValueEntry::WeakObject(weak) => {
-                let value = Self::extension_cpython_ptr_value_from_weak_object(&weak);
-                if value.is_none() {
-                    self.extension_cpython_ptr_values.remove(&ptr);
-                }
-                value
-            }
-        }
-    }
-
-    pub(super) fn extension_cpython_ptr_contains_live(&mut self, ptr: usize) -> bool {
-        self.extension_cpython_ptr_value(ptr).is_some()
-    }
-
-    pub(super) fn extension_cpython_ptr_value_cache_if_absent(
-        &mut self,
-        ptr: usize,
-        value: &Value,
-    ) {
-        if self.extension_cpython_ptr_value(ptr).is_some() {
-            return;
-        }
-        self.extension_cpython_ptr_values
-            .insert(ptr, Self::extension_cpython_ptr_value_entry(value));
-    }
-
-    pub(super) fn extension_cpython_ptr_value_set(&mut self, ptr: usize, value: &Value) {
-        self.extension_cpython_ptr_values
-            .insert(ptr, Self::extension_cpython_ptr_value_entry(value));
-    }
-
-    pub(super) fn extension_cpython_ptr_value_remove(&mut self, ptr: usize) -> Option<Value> {
-        let entry = self.extension_cpython_ptr_values.remove(&ptr)?;
-        match entry {
-            ExtensionCpythonPtrValueEntry::Strong(value) => Some(value),
-            ExtensionCpythonPtrValueEntry::WeakObject(weak) => {
-                Self::extension_cpython_ptr_value_from_weak_object(&weak)
-            }
-        }
-    }
-
     pub fn new() -> Self {
         Self::new_with_host(Arc::new(NativeHost))
     }
 
     pub fn new_with_host(host: Arc<dyn VmHost>) -> Self {
         configure_env_presence_probe_source(host.as_ref());
-        unsafe { pyrs_capi_ensure_runtime_tables() };
         let heap = Heap::new();
         let main_module = match heap.alloc_module(ModuleObject::new("__main__")) {
             Value::Module(obj) => obj,
@@ -1721,7 +1564,6 @@ impl Vm {
             // Shim fallback is restricted by LOCAL_SHIM_MODULES (`_ctypes`) and only used when
             // normal path resolution fails, so keep it enabled by default (allow explicit opt-out).
             local_shim_fallback_enabled: !host.env_flag_enabled("PYRS_DISABLE_LOCAL_SHIMS"),
-            is_main_interpreter: true,
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
             prefer_pure_re_when_available: true,
@@ -1751,13 +1593,7 @@ impl Vm {
             tracemalloc_enabled: false,
             tracemalloc_traceback_limit: 1,
             tracemalloc_object_traces: HashMap::new(),
-            main_thread_ident: vm_current_thread_ident(),
             next_synthetic_thread_ident: SYNTHETIC_THREAD_IDENT_START,
-            pending_main_thread_python_calls: VecDeque::new(),
-            pending_main_thread_python_call_overflow: VecDeque::new(),
-            pending_interp_python_calls: VecDeque::new(),
-            pending_interp_python_call_overflow: VecDeque::new(),
-            pending_callback_drain_depth: 0,
             builtins_version: 1,
             class_attr_versions: HashMap::new(),
             type_cache_version_tag: 1,
@@ -1792,23 +1628,12 @@ impl Vm {
             Vec::new(),
             false,
         );
-        for stdlib_path in detect_shared_cpython_stdlib_paths(host.as_ref()).paths {
-            if !vm
-                .module_paths
-                .iter()
-                .any(|existing| existing == &stdlib_path)
-            {
-                vm.module_paths.push(stdlib_path);
-            }
-        }
         vm.install_sys_module();
         vm.install_importlib_modules();
         // Provide CPython core `_random` substrate; stdlib `random.py` layers on top.
         vm.install_random_module();
         vm.install_stdlib_modules();
         vm.install_builtins();
-        vm.init_testcapi_heaptype_types();
-        vm.init_testcapi_structmember_types();
         vm.normalize_bootstrap_module_classes();
         vm.install_builtins_module();
         vm.refresh_warnings_fallback_defaults();
@@ -1862,10 +1687,6 @@ impl Vm {
 
     pub(super) fn capi_registry_pin_external_once(&mut self, ptr: usize) -> bool {
         self.capi_object_registry.pin_external_once(ptr)
-    }
-
-    pub(super) fn capi_registry_unpin_external(&mut self, ptr: usize) {
-        self.capi_object_registry.unpin_external(ptr);
     }
 
     pub(super) fn capi_pin_owned_ptr(&mut self, ptr: usize) -> bool {
@@ -2094,128 +1915,6 @@ impl Vm {
 
     pub(super) fn current_thread_ident_value(&self) -> i64 {
         vm_current_thread_ident()
-    }
-
-    pub(super) fn main_thread_ident_value(&self) -> i64 {
-        self.main_thread_ident
-    }
-
-    pub(super) fn is_main_thread(&self) -> bool {
-        self.current_thread_ident_value() == self.main_thread_ident
-    }
-
-    fn pending_python_call_limit(main_thread_only: bool) -> usize {
-        if main_thread_only {
-            TESTCAPI_MAIN_PENDING_CALLS_MAX
-        } else {
-            TESTINTERNALCAPI_PENDING_CALLS_MAX
-        }
-    }
-
-    pub(super) fn enqueue_pending_python_call(
-        &mut self,
-        callable: Value,
-        main_thread_only: bool,
-        ensure_added: bool,
-    ) -> bool {
-        let limit = Self::pending_python_call_limit(main_thread_only);
-        if main_thread_only {
-            if self.pending_main_thread_python_calls.len() < limit {
-                self.pending_main_thread_python_calls.push_back(callable);
-                return true;
-            }
-            if ensure_added {
-                self.pending_main_thread_python_call_overflow
-                    .push_back(callable);
-                return true;
-            }
-            return false;
-        }
-
-        if self.pending_interp_python_calls.len() < limit {
-            self.pending_interp_python_calls.push_back(callable);
-            return true;
-        }
-        if ensure_added {
-            self.pending_interp_python_call_overflow.push_back(callable);
-            return true;
-        }
-        false
-    }
-
-    fn refill_pending_python_call_queue(&mut self, main_thread_only: bool) {
-        let limit = Self::pending_python_call_limit(main_thread_only);
-        if main_thread_only {
-            while self.pending_main_thread_python_calls.len() < limit {
-                let Some(callable) = self.pending_main_thread_python_call_overflow.pop_front()
-                else {
-                    break;
-                };
-                self.pending_main_thread_python_calls.push_back(callable);
-            }
-            return;
-        }
-
-        while self.pending_interp_python_calls.len() < limit {
-            let Some(callable) = self.pending_interp_python_call_overflow.pop_front() else {
-                break;
-            };
-            self.pending_interp_python_calls.push_back(callable);
-        }
-    }
-
-    fn drain_pending_python_call_batch(
-        &mut self,
-        main_thread_only: bool,
-    ) -> Result<(), RuntimeError> {
-        let batch_len = if main_thread_only {
-            self.pending_main_thread_python_calls.len()
-        } else {
-            self.pending_interp_python_calls.len()
-        };
-
-        for _ in 0..batch_len {
-            let callable = if main_thread_only {
-                self.pending_main_thread_python_calls.pop_front()
-            } else {
-                self.pending_interp_python_calls.pop_front()
-            };
-            let Some(callable) = callable else {
-                break;
-            };
-            match self.call_internal(callable, Vec::new(), HashMap::new()) {
-                Ok(InternalCallOutcome::Value(_)) => {}
-                Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                    self.refill_pending_python_call_queue(main_thread_only);
-                    return Ok(());
-                }
-                Err(err) => {
-                    self.refill_pending_python_call_queue(main_thread_only);
-                    return Err(err);
-                }
-            }
-        }
-
-        self.refill_pending_python_call_queue(main_thread_only);
-        Ok(())
-    }
-
-    pub(super) fn run_pending_callback_queues(&mut self) -> Result<(), RuntimeError> {
-        if self.pending_callback_drain_depth > 0 {
-            return Ok(());
-        }
-        self.pending_callback_drain_depth += 1;
-        let result = (|| {
-            if self.is_main_thread() {
-                if unsafe { Py_MakePendingCalls() } != 0 {
-                    return Err(RuntimeError::new("pending C callback failed"));
-                }
-                self.drain_pending_python_call_batch(true)?;
-            }
-            self.drain_pending_python_call_batch(false)
-        })();
-        self.pending_callback_drain_depth = self.pending_callback_drain_depth.saturating_sub(1);
-        result
     }
 
     fn allocate_synthetic_thread_ident(&mut self) -> i64 {
@@ -2967,10 +2666,6 @@ impl Vm {
     pub fn add_module_path(&mut self, path: impl Into<PathBuf>) {
         let path = path.into();
         if self.module_paths.iter().any(|existing| existing == &path) {
-            // Keep preference/unload behavior deterministic even when the caller
-            // re-adds an already-present CPython Lib path.
-            self.preferred_filesystem_module_cache.clear();
-            self.maybe_prefer_cpython_pure_stdlib_modules();
             return;
         }
         self.module_paths.push(path);
@@ -3663,7 +3358,6 @@ impl Vm {
             for entry in ways.iter().flatten() {
                 roots.push(Value::Class(entry.owner_class.clone()));
                 match &entry.kind {
-                    LoadAttrSiteCacheKind::InstanceShadow => {}
                     LoadAttrSiteCacheKind::InstanceValue { value } => roots.push(value.clone()),
                     LoadAttrSiteCacheKind::InstanceFunction { function } => {
                         roots.push(Value::Function(function.clone()));
@@ -4125,10 +3819,6 @@ impl Vm {
         self.traceback_caret_enabled = enabled;
     }
 
-    pub(crate) fn mark_as_subinterpreter(&mut self) {
-        self.is_main_interpreter = false;
-    }
-
     pub fn register_source_in_linecache(
         &mut self,
         code: &CodeObject,
@@ -4290,82 +3980,6 @@ impl Vm {
                 self.decode_text_bytes_via_codec_lookup(bytes, encoding, errors)
             }
             Err(err) => Err(err),
-        }
-    }
-
-    fn encode_text_bytes_with_codec_fallback(
-        &mut self,
-        text: &str,
-        encoding: &str,
-        errors: &str,
-    ) -> Result<Vec<u8>, RuntimeError> {
-        let normalized = normalize_codec_encoding(Value::Str(encoding.to_string()))
-            .unwrap_or_else(|_| encoding.to_ascii_lowercase().replace('_', "-"));
-        match encode_text_bytes(text, &normalized, errors) {
-            Ok(bytes) => Ok(bytes),
-            Err(err) if err.message.contains("unsupported encoding") => {
-                self.encode_text_bytes_via_codec_lookup(text, encoding, errors)
-            }
-            Err(err) => Err(err),
-        }
-    }
-
-    fn encode_text_bytes_via_codec_lookup(
-        &mut self,
-        text: &str,
-        encoding: &str,
-        errors: &str,
-    ) -> Result<Vec<u8>, RuntimeError> {
-        let codec_info = self.call_builtin(
-            BuiltinFunction::CodecsLookup,
-            vec![Value::Str(encoding.to_string())],
-            HashMap::new(),
-        )?;
-        let encode = self.builtin_getattr(
-            vec![codec_info, Value::Str("encode".to_string())],
-            HashMap::new(),
-        )?;
-        let encoded = match self.call_internal_preserving_caller(
-            encode,
-            vec![Value::Str(text.to_string()), Value::Str(errors.to_string())],
-            HashMap::new(),
-        )? {
-            InternalCallOutcome::Value(value) => value,
-            InternalCallOutcome::CallerExceptionHandled => {
-                return Err(self.runtime_error_from_active_exception("encode() failed"));
-            }
-        };
-        let Value::Tuple(tuple_obj) = encoded else {
-            return Err(RuntimeError::new(
-                "TypeError: encode codec must return a tuple",
-            ));
-        };
-        let Object::Tuple(items) = &*tuple_obj.kind() else {
-            return Err(RuntimeError::new(
-                "TypeError: encode codec must return a tuple",
-            ));
-        };
-        let Some(first) = items.first() else {
-            return Err(RuntimeError::new(
-                "TypeError: encode codec must return a non-empty tuple",
-            ));
-        };
-        match first {
-            Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
-                Object::Bytes(bytes) => Ok(bytes.clone()),
-                _ => Err(RuntimeError::new(
-                    "TypeError: encoder should return a bytes result",
-                )),
-            },
-            Value::ByteArray(bytes_obj) => match &*bytes_obj.kind() {
-                Object::ByteArray(bytes) => Ok(bytes.clone()),
-                _ => Err(RuntimeError::new(
-                    "TypeError: encoder should return a bytes result",
-                )),
-            },
-            _ => Err(RuntimeError::new(
-                "TypeError: encoder should return a bytes result",
-            )),
         }
     }
 
@@ -5920,37 +5534,10 @@ impl Vm {
                     "get_recursion_depth",
                     BuiltinFunction::TestInternalCapiGetRecursionDepth,
                 ),
-                (
-                    "pending_threadfunc",
-                    BuiltinFunction::TestInternalCapiPendingThreadfunc,
-                ),
-                (
-                    "run_in_subinterp_with_config",
-                    BuiltinFunction::TestInternalCapiRunInSubinterpWithConfig,
-                ),
-                (
-                    "gh_119213_getargs",
-                    BuiltinFunction::TestInternalCapiGh119213Getargs,
-                ),
             ],
             vec![("TIER2_THRESHOLD", Value::Int(0))],
         );
         self.install_builtin_module("_testlimitedcapi", &[], Vec::new());
-        let unsigned_value = |value: u64| {
-            if let Ok(value) = i64::try_from(value) {
-                Value::Int(value)
-            } else {
-                Value::BigInt(Box::new(BigInt::from_u64(value)))
-            }
-        };
-        #[cfg(unix)]
-        let sizeof_time_t = std::mem::size_of::<libc::time_t>() as i64;
-        #[cfg(not(unix))]
-        let sizeof_time_t = std::mem::size_of::<i64>() as i64;
-        #[cfg(unix)]
-        let sizeof_pid_t = std::mem::size_of::<libc::pid_t>() as i64;
-        #[cfg(not(unix))]
-        let sizeof_pid_t = std::mem::size_of::<i32>() as i64;
         let meth_instance_class = match self
             .heap
             .alloc_class(ClassObject::new("MethInstance".to_string(), Vec::new()))
@@ -6023,242 +5610,32 @@ impl Vm {
                 ("meth_fastcall_keywords", BuiltinFunction::NoOp),
                 ("meth_noargs", BuiltinFunction::NoOp),
                 ("meth_o", BuiltinFunction::NoOp),
-                (
-                    "_pending_threadfunc",
-                    BuiltinFunction::TestCapiPendingThreadfunc,
-                ),
                 ("call_in_temporary_c_thread", BuiltinFunction::NoOp),
                 ("join_temporary_c_thread", BuiltinFunction::NoOp),
                 ("exception_print", BuiltinFunction::TestCapiExceptionPrint),
                 ("config_get", BuiltinFunction::TestCapiConfigGet),
-                ("get_args", BuiltinFunction::TestCapiGetArgs),
-                ("get_kwargs", BuiltinFunction::TestCapiGetKwargs),
-                ("getargs_empty", BuiltinFunction::TestCapiGetArgsEmpty),
-                ("getargs_tuple", BuiltinFunction::TestCapiGetArgsTuple),
-                (
-                    "getargs_b",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::B),
-                ),
-                (
-                    "getargs_B",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperB),
-                ),
-                (
-                    "getargs_h",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::H),
-                ),
-                (
-                    "getargs_H",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperH),
-                ),
-                (
-                    "getargs_I",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::I),
-                ),
-                (
-                    "getargs_k",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::K),
-                ),
-                (
-                    "getargs_i",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::LowerI),
-                ),
-                (
-                    "getargs_l",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::L),
-                ),
-                (
-                    "getargs_n",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::N),
-                ),
-                (
-                    "getargs_p",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::P),
-                ),
-                (
-                    "getargs_L",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperL),
-                ),
-                (
-                    "getargs_K",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperK),
-                ),
-                (
-                    "getargs_f",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::F),
-                ),
-                (
-                    "getargs_d",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::D),
-                ),
-                (
-                    "getargs_D",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperD),
-                ),
-                (
-                    "getargs_S",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperS),
-                ),
-                (
-                    "getargs_Y",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperY),
-                ),
-                (
-                    "getargs_U",
-                    BuiltinFunction::TestCapiGetArgsScalar(TestCapiScalarParseKind::UpperU),
-                ),
-                (
-                    "getargs_c",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerC),
-                ),
-                (
-                    "getargs_C",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::UpperC),
-                ),
-                (
-                    "getargs_s",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerS),
-                ),
-                (
-                    "getargs_s_star",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerSStar),
-                ),
-                (
-                    "getargs_s_hash",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerSHash),
-                ),
-                (
-                    "getargs_z",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerZ),
-                ),
-                (
-                    "getargs_z_star",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerZStar),
-                ),
-                (
-                    "getargs_z_hash",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerZHash),
-                ),
-                (
-                    "getargs_y",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerY),
-                ),
-                (
-                    "getargs_y_star",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerYStar),
-                ),
-                (
-                    "getargs_y_hash",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerYHash),
-                ),
-                (
-                    "getargs_es",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerEs),
-                ),
-                (
-                    "getargs_et",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerEt),
-                ),
-                (
-                    "getargs_es_hash",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerEsHash),
-                ),
-                (
-                    "getargs_et_hash",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::LowerEtHash),
-                ),
-                (
-                    "getargs_w_star",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::WStar),
-                ),
-                (
-                    "getargs_w_star_opt",
-                    BuiltinFunction::TestCapiGetArgsString(TestCapiStringParseKind::WStarOpt),
-                ),
-                (
-                    "gh_99240_clear_args",
-                    BuiltinFunction::TestCapiGetArgsString(
-                        TestCapiStringParseKind::Gh99240ClearArgs,
-                    ),
-                ),
-                ("getargs_keywords", BuiltinFunction::TestCapiGetArgsKeywords),
-                (
-                    "getargs_keyword_only",
-                    BuiltinFunction::TestCapiGetArgsKeywordOnly,
-                ),
-                (
-                    "getargs_positional_only_and_keywords",
-                    BuiltinFunction::TestCapiGetArgsPositionalOnlyAndKeywords,
-                ),
-                (
-                    "parse_tuple_and_keywords",
-                    BuiltinFunction::TestCapiParseTupleAndKeywords,
-                ),
-                ("argparsing", BuiltinFunction::TestCapiArgParsing),
                 (
                     "pyobject_vectorcall",
                     BuiltinFunction::TestCapiPyObjectVectorcall,
                 ),
-                (
-                    "PyTime_AsSecondsDouble",
-                    BuiltinFunction::TestCapiPyTimeAsSecondsDouble,
-                ),
-                ("PyTime_Monotonic", BuiltinFunction::TimeMonotonic),
-                ("PyTime_MonotonicRaw", BuiltinFunction::TimeMonotonic),
-                ("PyTime_PerfCounter", BuiltinFunction::TimeMonotonic),
-                ("PyTime_PerfCounterRaw", BuiltinFunction::TimeMonotonic),
-                ("PyTime_Time", BuiltinFunction::TimeTime),
-                ("PyTime_TimeRaw", BuiltinFunction::TimeTime),
             ],
             vec![
-                ("CHAR_MAX", Value::Int(std::ffi::c_char::MAX as i64)),
-                ("CHAR_MIN", Value::Int(std::ffi::c_char::MIN as i64)),
-                ("UCHAR_MAX", Value::Int(std::ffi::c_uchar::MAX as i64)),
-                ("SHRT_MAX", Value::Int(std::ffi::c_short::MAX as i64)),
-                ("SHRT_MIN", Value::Int(std::ffi::c_short::MIN as i64)),
-                ("USHRT_MAX", Value::Int(std::ffi::c_ushort::MAX as i64)),
                 ("INT_MAX", Value::Int(i32::MAX as i64)),
                 ("INT_MIN", Value::Int(i32::MIN as i64)),
                 ("UINT_MAX", Value::Int(u32::MAX as i64)),
-                ("LONG_MAX", Value::Int(std::ffi::c_long::MAX as i64)),
-                ("LONG_MIN", Value::Int(std::ffi::c_long::MIN as i64)),
-                ("ULONG_MAX", unsigned_value(std::ffi::c_ulong::MAX as u64)),
-                ("FLT_MAX", Value::Float(f32::MAX as f64)),
-                ("FLT_MIN", Value::Float(f32::MIN_POSITIVE as f64)),
-                ("DBL_MAX", Value::Float(f64::MAX)),
-                ("DBL_MIN", Value::Float(f64::MIN_POSITIVE)),
                 ("LLONG_MAX", Value::Int(i64::MAX)),
                 ("LLONG_MIN", Value::Int(i64::MIN)),
-                ("ULLONG_MAX", unsigned_value(u64::MAX)),
-                ("PY_SSIZE_T_MAX", Value::Int(isize::MAX as i64)),
-                ("PY_SSIZE_T_MIN", Value::Int(isize::MIN as i64)),
                 (
-                    "SIZEOF_VOID_P",
-                    Value::Int(std::mem::size_of::<*const c_void>() as i64),
+                    "ULLONG_MAX",
+                    Value::BigInt(Box::new(BigInt::from_u64(u64::MAX))),
                 ),
-                ("SIZEOF_TIME_T", Value::Int(sizeof_time_t)),
-                ("SIZEOF_PID_T", Value::Int(sizeof_pid_t)),
-                ("WITH_PYMALLOC", Value::Bool(false)),
-                ("WITH_MIMALLOC", Value::Bool(false)),
-                ("Py_single_input", Value::Int(256)),
-                ("Py_file_input", Value::Int(257)),
-                ("Py_eval_input", Value::Int(258)),
-                ("PyTime_MIN", Value::Int(i64::MIN)),
-                ("PyTime_MAX", Value::Int(i64::MAX)),
-                ("Py_Version", Value::Int(0x030e00f0)),
+                ("PY_SSIZE_T_MAX", Value::Int(i64::MAX)),
+                ("PY_SSIZE_T_MIN", Value::Int(i64::MIN)),
                 ("MethInstance", Value::Class(meth_instance_class)),
                 ("MethClass", Value::Class(meth_class_class)),
                 ("MethStatic", Value::Class(meth_static_class)),
             ],
         );
-        if let Some(module) = self.modules.get("_testcapi").cloned()
-            && let Object::Module(module_data) = &mut *module.kind_mut()
-        {
-            module_data.globals.insert(
-                "instancemethod".to_string(),
-                Value::Class(self.ensure_instancemethod_runtime_type_class()),
-            );
-        }
     }
 
     fn install_random_module(&mut self) {
@@ -6500,20 +5877,6 @@ impl Vm {
             }
         }
         self.register_module(name, module);
-    }
-
-    fn init_testcapi_structmember_types(&mut self) {
-        if let Some(module) = self.modules.get("_testcapi").cloned() {
-            self.init_testcapi_structmember_types_via_capi(module)
-                .expect("_testcapi structmember init should succeed");
-        }
-    }
-
-    fn init_testcapi_heaptype_types(&mut self) {
-        if let Some(module) = self.modules.get("_testcapi").cloned() {
-            self.init_testcapi_heaptype_types_via_capi(module)
-                .expect("_testcapi heaptype init should succeed");
-        }
     }
 
     fn alloc_bootstrap_class_value(&mut self, name: &str, module_name: &str) -> Value {
@@ -10186,7 +9549,11 @@ fn sre_category_matches(category: i64, ch: char) -> bool {
 
 fn sre_at_matches<T: SreText>(at: i64, text: &T, pos: usize) -> bool {
     let len = text.len();
-    let prev = if pos > 0 { text.char_at(pos - 1) } else { None };
+    let prev = if pos > 0 {
+        text.char_at(pos - 1)
+    } else {
+        None
+    };
     let cur = text.char_at(pos);
     match at {
         SRE_AT_BEGINNING | SRE_AT_BEGINNING_STRING => pos == 0,
@@ -10253,7 +9620,7 @@ fn sre_class_matches(
             | SRE_OP_LITERAL_UNI_IGNORE => {
                 let value = sre_read_u32(code, idx)?;
                 idx += 1;
-                let expected = internal_char_from_codepoint(value)?;
+                let expected = char::from_u32(value)?;
                 let is_match = if ignore_case {
                     sre_char_equal_ignore_case(ch, expected)
                 } else {
@@ -10264,8 +9631,8 @@ fn sre_class_matches(
                 }
             }
             SRE_OP_RANGE | SRE_OP_RANGE_UNI_IGNORE => {
-                let lo = internal_char_from_codepoint(sre_read_u32(code, idx)?)?;
-                let hi = internal_char_from_codepoint(sre_read_u32(code, idx + 1)?)?;
+                let lo = char::from_u32(sre_read_u32(code, idx)?)?;
+                let hi = char::from_u32(sre_read_u32(code, idx + 1)?)?;
                 idx += 2;
                 let is_match = if ignore_case || opcode == SRE_OP_RANGE_UNI_IGNORE {
                     let lower = ch.to_lowercase().next().unwrap_or(ch);
@@ -10286,7 +9653,7 @@ fn sre_class_matches(
                 }
             }
             SRE_OP_CHARSET => {
-                let ch_u32 = canonical_codepoint_for_internal_char(ch);
+                let ch_u32 = ch as u32;
                 if ch_u32 < 256 && sre_bitmap_contains(code, idx, ch_u32 as usize)? {
                     return Some(ok);
                 }
@@ -10296,7 +9663,7 @@ fn sre_class_matches(
                 let block_count = sre_read_usize(code, idx)?;
                 idx += 1;
                 let mapping_start = idx;
-                let ch_u32 = canonical_codepoint_for_internal_char(ch);
+                let ch_u32 = ch as u32;
                 let block = if ch_u32 < 0x10000 {
                     Some(
                         sre_bigcharset_mapping_byte(code, mapping_start, (ch_u32 >> 8) as usize)?
@@ -10438,7 +9805,7 @@ fn sre_run_program<T: SreText>(
             | SRE_OP_LITERAL_IGNORE
             | SRE_OP_LITERAL_LOC_IGNORE
             | SRE_OP_LITERAL_UNI_IGNORE => {
-                let expected = internal_char_from_codepoint(*code.get(pc + 1)? as u32)?;
+                let expected = char::from_u32(*code.get(pc + 1)? as u32)?;
                 let current = text.char_at(cursor)?;
                 let matched = matches!(
                     opcode,
@@ -10456,7 +9823,7 @@ fn sre_run_program<T: SreText>(
             | SRE_OP_NOT_LITERAL_IGNORE
             | SRE_OP_NOT_LITERAL_LOC_IGNORE
             | SRE_OP_NOT_LITERAL_UNI_IGNORE => {
-                let expected = internal_char_from_codepoint(*code.get(pc + 1)? as u32)?;
+                let expected = char::from_u32(*code.get(pc + 1)? as u32)?;
                 let current = text.char_at(cursor)?;
                 let equal = matches!(
                     opcode,
@@ -10675,9 +10042,15 @@ fn sre_run_program<T: SreText>(
                 let mut rep_pos = cursor;
                 for _ in 0..hard_max {
                     let repeat_checkpoint = marks.checkpoint();
-                    let Some(next_pos) =
-                        sre_run_program(code, unit_start, next_pc, text, rep_pos, marks, depth + 1)
-                    else {
+                    let Some(next_pos) = sre_run_program(
+                        code,
+                        unit_start,
+                        next_pc,
+                        text,
+                        rep_pos,
+                        marks,
+                        depth + 1,
+                    ) else {
                         marks.restore(repeat_checkpoint);
                         break;
                     };
@@ -10751,9 +10124,7 @@ fn compiled_regex_match_details_with_text<T: SreText>(
             let capture_start = marks.get(group * 2);
             let capture_end = marks.get(group * 2 + 1);
             let capture = match (capture_start, capture_end) {
-                (Some(cap_start), Some(cap_end))
-                    if cap_start <= cap_end && cap_end <= text.len() =>
-                {
+                (Some(cap_start), Some(cap_end)) if cap_start <= cap_end && cap_end <= text.len() => {
                     Some((text.byte_offset(cap_start), text.byte_offset(cap_end)))
                 }
                 _ => None,
@@ -10947,9 +10318,9 @@ fn re_match_details(
     match pattern {
         RePatternValue::Str(_) => match text {
             Value::Str(value) => re_match_details_str(pattern, value, mode, compiled_program),
-            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => Err(RuntimeError::new(
-                "cannot use a string pattern on a bytes-like object",
-            )),
+            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => Err(
+                RuntimeError::new("cannot use a string pattern on a bytes-like object"),
+            ),
             _ => Err(RuntimeError::new("string must be string")),
         },
         RePatternValue::Bytes(_) => match text {
@@ -11112,7 +10483,6 @@ fn normalize_codec_encoding(value: Value) -> Result<String, RuntimeError> {
         "latin-1" | "latin1" | "iso-8859-1" | "iso8859-1" | "cp819" | "l1" => {
             Ok("latin-1".to_string())
         }
-        "idna" => Ok("idna".to_string()),
         "gbk" | "cp936" | "ms936" | "936" => Ok("gbk".to_string()),
         "raw-unicode-escape" | "raw_unicode_escape" => Ok("raw-unicode-escape".to_string()),
         "unicode-escape" | "unicode_escape" => Ok("unicode-escape".to_string()),
@@ -11328,13 +10698,6 @@ fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>
             }
             Ok(out)
         }
-        "idna" => {
-            if text.is_ascii() {
-                Ok(text.as_bytes().to_vec())
-            } else {
-                Err(RuntimeError::lookup_error("unsupported encoding"))
-            }
-        }
         "gbk" => encode_gbk_bytes(text, errors),
         "raw-unicode-escape" => Ok(encode_raw_unicode_escape(text)),
         "unicode-escape" => Ok(encode_unicode_escape(text)),
@@ -11444,13 +10807,6 @@ fn decode_text_bytes(bytes: &[u8], encoding: &str, errors: &str) -> Result<Strin
                 out.push(*byte as char);
             }
             Ok(out)
-        }
-        "idna" => {
-            if bytes.iter().all(u8::is_ascii) {
-                Ok(String::from_utf8_lossy(bytes).into_owned())
-            } else {
-                Err(RuntimeError::lookup_error("unsupported encoding"))
-            }
         }
         "gbk" => decode_gbk_bytes(bytes, errors),
         "raw-unicode-escape" => decode_raw_unicode_escape(bytes, errors),
@@ -12463,13 +11819,14 @@ fn function_name_for_argument_errors(func: &FunctionObject) -> String {
 /// Bind positional/keyword call inputs to a function signature.
 ///
 /// Semantics intentionally follow CPython 3.14 for positional-only handling,
-/// default filling, duplicate detection, and keyword insertion order
-/// preservation for `**kwargs`.
+/// default filling, duplicate detection, and keyword insertion order preservation
+/// (`kwargs_order`) for `**kwargs`.
 fn bind_arguments(
     func: &FunctionObject,
     heap: &Heap,
     mut positional: Vec<Value>,
-    kwargs: CallKeywordArgs,
+    mut kwargs: HashMap<String, Value>,
+    kwargs_order: Option<Vec<String>>,
 ) -> Result<BoundArguments, RuntimeError> {
     let function_name = function_name_for_argument_errors(func);
     let posonly_len = func.code.posonly_params.len();
@@ -12578,9 +11935,19 @@ fn bind_arguments(
     let mut extra_kwargs: Vec<(String, Value)> = Vec::new();
     let mut extra_kwargs_seen: HashSet<String> = HashSet::new();
     let mut kwonly_values: HashMap<String, Value> = HashMap::new();
-    for entry in kwargs.into_entries() {
-        let name = entry.normalized_name;
-        let value = entry.value;
+    let mut ordered_kwargs: Vec<(String, Value)> = Vec::new();
+    if let Some(order) = kwargs_order {
+        for name in order {
+            if let Some(value) = kwargs.remove(&name) {
+                ordered_kwargs.push((name, value));
+            }
+        }
+    }
+    for (name, value) in kwargs.drain() {
+        ordered_kwargs.push((name, value));
+    }
+
+    for (name, value) in ordered_kwargs {
         if func.code.posonly_params.iter().any(|param| param == &name) {
             if func.code.kwarg.is_some() {
                 if !extra_kwargs_seen.insert(name.clone()) {
@@ -13358,9 +12725,7 @@ where
 }
 
 fn class_attr_lookup(class: &ObjRef, name: &str) -> Option<Value> {
-    class_attr_walk_visit(class, &mut |candidate| {
-        class_attr_lookup_direct(candidate, name)
-    })
+    class_attr_walk_visit(class, &mut |candidate| class_attr_lookup_direct(candidate, name))
 }
 
 fn class_attr_lookup_direct(class: &ObjRef, name: &str) -> Option<Value> {

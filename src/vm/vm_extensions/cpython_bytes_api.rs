@@ -10,10 +10,9 @@ use super::{
     _PyErr_BadInternalCall, CpythonBuffer, CpythonByteArrayCompatObject, CpythonObjectHead,
     CpythonTypeObject, CpythonVarObjectHead, ModuleCapiContext, PYBYTES_ASSTRING_MISMATCH_BT_COUNT,
     Py_DecRef, Py_XDecRef, Py_XIncRef, PyBuffer_Release, PyByteArray_Type, PyBytes_Type,
-    PyExc_ValueError, PyObject_GetBuffer, PyType_IsSubtype, c_name_to_string,
-    cpython_bytes_data_ptr, cpython_call_builtin, cpython_new_bytes_ptr, cpython_new_ptr_for_value,
-    cpython_set_error, cpython_set_typed_error, cpython_type_name_for_object_ptr,
-    cpython_value_from_ptr, with_active_cpython_context_mut,
+    PyObject_GetBuffer, PyType_IsSubtype, c_name_to_string, cpython_bytes_data_ptr,
+    cpython_call_builtin, cpython_new_bytes_ptr, cpython_new_ptr_for_value, cpython_set_error,
+    cpython_type_name_for_object_ptr, cpython_value_from_ptr, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -564,8 +563,8 @@ pub unsafe extern "C" fn PyBytes_AsStringAndSize(
     out_buffer: *mut *mut c_char,
     out_len: *mut isize,
 ) -> i32 {
-    if out_buffer.is_null() {
-        cpython_set_error("PyBytes_AsStringAndSize requires non-null buffer pointer");
+    if out_buffer.is_null() || out_len.is_null() {
+        cpython_set_error("PyBytes_AsStringAndSize requires non-null out pointers");
         return -1;
     }
     let ptr = unsafe { PyBytes_AsString(object) };
@@ -576,19 +575,10 @@ pub unsafe extern "C" fn PyBytes_AsStringAndSize(
     if len < 0 {
         return -1;
     }
-    if out_len.is_null() {
-        let slice = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len as usize) };
-        if slice.contains(&0) {
-            cpython_set_typed_error(unsafe { PyExc_ValueError }, "embedded null byte");
-            return -1;
-        }
-    }
     // SAFETY: caller provided valid pointers.
     unsafe {
         *out_buffer = ptr;
-        if !out_len.is_null() {
-            *out_len = len;
-        }
+        *out_len = len;
     }
     0
 }

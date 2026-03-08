@@ -5969,7 +5969,7 @@ impl Vm {
         } else if self.is_finalizing {
             None
         } else {
-            self.import_module_object("warnings").ok()
+            self.load_module("warnings").ok()
         };
         let Some(warnings_module) = warnings_module else {
             eprint!("<sys>:0: ResourceWarning: unclosed file {file_text}\n");

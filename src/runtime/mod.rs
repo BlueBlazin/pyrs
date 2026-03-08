@@ -15,7 +15,6 @@ use std::hash::{Hash, Hasher};
 use std::ops::Index;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering as AtomicOrdering};
-use std::sync::{Mutex, OnceLock};
 
 use crate::bytecode::CodeObject;
 use crate::unicode::{canonical_codepoint_for_internal_char, internal_char_from_codepoint};
@@ -128,119 +127,6 @@ impl FunctionObject {
         if self.call_cache_epoch == 0 {
             self.call_cache_epoch = 1;
         }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct CallKeywordArg {
-    pub key: Value,
-    pub normalized_name: String,
-    pub key_is_exact_str: bool,
-    pub value: Value,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct CallKeywordArgs {
-    entries: Vec<CallKeywordArg>,
-}
-
-impl CallKeywordArgs {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn from_normalized_map(
-        mut kwargs: HashMap<String, Value>,
-        kwargs_order: Option<Vec<String>>,
-    ) -> Self {
-        let mut entries = Vec::with_capacity(kwargs.len());
-        if let Some(order) = kwargs_order {
-            for name in order {
-                if let Some(value) = kwargs.remove(&name) {
-                    entries.push(CallKeywordArg {
-                        key: Value::Str(name.clone()),
-                        normalized_name: name,
-                        key_is_exact_str: true,
-                        value,
-                    });
-                }
-            }
-        }
-        for (name, value) in kwargs {
-            entries.push(CallKeywordArg {
-                key: Value::Str(name.clone()),
-                normalized_name: name,
-                key_is_exact_str: true,
-                value,
-            });
-        }
-        Self { entries }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn push(
-        &mut self,
-        key: Value,
-        normalized_name: String,
-        key_is_exact_str: bool,
-        value: Value,
-    ) {
-        self.entries.push(CallKeywordArg {
-            key,
-            normalized_name,
-            key_is_exact_str,
-            value,
-        });
-    }
-
-    pub fn push_exact_str(&mut self, name: String, value: Value) {
-        self.push(Value::Str(name.clone()), name, true, value);
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &CallKeywordArg> {
-        self.entries.iter()
-    }
-
-    pub fn into_entries(self) -> Vec<CallKeywordArg> {
-        self.entries
-    }
-
-    pub fn normalized_order(&self) -> Option<Vec<String>> {
-        if self.entries.is_empty() {
-            None
-        } else {
-            Some(
-                self.entries
-                    .iter()
-                    .map(|entry| entry.normalized_name.clone())
-                    .collect(),
-            )
-        }
-    }
-
-    pub fn cloned_normalized_map(&self) -> HashMap<String, Value> {
-        self.entries
-            .iter()
-            .map(|entry| (entry.normalized_name.clone(), entry.value.clone()))
-            .collect()
-    }
-
-    pub fn into_normalized_map_and_order(self) -> (HashMap<String, Value>, Option<Vec<String>>) {
-        let mut map = HashMap::with_capacity(self.entries.len());
-        let mut order = Vec::with_capacity(self.entries.len());
-        for entry in self.entries {
-            order.push(entry.normalized_name.clone());
-            map.insert(entry.normalized_name, entry.value);
-        }
-        let order = if order.is_empty() { None } else { Some(order) };
-        (map, order)
     }
 }
 
@@ -517,7 +403,6 @@ pub enum NativeMethodKind {
     IntIndexMethod,
     IntReprMethod,
     BuiltinBaseReprMethod,
-    BuiltinBaseHashMethod,
     FloatAsIntegerRatioMethod,
     FloatIsIntegerMethod,
     FloatConjugateMethod,
@@ -652,10 +537,6 @@ pub enum NativeMethodKind {
     BoundMethodDescriptorGet,
     FunctionDescriptorGet,
     GetSetDescriptorGet,
-    InstanceMethodTypeNew,
-    InstanceMethodDescriptorGet,
-    InstanceMethodCall,
-    InstanceMethodRepr,
     ClassMethodDescriptorGet,
     StaticMethodDescriptorGet,
     FunctionAnnotate,
@@ -701,47 +582,8 @@ impl NativeMethodObject {
 
 /// Heap object header with stable identity and interior-mutability payload.
 pub struct Obj {
-    heap_instance_id: u64,
     id: u64,
     kind: RefCell<Object>,
-}
-
-#[derive(Clone, Copy)]
-pub struct ObjDropHook {
-    pub callback: unsafe fn(u64, u64, usize, usize, usize),
-    pub arg0: usize,
-    pub arg1: usize,
-    pub arg2: usize,
-}
-
-type ObjDropHookKey = (u64, u64);
-
-fn obj_drop_hooks() -> &'static Mutex<HashMap<ObjDropHookKey, ObjDropHook>> {
-    static HOOKS: OnceLock<Mutex<HashMap<ObjDropHookKey, ObjDropHook>>> = OnceLock::new();
-    HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-pub fn register_obj_drop_hook(heap_instance_id: u64, object_id: u64, hook: ObjDropHook) {
-    if let Ok(mut hooks) = obj_drop_hooks().lock() {
-        hooks.insert((heap_instance_id, object_id), hook);
-    }
-}
-
-pub fn clear_obj_drop_hook(heap_instance_id: u64, object_id: u64) -> Option<ObjDropHook> {
-    obj_drop_hooks()
-        .lock()
-        .ok()
-        .and_then(|mut hooks| hooks.remove(&(heap_instance_id, object_id)))
-}
-
-pub fn clear_obj_drop_hooks_for_heap(heap_instance_id: u64) {
-    if let Ok(mut hooks) = obj_drop_hooks().lock() {
-        hooks.retain(|(hook_heap_instance_id, _), _| *hook_heap_instance_id != heap_instance_id);
-    }
-}
-
-fn take_obj_drop_hook(heap_instance_id: u64, object_id: u64) -> Option<ObjDropHook> {
-    clear_obj_drop_hook(heap_instance_id, object_id)
 }
 
 #[derive(Clone)]
@@ -754,10 +596,6 @@ pub struct ObjRef(Rc<Obj>);
 impl ObjRef {
     pub fn id(&self) -> u64 {
         self.0.id
-    }
-
-    pub fn heap_instance_id(&self) -> u64 {
-        self.0.heap_instance_id
     }
 
     pub fn kind(&self) -> Ref<'_, Object> {
@@ -867,17 +705,13 @@ fn owned_iterator_children(kind: IteratorKind) -> Vec<OwnedReleaseItem> {
             out.push(OwnedReleaseItem::Value(selectors));
         }
         IteratorKind::DropWhile {
-            predicate,
-            iterator,
-            ..
+            predicate, iterator, ..
         }
         | IteratorKind::Filter {
-            predicate,
-            iterator,
+            predicate, iterator,
         }
         | IteratorKind::FilterFalse {
-            predicate,
-            iterator,
+            predicate, iterator,
         }
         | IteratorKind::StarMap {
             callable: predicate,
@@ -889,9 +723,7 @@ fn owned_iterator_children(kind: IteratorKind) -> Vec<OwnedReleaseItem> {
         IteratorKind::Islice { iterator, .. }
         | IteratorKind::Batched { iterator, .. }
         | IteratorKind::GroupBy { shared: iterator }
-        | IteratorKind::Tee {
-            shared: iterator, ..
-        } => {
+        | IteratorKind::Tee { shared: iterator, .. } => {
             out.push(OwnedReleaseItem::Value(iterator));
         }
         IteratorKind::Pairwise {
@@ -901,9 +733,7 @@ fn owned_iterator_children(kind: IteratorKind) -> Vec<OwnedReleaseItem> {
             out.extend(previous.into_iter().map(OwnedReleaseItem::Value));
         }
         IteratorKind::TakeWhile {
-            predicate,
-            iterator,
-            ..
+            predicate, iterator, ..
         } => {
             out.push(OwnedReleaseItem::Value(predicate));
             out.push(OwnedReleaseItem::Value(iterator));
@@ -963,9 +793,7 @@ fn owned_object_children(object: Object) -> Vec<OwnedReleaseItem> {
             }
         }
         Object::Iterator(iterator) => out.extend(owned_iterator_children(iterator.kind)),
-        Object::Generator(generator) => {
-            out.push(OwnedReleaseItem::Value(Value::Code(generator.code)))
-        }
+        Object::Generator(generator) => out.push(OwnedReleaseItem::Value(Value::Code(generator.code))),
         Object::Module(module) => {
             out.extend(module.globals.into_values().map(OwnedReleaseItem::Value));
         }
@@ -1119,7 +947,6 @@ impl fmt::Debug for Obj {
             .map(|kind| object_variant_name(&kind))
             .unwrap_or("<borrowed mut>");
         f.debug_struct("Obj")
-            .field("heap_instance_id", &self.heap_instance_id)
             .field("id", &self.id)
             .field("kind", &kind)
             .finish()
@@ -1128,17 +955,6 @@ impl fmt::Debug for Obj {
 
 impl Drop for Obj {
     fn drop(&mut self) {
-        if let Some(hook) = take_obj_drop_hook(self.heap_instance_id, self.id) {
-            unsafe {
-                (hook.callback)(
-                    self.heap_instance_id,
-                    self.id,
-                    hook.arg0,
-                    hook.arg1,
-                    hook.arg2,
-                );
-            }
-        }
         let object = std::mem::replace(self.kind.get_mut(), Object::Bytes(Vec::new()));
         release_owned_items_stack_safe(owned_object_children(object));
     }
@@ -2921,7 +2737,6 @@ fn native_kind_is_slot_wrapper(kind: NativeMethodKind) -> bool {
                 | BuiltinFunction::OperatorAdd
         ) | NativeMethodKind::IntReprMethod
             | NativeMethodKind::BuiltinBaseReprMethod
-            | NativeMethodKind::BuiltinBaseHashMethod
     )
 }
 
@@ -3320,7 +3135,6 @@ impl Heap {
     pub fn alloc(&self, kind: Object) -> ObjRef {
         let id = self.next_id();
         let obj = Rc::new(Obj {
-            heap_instance_id: self.instance_id,
             id,
             kind: RefCell::new(kind),
         });
@@ -4975,50 +4789,6 @@ impl PartialEq for Value {
 impl Eq for Value {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum TestCapiScalarParseKind {
-    B,
-    UpperB,
-    H,
-    UpperH,
-    I,
-    K,
-    LowerI,
-    L,
-    N,
-    P,
-    UpperL,
-    UpperK,
-    F,
-    D,
-    UpperD,
-    UpperS,
-    UpperY,
-    UpperU,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum TestCapiStringParseKind {
-    LowerC,
-    UpperC,
-    LowerS,
-    LowerSStar,
-    LowerSHash,
-    LowerZ,
-    LowerZStar,
-    LowerZHash,
-    LowerY,
-    LowerYStar,
-    LowerYHash,
-    LowerEs,
-    LowerEt,
-    LowerEsHash,
-    LowerEtHash,
-    WStar,
-    WStarOpt,
-    Gh99240ClearArgs,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum BuiltinFunction {
     Print,
     Input,
@@ -5480,7 +5250,6 @@ pub enum BuiltinFunction {
     JsonEncodeBaseStringAscii,
     JsonMakeEncoder,
     JsonMakeEncoderCall,
-    JsonScannerCall,
     SqliteConnect,
     SqliteCompleteStatement,
     SqliteRegisterAdapter,
@@ -5916,24 +5685,8 @@ pub enum BuiltinFunction {
     TypeAnnotationsGet,
     TestCapiExceptionPrint,
     TestCapiConfigGet,
-    TestCapiGetArgs,
-    TestCapiGetKwargs,
-    TestCapiGetArgsEmpty,
-    TestCapiGetArgsTuple,
-    TestCapiGetArgsScalar(TestCapiScalarParseKind),
-    TestCapiGetArgsString(TestCapiStringParseKind),
-    TestCapiParseTupleAndKeywords,
-    TestCapiArgParsing,
-    TestCapiGetArgsKeywords,
-    TestCapiGetArgsKeywordOnly,
-    TestCapiGetArgsPositionalOnlyAndKeywords,
-    TestCapiPendingThreadfunc,
     TestCapiPyObjectVectorcall,
-    TestCapiPyTimeAsSecondsDouble,
     TestInternalCapiGetRecursionDepth,
-    TestInternalCapiPendingThreadfunc,
-    TestInternalCapiRunInSubinterpWithConfig,
-    TestInternalCapiGh119213Getargs,
     DataclassesField,
     DataclassesIsDataclass,
     DataclassesFields,
@@ -9129,7 +8882,6 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::JsonEncodeBaseStringAscii
             | BuiltinFunction::JsonMakeEncoder
             | BuiltinFunction::JsonMakeEncoderCall
-            | BuiltinFunction::JsonScannerCall
             | BuiltinFunction::HashlibMd5
             | BuiltinFunction::HashlibSha1
             | BuiltinFunction::HashlibSha224
@@ -9362,24 +9114,8 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::TypeAnnotationsGet
             | BuiltinFunction::TestCapiExceptionPrint
             | BuiltinFunction::TestCapiConfigGet
-            | BuiltinFunction::TestCapiGetArgs
-            | BuiltinFunction::TestCapiGetKwargs
-            | BuiltinFunction::TestCapiGetArgsEmpty
-            | BuiltinFunction::TestCapiGetArgsTuple
-            | BuiltinFunction::TestCapiGetArgsScalar(_)
-            | BuiltinFunction::TestCapiGetArgsString(_)
-            | BuiltinFunction::TestCapiParseTupleAndKeywords
-            | BuiltinFunction::TestCapiArgParsing
-            | BuiltinFunction::TestCapiGetArgsKeywords
-            | BuiltinFunction::TestCapiGetArgsKeywordOnly
-            | BuiltinFunction::TestCapiGetArgsPositionalOnlyAndKeywords
-            | BuiltinFunction::TestCapiPendingThreadfunc
             | BuiltinFunction::TestCapiPyObjectVectorcall
-            | BuiltinFunction::TestCapiPyTimeAsSecondsDouble
             | BuiltinFunction::TestInternalCapiGetRecursionDepth
-            | BuiltinFunction::TestInternalCapiPendingThreadfunc
-            | BuiltinFunction::TestInternalCapiRunInSubinterpWithConfig
-            | BuiltinFunction::TestInternalCapiGh119213Getargs
             | BuiltinFunction::DataclassesField
             | BuiltinFunction::DataclassesIsDataclass
             | BuiltinFunction::DataclassesFields
@@ -11069,7 +10805,6 @@ fn native_method_name(kind: NativeMethodKind) -> Option<String> {
         NativeMethodKind::Builtin(builtin) => Some(builtin_callable_name(builtin)),
         NativeMethodKind::IntReprMethod => Some("__repr__".to_string()),
         NativeMethodKind::BuiltinBaseReprMethod => Some("__repr__".to_string()),
-        NativeMethodKind::BuiltinBaseHashMethod => Some("__hash__".to_string()),
         NativeMethodKind::DictKeys => Some("keys".to_string()),
         NativeMethodKind::DictValues => Some("values".to_string()),
         NativeMethodKind::DictItems => Some("items".to_string()),
@@ -11110,12 +10845,8 @@ fn native_method_name(kind: NativeMethodKind) -> Option<String> {
         NativeMethodKind::BoundMethodDescriptorGet
         | NativeMethodKind::FunctionDescriptorGet
         | NativeMethodKind::GetSetDescriptorGet
-        | NativeMethodKind::InstanceMethodDescriptorGet
         | NativeMethodKind::ClassMethodDescriptorGet
         | NativeMethodKind::StaticMethodDescriptorGet => Some("__get__".to_string()),
-        NativeMethodKind::InstanceMethodTypeNew => Some("__new__".to_string()),
-        NativeMethodKind::InstanceMethodCall => Some("__call__".to_string()),
-        NativeMethodKind::InstanceMethodRepr => Some("__repr__".to_string()),
         _ => None,
     }
 }
@@ -11794,9 +11525,6 @@ pub fn format_value(value: &Value) -> String {
                         NativeMethodKind::BuiltinBaseReprMethod => {
                             "<bound method __repr__>".to_string()
                         }
-                        NativeMethodKind::BuiltinBaseHashMethod => {
-                            "<bound method __hash__>".to_string()
-                        }
                         NativeMethodKind::FloatAsIntegerRatioMethod => {
                             "<bound method float.as_integer_ratio>".to_string()
                         }
@@ -11994,18 +11722,6 @@ pub fn format_value(value: &Value) -> String {
                         }
                         NativeMethodKind::GetSetDescriptorGet => {
                             "<bound method getset_descriptor.__get__>".to_string()
-                        }
-                        NativeMethodKind::InstanceMethodTypeNew => {
-                            "<bound method instancemethod.__new__>".to_string()
-                        }
-                        NativeMethodKind::InstanceMethodDescriptorGet => {
-                            "<bound method instancemethod.__get__>".to_string()
-                        }
-                        NativeMethodKind::InstanceMethodCall => {
-                            "<bound method instancemethod.__call__>".to_string()
-                        }
-                        NativeMethodKind::InstanceMethodRepr => {
-                            "<bound method instancemethod.__repr__>".to_string()
                         }
                         NativeMethodKind::ClassMethodDescriptorGet => {
                             "<bound method classmethod.__get__>".to_string()
@@ -12249,9 +11965,6 @@ fn format_repr_string(value: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if canonical_codepoint_for_internal_char(c) != c as u32 => {
-                append_python_char_escape(&mut out, c)
-            }
             c if c.is_control() => append_python_char_escape(&mut out, c),
             c => out.push(c),
         }
@@ -12261,7 +11974,7 @@ fn format_repr_string(value: &str) -> String {
 }
 
 fn append_python_char_escape(out: &mut String, ch: char) {
-    let code = canonical_codepoint_for_internal_char(ch);
+    let code = ch as u32;
     if code <= 0xFF {
         out.push_str(&format!("\\x{code:02x}"));
     } else if code <= 0xFFFF {
@@ -12414,52 +12127,6 @@ fn builtin_type_object_name(builtin: BuiltinFunction) -> Option<&'static str> {
     builtin_type_name_info(builtin).map(|info| info.qualified_name)
 }
 
-fn testcapi_scalar_function_name(kind: TestCapiScalarParseKind) -> &'static str {
-    match kind {
-        TestCapiScalarParseKind::B => "getargs_b",
-        TestCapiScalarParseKind::UpperB => "getargs_B",
-        TestCapiScalarParseKind::H => "getargs_h",
-        TestCapiScalarParseKind::UpperH => "getargs_H",
-        TestCapiScalarParseKind::I => "getargs_I",
-        TestCapiScalarParseKind::K => "getargs_k",
-        TestCapiScalarParseKind::LowerI => "getargs_i",
-        TestCapiScalarParseKind::L => "getargs_l",
-        TestCapiScalarParseKind::N => "getargs_n",
-        TestCapiScalarParseKind::P => "getargs_p",
-        TestCapiScalarParseKind::UpperL => "getargs_L",
-        TestCapiScalarParseKind::UpperK => "getargs_K",
-        TestCapiScalarParseKind::F => "getargs_f",
-        TestCapiScalarParseKind::D => "getargs_d",
-        TestCapiScalarParseKind::UpperD => "getargs_D",
-        TestCapiScalarParseKind::UpperS => "getargs_S",
-        TestCapiScalarParseKind::UpperY => "getargs_Y",
-        TestCapiScalarParseKind::UpperU => "getargs_U",
-    }
-}
-
-fn testcapi_string_function_name(kind: TestCapiStringParseKind) -> &'static str {
-    match kind {
-        TestCapiStringParseKind::LowerC => "getargs_c",
-        TestCapiStringParseKind::UpperC => "getargs_C",
-        TestCapiStringParseKind::LowerS => "getargs_s",
-        TestCapiStringParseKind::LowerSStar => "getargs_s_star",
-        TestCapiStringParseKind::LowerSHash => "getargs_s_hash",
-        TestCapiStringParseKind::LowerZ => "getargs_z",
-        TestCapiStringParseKind::LowerZStar => "getargs_z_star",
-        TestCapiStringParseKind::LowerZHash => "getargs_z_hash",
-        TestCapiStringParseKind::LowerY => "getargs_y",
-        TestCapiStringParseKind::LowerYStar => "getargs_y_star",
-        TestCapiStringParseKind::LowerYHash => "getargs_y_hash",
-        TestCapiStringParseKind::LowerEs => "getargs_es",
-        TestCapiStringParseKind::LowerEt => "getargs_et",
-        TestCapiStringParseKind::LowerEsHash => "getargs_es_hash",
-        TestCapiStringParseKind::LowerEtHash => "getargs_et_hash",
-        TestCapiStringParseKind::WStar => "getargs_w_star",
-        TestCapiStringParseKind::WStarOpt => "getargs_w_star_opt",
-        TestCapiStringParseKind::Gh99240ClearArgs => "gh_99240_clear_args",
-    }
-}
-
 fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
     match builtin {
         BuiltinFunction::Print => "print".to_string(),
@@ -12531,20 +12198,6 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::CoroutineType => "coroutine".to_string(),
         BuiltinFunction::AsyncGeneratorType => "async_generator".to_string(),
         BuiltinFunction::TypeAnnotationsGet => "__annotations__.__get__".to_string(),
-        BuiltinFunction::TestCapiGetArgs => "get_args".to_string(),
-        BuiltinFunction::TestCapiGetKwargs => "get_kwargs".to_string(),
-        BuiltinFunction::TestCapiGetArgsEmpty => "getargs_empty".to_string(),
-        BuiltinFunction::TestCapiGetArgsTuple => "getargs_tuple".to_string(),
-        BuiltinFunction::TestCapiGetArgsScalar(kind) => {
-            testcapi_scalar_function_name(kind).to_string()
-        }
-        BuiltinFunction::TestCapiGetArgsString(kind) => {
-            testcapi_string_function_name(kind).to_string()
-        }
-        BuiltinFunction::TestCapiParseTupleAndKeywords => "parse_tuple_and_keywords".to_string(),
-        BuiltinFunction::TestCapiArgParsing => "argparsing".to_string(),
-        BuiltinFunction::TestCapiPendingThreadfunc => "_pending_threadfunc".to_string(),
-        BuiltinFunction::TestInternalCapiPendingThreadfunc => "pending_threadfunc".to_string(),
         BuiltinFunction::TypingNoDefaultNew => "__new__".to_string(),
         BuiltinFunction::TypingNoDefaultRepr => "__repr__".to_string(),
         BuiltinFunction::TypingNoDefaultReduce => "__reduce__".to_string(),

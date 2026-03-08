@@ -217,7 +217,7 @@ pub unsafe extern "C" fn PyCodec_IncrementalEncoder(
         ) {
             Ok(value) => value,
             Err(err) => {
-                context.set_error_from_runtime_error(err);
+                context.set_error(err);
                 return std::ptr::null_mut();
             }
         };
@@ -267,7 +267,7 @@ pub unsafe extern "C" fn PyCodec_IncrementalDecoder(
         ) {
             Ok(value) => value,
             Err(err) => {
-                context.set_error_from_runtime_error(err);
+                context.set_error(err);
                 return std::ptr::null_mut();
             }
         };

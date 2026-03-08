@@ -256,9 +256,9 @@ impl Vm {
     ) -> Result<ObjRef, RuntimeError> {
         match &*receiver.kind() {
             Object::Tuple(_) => Ok(receiver.clone()),
-            Object::Instance(_) => self.instance_backing_tuple(receiver).ok_or_else(|| {
-                RuntimeError::type_error(format!("{method_name}() receiver must be tuple"))
-            }),
+            Object::Instance(_) => self
+                .instance_backing_tuple(receiver)
+                .ok_or_else(|| RuntimeError::type_error(format!("{method_name}() receiver must be tuple"))),
             Object::Module(module_data) => {
                 if let Some(Value::Tuple(tuple)) = module_data.globals.get("value") {
                     return Ok(tuple.clone());
@@ -270,13 +270,11 @@ impl Vm {
                 }
                 match args.remove(0) {
                     Value::Tuple(tuple) => Ok(tuple),
-                    Value::Instance(instance) => {
-                        self.instance_backing_tuple(&instance).ok_or_else(|| {
-                            RuntimeError::type_error(format!(
-                                "{method_name}() receiver must be tuple"
-                            ))
-                        })
-                    }
+                    Value::Instance(instance) => self.instance_backing_tuple(&instance).ok_or_else(
+                        || RuntimeError::type_error(format!(
+                            "{method_name}() receiver must be tuple"
+                        )),
+                    ),
                     _ => Err(RuntimeError::type_error(format!(
                         "{method_name}() receiver must be tuple"
                     ))),
@@ -303,7 +301,6 @@ impl Vm {
 
     fn slot_wrapper_method_name(&self, builtin: BuiltinFunction) -> &'static str {
         match builtin {
-            BuiltinFunction::Hash => "__hash__",
             BuiltinFunction::Repr => "__repr__",
             BuiltinFunction::Str => "__str__",
             BuiltinFunction::OperatorAdd => "__add__",
@@ -452,83 +449,6 @@ impl Vm {
             },
             _ => Err(RuntimeError::type_error("unsupported builtin repr owner")),
         }
-    }
-
-    fn builtin_base_hash_value(
-        &mut self,
-        dispatch_owner: &Value,
-        receiver_value: &Value,
-    ) -> Result<i64, RuntimeError> {
-        let value = match dispatch_owner {
-            Value::Builtin(BuiltinFunction::Int) | Value::Builtin(BuiltinFunction::Bool) => {
-                match receiver_value {
-                    Value::Int(value) => Value::Int(*value),
-                    Value::BigInt(value) => Value::BigInt(value.clone()),
-                    Value::Bool(value) => Value::Bool(*value),
-                    Value::Instance(instance) => self
-                        .instance_backing_int(instance)
-                        .ok_or_else(|| RuntimeError::type_error("int receiver is invalid"))?,
-                    _ => return Err(RuntimeError::type_error("int receiver is invalid")),
-                }
-            }
-            Value::Builtin(BuiltinFunction::Float) => match receiver_value {
-                Value::Float(value) => Value::Float(*value),
-                Value::Instance(instance) => Value::Float(
-                    self.instance_backing_float(instance)
-                        .ok_or_else(|| RuntimeError::type_error("float receiver is invalid"))?,
-                ),
-                _ => return Err(RuntimeError::type_error("float receiver is invalid")),
-            },
-            Value::Builtin(BuiltinFunction::Complex) => match receiver_value {
-                Value::Complex { real, imag } => Value::Complex {
-                    real: *real,
-                    imag: *imag,
-                },
-                Value::Instance(instance) => {
-                    let (real, imag) = self
-                        .instance_backing_complex(instance)
-                        .ok_or_else(|| RuntimeError::type_error("complex receiver is invalid"))?;
-                    Value::Complex { real, imag }
-                }
-                _ => return Err(RuntimeError::type_error("complex receiver is invalid")),
-            },
-            Value::Builtin(BuiltinFunction::Str) => match receiver_value {
-                Value::Str(value) => Value::Str(value.clone()),
-                Value::Instance(instance) => Value::Str(
-                    self.instance_backing_str(instance)
-                        .ok_or_else(|| RuntimeError::type_error("str receiver is invalid"))?,
-                ),
-                _ => return Err(RuntimeError::type_error("str receiver is invalid")),
-            },
-            Value::Builtin(BuiltinFunction::Bytes) => match receiver_value {
-                Value::Bytes(value) => Value::Bytes(value.clone()),
-                Value::Instance(instance) => self
-                    .instance_backing_bytes_like(instance)
-                    .ok_or_else(|| RuntimeError::type_error("bytes receiver is invalid"))?,
-                _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
-            },
-            Value::Builtin(BuiltinFunction::Tuple) => match receiver_value {
-                Value::Tuple(value) => Value::Tuple(value.clone()),
-                Value::Instance(instance) => Value::Tuple(
-                    self.instance_backing_tuple(instance)
-                        .ok_or_else(|| RuntimeError::type_error("tuple receiver is invalid"))?,
-                ),
-                _ => return Err(RuntimeError::type_error("tuple receiver is invalid")),
-            },
-            Value::Builtin(BuiltinFunction::FrozenSet) => match receiver_value {
-                Value::FrozenSet(value) => Value::FrozenSet(value.clone()),
-                Value::Instance(instance) => Value::FrozenSet(
-                    self.instance_backing_frozenset(instance)
-                        .ok_or_else(|| RuntimeError::type_error("frozenset receiver is invalid"))?,
-                ),
-                _ => return Err(RuntimeError::type_error("frozenset receiver is invalid")),
-            },
-            Value::Builtin(BuiltinFunction::ObjectNew) | Value::Class(_) => {
-                return Ok(self.heap.id_of(receiver_value) as i64);
-            }
-            _ => return Err(RuntimeError::type_error("unsupported builtin hash owner")),
-        };
-        self.hash_value_runtime(&value)
     }
 
     fn extract_slot_wrapper_receiver_value(
@@ -2441,11 +2361,8 @@ impl Vm {
                         "tuple.count() expects one argument",
                     ));
                 }
-                let tuple_obj = self.extract_tuple_receiver_object_for_method_call(
-                    &receiver,
-                    &mut args,
-                    "tuple.count",
-                )?;
+                let tuple_obj =
+                    self.extract_tuple_receiver_object_for_method_call(&receiver, &mut args, "tuple.count")?;
                 if args.len() != 1 {
                     return Err(RuntimeError::type_error(
                         "tuple.count() expects one argument",
@@ -2575,11 +2492,8 @@ impl Vm {
                     }
                     Ok(None)
                 };
-                let tuple_obj = self.extract_tuple_receiver_object_for_method_call(
-                    &receiver,
-                    &mut args,
-                    "tuple.index",
-                )?;
+                let tuple_obj =
+                    self.extract_tuple_receiver_object_for_method_call(&receiver, &mut args, "tuple.index")?;
                 let mut remaining_args = args;
                 let tuple_kind = tuple_obj.kind();
                 let Object::Tuple(values) = &*tuple_kind else {
@@ -2699,11 +2613,7 @@ impl Vm {
                             }
                         }
                     }
-                    _ => {
-                        return Err(RuntimeError::new(
-                            "list.__reversed__() receiver must be list",
-                        ));
-                    }
+                    _ => return Err(RuntimeError::new("list.__reversed__() receiver must be list")),
                 };
                 Ok(NativeCallResult::Value(
                     self.list_reverse_iterator(list_receiver)?,
@@ -2936,16 +2846,6 @@ impl Vm {
                     .ok_or_else(|| RuntimeError::type_error("repr dispatch owner is invalid"))?;
                 let value = self.builtin_base_repr_value(&dispatch_owner, &value)?;
                 Ok(NativeCallResult::Value(Value::Str(format_repr(&value))))
-            }
-            NativeMethodKind::BuiltinBaseHashMethod => {
-                let value = self
-                    .extract_slot_wrapper_receiver_value(&receiver, &mut args, "__hash__")?
-                    .ok_or_else(|| RuntimeError::type_error("hash receiver is invalid"))?;
-                let dispatch_owner = self
-                    .slot_wrapper_dispatch_owner(&receiver)
-                    .ok_or_else(|| RuntimeError::type_error("hash dispatch owner is invalid"))?;
-                let value = self.builtin_base_hash_value(&dispatch_owner, &value)?;
-                Ok(NativeCallResult::Value(Value::Int(value)))
             }
             NativeMethodKind::FloatAsIntegerRatioMethod => {
                 let value = self.extract_float_receiver_value_for_method_call(
@@ -6727,67 +6627,6 @@ impl Vm {
                     self.builtin_getattr(vec![obj, Value::Str(descriptor_name)], HashMap::new())?;
                 Ok(NativeCallResult::Value(value))
             }
-            NativeMethodKind::InstanceMethodTypeNew => {
-                if !kwargs.is_empty() {
-                    return Err(RuntimeError::type_error(
-                        "instancemethod() takes no keyword arguments",
-                    ));
-                }
-                if args.len() != 1 {
-                    return Err(RuntimeError::type_error(
-                        "instancemethod() takes exactly one argument",
-                    ));
-                }
-                Ok(NativeCallResult::Value(
-                    self.build_instancemethod_descriptor(args.remove(0))?,
-                ))
-            }
-            NativeMethodKind::InstanceMethodDescriptorGet => {
-                if args.is_empty() || args.len() > 2 {
-                    return Err(RuntimeError::new("__get__() expects 1-2 arguments"));
-                }
-                let obj = args.remove(0);
-                let Some(callable) = self.instancemethod_descriptor_callable(&receiver) else {
-                    return Err(RuntimeError::new("invalid instancemethod descriptor"));
-                };
-                if matches!(obj, Value::None) {
-                    return Ok(NativeCallResult::Value(callable));
-                }
-                Ok(NativeCallResult::Value(
-                    self.bind_instancemethod_callable(callable, obj)?,
-                ))
-            }
-            NativeMethodKind::InstanceMethodCall => {
-                let Some(callable) = self.instancemethod_descriptor_callable(&receiver) else {
-                    return Err(RuntimeError::new("invalid instancemethod descriptor"));
-                };
-                match self.call_internal(callable, args, kwargs)? {
-                    InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(value)),
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        Ok(NativeCallResult::PropagatedException)
-                    }
-                }
-            }
-            NativeMethodKind::InstanceMethodRepr => {
-                if !kwargs.is_empty() || !args.is_empty() {
-                    return Err(RuntimeError::type_error("__repr__() takes no arguments"));
-                }
-                let Some(callable) = self.instancemethod_descriptor_callable(&receiver) else {
-                    return Err(RuntimeError::new("invalid instancemethod descriptor"));
-                };
-                let callable_name = self
-                    .optional_getattr_value(callable, "__name__")?
-                    .and_then(|value| match value {
-                        Value::Str(text) => Some(text),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| "?".to_string());
-                Ok(NativeCallResult::Value(Value::Str(format!(
-                    "<instancemethod {} at 0x{:x}>",
-                    callable_name,
-                    receiver.id()
-                ))))
-            }
             NativeMethodKind::ClassMethodDescriptorGet => {
                 if args.is_empty() || args.len() > 2 {
                     return Err(RuntimeError::new("__get__() expects 1-2 arguments"));
@@ -7208,7 +7047,7 @@ impl Vm {
                     let typing_module = if let Some(module) = self.modules.get("typing").cloned() {
                         module
                     } else {
-                        self.import_module_object("typing")?
+                        self.load_module("typing")?
                     };
                     let annotated = self.builtin_getattr(
                         vec![
@@ -9030,7 +8869,7 @@ impl Vm {
         let annotationlib = if let Some(module) = self.modules.get("annotationlib").cloned() {
             module
         } else {
-            self.import_module_object("annotationlib")?
+            self.load_module("annotationlib")?
         };
         let forward_ref_ctor = self.builtin_getattr(
             vec![
@@ -13658,7 +13497,6 @@ impl Vm {
             }
             BuiltinFunction::CopyregNewObj => self.builtin_copyreg_newobj(args, kwargs),
             BuiltinFunction::CopyregNewObjEx => self.builtin_copyreg_newobj_ex(args, kwargs),
-            BuiltinFunction::JsonScannerCall => self.builtin_json_scanner_call(args, kwargs),
             BuiltinFunction::JsonScannerMakeScanner => {
                 self.builtin_json_scanner_make_scanner(args, kwargs)
             }
@@ -14070,53 +13908,11 @@ impl Vm {
                 self.builtin_testcapi_exception_print(args, kwargs)
             }
             BuiltinFunction::TestCapiConfigGet => self.builtin_testcapi_config_get(args, kwargs),
-            BuiltinFunction::TestCapiGetArgs => self.builtin_testcapi_get_args(args, kwargs),
-            BuiltinFunction::TestCapiGetKwargs => self.builtin_testcapi_get_kwargs(args, kwargs),
-            BuiltinFunction::TestCapiGetArgsEmpty => {
-                self.builtin_testcapi_getargs_empty(args, kwargs)
-            }
-            BuiltinFunction::TestCapiGetArgsTuple => {
-                self.builtin_testcapi_getargs_tuple(args, kwargs)
-            }
-            BuiltinFunction::TestCapiGetArgsScalar(kind) => {
-                self.builtin_testcapi_getargs_scalar(kind, args, kwargs)
-            }
-            BuiltinFunction::TestCapiGetArgsString(kind) => {
-                self.builtin_testcapi_getargs_string(kind, args, kwargs)
-            }
-            BuiltinFunction::TestCapiParseTupleAndKeywords => {
-                self.builtin_testcapi_parse_tuple_and_keywords(args, kwargs)
-            }
-            BuiltinFunction::TestCapiArgParsing => self.builtin_testcapi_argparsing(args, kwargs),
-            BuiltinFunction::TestCapiGetArgsKeywords => {
-                self.builtin_testcapi_getargs_keywords(args, kwargs)
-            }
-            BuiltinFunction::TestCapiGetArgsKeywordOnly => {
-                self.builtin_testcapi_getargs_keyword_only(args, kwargs)
-            }
-            BuiltinFunction::TestCapiGetArgsPositionalOnlyAndKeywords => {
-                self.builtin_testcapi_getargs_positional_only_and_keywords(args, kwargs)
-            }
-            BuiltinFunction::TestCapiPendingThreadfunc => {
-                self.builtin_testcapi_pending_threadfunc(args, kwargs)
-            }
             BuiltinFunction::TestCapiPyObjectVectorcall => {
                 self.builtin_testcapi_pyobject_vectorcall(args, kwargs)
             }
-            BuiltinFunction::TestCapiPyTimeAsSecondsDouble => {
-                self.builtin_testcapi_pytime_as_secondsdouble(args, kwargs)
-            }
             BuiltinFunction::TestInternalCapiGetRecursionDepth => {
                 self.builtin_testinternalcapi_get_recursion_depth(args, kwargs)
-            }
-            BuiltinFunction::TestInternalCapiPendingThreadfunc => {
-                self.builtin_testinternalcapi_pending_threadfunc(args, kwargs)
-            }
-            BuiltinFunction::TestInternalCapiRunInSubinterpWithConfig => {
-                self.builtin_testinternalcapi_run_in_subinterp_with_config(args, kwargs)
-            }
-            BuiltinFunction::TestInternalCapiGh119213Getargs => {
-                self.builtin_testinternalcapi_gh_119213_getargs(args, kwargs)
             }
             BuiltinFunction::DataclassesField => self.builtin_dataclasses_field(args, kwargs),
             BuiltinFunction::DataclassesIsDataclass => {

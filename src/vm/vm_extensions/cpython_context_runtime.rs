@@ -384,7 +384,7 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_builtin_cfunction_
         ) {
             Ok(value) => value,
             Err(err) => {
-                context.set_error_from_runtime_error(err);
+                context.set_error(err);
                 return std::ptr::null_mut();
             }
         };

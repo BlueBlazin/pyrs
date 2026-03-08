@@ -196,13 +196,9 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                 // (e.g. module attrs like numpy.dot) stay authoritative.
                 let is_generic_getattro = tp_getattro == PyObject_GetAttr as *mut c_void
                     || tp_getattro == PyObject_GenericGetAttr as *mut c_void;
-                // Only compat objects owned by this runtime should bypass generic tp_getattro.
-                // External host objects must keep CPython's generic attribute binding so bound
-                // methods like `_decimal.ContextManager.__enter__` materialize correctly.
-                if is_generic_getattro
-                    && is_owned
-                    && context.cpython_value_from_ptr(object).is_some()
-                {
+                // For mapped runtime values, route through pyrs generic getattr so descriptor
+                // protocol semantics on runtime objects stay authoritative.
+                if is_generic_getattro && context.cpython_value_from_ptr(object).is_some() {
                     return None;
                 }
                 if trace_getattr_slots {
@@ -789,14 +785,11 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                 || tp_getattro == PyObject_GetAttr as *mut c_void
                 || tp_getattro == PyObject_GenericGetAttr as *mut c_void
             {
-                // Compat objects owned by this runtime should still resolve through pyrs
-                // attribute machinery. External objects using generic getattr should stay on
-                // the C-API tp_dict path so descriptor binding remains CPython-shaped.
-                if is_owned && context.cpython_value_from_ptr(object).is_some() {
+                // Preserve descriptor/binding semantics for mapped runtime values.
+                if context.cpython_value_from_ptr(object).is_some() {
                     return None;
                 }
-                // Generic external-object lookup runs through tp_dict/MRO resolution, including
-                // descriptor binding via tp_descr_get when present.
+                // For unmapped foreign objects, best-effort raw tp_dict fallback.
                 if let Some(attr_name) = attr_name.as_ref()
                     && let Some(result) = context.lookup_type_attr_via_tp_dict(object, attr_name)
                 {
@@ -1224,29 +1217,6 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
         && name_text.contains("__pybind11");
     let trace_seed_setattr = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_SEED_ATTRS")
         && name_text == "_seed_seq";
-    let trace_proxy_finalize_attr =
-        super::super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_DROP")
-            && matches!(name_text.as_str(), "__class__" | "refcnt_in_del");
-    if trace_proxy_finalize_attr {
-        let _ = with_active_cpython_context_mut(|context| {
-            let object_tag = context
-                .cpython_value_from_borrowed_ptr(object)
-                .map(|value| cpython_value_debug_tag(&value))
-                .unwrap_or_else(|| "<unresolved-object>".to_string());
-            let value_tag = if value_ptr.is_null() {
-                "<null>".to_string()
-            } else {
-                context
-                    .cpython_value_from_borrowed_ptr(value_ptr)
-                    .map(|value| cpython_value_debug_tag(&value))
-                    .unwrap_or_else(|| "<unresolved-value>".to_string())
-            };
-            eprintln!(
-                "[cpy-proxy-drop] setattr-enter object={:p} name={} value={:p} object_tag={} value_tag={}",
-                object, name_text, value_ptr, object_tag, value_tag
-            );
-        });
-    }
     if trace_seed_setattr {
         let _ = with_active_cpython_context_mut(|context| {
             let object_tag = context
@@ -1368,12 +1338,6 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             Some(-1)
         });
         if let Some(status) = native_status {
-            if trace_proxy_finalize_attr {
-                eprintln!(
-                    "[cpy-proxy-drop] setattr-native object={:p} name={} value={:p} status={}",
-                    object, name_text, value_ptr, status
-                );
-            }
             if status == 0 {
                 let attr_name_for_sync = name_text.clone();
                 let _ = with_active_cpython_context_mut(|context| {
@@ -1446,12 +1410,6 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
         vec![object_value, Value::Str(name_text), value],
     ) {
         Ok(_) => {
-            if trace_proxy_finalize_attr {
-                eprintln!(
-                    "[cpy-proxy-drop] setattr-builtin object={:p} name={} value={:p} status=0",
-                    object, name_text_for_sync, value_ptr
-                );
-            }
             let _ = with_active_cpython_context_mut(|context| {
                 if let Value::Module(module_obj) = &object_value_for_sync {
                     let _ = context.sync_module_dict_set(
@@ -1479,12 +1437,6 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             0
         }
         Err(err) => {
-            if trace_proxy_finalize_attr {
-                eprintln!(
-                    "[cpy-proxy-drop] setattr-builtin object={:p} name={} value={:p} status=-1 err={}",
-                    object, name_text_for_sync, value_ptr, err
-                );
-            }
             if trace_pybind11_attr {
                 eprintln!(
                     "[pybind11-attr] branch=builtin object={:p} name={} value={:p} status=-1 err={}",

@@ -8,11 +8,11 @@ use super::{
     PyDictIterItem_Type, PyDictIterKey_Type, PyDictIterValue_Type, PyDictKeys_Type,
     PyDictRevIterItem_Type, PyDictRevIterKey_Type, PyDictRevIterValue_Type, PyDictValues_Type,
     PyEnum_Type, PyFilter_Type, PyFloat_Type, PyFrozenSet_Type, PyFunction_Type, PyGen_Type,
-    PyInstanceMethod_Type, PyList_Type, PyListIter_Type, PyListRevIter_Type, PyLong_Type,
-    PyMap_Type, PyMemoryView_Type, PyMethod_Type, PyModule_Type, PyNone_Type, PyRange_Type,
-    PyRangeIter_Type, PyReversed_Type, PySeqIter_Type, PySet_Type, PySetIter_Type, PySlice_Type,
-    PySuper_Type, PyTuple_Type, PyTupleIter_Type, PyType_Type, PyUnicode_Type, PyUnicodeIter_Type,
-    PyZip_Type, cpython_exception_ptr_for_name,
+    PyList_Type, PyListIter_Type, PyListRevIter_Type, PyLong_Type, PyMap_Type, PyMemoryView_Type,
+    PyMethod_Type, PyModule_Type, PyNone_Type, PyRange_Type, PyRangeIter_Type, PyReversed_Type,
+    PySeqIter_Type, PySet_Type, PySetIter_Type, PySlice_Type, PySuper_Type, PyTuple_Type,
+    PyTupleIter_Type, PyType_Type, PyUnicode_Type, PyUnicodeIter_Type, PyZip_Type,
+    cpython_exception_ptr_for_name,
 };
 
 pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
@@ -106,18 +106,6 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
         Value::Slice(_) => std::ptr::addr_of_mut!(PySlice_Type).cast(),
         Value::Super(_) => std::ptr::addr_of_mut!(PySuper_Type).cast(),
         Value::Function(_) => std::ptr::addr_of_mut!(PyFunction_Type).cast(),
-        Value::Instance(instance) => {
-            if let Object::Instance(instance_data) = &*instance.kind()
-                && matches!(
-                    instance_data.attrs.get("__pyrs_instancemethod__"),
-                    Some(Value::Bool(true))
-                )
-            {
-                std::ptr::addr_of_mut!(PyInstanceMethod_Type).cast()
-            } else {
-                std::ptr::addr_of_mut!(PyBaseObject_Type).cast()
-            }
-        }
         Value::BoundMethod(_) => std::ptr::addr_of_mut!(PyMethod_Type).cast(),
         Value::Exception(exception_obj) => cpython_exception_ptr_for_name(&exception_obj.name)
             .unwrap_or_else(|| std::ptr::addr_of_mut!(PyBaseObject_Type).cast()),
@@ -163,7 +151,6 @@ pub(super) fn cpython_builtin_type_ptr_for_class_name(class_name: &str) -> Optio
         "complex" => std::ptr::addr_of_mut!(PyComplex_Type).cast(),
         "function" => std::ptr::addr_of_mut!(PyFunction_Type).cast(),
         "coroutine" => std::ptr::addr_of_mut!(PyCoro_Type).cast(),
-        "instancemethod" => std::ptr::addr_of_mut!(PyInstanceMethod_Type).cast(),
         "str" => std::ptr::addr_of_mut!(PyUnicode_Type).cast(),
         "bytes" => std::ptr::addr_of_mut!(PyBytes_Type).cast(),
         "bytearray" => std::ptr::addr_of_mut!(PyByteArray_Type).cast(),
@@ -196,8 +183,6 @@ pub(super) fn cpython_builtin_type_name_for_ptr(ptr: *mut c_void) -> Option<&'st
         Some("function")
     } else if ptr == std::ptr::addr_of_mut!(PyCoro_Type).cast() {
         Some("coroutine")
-    } else if ptr == std::ptr::addr_of_mut!(PyInstanceMethod_Type).cast() {
-        Some("instancemethod")
     } else if ptr == std::ptr::addr_of_mut!(PyUnicode_Type).cast() {
         Some("str")
     } else if ptr == std::ptr::addr_of_mut!(PyBytes_Type).cast() {
