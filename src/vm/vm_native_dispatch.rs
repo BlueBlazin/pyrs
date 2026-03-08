@@ -14096,6 +14096,9 @@ impl Vm {
             BuiltinFunction::TestCapiGetArgsPositionalOnlyAndKeywords => {
                 self.builtin_testcapi_getargs_positional_only_and_keywords(args, kwargs)
             }
+            BuiltinFunction::TestCapiPendingThreadfunc => {
+                self.builtin_testcapi_pending_threadfunc(args, kwargs)
+            }
             BuiltinFunction::TestCapiPyObjectVectorcall => {
                 self.builtin_testcapi_pyobject_vectorcall(args, kwargs)
             }
@@ -14104,6 +14107,9 @@ impl Vm {
             }
             BuiltinFunction::TestInternalCapiGetRecursionDepth => {
                 self.builtin_testinternalcapi_get_recursion_depth(args, kwargs)
+            }
+            BuiltinFunction::TestInternalCapiPendingThreadfunc => {
+                self.builtin_testinternalcapi_pending_threadfunc(args, kwargs)
             }
             BuiltinFunction::TestInternalCapiRunInSubinterpWithConfig => {
                 self.builtin_testinternalcapi_run_in_subinterp_with_config(args, kwargs)

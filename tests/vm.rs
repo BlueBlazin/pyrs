@@ -18999,6 +18999,73 @@ ok = check()
 }
 
 #[test]
+fn exposes_testcapi_pending_threadfunc_helpers() {
+    let source = r#"import _testcapi, _testinternalcapi, threading
+main_tid = threading.get_ident()
+main_hits = []
+interp_hits = []
+
+def main_callback():
+    main_hits.append(threading.get_ident())
+
+def interp_callback():
+    interp_hits.append(threading.get_ident())
+
+added_main = _testcapi._pending_threadfunc(main_callback, 33)
+added_interp = _testinternalcapi.pending_threadfunc(interp_callback, 301)
+spins = 0
+while (len(main_hits) < added_main or len(interp_hits) < added_interp) and spins < 20000:
+    spins += 1
+    _ = spins * spins
+
+ok = (
+    added_main == 32
+    and added_interp == 300
+    and len(main_hits) == 32
+    and len(interp_hits) == 300
+    and all(tid == main_tid for tid in main_hits)
+    and all(tid == main_tid for tid in interp_hits)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn testinternalcapi_pending_threadfunc_requeues_onto_worker_thread() {
+    let source = r#"import _testinternalcapi, threading
+main_tid = threading.get_ident()
+runner_tids = []
+
+def callback():
+    if threading.get_ident() == main_tid:
+        _testinternalcapi.pending_threadfunc(callback, ensure_added=True)
+        return
+    runner_tids.append(threading.get_ident())
+
+def worker():
+    spins = 0
+    while not runner_tids and spins < 20000:
+        spins += 1
+        _ = spins * spins
+
+added = _testinternalcapi.pending_threadfunc(callback, ensure_added=True)
+t = threading.Thread(target=worker)
+t.start()
+t.join()
+ok = added == 1 and len(runner_tids) == 1 and runner_tids[0] != main_tid
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn testcapi_parse_keyword_messages_preserve_invalid_utf8_and_surrogates() {
     let source = r#"import _testcapi
 

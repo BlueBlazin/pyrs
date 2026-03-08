@@ -29,8 +29,8 @@ mod wasm_libc_shim;
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, HashSet};
-use std::ffi::{CString, OsString, c_void};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::ffi::{CString, OsString, c_int, c_void};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{IsTerminal, Read, Seek, SeekFrom, Write};
@@ -77,8 +77,8 @@ use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, CallKeywordArgs, ClassObject, DictViewKind,
     ExceptionObject, FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind,
     IteratorObject, MemoryViewObject, ModuleObject, NativeMethodKind, NativeMethodObject, Obj,
-    ObjRef, Object, RuntimeError, SuperObject, TestCapiScalarParseKind,
-    TestCapiStringParseKind, Value, clear_obj_drop_hooks_for_heap, format_repr, format_value,
+    ObjRef, Object, RuntimeError, SuperObject, TestCapiScalarParseKind, TestCapiStringParseKind,
+    Value, clear_obj_drop_hooks_for_heap, format_repr, format_value,
     runtime_get_int_max_str_digits,
 };
 use crate::unicode::{
@@ -94,6 +94,7 @@ struct Block {
 
 unsafe extern "C" {
     fn free(ptr: *mut c_void);
+    fn Py_MakePendingCalls() -> c_int;
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -248,6 +249,8 @@ const SIGNAL_SIGINT: i64 = 2;
 const SIGNAL_SIGKILL: i64 = 9;
 const SIGNAL_SIGTERM: i64 = 15;
 const SYNTHETIC_THREAD_IDENT_START: i64 = 1_i64 << 60;
+const TESTCAPI_MAIN_PENDING_CALLS_MAX: usize = 32;
+const TESTINTERNALCAPI_PENDING_CALLS_MAX: usize = 300;
 const PY_TPFLAGS_DISALLOW_INSTANTIATION: i64 = 1 << 7;
 const PY_TPFLAGS_IMMUTABLETYPE: i64 = 1 << 8;
 const PY_TPFLAGS_HEAPTYPE: i64 = 1 << 9;
@@ -1292,7 +1295,13 @@ pub struct Vm {
     tracemalloc_enabled: bool,
     tracemalloc_traceback_limit: usize,
     tracemalloc_object_traces: HashMap<u64, Vec<(String, usize)>>,
+    main_thread_ident: i64,
     next_synthetic_thread_ident: i64,
+    pending_main_thread_python_calls: VecDeque<Value>,
+    pending_main_thread_python_call_overflow: VecDeque<Value>,
+    pending_interp_python_calls: VecDeque<Value>,
+    pending_interp_python_call_overflow: VecDeque<Value>,
+    pending_callback_drain_depth: usize,
     builtins_version: u64,
     class_attr_versions: HashMap<u64, u64>,
     type_cache_version_tag: u32,
@@ -1738,7 +1747,13 @@ impl Vm {
             tracemalloc_enabled: false,
             tracemalloc_traceback_limit: 1,
             tracemalloc_object_traces: HashMap::new(),
+            main_thread_ident: vm_current_thread_ident(),
             next_synthetic_thread_ident: SYNTHETIC_THREAD_IDENT_START,
+            pending_main_thread_python_calls: VecDeque::new(),
+            pending_main_thread_python_call_overflow: VecDeque::new(),
+            pending_interp_python_calls: VecDeque::new(),
+            pending_interp_python_call_overflow: VecDeque::new(),
+            pending_callback_drain_depth: 0,
             builtins_version: 1,
             class_attr_versions: HashMap::new(),
             type_cache_version_tag: 1,
@@ -1774,7 +1789,10 @@ impl Vm {
             false,
         );
         if let Some(stdlib_root) = vm.detect_cpython_stdlib_root()
-            && !vm.module_paths.iter().any(|existing| existing == &stdlib_root)
+            && !vm
+                .module_paths
+                .iter()
+                .any(|existing| existing == &stdlib_root)
         {
             vm.module_paths.push(stdlib_root);
         }
@@ -2071,6 +2089,128 @@ impl Vm {
 
     pub(super) fn current_thread_ident_value(&self) -> i64 {
         vm_current_thread_ident()
+    }
+
+    pub(super) fn main_thread_ident_value(&self) -> i64 {
+        self.main_thread_ident
+    }
+
+    pub(super) fn is_main_thread(&self) -> bool {
+        self.current_thread_ident_value() == self.main_thread_ident
+    }
+
+    fn pending_python_call_limit(main_thread_only: bool) -> usize {
+        if main_thread_only {
+            TESTCAPI_MAIN_PENDING_CALLS_MAX
+        } else {
+            TESTINTERNALCAPI_PENDING_CALLS_MAX
+        }
+    }
+
+    pub(super) fn enqueue_pending_python_call(
+        &mut self,
+        callable: Value,
+        main_thread_only: bool,
+        ensure_added: bool,
+    ) -> bool {
+        let limit = Self::pending_python_call_limit(main_thread_only);
+        if main_thread_only {
+            if self.pending_main_thread_python_calls.len() < limit {
+                self.pending_main_thread_python_calls.push_back(callable);
+                return true;
+            }
+            if ensure_added {
+                self.pending_main_thread_python_call_overflow
+                    .push_back(callable);
+                return true;
+            }
+            return false;
+        }
+
+        if self.pending_interp_python_calls.len() < limit {
+            self.pending_interp_python_calls.push_back(callable);
+            return true;
+        }
+        if ensure_added {
+            self.pending_interp_python_call_overflow.push_back(callable);
+            return true;
+        }
+        false
+    }
+
+    fn refill_pending_python_call_queue(&mut self, main_thread_only: bool) {
+        let limit = Self::pending_python_call_limit(main_thread_only);
+        if main_thread_only {
+            while self.pending_main_thread_python_calls.len() < limit {
+                let Some(callable) = self.pending_main_thread_python_call_overflow.pop_front()
+                else {
+                    break;
+                };
+                self.pending_main_thread_python_calls.push_back(callable);
+            }
+            return;
+        }
+
+        while self.pending_interp_python_calls.len() < limit {
+            let Some(callable) = self.pending_interp_python_call_overflow.pop_front() else {
+                break;
+            };
+            self.pending_interp_python_calls.push_back(callable);
+        }
+    }
+
+    fn drain_pending_python_call_batch(
+        &mut self,
+        main_thread_only: bool,
+    ) -> Result<(), RuntimeError> {
+        let batch_len = if main_thread_only {
+            self.pending_main_thread_python_calls.len()
+        } else {
+            self.pending_interp_python_calls.len()
+        };
+
+        for _ in 0..batch_len {
+            let callable = if main_thread_only {
+                self.pending_main_thread_python_calls.pop_front()
+            } else {
+                self.pending_interp_python_calls.pop_front()
+            };
+            let Some(callable) = callable else {
+                break;
+            };
+            match self.call_internal(callable, Vec::new(), HashMap::new()) {
+                Ok(InternalCallOutcome::Value(_)) => {}
+                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    self.refill_pending_python_call_queue(main_thread_only);
+                    return Ok(());
+                }
+                Err(err) => {
+                    self.refill_pending_python_call_queue(main_thread_only);
+                    return Err(err);
+                }
+            }
+        }
+
+        self.refill_pending_python_call_queue(main_thread_only);
+        Ok(())
+    }
+
+    pub(super) fn run_pending_callback_queues(&mut self) -> Result<(), RuntimeError> {
+        if self.pending_callback_drain_depth > 0 {
+            return Ok(());
+        }
+        self.pending_callback_drain_depth += 1;
+        let result = (|| {
+            if self.is_main_thread() {
+                if unsafe { Py_MakePendingCalls() } != 0 {
+                    return Err(RuntimeError::new("pending C callback failed"));
+                }
+                self.drain_pending_python_call_batch(true)?;
+            }
+            self.drain_pending_python_call_batch(false)
+        })();
+        self.pending_callback_drain_depth = self.pending_callback_drain_depth.saturating_sub(1);
+        result
     }
 
     fn allocate_synthetic_thread_ident(&mut self) -> i64 {
@@ -4177,10 +4317,7 @@ impl Vm {
         )?;
         let encoded = match self.call_internal_preserving_caller(
             encode,
-            vec![
-                Value::Str(text.to_string()),
-                Value::Str(errors.to_string()),
-            ],
+            vec![Value::Str(text.to_string()), Value::Str(errors.to_string())],
             HashMap::new(),
         )? {
             InternalCallOutcome::Value(value) => value,
@@ -5774,6 +5911,10 @@ impl Vm {
                     BuiltinFunction::TestInternalCapiGetRecursionDepth,
                 ),
                 (
+                    "pending_threadfunc",
+                    BuiltinFunction::TestInternalCapiPendingThreadfunc,
+                ),
+                (
                     "run_in_subinterp_with_config",
                     BuiltinFunction::TestInternalCapiRunInSubinterpWithConfig,
                 ),
@@ -5872,6 +6013,10 @@ impl Vm {
                 ("meth_fastcall_keywords", BuiltinFunction::NoOp),
                 ("meth_noargs", BuiltinFunction::NoOp),
                 ("meth_o", BuiltinFunction::NoOp),
+                (
+                    "_pending_threadfunc",
+                    BuiltinFunction::TestCapiPendingThreadfunc,
+                ),
                 ("call_in_temporary_c_thread", BuiltinFunction::NoOp),
                 ("join_temporary_c_thread", BuiltinFunction::NoOp),
                 ("exception_print", BuiltinFunction::TestCapiExceptionPrint),

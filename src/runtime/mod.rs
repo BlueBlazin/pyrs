@@ -5926,9 +5926,11 @@ pub enum BuiltinFunction {
     TestCapiGetArgsKeywords,
     TestCapiGetArgsKeywordOnly,
     TestCapiGetArgsPositionalOnlyAndKeywords,
+    TestCapiPendingThreadfunc,
     TestCapiPyObjectVectorcall,
     TestCapiPyTimeAsSecondsDouble,
     TestInternalCapiGetRecursionDepth,
+    TestInternalCapiPendingThreadfunc,
     TestInternalCapiRunInSubinterpWithConfig,
     TestInternalCapiGh119213Getargs,
     DataclassesField,
@@ -9369,9 +9371,11 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::TestCapiGetArgsKeywords
             | BuiltinFunction::TestCapiGetArgsKeywordOnly
             | BuiltinFunction::TestCapiGetArgsPositionalOnlyAndKeywords
+            | BuiltinFunction::TestCapiPendingThreadfunc
             | BuiltinFunction::TestCapiPyObjectVectorcall
             | BuiltinFunction::TestCapiPyTimeAsSecondsDouble
             | BuiltinFunction::TestInternalCapiGetRecursionDepth
+            | BuiltinFunction::TestInternalCapiPendingThreadfunc
             | BuiltinFunction::TestInternalCapiRunInSubinterpWithConfig
             | BuiltinFunction::TestInternalCapiGh119213Getargs
             | BuiltinFunction::DataclassesField
@@ -12537,6 +12541,8 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         }
         BuiltinFunction::TestCapiParseTupleAndKeywords => "parse_tuple_and_keywords".to_string(),
         BuiltinFunction::TestCapiArgParsing => "argparsing".to_string(),
+        BuiltinFunction::TestCapiPendingThreadfunc => "_pending_threadfunc".to_string(),
+        BuiltinFunction::TestInternalCapiPendingThreadfunc => "pending_threadfunc".to_string(),
         BuiltinFunction::TypingNoDefaultNew => "__new__".to_string(),
         BuiltinFunction::TypingNoDefaultRepr => "__repr__".to_string(),
         BuiltinFunction::TypingNoDefaultReduce => "__reduce__".to_string(),

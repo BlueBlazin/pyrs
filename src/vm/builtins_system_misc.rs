@@ -1,14 +1,14 @@
 use super::{
     BigInt, BuiltinFunction, CallKeywordArgs, HashMap, InstanceObject, InternalCallOutcome, IpAddr,
     IteratorKind, IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT,
-    SIGNAL_IGNORE, SIGNAL_SIGINT, SocketAddr, TestCapiScalarParseKind, TimeParts, ToSocketAddrs,
-    TestCapiStringParseKind, Value, Vm, apply_uuid_variant, apply_uuid_version,
+    SIGNAL_IGNORE, SIGNAL_SIGINT, SocketAddr, TestCapiScalarParseKind, TestCapiStringParseKind,
+    TimeParts, ToSocketAddrs, Value, Vm, apply_uuid_variant, apply_uuid_version,
     bytes_like_from_value, day_of_year, days_from_civil, decode_text_bytes,
     dict_contains_key_checked, dict_get_value, dict_set_value_checked, format_strftime,
-    format_uuid_hex, format_uuid_hyphenated, is_truthy,
-    parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp,
-    unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes,
-    uuid_timestamp_100ns_since_gregorian, value_from_bigint, value_to_f64, value_to_int,
+    format_uuid_hex, format_uuid_hyphenated, is_truthy, parse_uuid_like_string,
+    runtime_error_matches_exception, split_unix_timestamp, unix_time_now_duration,
+    uuid_hash_mix_bytes, uuid_random_bytes, uuid_timestamp_100ns_since_gregorian,
+    value_from_bigint, value_to_f64, value_to_int,
 };
 use crate::{compiler, parser};
 use std::rc::Rc;
@@ -194,8 +194,11 @@ impl Vm {
                     category_value.clone(),
                     vec![Value::Str(message.clone())],
                     HashMap::new(),
-                )? else {
-                    return Err(RuntimeError::new("warning category call did not return a value"));
+                )?
+                else {
+                    return Err(RuntimeError::new(
+                        "warning category call did not return a value",
+                    ));
                 };
                 if let Value::Exception(exception) = raised {
                     return Err(RuntimeError::from_exception((*exception).clone()));
@@ -206,9 +209,9 @@ impl Vm {
             }
             "once" => {
                 dict_set_value_checked(&registry, key.clone(), Value::Int(1))?;
-                let once_key =
-                    self.heap
-                        .alloc_tuple(vec![text_key.clone(), category_value.clone()]);
+                let once_key = self
+                    .heap
+                    .alloc_tuple(vec![text_key.clone(), category_value.clone()]);
                 let onceregistry = self.capi_warning_onceregistry(&warnings_module)?;
                 if dict_contains_key_checked(&onceregistry, &once_key)? {
                     return Ok(());
@@ -218,9 +221,11 @@ impl Vm {
             "always" | "all" => {}
             "module" => {
                 dict_set_value_checked(&registry, key.clone(), Value::Int(1))?;
-                let alt_key = self
-                    .heap
-                    .alloc_tuple(vec![text_key.clone(), category_value.clone(), Value::Int(0)]);
+                let alt_key = self.heap.alloc_tuple(vec![
+                    text_key.clone(),
+                    category_value.clone(),
+                    Value::Int(0),
+                ]);
                 if dict_contains_key_checked(&registry, &alt_key)? {
                     return Ok(());
                 }
@@ -240,8 +245,11 @@ impl Vm {
             category_value.clone(),
             vec![Value::Str(message)],
             HashMap::new(),
-        )? else {
-            return Err(RuntimeError::new("warning category call did not return a value"));
+        )?
+        else {
+            return Err(RuntimeError::new(
+                "warning category call did not return a value",
+            ));
         };
         let warning_message = self.capi_warning_message_value(
             &warnings_module,
@@ -396,7 +404,11 @@ impl Vm {
         }
     }
 
-    fn capi_warning_pattern_matches(&mut self, pattern: &Value, text: &str) -> Result<bool, RuntimeError> {
+    fn capi_warning_pattern_matches(
+        &mut self,
+        pattern: &Value,
+        text: &str,
+    ) -> Result<bool, RuntimeError> {
         self.capi_warning_pattern_matches_value(pattern, &Value::Str(text.to_string()))
     }
 
@@ -407,7 +419,9 @@ impl Vm {
     ) -> Result<bool, RuntimeError> {
         match pattern {
             Value::None => Ok(true),
-            Value::Str(expected) => Ok(matches!(candidate, Value::Str(actual) if actual == expected)),
+            Value::Str(expected) => {
+                Ok(matches!(candidate, Value::Str(actual) if actual == expected))
+            }
             other => {
                 let matcher = self.builtin_getattr(
                     vec![other.clone(), Value::Str("match".to_string())],
@@ -417,7 +431,8 @@ impl Vm {
                     matcher,
                     vec![candidate.clone()],
                     HashMap::new(),
-                )? else {
+                )?
+                else {
                     return Ok(false);
                 };
                 Ok(is_truthy(&matched))
@@ -430,11 +445,15 @@ impl Vm {
         category: &Value,
         expected: &Value,
     ) -> Result<bool, RuntimeError> {
-        let result = self.builtin_issubclass(vec![category.clone(), expected.clone()], HashMap::new())?;
+        let result =
+            self.builtin_issubclass(vec![category.clone(), expected.clone()], HashMap::new())?;
         Ok(matches!(result, Value::Bool(true)))
     }
 
-    fn capi_warning_onceregistry(&mut self, warnings_module: &ObjRef) -> Result<ObjRef, RuntimeError> {
+    fn capi_warning_onceregistry(
+        &mut self,
+        warnings_module: &ObjRef,
+    ) -> Result<ObjRef, RuntimeError> {
         match self.load_attr_module(warnings_module, "onceregistry")? {
             Value::Dict(dict_obj) => Ok(dict_obj),
             other => Err(RuntimeError::type_error(format!(
@@ -459,7 +478,8 @@ impl Vm {
                 "warnings.WarningMessage must be a class",
             ));
         };
-        let Value::Instance(instance_obj) = self.heap.alloc_instance(InstanceObject::new(class_obj))
+        let Value::Instance(instance_obj) =
+            self.heap.alloc_instance(InstanceObject::new(class_obj))
         else {
             unreachable!();
         };
@@ -478,7 +498,9 @@ impl Vm {
                 .insert("lineno".to_string(), Value::Int(lineno));
             instance_data.attrs.insert("file".to_string(), Value::None);
             instance_data.attrs.insert("line".to_string(), Value::None);
-            instance_data.attrs.insert("source".to_string(), Value::None);
+            instance_data
+                .attrs
+                .insert("source".to_string(), Value::None);
             instance_data.attrs.insert(
                 "_category_name".to_string(),
                 Value::Str(category_name.to_string()),
@@ -1215,8 +1237,7 @@ impl Vm {
 
         for entry in kwargs.into_entries() {
             if entry.normalized_name != "keyword" {
-                let unexpected =
-                    testcapi_keyword_name_display(&entry.key, &entry.normalized_name);
+                let unexpected = testcapi_keyword_name_display(&entry.key, &entry.normalized_name);
                 return Err(RuntimeError::type_error(format!(
                     "this function got an unexpected keyword argument {}",
                     unexpected
@@ -4629,7 +4650,7 @@ impl Vm {
                 "_get_main_thread_ident() expects no arguments",
             ));
         }
-        Ok(Value::Int(self.current_thread_ident_value()))
+        Ok(Value::Int(self.main_thread_ident_value()))
     }
 
     pub(super) fn builtin_thread_is_main_interpreter(
@@ -7724,6 +7745,110 @@ impl Vm {
         Ok(Value::Int(self.frames.len().max(1) as i64))
     }
 
+    fn parse_pending_threadfunc_args(
+        &mut self,
+        function_name: &str,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<(Value, u32, bool, bool), RuntimeError> {
+        if args.len() > 2 {
+            return Err(RuntimeError::type_error(format!(
+                "{function_name}() takes at most 2 positional arguments ({} given)",
+                args.len()
+            )));
+        }
+
+        let callback_kw = kwargs.remove("callback");
+        let num_kw = kwargs.remove("num");
+        let blocking_kw = kwargs.remove("blocking");
+        let ensure_added_kw = kwargs.remove("ensure_added");
+        if !kwargs.is_empty() {
+            let name = kwargs.keys().next().cloned().unwrap_or_default();
+            return Err(RuntimeError::type_error(format!(
+                "{function_name}() got an unexpected keyword argument '{name}'"
+            )));
+        }
+
+        let callback = if !args.is_empty() {
+            if callback_kw.is_some() {
+                return Err(RuntimeError::type_error(format!(
+                    "{function_name}() got multiple values for argument 'callback'"
+                )));
+            }
+            args.remove(0)
+        } else {
+            callback_kw.ok_or_else(|| {
+                RuntimeError::type_error(format!(
+                    "{function_name}() missing required argument 'callback'"
+                ))
+            })?
+        };
+
+        let num = if !args.is_empty() {
+            if num_kw.is_some() {
+                return Err(RuntimeError::type_error(format!(
+                    "{function_name}() got multiple values for argument 'num'"
+                )));
+            }
+            let count = self.capi_long_as_unsigned_long(args.remove(0))?;
+            if count > u32::MAX as u64 {
+                return Err(RuntimeError::overflow_error(
+                    "Python int too large to convert to C unsigned int",
+                ));
+            }
+            count as u32
+        } else if let Some(value) = num_kw {
+            let count = self.capi_long_as_unsigned_long(value)?;
+            if count > u32::MAX as u64 {
+                return Err(RuntimeError::overflow_error(
+                    "Python int too large to convert to C unsigned int",
+                ));
+            }
+            count as u32
+        } else {
+            1
+        };
+
+        let blocking = blocking_kw.as_ref().is_some_and(is_truthy);
+        let ensure_added = ensure_added_kw.as_ref().is_some_and(is_truthy);
+        Ok((callback, num, blocking, ensure_added))
+    }
+
+    fn builtin_pending_threadfunc(
+        &mut self,
+        function_name: &str,
+        main_thread_only: bool,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let (callback, num, _blocking, ensure_added) =
+            self.parse_pending_threadfunc_args(function_name, args, kwargs)?;
+        let mut added = 0_u32;
+        for _ in 0..num {
+            if !self.enqueue_pending_python_call(callback.clone(), main_thread_only, ensure_added) {
+                break;
+            }
+            added = added.saturating_add(1);
+        }
+        Ok(Value::Int(added as i64))
+    }
+
+    pub(super) fn builtin_testcapi_pending_threadfunc(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_pending_threadfunc("_pending_threadfunc", true, args, kwargs)
+    }
+
+    pub(super) fn builtin_testinternalcapi_pending_threadfunc(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_pending_threadfunc("pending_threadfunc", false, args, kwargs)
+    }
+
     pub(super) fn builtin_testinternalcapi_run_in_subinterp_with_config(
         &mut self,
         mut args: Vec<Value>,
@@ -7774,7 +7899,8 @@ impl Vm {
         };
 
         let module = parser::parse_module(&code).map_err(|err| RuntimeError::new(err.message))?;
-        let code = compiler::compile_module(&module).map_err(|err| RuntimeError::new(err.message))?;
+        let code =
+            compiler::compile_module(&module).map_err(|err| RuntimeError::new(err.message))?;
         let mut subvm = Vm::new_with_host(self.host.clone());
         subvm.module_paths = self.module_paths.clone();
         subvm.mark_as_subinterpreter();

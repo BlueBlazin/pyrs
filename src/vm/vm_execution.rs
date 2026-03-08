@@ -979,6 +979,14 @@ impl Vm {
                 self.push_value(sent);
             }
 
+            match self.run_pending_callback_queues() {
+                Ok(()) => {}
+                Err(err) => match self.handle_runtime_error(err) {
+                    Ok(()) => continue,
+                    Err(err) => return Err(err),
+                },
+            }
+
             let should_return = {
                 let frame = self.frames.last().expect("frame exists");
                 frame.ip >= frame.code.instructions.len()
