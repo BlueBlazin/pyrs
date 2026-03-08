@@ -2780,6 +2780,32 @@ impl Vm {
             ],
             vec![
                 ("BOM_UTF8", self.heap.alloc_bytes(vec![0xEF, 0xBB, 0xBF])),
+                ("BOM_LE", self.heap.alloc_bytes(vec![0xFF, 0xFE])),
+                ("BOM_UTF16_LE", self.heap.alloc_bytes(vec![0xFF, 0xFE])),
+                ("BOM_BE", self.heap.alloc_bytes(vec![0xFE, 0xFF])),
+                ("BOM_UTF16_BE", self.heap.alloc_bytes(vec![0xFE, 0xFF])),
+                ("BOM_UTF32_LE", self.heap.alloc_bytes(vec![0xFF, 0xFE, 0x00, 0x00])),
+                ("BOM_UTF32_BE", self.heap.alloc_bytes(vec![0x00, 0x00, 0xFE, 0xFF])),
+                (
+                    "BOM_UTF16",
+                    if cfg!(target_endian = "little") {
+                        self.heap.alloc_bytes(vec![0xFF, 0xFE])
+                    } else {
+                        self.heap.alloc_bytes(vec![0xFE, 0xFF])
+                    },
+                ),
+                (
+                    "BOM_UTF32",
+                    if cfg!(target_endian = "little") {
+                        self.heap.alloc_bytes(vec![0xFF, 0xFE, 0x00, 0x00])
+                    } else {
+                        self.heap.alloc_bytes(vec![0x00, 0x00, 0xFE, 0xFF])
+                    },
+                ),
+                ("BOM32_LE", self.heap.alloc_bytes(vec![0xFF, 0xFE])),
+                ("BOM32_BE", self.heap.alloc_bytes(vec![0xFE, 0xFF])),
+                ("BOM64_LE", self.heap.alloc_bytes(vec![0xFF, 0xFE, 0x00, 0x00])),
+                ("BOM64_BE", self.heap.alloc_bytes(vec![0x00, 0x00, 0xFE, 0xFF])),
                 ("Codec", codec_class),
                 ("CodecInfo", codec_info_class),
                 ("IncrementalDecoder", incremental_decoder_class),
@@ -9797,6 +9823,22 @@ class BufferedIncrementalDecoder(IncrementalDecoder):
     }
 
     fn install_json_accelerator_module(&mut self) {
+        let scanner_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Scanner".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *scanner_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_json".to_string()));
+            class_data.attrs.insert(
+                "__call__".to_string(),
+                Value::Builtin(BuiltinFunction::JsonScannerCall),
+            );
+        }
         self.install_builtin_module(
             "_json",
             &[
@@ -9809,7 +9851,7 @@ class BufferedIncrementalDecoder(IncrementalDecoder):
                 ("make_scanner", BuiltinFunction::JsonScannerMakeScanner),
                 ("scanstring", BuiltinFunction::JsonDecoderScanString),
             ],
-            Vec::new(),
+            vec![("__pyrs_scanner_class__", Value::Class(scanner_class))],
         );
     }
 

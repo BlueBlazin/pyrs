@@ -5480,6 +5480,7 @@ pub enum BuiltinFunction {
     JsonEncodeBaseStringAscii,
     JsonMakeEncoder,
     JsonMakeEncoderCall,
+    JsonScannerCall,
     SqliteConnect,
     SqliteCompleteStatement,
     SqliteRegisterAdapter,
@@ -9128,6 +9129,7 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::JsonEncodeBaseStringAscii
             | BuiltinFunction::JsonMakeEncoder
             | BuiltinFunction::JsonMakeEncoderCall
+            | BuiltinFunction::JsonScannerCall
             | BuiltinFunction::HashlibMd5
             | BuiltinFunction::HashlibSha1
             | BuiltinFunction::HashlibSha224

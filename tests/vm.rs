@@ -9062,11 +9062,14 @@ a = json.loads(b'{"x": 1, "y": [2, 3]}')
 b = json.loads(bytearray(b'{"x": 1, "y": [2, 3]}'))
 ok = (a['x'] == 1 and a['y'] == [2, 3] and b == a)
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    let source = source.to_string();
+    run_with_large_stack("json-loads-bytes-bytearray", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -23281,13 +23284,29 @@ except StopIteration as exc:
 
 #[test]
 fn json_raw_decode_invalid_token_reports_integer_position() {
-    let source = r#"import _json
-scan_once = _json.make_scanner(object())
+    let source = r#"import _json, json
+scan_once = _json.make_scanner(json.JSONDecoder())
 ok = False
 try:
     scan_once("nan", 0)
 except StopIteration as exc:
     ok = (type(exc.value) is int and exc.value == 0)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn json_make_scanner_requires_strict_attr_like_cpython() {
+    let source = r#"import _json
+ok = False
+try:
+    _json.make_scanner(object())
+except AttributeError as exc:
+    ok = ("strict" in str(exc))
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

@@ -13658,6 +13658,7 @@ impl Vm {
             }
             BuiltinFunction::CopyregNewObj => self.builtin_copyreg_newobj(args, kwargs),
             BuiltinFunction::CopyregNewObjEx => self.builtin_copyreg_newobj_ex(args, kwargs),
+            BuiltinFunction::JsonScannerCall => self.builtin_json_scanner_call(args, kwargs),
             BuiltinFunction::JsonScannerMakeScanner => {
                 self.builtin_json_scanner_make_scanner(args, kwargs)
             }

@@ -780,6 +780,7 @@ impl Vm {
             BuiltinFunction::JsonEncodeBaseStringAscii => "encode_basestring_ascii".to_string(),
             BuiltinFunction::JsonMakeEncoder => "make_encoder".to_string(),
             BuiltinFunction::JsonMakeEncoderCall => "_iterencode".to_string(),
+            BuiltinFunction::JsonScannerCall => "__call__".to_string(),
             BuiltinFunction::JsonScannerMakeScanner => "make_scanner".to_string(),
             BuiltinFunction::JsonScannerPyMakeScanner => "py_make_scanner".to_string(),
             BuiltinFunction::JsonScannerScanOnce => "scan_once".to_string(),
@@ -1027,6 +1028,7 @@ impl Vm {
             }
             BuiltinFunction::JsonMakeEncoder => "_json.make_encoder".to_string(),
             BuiltinFunction::JsonMakeEncoderCall => "_json._iterencode".to_string(),
+            BuiltinFunction::JsonScannerCall => "_json.Scanner.__call__".to_string(),
             BuiltinFunction::JsonScannerMakeScanner => "_json.make_scanner".to_string(),
             BuiltinFunction::JsonScannerPyMakeScanner => "json.scanner.py_make_scanner".to_string(),
             BuiltinFunction::JsonScannerScanOnce => "_json.scan_once".to_string(),
@@ -1484,6 +1486,7 @@ impl Vm {
             | BuiltinFunction::SreAsciiToLower
             | BuiltinFunction::SreUnicodeIsCased
             | BuiltinFunction::SreUnicodeToLower => "_sre",
+            BuiltinFunction::JsonScannerCall => "_json",
             BuiltinFunction::JsonScannerPyMakeScanner => "json.scanner",
             BuiltinFunction::OperatorContains => "operator",
             BuiltinFunction::FunctoolsReduce => "functools",

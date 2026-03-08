@@ -4,9 +4,9 @@
 //! while explicitly rejecting unsupported option families with typed errors.
 
 use super::super::{
-    BigInt, BuiltinFunction, ExceptionObject, HashMap, HashSet, Heap, InternalCallOutcome,
-    ModuleObject, Object, RuntimeError, Value, Vm, format_repr, is_truthy,
-    runtime_get_int_max_str_digits, value_to_int,
+    BigInt, BuiltinFunction, ExceptionObject, HashMap, HashSet, Heap, InstanceObject,
+    InternalCallOutcome, ModuleObject, ObjRef, Object, RuntimeError, Value, Vm, format_repr,
+    is_truthy, runtime_get_int_max_str_digits, value_to_int,
 };
 use crate::unicode::{internal_char_from_codepoint, surrogate_code_unit_from_internal_char};
 
@@ -34,6 +34,26 @@ impl Default for JsonDumpsOptions {
             indent: None,
         }
     }
+}
+
+const JSON_SCANNER_CLASS_ATTR: &str = "__pyrs_scanner_class__";
+const JSON_SCANNER_PARSE_OBJECT_ATTR: &str = "__pyrs_json_parse_object__";
+const JSON_SCANNER_PARSE_ARRAY_ATTR: &str = "__pyrs_json_parse_array__";
+const JSON_SCANNER_PARSE_STRING_ATTR: &str = "__pyrs_json_parse_string__";
+const JSON_SCANNER_RECURSIVE_SCANNER_ATTR: &str = "__pyrs_json_scanner__";
+const JSON_SCANNER_MEMO_ATTR: &str = "__pyrs_json_memo__";
+
+#[derive(Clone)]
+struct JsonScannerState {
+    strict: bool,
+    object_hook: Value,
+    object_pairs_hook: Value,
+    parse_float: Value,
+    parse_int: Value,
+    parse_constant: Value,
+    parse_object: Value,
+    parse_array: Value,
+    parse_string: Value,
 }
 
 impl Vm {
@@ -509,117 +529,428 @@ impl Vm {
         Ok(())
     }
 
-    fn json_scanner_requires_python_make_scanner(
-        &mut self,
-        context: &Value,
-    ) -> Result<bool, RuntimeError> {
-        let parse_float = self
-            .optional_getattr_value(context.clone(), "parse_float")?
-            .unwrap_or(Value::None);
-        let parse_int = self
-            .optional_getattr_value(context.clone(), "parse_int")?
-            .unwrap_or(Value::None);
-        let parse_constant = self
-            .optional_getattr_value(context.clone(), "parse_constant")?
-            .unwrap_or(Value::None);
-        let strict = self
-            .optional_getattr_value(context.clone(), "strict")?
-            .unwrap_or(Value::Bool(true));
-        let object_hook = self
-            .optional_getattr_value(context.clone(), "object_hook")?
-            .unwrap_or(Value::None);
-        let object_pairs_hook = self
-            .optional_getattr_value(context.clone(), "object_pairs_hook")?
-            .unwrap_or(Value::None);
-
-        Ok(!json_is_default_parse_float(&parse_float)
-            || !json_is_default_parse_int(&parse_int)
-            || !json_is_default_parse_constant(&parse_constant)
-            || !matches!(strict, Value::Bool(true))
-            || object_hook != Value::None
-            || object_pairs_hook != Value::None)
-    }
-
     pub(in crate::vm) fn builtin_json_scanner_make_scanner(
         &mut self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::type_error(
+                "make_scanner() expects one context argument",
+            ));
+        }
+        let context = if let Some(context) = args.pop() {
+            if kwargs.contains_key("context") {
+                return Err(RuntimeError::type_error(
+                    "make_scanner() got multiple values for argument 'context'",
+                ));
+            }
+            context
+        } else if let Some(context) = kwargs.remove("context") {
+            context
+        } else {
+            return Err(RuntimeError::type_error(
+                "make_scanner() missing required argument 'context'",
+            ));
+        };
+        if let Some(unexpected) = kwargs.keys().next().cloned() {
+            return Err(RuntimeError::type_error(format!(
+                "make_scanner() got an unexpected keyword argument '{}'",
+                unexpected
+            )));
+        }
+
+        let strict_value = self.builtin_getattr(
+            vec![context.clone(), Value::Str("strict".to_string())],
+            HashMap::new(),
+        )?;
+        let strict = self.truthy_from_value(&strict_value)?;
+        let object_hook = self.builtin_getattr(
+            vec![context.clone(), Value::Str("object_hook".to_string())],
+            HashMap::new(),
+        )?;
+        let object_pairs_hook = self.builtin_getattr(
+            vec![
+                context.clone(),
+                Value::Str("object_pairs_hook".to_string()),
+            ],
+            HashMap::new(),
+        )?;
+        let parse_float = self.builtin_getattr(
+            vec![context.clone(), Value::Str("parse_float".to_string())],
+            HashMap::new(),
+        )?;
+        let parse_int = self.builtin_getattr(
+            vec![context.clone(), Value::Str("parse_int".to_string())],
+            HashMap::new(),
+        )?;
+        let parse_constant = self.builtin_getattr(
+            vec![
+                context.clone(),
+                Value::Str("parse_constant".to_string()),
+            ],
+            HashMap::new(),
+        )?;
+        let parse_object = self.builtin_getattr(
+            vec![context.clone(), Value::Str("parse_object".to_string())],
+            HashMap::new(),
+        )?;
+        let parse_array = self.builtin_getattr(
+            vec![context.clone(), Value::Str("parse_array".to_string())],
+            HashMap::new(),
+        )?;
+        let parse_string = self.builtin_getattr(
+            vec![context, Value::Str("parse_string".to_string())],
+            HashMap::new(),
+        )?;
+
+        let scanner_class = self.json_scanner_runtime_class()?;
+        let scanner = match self.heap.alloc_instance(InstanceObject::new(scanner_class)) {
+            Value::Instance(instance) => instance,
+            _ => unreachable!(),
+        };
+        if let Object::Instance(instance_data) = &mut *scanner.kind_mut() {
+            instance_data
+                .attrs
+                .insert("strict".to_string(), Value::Bool(strict));
+            instance_data
+                .attrs
+                .insert("object_hook".to_string(), object_hook.clone());
+            instance_data
+                .attrs
+                .insert("object_pairs_hook".to_string(), object_pairs_hook.clone());
+            instance_data
+                .attrs
+                .insert("parse_float".to_string(), parse_float.clone());
+            instance_data
+                .attrs
+                .insert("parse_int".to_string(), parse_int.clone());
+            instance_data
+                .attrs
+                .insert("parse_constant".to_string(), parse_constant.clone());
+            instance_data
+                .attrs
+                .insert(JSON_SCANNER_PARSE_OBJECT_ATTR.to_string(), parse_object);
+            instance_data
+                .attrs
+                .insert(JSON_SCANNER_PARSE_ARRAY_ATTR.to_string(), parse_array);
+            instance_data
+                .attrs
+                .insert(JSON_SCANNER_PARSE_STRING_ATTR.to_string(), parse_string);
+        }
+        Ok(Value::Instance(scanner))
+    }
+
+    pub(in crate::vm) fn builtin_json_scanner_call(
+        &mut self,
+        mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("make_scanner() expects context"));
+        let receiver = self.receiver_from_value(
+            args.first()
+                .ok_or_else(|| RuntimeError::type_error("scan_once() missing receiver"))?,
+        )?;
+        args.remove(0);
+        let (source, idx) = self.json_scanner_parse_call_args(args, kwargs)?;
+        let memo = self.heap.alloc_dict(Vec::new());
+        let recursive_state = match self
+            .heap
+            .alloc_module(ModuleObject::new("__json_scanner_scan_once__".to_string()))
+        {
+            Value::Module(module) => module,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *recursive_state.kind_mut() {
+            module_data.globals.insert(
+                JSON_SCANNER_RECURSIVE_SCANNER_ATTR.to_string(),
+                Value::Instance(receiver.clone()),
+            );
+            module_data
+                .globals
+                .insert(JSON_SCANNER_MEMO_ATTR.to_string(), memo.clone());
         }
-        let context = args[0].clone();
-        if self.json_scanner_requires_python_make_scanner(&context)? {
-            if let Ok(strict_value) = self.builtin_getattr(
-                vec![context.clone(), Value::Str("strict".to_string())],
-                HashMap::new(),
-            ) {
-                let _ = self.builtin_bool(vec![strict_value], HashMap::new())?;
-            }
-            let caller_depth = self.frames.len();
-            if let Ok(scanner_module) = self.import_module_object("json.scanner")
-                && let Ok(scanner_module) =
-                    self.return_imported_module(scanner_module, caller_depth)
-                && let Object::Module(module_data) = &*scanner_module.kind()
-                && let Some(py_make_scanner) = module_data.globals.get("py_make_scanner").cloned()
-            {
-                let recursive_builtin = matches!(
-                    py_make_scanner,
-                    Value::Builtin(BuiltinFunction::JsonScannerMakeScanner)
-                        | Value::Builtin(BuiltinFunction::JsonScannerPyMakeScanner)
-                );
-                if !recursive_builtin {
-                    match self.call_internal(py_make_scanner, vec![context], HashMap::new())? {
-                        InternalCallOutcome::Value(value) => return Ok(value),
-                        InternalCallOutcome::CallerExceptionHandled => {
-                            return Err(RuntimeError::runtime_error(
-                                "make_scanner() callback did not return a value",
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        Ok(Value::Builtin(BuiltinFunction::JsonScannerScanOnce))
+        let recursive_scan_once =
+            self.alloc_builtin_bound_method(BuiltinFunction::JsonScannerScanOnce, recursive_state);
+        self.json_scanner_scan_once_impl(&receiver, memo, recursive_scan_once, source, idx)
     }
 
     pub(in crate::vm) fn builtin_json_scanner_scan_once(
         &mut self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("scan_once() expects string and index"));
-        }
-        let source = match &args[0] {
-            Value::Str(text) => text.clone(),
-            _ => return Err(RuntimeError::new("scan_once() expects string and index")),
+        let receiver = self.receiver_from_value(
+            args.first()
+                .ok_or_else(|| RuntimeError::type_error("scan_once() missing receiver"))?,
+        )?;
+        args.remove(0);
+        let (source, idx) = self.json_scanner_parse_call_args(args, kwargs)?;
+        let (scanner, memo) = match &*receiver.kind() {
+            Object::Module(module_data) => (
+                module_data
+                    .globals
+                    .get(JSON_SCANNER_RECURSIVE_SCANNER_ATTR)
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::runtime_error("json scanner state missing"))?,
+                module_data
+                    .globals
+                    .get(JSON_SCANNER_MEMO_ATTR)
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::runtime_error("json scanner memo missing"))?,
+            ),
+            _ => {
+                return Err(RuntimeError::runtime_error(
+                    "json scanner recursive receiver is invalid",
+                ));
+            }
         };
-        let idx = value_to_int(args[1].clone())?;
+        let Value::Instance(scanner) = scanner else {
+            return Err(RuntimeError::runtime_error(
+                "json scanner recursive receiver is invalid",
+            ));
+        };
+        let recursive_scan_once =
+            self.alloc_builtin_bound_method(BuiltinFunction::JsonScannerScanOnce, receiver);
+        self.json_scanner_scan_once_impl(&scanner, memo, recursive_scan_once, source, idx)
+    }
+
+    fn json_scanner_runtime_class(&self) -> Result<ObjRef, RuntimeError> {
+        let module = self
+            .modules
+            .get("_json")
+            .cloned()
+            .ok_or_else(|| RuntimeError::runtime_error("_json module is unavailable"))?;
+        match &*module.kind() {
+            Object::Module(module_data) => match module_data.globals.get(JSON_SCANNER_CLASS_ATTR) {
+                Some(Value::Class(class)) => Ok(class.clone()),
+                _ => Err(RuntimeError::runtime_error(
+                    "_json scanner type is unavailable",
+                )),
+            },
+            _ => Err(RuntimeError::runtime_error("_json module is invalid")),
+        }
+    }
+
+    fn json_scanner_parse_call_args(
+        &self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<(String, i64), RuntimeError> {
+        if args.len() > 2 {
+            return Err(RuntimeError::type_error(
+                "scan_once() expects string and index",
+            ));
+        }
+        let source = if !args.is_empty() {
+            if kwargs.contains_key("string") {
+                return Err(RuntimeError::type_error(
+                    "scan_once() got multiple values for argument 'string'",
+                ));
+            }
+            args.remove(0)
+        } else if let Some(source) = kwargs.remove("string") {
+            source
+        } else {
+            return Err(RuntimeError::type_error(
+                "scan_once() missing required argument 'string'",
+            ));
+        };
+        let idx = if !args.is_empty() {
+            if kwargs.contains_key("idx") {
+                return Err(RuntimeError::type_error(
+                    "scan_once() got multiple values for argument 'idx'",
+                ));
+            }
+            args.remove(0)
+        } else if let Some(idx) = kwargs.remove("idx") {
+            idx
+        } else {
+            return Err(RuntimeError::type_error(
+                "scan_once() missing required argument 'idx'",
+            ));
+        };
+        if let Some(unexpected) = kwargs.keys().next().cloned() {
+            return Err(RuntimeError::type_error(format!(
+                "scan_once() got an unexpected keyword argument '{}'",
+                unexpected
+            )));
+        }
+        let Value::Str(source) = source else {
+            return Err(RuntimeError::type_error(format!(
+                "first argument must be a string, not {}",
+                self.value_type_name_for_error(&source)
+            )));
+        };
+        Ok((source, value_to_int(idx)?))
+    }
+
+    fn json_scanner_state(&self, scanner: &ObjRef) -> Result<JsonScannerState, RuntimeError> {
+        let Object::Instance(instance_data) = &*scanner.kind() else {
+            return Err(RuntimeError::type_error(
+                "json scanner receiver is invalid",
+            ));
+        };
+        let strict = match instance_data.attrs.get("strict") {
+            Some(Value::Bool(strict)) => *strict,
+            _ => {
+                return Err(RuntimeError::runtime_error(
+                    "json scanner strict flag is missing",
+                ));
+            }
+        };
+        let get_attr = |name: &str| {
+            instance_data
+                .attrs
+                .get(name)
+                .cloned()
+                .ok_or_else(|| RuntimeError::runtime_error(format!("json scanner attr '{}' missing", name)))
+        };
+        Ok(JsonScannerState {
+            strict,
+            object_hook: get_attr("object_hook")?,
+            object_pairs_hook: get_attr("object_pairs_hook")?,
+            parse_float: get_attr("parse_float")?,
+            parse_int: get_attr("parse_int")?,
+            parse_constant: get_attr("parse_constant")?,
+            parse_object: get_attr(JSON_SCANNER_PARSE_OBJECT_ATTR)?,
+            parse_array: get_attr(JSON_SCANNER_PARSE_ARRAY_ATTR)?,
+            parse_string: get_attr(JSON_SCANNER_PARSE_STRING_ATTR)?,
+        })
+    }
+
+    fn json_scanner_call_callback(
+        &mut self,
+        callable: Value,
+        args: Vec<Value>,
+        fallback: &str,
+    ) -> Result<Value, RuntimeError> {
+        match self.call_internal(callable, args, HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception(fallback))
+            }
+        }
+    }
+
+    fn json_scanner_scan_once_impl(
+        &mut self,
+        scanner: &ObjRef,
+        memo: Value,
+        recursive_scan_once: Value,
+        source: String,
+        idx: i64,
+    ) -> Result<Value, RuntimeError> {
         if idx < 0 {
-            return Err(self.stop_iteration_runtime_error(Value::Int(0)));
+            return Err(RuntimeError::value_error("idx cannot be negative"));
         }
         let idx = idx as usize;
-        let depth_limit = json_parse_depth_limit(self);
-        let (node, end) =
-            match parse_json_node_from_index_with_limit_detail(&source, idx, depth_limit) {
-                Ok(result) => result,
-                Err(err) if err.message.contains("maximum recursion depth exceeded") => {
-                    return Err(self.recursion_limit_error());
-                }
-                Err(err) if err.message == "Expecting value" => {
-                    return Err(self.stop_iteration_runtime_error(Value::Int(err.pos as i64)));
-                }
-                Err(err) => {
-                    return Err(json_decode_error_runtime_error(
-                        &err.message,
-                        &source,
-                        err.pos,
-                    ));
-                }
-            };
-        let value = json_node_to_value(node, &self.heap);
-        Ok(self.heap.alloc_tuple(vec![value, Value::Int(end as i64)]))
+        let Some(start_byte) = utf8_char_index_to_byte(&source, idx) else {
+            return Err(self.stop_iteration_runtime_error(Value::Int(idx as i64)));
+        };
+        let state = self.json_scanner_state(scanner)?;
+        let bytes = source.as_bytes();
+        let Some(&first) = bytes.get(start_byte) else {
+            return Err(self.stop_iteration_runtime_error(Value::Int(idx as i64)));
+        };
+
+        let tuple_result = match first {
+            b'"' => self.json_scanner_call_callback(
+                state.parse_string,
+                vec![
+                    Value::Str(source),
+                    Value::Int(idx as i64 + 1),
+                    Value::Bool(state.strict),
+                ],
+                "json scanner string parse failed",
+            )?,
+            b'{' => self.json_scanner_call_callback(
+                state.parse_object,
+                vec![
+                    self.heap
+                        .alloc_tuple(vec![Value::Str(source), Value::Int(idx as i64 + 1)]),
+                    Value::Bool(state.strict),
+                    recursive_scan_once,
+                    state.object_hook,
+                    state.object_pairs_hook,
+                    memo,
+                ],
+                "json scanner object parse failed",
+            )?,
+            b'[' => self.json_scanner_call_callback(
+                state.parse_array,
+                vec![
+                    self.heap
+                        .alloc_tuple(vec![Value::Str(source), Value::Int(idx as i64 + 1)]),
+                    recursive_scan_once,
+                ],
+                "json scanner array parse failed",
+            )?,
+            b'n' if bytes.get(start_byte..start_byte + 4) == Some(b"null") => {
+                self.heap.alloc_tuple(vec![Value::None, Value::Int(idx as i64 + 4)])
+            }
+            b't' if bytes.get(start_byte..start_byte + 4) == Some(b"true") => {
+                self.heap.alloc_tuple(vec![Value::Bool(true), Value::Int(idx as i64 + 4)])
+            }
+            b'f' if bytes.get(start_byte..start_byte + 5) == Some(b"false") => {
+                self.heap.alloc_tuple(vec![Value::Bool(false), Value::Int(idx as i64 + 5)])
+            }
+            b'N' if bytes.get(start_byte..start_byte + 3) == Some(b"NaN") => {
+                let value = self.json_scanner_call_callback(
+                    state.parse_constant,
+                    vec![Value::Str("NaN".to_string())],
+                    "json scanner parse_constant failed",
+                )?;
+                self.heap
+                    .alloc_tuple(vec![value, Value::Int(idx as i64 + 3)])
+            }
+            b'I' if bytes.get(start_byte..start_byte + 8) == Some(b"Infinity") => {
+                let value = self.json_scanner_call_callback(
+                    state.parse_constant,
+                    vec![Value::Str("Infinity".to_string())],
+                    "json scanner parse_constant failed",
+                )?;
+                self.heap
+                    .alloc_tuple(vec![value, Value::Int(idx as i64 + 8)])
+            }
+            b'-' if bytes.get(start_byte..start_byte + 9) == Some(b"-Infinity") => {
+                let value = self.json_scanner_call_callback(
+                    state.parse_constant,
+                    vec![Value::Str("-Infinity".to_string())],
+                    "json scanner parse_constant failed",
+                )?;
+                self.heap
+                    .alloc_tuple(vec![value, Value::Int(idx as i64 + 9)])
+            }
+            b'-' | b'0'..=b'9' => {
+                let Some(end_byte) = json_scan_number_end_byte(&source, start_byte) else {
+                    return Err(self.stop_iteration_runtime_error(Value::Int(idx as i64)));
+                };
+                let number_text = source[start_byte..end_byte].to_string();
+                let end_char = utf8_byte_index_to_char(&source, end_byte)
+                    .ok_or_else(|| RuntimeError::runtime_error("json scanner index is invalid"))?;
+                let value = if number_text
+                    .bytes()
+                    .any(|byte| matches!(byte, b'.' | b'e' | b'E'))
+                {
+                    self.json_scanner_call_callback(
+                        state.parse_float,
+                        vec![Value::Str(number_text)],
+                        "json scanner parse_float failed",
+                    )?
+                } else {
+                    self.json_scanner_call_callback(
+                        state.parse_int,
+                        vec![Value::Str(number_text)],
+                        "json scanner parse_int failed",
+                    )?
+                };
+                self.heap
+                    .alloc_tuple(vec![value, Value::Int(end_char as i64)])
+            }
+            _ => return Err(self.stop_iteration_runtime_error(Value::Int(idx as i64))),
+        };
+
+        Ok(tuple_result)
     }
 
     pub(in crate::vm) fn builtin_json_decoder_scanstring(
@@ -2037,6 +2368,51 @@ fn utf8_byte_index_to_char(source: &str, byte_index: usize) -> Option<usize> {
         return None;
     }
     Some(source[..byte_index].chars().count())
+}
+
+fn json_scan_number_end_byte(source: &str, start_byte: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut pos = start_byte;
+    if bytes.get(pos) == Some(&b'-') {
+        pos += 1;
+    }
+    match bytes.get(pos) {
+        Some(b'0') => {
+            pos += 1;
+            if matches!(bytes.get(pos), Some(b'0'..=b'9')) {
+                return None;
+            }
+        }
+        Some(b'1'..=b'9') => {
+            pos += 1;
+            while matches!(bytes.get(pos), Some(b'0'..=b'9')) {
+                pos += 1;
+            }
+        }
+        _ => return None,
+    }
+    if bytes.get(pos) == Some(&b'.') {
+        pos += 1;
+        if !matches!(bytes.get(pos), Some(b'0'..=b'9')) {
+            return None;
+        }
+        while matches!(bytes.get(pos), Some(b'0'..=b'9')) {
+            pos += 1;
+        }
+    }
+    if matches!(bytes.get(pos), Some(b'e' | b'E')) {
+        pos += 1;
+        if matches!(bytes.get(pos), Some(b'+' | b'-')) {
+            pos += 1;
+        }
+        if !matches!(bytes.get(pos), Some(b'0'..=b'9')) {
+            return None;
+        }
+        while matches!(bytes.get(pos), Some(b'0'..=b'9')) {
+            pos += 1;
+        }
+    }
+    Some(pos)
 }
 
 fn json_string_has_unescaped_ascii_control_char(source: &str, start: usize, end: usize) -> bool {
