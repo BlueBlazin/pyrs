@@ -11568,6 +11568,9 @@ class BufferedIncrementalDecoder(IncrementalDecoder):
     }
 
     pub(super) fn module_requires_realization(&mut self, name: &str, module: &ObjRef) -> bool {
+        if self.should_prefer_filesystem_module(name, module) {
+            return true;
+        }
         if Self::module_is_initializing(module) {
             return false;
         }
