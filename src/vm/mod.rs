@@ -2967,6 +2967,10 @@ impl Vm {
     pub fn add_module_path(&mut self, path: impl Into<PathBuf>) {
         let path = path.into();
         if self.module_paths.iter().any(|existing| existing == &path) {
+            // Keep preference/unload behavior deterministic even when the caller
+            // re-adds an already-present CPython Lib path.
+            self.preferred_filesystem_module_cache.clear();
+            self.maybe_prefer_cpython_pure_stdlib_modules();
             return;
         }
         self.module_paths.push(path);

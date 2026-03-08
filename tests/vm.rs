@@ -4832,6 +4832,45 @@ ok = (
 }
 
 #[test]
+fn class_private_name_mangling_matches_cpython_for_methods_attrs_and_annotations() {
+    let source = r#"class C:
+    __a: int = 1
+    def __secret(self):
+        return self.__a
+    def nested(self):
+        def inner():
+            return self.__a
+        return inner()
+    def mutate(self):
+        self.__a += 1
+        del self.__a
+        self.__a = 7
+        return self.__a
+
+c = C()
+first = c._C__secret()
+nested = c.nested()
+c._C__a = 3
+mutated = c.mutate()
+ok = (
+    hasattr(C, "_C__secret")
+    and (not hasattr(C, "__secret"))
+    and first == 1
+    and nested == 1
+    and mutated == 7
+    and c._C__a == 7
+    and ("_C__a" in C.__annotations__)
+    and ("__a" not in C.__annotations__)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn io_open_with_utf8_encoding_works_with_pure_codecs() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping io utf-8 open test (CPython Lib path not available)");
@@ -13169,6 +13208,9 @@ w = a == c\n";
 #[test]
 fn collects_self_referential_list_cycles() {
     let mut vm = Vm::new();
+    // VM bootstrap can leave transient, unreachable objects; normalize the
+    // baseline so this test isolates the self-referential cycle behavior.
+    vm.gc_collect();
     let before = vm.heap_object_count();
     {
         let list_value = vm.alloc_list(Vec::new());

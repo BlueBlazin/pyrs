@@ -2924,6 +2924,7 @@ struct Compiler {
     scope: ScopeInfo,
     current_span: Span,
     cell_index: HashMap<String, u32>,
+    class_private_prefix: Option<String>,
     future_annotations: bool,
     future_annotations_import: bool,
 }
@@ -2960,6 +2961,7 @@ impl Compiler {
             scope,
             current_span: Span::unknown(),
             cell_index,
+            class_private_prefix: None,
             future_annotations: false,
             future_annotations_import: false,
         }
@@ -3568,7 +3570,7 @@ impl Compiler {
             }
             ExprKind::Attribute { value, name } => {
                 compiler.compile_expr(value)?;
-                let idx = compiler.code.add_name(name.clone());
+                let idx = compiler.add_maybe_mangled_name(name);
                 compiler.emit(Opcode::LoadAttr, Some(idx << 1));
                 Ok(())
             }
@@ -3680,11 +3682,12 @@ impl Compiler {
     }
 
     fn emit_load_name(&mut self, name: &str) -> Result<(), CompileError> {
-        let idx = self.code.add_name(name.to_string());
+        let resolved = self.maybe_mangle_private_name(name);
+        let idx = self.code.add_name(resolved.clone());
         match self.name_kind(name) {
             NameKind::Local => self.emit(Opcode::LoadFast, Some(idx)),
             NameKind::Cell | NameKind::Free => {
-                let deref = self.deref_index(name)?;
+                let deref = self.deref_index(&resolved)?;
                 self.emit(Opcode::LoadDeref, Some(deref));
             }
             NameKind::Global => {
@@ -3697,27 +3700,35 @@ impl Compiler {
     }
 
     fn emit_store_name(&mut self, name: &str) {
-        let idx = self.code.add_name(name.to_string());
+        let resolved = self.maybe_mangle_private_name(name);
+        let idx = self.code.add_name(resolved);
         self.emit(Opcode::StoreFast, Some(idx));
     }
 
     fn emit_delete_name(&mut self, name: &str) {
-        let idx = self.code.add_name(name.to_string());
+        let resolved = self.maybe_mangle_private_name(name);
+        let idx = self.code.add_name(resolved);
         self.emit(Opcode::DeleteName, Some(idx));
     }
 
     fn emit_store_name_scoped(&mut self, name: &str) -> Result<(), CompileError> {
-        let idx = self.code.add_name(name.to_string());
+        let resolved = self.maybe_mangle_private_name(name);
+        let idx = self.code.add_name(resolved.clone());
         match self.name_kind(name) {
             NameKind::Global => self.emit(Opcode::StoreGlobal, Some(idx)),
             NameKind::Cell | NameKind::Free => {
-                let deref = self.deref_index(name)?;
+                let deref = self.deref_index(&resolved)?;
                 self.emit(Opcode::StoreDeref, Some(deref));
             }
             NameKind::Local => self.emit(Opcode::StoreFast, Some(idx)),
             NameKind::Name => self.emit(Opcode::StoreName, Some(idx)),
         }
         Ok(())
+    }
+
+    fn add_maybe_mangled_name(&mut self, name: &str) -> u32 {
+        let resolved = self.maybe_mangle_private_name(name);
+        self.code.add_name(resolved)
     }
 
     fn emit_closure_tuple(&mut self, freevars: &[String]) -> Result<(), CompileError> {
@@ -3922,6 +3933,25 @@ impl Compiler {
             .ok_or_else(|| CompileError::new(format!("unknown closure variable '{name}'")))
     }
 
+    fn class_private_prefix(name: &str) -> Option<String> {
+        let stripped = name.trim_start_matches('_');
+        if stripped.is_empty() {
+            None
+        } else {
+            Some(stripped.to_string())
+        }
+    }
+
+    fn maybe_mangle_private_name(&self, name: &str) -> String {
+        let Some(prefix) = self.class_private_prefix.as_deref() else {
+            return name.to_string();
+        };
+        if !name.starts_with("__") || name.ends_with("__") || name.contains('.') {
+            return name.to_string();
+        }
+        format!("_{prefix}{name}")
+    }
+
     fn emit_jump(&mut self, opcode: Opcode) -> usize {
         let index = self.code.instructions.len();
         self.emit(opcode, Some(0));
@@ -4038,6 +4068,7 @@ impl Compiler {
             &self.scope,
         )?;
         let mut compiler = Compiler::new(name, &self.code.filename, scope);
+        compiler.class_private_prefix = self.class_private_prefix.clone();
         compiler.future_annotations = self.future_annotations;
         compiler.future_annotations_import = self.future_annotations_import;
         compiler.code.first_line = definition_span.line.max(1);
@@ -4473,6 +4504,7 @@ impl Compiler {
     fn compile_class(&mut self, name: &str, body: &[Stmt]) -> Result<CodeObject, CompileError> {
         let scope = ScopeInfo::for_class(body, &self.scope)?;
         let mut compiler = Compiler::new(&format!("<class {name}>"), &self.code.filename, scope);
+        compiler.class_private_prefix = Self::class_private_prefix(name);
         compiler.future_annotations = self.future_annotations;
         compiler.future_annotations_import = self.future_annotations_import;
         compiler.code.first_line = self.current_span.line.max(1);
@@ -5231,7 +5263,7 @@ impl Compiler {
         let mut outer_iter: Option<Expr> = None;
         if let Some(first_clause) = clauses.first() {
             params.push(Parameter {
-                name: "__pyrs_comp_iter0".to_string(),
+                name: "_pyrs_comp_iter0".to_string(),
                 default: None,
                 annotation: None,
             });
@@ -5319,14 +5351,13 @@ impl Compiler {
     fn compile_delete_target(&mut self, target: &AssignTarget) -> Result<(), CompileError> {
         match target {
             AssignTarget::Name(name) => {
-                let idx = self.code.add_name(name.clone());
-                self.emit(Opcode::DeleteName, Some(idx));
+                self.emit_delete_name(name);
                 Ok(())
             }
             AssignTarget::Starred(_) => Err(CompileError::new("cannot delete starred target")),
             AssignTarget::Attribute { value, name } => {
                 self.compile_expr(value)?;
-                let idx = self.code.add_name(name.clone());
+                let idx = self.add_maybe_mangled_name(name);
                 self.emit(Opcode::DeleteAttr, Some(idx));
                 Ok(())
             }
@@ -5356,7 +5387,7 @@ impl Compiler {
             AssignTarget::Name(name) if simple => {
                 self.ensure_local_name("__annotations__");
                 self.emit_load_name("__annotations__")?;
-                self.emit_const(Value::Str(name.clone()));
+                self.emit_const(Value::Str(self.maybe_mangle_private_name(name)));
                 self.emit_annotation_expr(annotation)?;
                 self.emit(Opcode::DictSet, None);
                 self.emit_store_name_scoped("__annotations__")?;
@@ -5418,7 +5449,7 @@ impl Compiler {
                 self.emit_store_name(&temp);
                 self.compile_expr(value)?;
                 self.emit_load_name(&temp)?;
-                let idx = self.code.add_name(name.clone());
+                let idx = self.add_maybe_mangled_name(name);
                 self.emit(Opcode::StoreAttr, Some(idx));
                 self.emit_delete_name(&temp);
                 Ok(())
@@ -5515,7 +5546,7 @@ impl Compiler {
                 self.compile_expr(object)?;
                 self.emit_store_name(&temp);
                 self.emit_load_name(&temp)?;
-                let idx = self.code.add_name(name.clone());
+                let idx = self.add_maybe_mangled_name(name);
                 self.emit(Opcode::LoadAttr, Some(idx << 1));
                 self.compile_expr(value)?;
                 let opcode = match op {
@@ -5537,7 +5568,7 @@ impl Compiler {
                 self.emit_store_name(&value_temp);
                 self.emit_load_name(&temp)?;
                 self.emit_load_name(&value_temp)?;
-                let idx = self.code.add_name(name.clone());
+                let idx = self.add_maybe_mangled_name(name);
                 self.emit(Opcode::StoreAttr, Some(idx));
                 Ok(())
             }
@@ -6323,7 +6354,7 @@ impl Compiler {
     }
 
     fn fresh_temp(&mut self, prefix: &str) -> String {
-        let name = format!("__pyrs_{prefix}_{}", self.temp_counter);
+        let name = format!("_pyrs_{prefix}_{}", self.temp_counter);
         self.temp_counter += 1;
         self.scope.locals.insert(name.clone());
         name
@@ -6445,7 +6476,7 @@ fn annotation_bool_op_symbol(op: &BoolOp) -> &'static str {
 }
 
 fn build_list_comp_body(elt: &Expr, clauses: &[ComprehensionClause]) -> Vec<Stmt> {
-    let result_name = "__pyrs_comp_result".to_string();
+    let result_name = "_pyrs_comp_result".to_string();
     let append_stmt = Stmt {
         span: elt.span,
         node: StmtKind::AugAssign {
@@ -6481,7 +6512,7 @@ fn build_list_comp_body(elt: &Expr, clauses: &[ComprehensionClause]) -> Vec<Stmt
 }
 
 fn build_set_comp_body(elt: &Expr, clauses: &[ComprehensionClause]) -> Vec<Stmt> {
-    let result_name = "__pyrs_comp_result".to_string();
+    let result_name = "_pyrs_comp_result".to_string();
     let add_stmt = Stmt {
         span: elt.span,
         node: StmtKind::Expr(Expr {
@@ -6531,7 +6562,7 @@ fn build_set_comp_body(elt: &Expr, clauses: &[ComprehensionClause]) -> Vec<Stmt>
 }
 
 fn build_dict_comp_body(key: &Expr, value: &Expr, clauses: &[ComprehensionClause]) -> Vec<Stmt> {
-    let result_name = "__pyrs_comp_result".to_string();
+    let result_name = "_pyrs_comp_result".to_string();
     let assign_stmt = Stmt {
         span: key.span,
         node: StmtKind::Assign {
@@ -6623,7 +6654,7 @@ fn rewrite_first_comp_iter_stmt(stmts: &mut [Stmt]) -> bool {
             StmtKind::For { iter, .. } => {
                 *iter = Expr {
                     span: iter.span,
-                    node: ExprKind::Name("__pyrs_comp_iter0".to_string()),
+                    node: ExprKind::Name("_pyrs_comp_iter0".to_string()),
                 };
                 return true;
             }
