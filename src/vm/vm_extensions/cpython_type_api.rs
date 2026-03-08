@@ -3775,12 +3775,24 @@ pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void)
     if (subtype as usize) < MIN_VALID_PTR || (ty as usize) < MIN_VALID_PTR {
         if trace {
             eprintln!("[type-subtype] below-min subtype={:p} ty={:p}", subtype, ty);
+            if super::super::env_var_present_cached("PYRS_TRACE_TYPE_SUBTYPE_BT") {
+                eprintln!(
+                    "[type-subtype] below-min bt={}",
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
         }
         return 0;
     }
     if (subtype as usize) % TYPE_ALIGN != 0 || (ty as usize) % TYPE_ALIGN != 0 {
         if trace {
             eprintln!("[type-subtype] unaligned subtype={:p} ty={:p}", subtype, ty);
+            if super::super::env_var_present_cached("PYRS_TRACE_TYPE_SUBTYPE_BT") {
+                eprintln!(
+                    "[type-subtype] unaligned bt={}",
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
         }
         return 0;
     }
