@@ -6,8 +6,8 @@ use super::class_name_for_instance;
 use super::containers::{dedup_hashable_values, dict_contains_key_checked, ensure_hashable};
 use super::{
     DICT_BACKING_STORAGE_ATTR, LIST_BACKING_STORAGE_ATTR, NumericValue, STR_BACKING_STORAGE_ATTR,
-    env_var_present_cached, mod_float, numeric_as_complex, numeric_as_f64, numeric_pair,
-    python_floor_div, python_mod, value_to_int,
+    TUPLE_BACKING_STORAGE_ATTR, env_var_present_cached, mod_float, numeric_as_complex,
+    numeric_as_f64, numeric_pair, python_floor_div, python_mod, value_to_int,
 };
 use crate::runtime::{
     BigInt, BuiltinFunction, Heap, Object, RuntimeError, Value, format_repr, format_value,
@@ -45,6 +45,26 @@ fn list_like_for_add(value: &Value) -> Option<Vec<Value>> {
                     _ => None,
                 }
             }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn tuple_like_values(value: &Value) -> Option<Vec<Value>> {
+    match value {
+        Value::Tuple(tuple) => match &*tuple.kind() {
+            Object::Tuple(values) => Some(values.clone()),
+            _ => None,
+        },
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => match instance_data.attrs.get(TUPLE_BACKING_STORAGE_ATTR) {
+                Some(Value::Tuple(tuple)) => match &*tuple.kind() {
+                    Object::Tuple(values) => Some(values.clone()),
+                    _ => None,
+                },
+                _ => None,
+            },
             _ => None,
         },
         _ => None,
@@ -511,16 +531,7 @@ fn value_to_bytes_percent_value(value: Value) -> Result<Vec<u8>, RuntimeError> {
 }
 
 fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeError> {
-    let mut positional_args = match &right {
-        Value::Tuple(obj) => match &*obj.kind() {
-            Object::Tuple(values) => values.clone(),
-            _ => vec![right.clone()],
-        },
-        Value::Instance(_) => {
-            namedtuple_instance_percent_args(&right).unwrap_or_else(|| vec![right.clone()])
-        }
-        _ => vec![right.clone()],
-    };
+    let mut positional_args = tuple_like_values(&right).unwrap_or_else(|| vec![right.clone()]);
     let mapping = match &right {
         Value::Dict(obj) => match &*obj.kind() {
             Object::Dict(entries) => Some(entries.clone()),
@@ -701,53 +712,6 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
     }
     positional_args.clear();
     Ok(out)
-}
-
-fn namedtuple_instance_percent_args(value: &Value) -> Option<Vec<Value>> {
-    let Value::Instance(instance) = value else {
-        return None;
-    };
-    let (class, attrs) = match &*instance.kind() {
-        Object::Instance(instance_data) => {
-            (instance_data.class.clone(), instance_data.attrs.clone())
-        }
-        _ => return None,
-    };
-    let field_names = match &*class.kind() {
-        Object::Class(class_data) => {
-            let fields = class_data.attrs.get("__pyrs_namedtuple_fields__")?;
-            match fields {
-                Value::Tuple(obj) => match &*obj.kind() {
-                    Object::Tuple(values) => values
-                        .iter()
-                        .map(|value| match value {
-                            Value::Str(name) => Some(name.clone()),
-                            _ => None,
-                        })
-                        .collect::<Option<Vec<_>>>()?,
-                    _ => return None,
-                },
-                Value::List(obj) => match &*obj.kind() {
-                    Object::List(values) => values
-                        .iter()
-                        .map(|value| match value {
-                            Value::Str(name) => Some(name.clone()),
-                            _ => None,
-                        })
-                        .collect::<Option<Vec<_>>>()?,
-                    _ => return None,
-                },
-                _ => return None,
-            }
-        }
-        _ => return None,
-    };
-
-    let mut out = Vec::with_capacity(field_names.len());
-    for field in field_names {
-        out.push(attrs.get(&field)?.clone());
-    }
-    Some(out)
 }
 
 fn format_percent_value(
@@ -1401,10 +1365,9 @@ pub(super) fn compare_order(left: Value, right: Value) -> Result<Ordering, Runti
             (left, right) => numeric_as_f64(left).total_cmp(&numeric_as_f64(right)),
         });
     }
-    if let (Some(left_values), Some(right_values)) = (
-        namedtuple_instance_percent_args(&left),
-        namedtuple_instance_percent_args(&right),
-    ) {
+    if let (Some(left_values), Some(right_values)) =
+        (tuple_like_values(&left), tuple_like_values(&right))
+    {
         return compare_sequence_order(&left_values, &right_values);
     }
 

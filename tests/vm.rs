@@ -8618,6 +8618,23 @@ ok = (t.count(2) == 2 and TupleSub.count(t, 2) == 2 and s.count("e") == 2 and St
 }
 
 #[test]
+fn tuple_subclass_percent_formatting_and_ordering_use_tuple_backing() {
+    let source = r#"class TupleSub(tuple):
+    pass
+
+left = TupleSub((1, 2, "x"))
+right = TupleSub((1, 3, 0))
+formatted = "First has %d, Second has %d:  %r" % left
+ok = (formatted == "First has 1, Second has 2:  'x'" and left < right)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn float_builtin_accepts_bytes_like_literals() {
     let source = "a = float(b'1.5')\n\
 b = float(bytearray(b'2.25'))\n\
