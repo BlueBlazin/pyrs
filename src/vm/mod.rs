@@ -493,6 +493,7 @@ struct LoadFastSiteCacheEntry {
 
 #[derive(Clone)]
 enum LoadAttrSiteCacheKind {
+    InstanceShadow,
     InstanceValue { value: Value },
     InstanceFunction { function: ObjRef },
     InstanceBuiltin { builtin: BuiltinFunction },
@@ -3658,6 +3659,7 @@ impl Vm {
             for entry in ways.iter().flatten() {
                 roots.push(Value::Class(entry.owner_class.clone()));
                 match &entry.kind {
+                    LoadAttrSiteCacheKind::InstanceShadow => {}
                     LoadAttrSiteCacheKind::InstanceValue { value } => roots.push(value.clone()),
                     LoadAttrSiteCacheKind::InstanceFunction { function } => {
                         roots.push(Value::Function(function.clone()));

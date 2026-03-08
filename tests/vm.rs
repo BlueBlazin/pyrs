@@ -10332,6 +10332,16 @@ fn instance_dict_attribute_is_available_for_dynamic_instances() {
 }
 
 #[test]
+fn instance_shadowed_attr_site_cache_tracks_updates_and_deletes() {
+    let source = "class C:\n    value = 41\n\ndef read(obj):\n    return obj.value\n\nc = C()\nc.value = 1\na = read(c)\nc.value = 2\nb = read(c)\ndel c.value\ncval = read(c)\nc.value = 3\nd = read(c)\nok = (a, b, cval, d) == (1, 2, 41, 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn instance_dict_attribute_respects_slots_without_dict() {
     let source = "class S:\n    __slots__ = ('x',)\ns = S()\ns.x = 1\ncaught = False\ntry:\n    _ = s.__dict__\nexcept AttributeError:\n    caught = True\nok = caught\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -21843,6 +21853,38 @@ result = json.loads('{"x": 1, "arr": [2, 3]}')
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert!(vm.get_global("result").is_some());
+}
+
+#[test]
+fn vm_json_loads_handles_whitespace_heavy_object_fast_path() {
+    let source = r#"import json
+result = json.loads('{   "key"    :    "value"    ,  "k":"v"    }')
+ok = (result == {"key": "value", "k": "v"})
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn vm_json_loads_handles_deep_default_scanner_nesting() {
+    let source = r#"import json
+doc = '[[[[[[[[[[[[[[[[[[[["Too deep"]]]]]]]]]]]]]]]]]]]]'
+value = json.loads(doc)
+depth = 0
+cursor = value
+while isinstance(cursor, list):
+    depth += 1
+    cursor = cursor[0]
+ok = (depth == 20 and cursor == "Too deep")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]

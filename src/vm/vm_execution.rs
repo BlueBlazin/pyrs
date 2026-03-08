@@ -11460,9 +11460,6 @@ impl Vm {
             Object::Instance(instance_data) => instance_data.class.clone(),
             _ => return Ok(None),
         };
-        if self.instance_has_attr_shadow(instance, attr_name) {
-            return Ok(None);
-        }
 
         let ways = self
             .frames
@@ -11498,22 +11495,41 @@ impl Vm {
                 continue;
             }
 
-            let value = match cached.kind {
+            if !matches!(&cached.kind, LoadAttrSiteCacheKind::InstanceShadow)
+                && self.instance_has_attr_shadow(instance, attr_name)
+            {
+                return Ok(None);
+            }
+
+            let value = match &cached.kind {
+                LoadAttrSiteCacheKind::InstanceShadow => {
+                    match self.instance_shadow_attr_value(instance, &class_ref, attr_name) {
+                        Some(value) => value,
+                        None => {
+                            if let Some(frame) = self.frames.last_mut()
+                                && let Some(slot) = frame.load_attr_inline_cache.get_mut(site_index)
+                            {
+                                slot[way_idx] = None;
+                            }
+                            continue;
+                        }
+                    }
+                }
                 LoadAttrSiteCacheKind::InstanceValue { value } => value.clone(),
                 LoadAttrSiteCacheKind::InstanceFunction { function } => self
                     .heap
-                    .alloc_bound_method(BoundMethod::new(function, instance.clone())),
+                    .alloc_bound_method(BoundMethod::new(function.clone(), instance.clone())),
                 LoadAttrSiteCacheKind::InstanceBuiltin { builtin } => {
-                    self.alloc_builtin_bound_method(builtin, instance.clone())
+                    self.alloc_builtin_bound_method(*builtin, instance.clone())
                 }
                 LoadAttrSiteCacheKind::InstanceClassMethod { descriptor } => {
-                    match self.bind_classmethod_attr(&class_ref, &Value::Module(descriptor)) {
+                    match self.bind_classmethod_attr(&class_ref, &Value::Module(descriptor.clone())) {
                         Some(bound) => bound,
                         None => continue,
                     }
                 }
                 LoadAttrSiteCacheKind::InstanceStaticMethod { descriptor } => {
-                    match self.unwrap_staticmethod_attr(&Value::Module(descriptor)) {
+                    match self.unwrap_staticmethod_attr(&Value::Module(descriptor.clone())) {
                         Some(unwrapped) => unwrapped,
                         None => continue,
                     }

@@ -8347,6 +8347,19 @@ impl Vm {
         })
     }
 
+    fn build_load_attr_instance_shadow_site_cache_entry(
+        &self,
+        class_ref: &ObjRef,
+    ) -> LoadAttrSiteCacheEntry {
+        LoadAttrSiteCacheEntry {
+            class_id: class_ref.id(),
+            class_version: self.class_attr_version(class_ref),
+            owner_class: class_ref.clone(),
+            owner_class_version: self.class_attr_version(class_ref),
+            kind: LoadAttrSiteCacheKind::InstanceShadow,
+        }
+    }
+
     pub(super) fn load_attr_instance_with_site_cache(
         &mut self,
         instance: &ObjRef,
@@ -8364,8 +8377,7 @@ impl Vm {
         }
 
         let mut site_cache_entry = None;
-        let allow_site_cache = class_attr_lookup(&class_ref, "__getattr__").is_none()
-            && !self.instance_has_attr_shadow(instance, attr_name);
+        let allow_site_cache = class_attr_lookup(&class_ref, "__getattr__").is_none();
         let outcome = self.load_attr_instance_default(
             instance,
             attr_name,
@@ -8703,36 +8715,11 @@ impl Vm {
             }
         }
 
-        if let Object::Instance(instance_data) = &*instance.kind() {
-            let slot_layout = collect_slot_names(&class_ref);
-            let has_dynamic_dict =
-                Self::class_supports_dynamic_instance_dict(&class_ref, slot_layout.as_ref());
-            let mut attr_is_declared_slot = false;
-            if let Some(allowed_slots) = &slot_layout {
-                attr_is_declared_slot = allowed_slots.iter().any(|name| name == attr_name);
+        if let Some(attr) = self.instance_shadow_attr_value(instance, &class_ref, attr_name) {
+            if let Some(slot) = site_cache_entry.as_mut() {
+                **slot = Some(self.build_load_attr_instance_shadow_site_cache_entry(&class_ref));
             }
-            if let Some(allowed_slots) = &slot_layout
-                && has_dynamic_dict
-                && !attr_is_declared_slot
-                && !allowed_slots.is_empty()
-            {
-                if let Some(Value::Dict(dict_obj)) =
-                    instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
-                    && let Some(attr) = dict_get_value(dict_obj, &Value::Str(attr_name.to_string()))
-                {
-                    return Ok(AttrAccessOutcome::Value(attr));
-                }
-            } else {
-                if let Some(attr) = instance_data.attrs.get(attr_name).cloned() {
-                    return Ok(AttrAccessOutcome::Value(attr));
-                }
-                if let Some(Value::Dict(dict_obj)) =
-                    instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
-                    && let Some(attr) = dict_get_value(dict_obj, &Value::Str(attr_name.to_string()))
-                {
-                    return Ok(AttrAccessOutcome::Value(attr));
-                }
-            }
+            return Ok(AttrAccessOutcome::Value(attr));
         }
 
         if class_attr.is_none() && !suppress_class_metadata {
@@ -9079,6 +9066,46 @@ impl Vm {
             );
         }
         Err(self.instance_missing_attribute_error(instance, &class_name, attr_name))
+    }
+
+    pub(super) fn instance_shadow_attr_value(
+        &self,
+        instance: &ObjRef,
+        class_ref: &ObjRef,
+        attr_name: &str,
+    ) -> Option<Value> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        let slot_layout = collect_slot_names(class_ref);
+        let has_dynamic_dict =
+            Self::class_supports_dynamic_instance_dict(class_ref, slot_layout.as_ref());
+        let attr_key = Value::Str(attr_name.to_string());
+        if let Some(allowed_slots) = &slot_layout {
+            let attr_is_declared_slot = allowed_slots.iter().any(|name| name == attr_name);
+            if has_dynamic_dict && !attr_is_declared_slot && !allowed_slots.is_empty() {
+                return instance_data
+                    .attrs
+                    .get(INSTANCE_DICT_STORAGE_ATTR)
+                    .and_then(|value| match value {
+                        Value::Dict(dict_obj) => dict_get_value(dict_obj, &attr_key),
+                        _ => None,
+                    });
+            }
+        }
+        instance_data
+            .attrs
+            .get(attr_name)
+            .cloned()
+            .or_else(|| {
+                instance_data
+                    .attrs
+                    .get(INSTANCE_DICT_STORAGE_ATTR)
+                    .and_then(|value| match value {
+                        Value::Dict(dict_obj) => dict_get_value(dict_obj, &attr_key),
+                        _ => None,
+                    })
+            })
     }
 
     pub(super) fn load_attr_super(

@@ -149,31 +149,80 @@ fn pyrs_bin() -> Option<PathBuf> {
             }
         }
     }
-    if let Some(path) = option_env!("CARGO_BIN_EXE_pyrs") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
+    let mut auto_candidates: Vec<PathBuf> = Vec::new();
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_pyrs") {
         let path = PathBuf::from(path);
         if path.is_file() {
-            return Some(path);
+            auto_candidates.push(path);
         }
     }
-    let from_manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/pyrs");
-    if from_manifest.is_file() {
-        return Some(from_manifest);
+    if let Some(path) = option_env!("CARGO_BIN_EXE_pyrs") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            auto_candidates.push(path);
+        }
+    }
+    if let Some(path) = fresh_debug_pyrs_bin_from_deps() {
+        auto_candidates.push(path);
     }
     if let Ok(exe) = std::env::current_exe()
         && let Some(debug_dir) = exe.parent().and_then(|deps| deps.parent())
     {
         let sibling = debug_dir.join("pyrs");
         if sibling.is_file() {
-            return Some(sibling);
+            auto_candidates.push(sibling);
         }
     }
-    None
+    let from_manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/pyrs");
+    if from_manifest.is_file() {
+        auto_candidates.push(from_manifest);
+    }
+    newest_existing_path(auto_candidates)
+}
+
+fn fresh_debug_pyrs_bin_from_deps() -> Option<PathBuf> {
+    let deps_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/deps");
+    let entries = fs::read_dir(deps_dir).ok()?;
+    let mut newest: Option<(SystemTime, PathBuf)> = None;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !file_name.starts_with("pyrs-") || path.extension().is_some() || !path.is_file() {
+            continue;
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let Ok(metadata) = fs::metadata(&path) else {
+                continue;
+            };
+            if metadata.permissions().mode() & 0o111 == 0 {
+                continue;
+            }
+        }
+
+        let depinfo = path.with_extension("d");
+        let Ok(depinfo_text) = fs::read_to_string(&depinfo) else {
+            continue;
+        };
+        if !depinfo_text.contains(": src/main.rs") || depinfo_text.contains("src/lib.rs") {
+            continue;
+        }
+
+        let Some(modified) = file_mtime(&path) else {
+            continue;
+        };
+        match &newest {
+            Some((current, _)) if modified <= *current => {}
+            _ => newest = Some((modified, path)),
+        }
+    }
+
+    newest.map(|(_, path)| path)
 }
 
 fn strict_subprocess_bin() -> Option<PathBuf> {
@@ -195,19 +244,20 @@ fn strict_subprocess_bin() -> Option<PathBuf> {
         }
     }
 
-    // Default strict behavior: prefer release subprocesses for long-running stdlib suites.
-    // If debug is newer than release, prefer debug to avoid stale binary mismatches.
+    // Strict harness correctness depends on using the same freshly-built interpreter
+    // artifact the test binary was built against. Release subprocesses are therefore
+    // opt-in; otherwise stale release binaries can silently mask or invent failures.
     let prefer_release = std::env::var("PYRS_STRICT_PREFER_RELEASE")
         .ok()
         .map(|value| {
             let normalized = value.trim().to_ascii_lowercase();
             !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
         })
-        .unwrap_or(true);
+        .unwrap_or(false);
 
     let debug = pyrs_bin();
+    let release = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/pyrs");
     if prefer_release {
-        let release = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/pyrs");
         if release.is_file() {
             match debug.as_ref() {
                 Some(debug_bin) if is_older_file(&release, debug_bin) => {}
@@ -216,11 +266,25 @@ fn strict_subprocess_bin() -> Option<PathBuf> {
         }
     }
 
-    debug
+    debug.or_else(|| release.is_file().then_some(release))
 }
 
 fn file_mtime(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).ok()?.modified().ok()
+}
+
+fn newest_existing_path(paths: Vec<PathBuf>) -> Option<PathBuf> {
+    let mut newest: Option<(SystemTime, PathBuf)> = None;
+    for path in paths {
+        let Some(modified) = file_mtime(&path) else {
+            continue;
+        };
+        match &newest {
+            Some((current, _)) if modified <= *current => {}
+            _ => newest = Some((modified, path)),
+        }
+    }
+    newest.map(|(_, path)| path)
 }
 
 fn is_older_file(candidate: &Path, reference: &Path) -> bool {
@@ -547,6 +611,37 @@ fn subprocess_harness_helper_times_out_hanging_program() {
     assert!(
         err.contains("timed out"),
         "expected timeout error, got: {err}"
+    );
+}
+
+#[test]
+fn strict_subprocess_bin_defaults_to_fresh_debug_artifact() {
+    if std::env::var_os("PYRS_SUBPROCESS_BIN").is_some()
+        || std::env::var_os("PYRS_SUBPROCESS_BIN_MODE").is_some()
+        || std::env::var_os("PYRS_STRICT_PREFER_RELEASE").is_some()
+    {
+        eprintln!("skipping strict subprocess selection regression due to explicit harness bin env");
+        return;
+    }
+    let Some(debug) = pyrs_bin() else {
+        eprintln!("skipping strict subprocess selection regression (pyrs binary not found)");
+        return;
+    };
+    if let Some(expected) = fresh_debug_pyrs_bin_from_deps() {
+        assert!(
+            !is_older_file(&debug, &expected),
+            "pyrs_bin() should not resolve to a debug interpreter older than the freshest Cargo-built deps binary",
+        );
+    }
+    let release = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/pyrs");
+    assert_eq!(
+        strict_subprocess_bin(),
+        Some(debug.clone()),
+        "strict harness should default to the freshest debug interpreter artifact unless release is explicitly requested",
+    );
+    assert!(
+        !matches!(release.canonicalize(), Ok(path) if path == debug),
+        "pyrs_bin() should not resolve to the release interpreter by default",
     );
 }
 

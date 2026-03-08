@@ -1317,6 +1317,350 @@ impl Vm {
         }
     }
 
+    fn json_scanner_parse_value_default_nonrecursive(
+        &mut self,
+        state: &JsonScannerState,
+        source: &str,
+        start_byte: usize,
+        depth_limit: usize,
+    ) -> Result<(Value, usize), RuntimeError> {
+        #[derive(Clone, Copy)]
+        enum ArrayState {
+            ExpectValueOrEnd,
+            ExpectCommaOrEnd,
+        }
+
+        enum ObjectState {
+            ExpectKeyOrEnd,
+            ExpectValue(String),
+            ExpectCommaOrEnd,
+        }
+
+        enum Frame {
+            Array {
+                values: Vec<Value>,
+                state: ArrayState,
+                trailing_comma_pos: Option<usize>,
+            },
+            Object {
+                pairs: Vec<(String, Value)>,
+                state: ObjectState,
+                trailing_comma_pos: Option<usize>,
+            },
+        }
+
+        let bytes = source.as_bytes();
+        let mut stack: Vec<Frame> = Vec::new();
+        let mut idx = start_byte;
+        let mut pending: Option<(Value, usize)> = None;
+
+        loop {
+            if let Some((value, end_byte)) = pending.take() {
+                if let Some(frame) = stack.last_mut() {
+                    match frame {
+                        Frame::Array { values, state, .. } => {
+                            values.push(value);
+                            *state = ArrayState::ExpectCommaOrEnd;
+                            idx = end_byte;
+                            continue;
+                        }
+                        Frame::Object { pairs, state, .. } => {
+                            let key = match std::mem::replace(state, ObjectState::ExpectCommaOrEnd)
+                            {
+                                ObjectState::ExpectValue(key) => key,
+                                other => {
+                                    *state = other;
+                                    return Err(RuntimeError::runtime_error(
+                                        "json object parser state is invalid",
+                                    ));
+                                }
+                            };
+                            pairs.push((key, value));
+                            idx = end_byte;
+                            continue;
+                        }
+                    }
+                }
+                return Ok((value, end_byte));
+            }
+
+            if stack.is_empty() {
+                match bytes.get(idx) {
+                    Some(b'[') => {
+                        stack.push(Frame::Array {
+                            values: Vec::new(),
+                            state: ArrayState::ExpectValueOrEnd,
+                            trailing_comma_pos: None,
+                        });
+                        idx += 1;
+                        continue;
+                    }
+                    Some(b'{') => {
+                        stack.push(Frame::Object {
+                            pairs: Vec::new(),
+                            state: ObjectState::ExpectKeyOrEnd,
+                            trailing_comma_pos: None,
+                        });
+                        idx += 1;
+                        continue;
+                    }
+                    Some(_) => return self.json_scanner_parse_value_native(state, source, idx, 0, depth_limit),
+                    None => return Err(self.json_scanner_stop_iteration_at_byte(source, idx)),
+                }
+            }
+
+            match stack.last_mut().expect("validated non-empty stack") {
+                Frame::Array {
+                    values,
+                    state: array_state,
+                    trailing_comma_pos,
+                } => match array_state {
+                    ArrayState::ExpectValueOrEnd => {
+                        idx = json_skip_ws(bytes, idx);
+                        if let Some(comma_pos) = trailing_comma_pos.take()
+                            && bytes.get(idx) == Some(&b']')
+                        {
+                            return Err(json_decode_error_runtime_error(
+                                "Illegal trailing comma before end of array",
+                                source,
+                                comma_pos,
+                            ));
+                        }
+                        match bytes.get(idx) {
+                            Some(b']') => {
+                                let value = self.heap.alloc_list(std::mem::take(values));
+                                stack.pop();
+                                pending = Some((value, idx + 1));
+                            }
+                            Some(b'[') => {
+                                if stack.len() >= depth_limit {
+                                    return Err(self.recursion_limit_error());
+                                }
+                                stack.push(Frame::Array {
+                                    values: Vec::new(),
+                                    state: ArrayState::ExpectValueOrEnd,
+                                    trailing_comma_pos: None,
+                                });
+                                idx += 1;
+                            }
+                            Some(b'{') => {
+                                if stack.len() >= depth_limit {
+                                    return Err(self.recursion_limit_error());
+                                }
+                                stack.push(Frame::Object {
+                                    pairs: Vec::new(),
+                                    state: ObjectState::ExpectKeyOrEnd,
+                                    trailing_comma_pos: None,
+                                });
+                                idx += 1;
+                            }
+                            Some(_) => {
+                                if stack.len() >= depth_limit {
+                                    return Err(self.recursion_limit_error());
+                                }
+                                let (value, end_byte) = self.json_scanner_parse_value_native(
+                                    state,
+                                    source,
+                                    idx,
+                                    stack.len(),
+                                    depth_limit,
+                                )?;
+                                pending = Some((value, end_byte));
+                            }
+                            None => {
+                                return Err(self.json_scanner_stop_iteration_at_byte(source, idx));
+                            }
+                        }
+                    }
+                    ArrayState::ExpectCommaOrEnd => {
+                        idx = json_skip_ws(bytes, idx);
+                        match bytes.get(idx) {
+                            Some(b']') => {
+                                let value = self.heap.alloc_list(std::mem::take(values));
+                                stack.pop();
+                                pending = Some((value, idx + 1));
+                            }
+                            Some(b',') => {
+                                *trailing_comma_pos = Some(idx);
+                                *array_state = ArrayState::ExpectValueOrEnd;
+                                idx += 1;
+                            }
+                            Some(_) => {
+                                return Err(json_decode_error_runtime_error(
+                                    "Expecting ',' delimiter",
+                                    source,
+                                    idx,
+                                ));
+                            }
+                            None => {
+                                return Err(json_decode_error_runtime_error(
+                                    "Expecting ',' delimiter",
+                                    source,
+                                    idx,
+                                ));
+                            }
+                        }
+                    }
+                },
+                Frame::Object {
+                    pairs,
+                    state: object_state,
+                    trailing_comma_pos,
+                } => match object_state {
+                    ObjectState::ExpectKeyOrEnd => {
+                        idx = json_skip_ws(bytes, idx);
+                        if let Some(comma_pos) = trailing_comma_pos.take()
+                            && bytes.get(idx) == Some(&b'}')
+                        {
+                            return Err(json_decode_error_runtime_error(
+                                "Illegal trailing comma before end of object",
+                                source,
+                                comma_pos,
+                            ));
+                        }
+                        match bytes.get(idx) {
+                            Some(b'}') => {
+                                let value = self.heap.alloc_dict(
+                                    std::mem::take(pairs)
+                                        .into_iter()
+                                        .map(|(key, value)| (Value::Str(key), value))
+                                        .collect(),
+                                );
+                                stack.pop();
+                                pending = Some((value, idx + 1));
+                            }
+                            Some(b'"') => {
+                                let (key, key_end) = self
+                                    .json_scanner_parse_string_native(source, idx, state.strict)?;
+                                idx = json_skip_ws(bytes, key_end);
+                                if bytes.get(idx) != Some(&b':') {
+                                    return Err(json_decode_error_runtime_error(
+                                        "Expecting ':' delimiter",
+                                        source,
+                                        idx,
+                                    ));
+                                }
+                                *object_state = ObjectState::ExpectValue(key);
+                                idx += 1;
+                            }
+                            Some(_) => {
+                                return Err(json_decode_error_runtime_error(
+                                    "Expecting property name enclosed in double quotes",
+                                    source,
+                                    idx,
+                                ));
+                            }
+                            None => {
+                                return Err(json_decode_error_runtime_error(
+                                    "Expecting property name enclosed in double quotes",
+                                    source,
+                                    idx,
+                                ));
+                            }
+                        }
+                    }
+                    ObjectState::ExpectValue(_) => {
+                        idx = json_skip_ws(bytes, idx);
+                        if stack.len() >= depth_limit {
+                            return Err(self.recursion_limit_error());
+                        }
+                        match bytes.get(idx) {
+                            Some(b'[') => {
+                                stack.push(Frame::Array {
+                                    values: Vec::new(),
+                                    state: ArrayState::ExpectValueOrEnd,
+                                    trailing_comma_pos: None,
+                                });
+                                idx += 1;
+                            }
+                            Some(b'{') => {
+                                stack.push(Frame::Object {
+                                    pairs: Vec::new(),
+                                    state: ObjectState::ExpectKeyOrEnd,
+                                    trailing_comma_pos: None,
+                                });
+                                idx += 1;
+                            }
+                            _ => {
+                                let (value, end_byte) = self.json_scanner_parse_value_native(
+                                    state,
+                                    source,
+                                    idx,
+                                    stack.len(),
+                                    depth_limit,
+                                )?;
+                                pending = Some((value, end_byte));
+                            }
+                        }
+                    }
+                    ObjectState::ExpectCommaOrEnd => {
+                        idx = json_skip_ws(bytes, idx);
+                        match bytes.get(idx) {
+                            Some(b'}') => {
+                                let value = self.heap.alloc_dict(
+                                    std::mem::take(pairs)
+                                        .into_iter()
+                                        .map(|(key, value)| (Value::Str(key), value))
+                                        .collect(),
+                                );
+                                stack.pop();
+                                pending = Some((value, idx + 1));
+                            }
+                            Some(b',') => {
+                                *trailing_comma_pos = Some(idx);
+                                *object_state = ObjectState::ExpectKeyOrEnd;
+                                idx += 1;
+                            }
+                            Some(_) => {
+                                return Err(json_decode_error_runtime_error(
+                                    "Expecting ',' delimiter",
+                                    source,
+                                    idx,
+                                ));
+                            }
+                            None => {
+                                return Err(json_decode_error_runtime_error(
+                                    "Expecting ',' delimiter",
+                                    source,
+                                    idx,
+                                ));
+                            }
+                        }
+                    }
+                },
+            }
+
+            if stack.is_empty() && pending.is_none() {
+                return Err(RuntimeError::runtime_error("json parser stack is invalid"));
+            }
+
+            if pending.is_none() && matches!(bytes.get(idx), Some(b'[')) && json_scanner_can_use_tree_parser(state) {
+                if stack.len() >= depth_limit {
+                    return Err(self.recursion_limit_error());
+                }
+                stack.push(Frame::Array {
+                    values: Vec::new(),
+                    state: ArrayState::ExpectValueOrEnd,
+                    trailing_comma_pos: None,
+                });
+                idx += 1;
+            } else if pending.is_none()
+                && matches!(bytes.get(idx), Some(b'{'))
+                && json_scanner_can_use_tree_parser(state)
+            {
+                if stack.len() >= depth_limit {
+                    return Err(self.recursion_limit_error());
+                }
+                stack.push(Frame::Object {
+                    pairs: Vec::new(),
+                    state: ObjectState::ExpectKeyOrEnd,
+                    trailing_comma_pos: None,
+                });
+                idx += 1;
+            }
+        }
+    }
+
     fn json_scanner_scan_once_impl(
         &mut self,
         scanner: &ObjRef,
@@ -1334,6 +1678,29 @@ impl Vm {
         };
         let state = self.json_scanner_state(scanner)?;
         let depth_limit = json_parse_depth_limit(self);
+        let bytes = source.as_bytes();
+        let Some(&first) = bytes.get(start_byte) else {
+            return Err(self.json_scanner_stop_iteration_at_byte(&source, start_byte));
+        };
+        if json_scanner_can_use_tree_parser(&state)
+            && matches!(
+                first,
+                b'"' | b'{' | b'[' | b'n' | b't' | b'f' | b'N' | b'I' | b'-' | b'0'..=b'9'
+            )
+        {
+            let (value, end_byte) = self
+                .json_scanner_parse_value_default_nonrecursive(
+                    &state,
+                    &source,
+                    start_byte,
+                    depth_limit,
+                )?;
+            let end_char = utf8_byte_index_to_char(&source, end_byte)
+                .ok_or_else(|| RuntimeError::runtime_error("json scanner index is invalid"))?;
+            return Ok(self
+                .heap
+                .alloc_tuple(vec![value, Value::Int(end_char as i64)]));
+        }
         let (value, end_byte) =
             self.json_scanner_parse_value_native(&state, &source, start_byte, 0, depth_limit)?;
         let end_char = utf8_byte_index_to_char(&source, end_byte)
@@ -1701,6 +2068,15 @@ fn json_is_default_parse_constant(value: &Value) -> bool {
         },
         _ => false,
     }
+}
+
+fn json_scanner_can_use_tree_parser(state: &JsonScannerState) -> bool {
+    state.strict
+        && matches!(state.object_hook, Value::None)
+        && matches!(state.object_pairs_hook, Value::None)
+        && json_is_default_parse_float(&state.parse_float)
+        && json_is_default_parse_int(&state.parse_int)
+        && json_is_default_parse_constant(&state.parse_constant)
 }
 
 fn json_escape_string(text: &str, ensure_ascii: bool) -> String {
