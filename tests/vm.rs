@@ -3916,7 +3916,8 @@ except StopIteration:\n    done = True\n";
 
 #[test]
 fn executes_stdlib_bootstrap_modules() {
-    let source = "import math\n\
+    run_with_large_stack("executes_stdlib_bootstrap_modules", || {
+        let source = "import math\n\
 import json\n\
 import codecs\n\
 import re\n\
@@ -3962,6 +3963,8 @@ repeat_vals = list(itertools.repeat('x', 3))\n\
 reduced = functools.reduce(operator.add, [1, 2, 3], 0)\n\
 \n\
 counter = collections.Counter('abca')\n\
+counter_a = counter['a']\n\
+counter_b = counter['b']\n\
 dq = collections.deque((4, 5))\n\
 dq_vals = list(dq)\n\
 mod = types.ModuleType('tmp')\n\
@@ -3978,100 +3981,100 @@ joined = str(pathlib.Path(cwd).joinpath('foo'))\n\
 pth = str(pathlib.Path(cwd, 'bar'))\n\
 t = time.time()\n\
 m = time.monotonic()\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
 
-    assert_float_global(&vm, "sqrt", 3.0);
-    assert_eq!(vm.get_global("ceil"), Some(Value::Int(3)));
-    assert_eq!(vm.get_global("finite"), Some(Value::Bool(true)));
-    assert_eq!(vm.get_global("gcd1"), Some(Value::Int(6)));
-    assert_eq!(vm.get_global("gcd2"), Some(Value::Int(6)));
-    assert_eq!(vm.get_global("gcd3"), Some(Value::Int(7)));
-    assert_eq!(vm.get_global("op"), Some(Value::Int(5)));
-    assert_eq!(vm.get_global("op_pow"), Some(Value::Int(256)));
-    assert_eq!(vm.get_global("contains"), Some(Value::Bool(true)));
-    assert_eq!(vm.get_global("item"), Some(Value::Int(8)));
-    assert_eq!(
-        list_values(vm.get_global("chain_vals")),
-        Some(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
-    );
-    assert_eq!(
-        list_values(vm.get_global("repeat_vals")),
-        Some(vec![
-            Value::Str("x".to_string()),
-            Value::Str("x".to_string()),
-            Value::Str("x".to_string())
-        ])
-    );
-    assert_eq!(vm.get_global("reduced"), Some(Value::Int(6)));
-    assert_eq!(vm.get_global("is_mod"), Some(Value::Bool(true)));
-    assert_eq!(vm.get_global("is_class"), Some(Value::Bool(true)));
-    assert_eq!(vm.get_global("is_gen"), Some(Value::Bool(true)));
+        assert_float_global(&vm, "sqrt", 3.0);
+        assert_eq!(vm.get_global("ceil"), Some(Value::Int(3)));
+        assert_eq!(vm.get_global("finite"), Some(Value::Bool(true)));
+        assert_eq!(vm.get_global("gcd1"), Some(Value::Int(6)));
+        assert_eq!(vm.get_global("gcd2"), Some(Value::Int(6)));
+        assert_eq!(vm.get_global("gcd3"), Some(Value::Int(7)));
+        assert_eq!(vm.get_global("op"), Some(Value::Int(5)));
+        assert_eq!(vm.get_global("op_pow"), Some(Value::Int(256)));
+        assert_eq!(vm.get_global("contains"), Some(Value::Bool(true)));
+        assert_eq!(vm.get_global("item"), Some(Value::Int(8)));
+        assert_eq!(
+            list_values(vm.get_global("chain_vals")),
+            Some(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+        );
+        assert_eq!(
+            list_values(vm.get_global("repeat_vals")),
+            Some(vec![
+                Value::Str("x".to_string()),
+                Value::Str("x".to_string()),
+                Value::Str("x".to_string())
+            ])
+        );
+        assert_eq!(vm.get_global("reduced"), Some(Value::Int(6)));
+        assert_eq!(vm.get_global("is_mod"), Some(Value::Bool(true)));
+        assert_eq!(vm.get_global("is_class"), Some(Value::Bool(true)));
+        assert_eq!(vm.get_global("is_gen"), Some(Value::Bool(true)));
 
-    match vm.get_global("encoded") {
-        Some(Value::Str(text)) => {
-            assert!(text.contains("\"a\": 1"));
-            assert!(text.contains("\"b\": [2, 3]"));
+        match vm.get_global("encoded") {
+            Some(Value::Str(text)) => {
+                assert!(text.contains("\"a\": 1"));
+                assert!(text.contains("\"b\": [2, 3]"));
+            }
+            other => panic!("expected encoded JSON string, got {other:?}"),
         }
-        other => panic!("expected encoded JSON string, got {other:?}"),
-    }
-    assert_eq!(
-        bytes_values(vm.get_global("encoded_ascii")),
-        Some(vec![65, 90])
-    );
-    assert_eq!(
-        vm.get_global("decoded_ascii"),
-        Some(Value::Str("AZ".to_string()))
-    );
-    assert_eq!(
-        vm.get_global("decoded_ignore"),
-        Some(Value::Str("AB".to_string()))
-    );
-    match vm.get_global("decoded_replace") {
-        Some(Value::Str(text)) => {
-            assert!(text.starts_with('A'));
-            assert!(text.ends_with('B'));
-            assert_eq!(text.chars().count(), 3);
+        assert_eq!(
+            bytes_values(vm.get_global("encoded_ascii")),
+            Some(vec![65, 90])
+        );
+        assert_eq!(
+            vm.get_global("decoded_ascii"),
+            Some(Value::Str("AZ".to_string()))
+        );
+        assert_eq!(
+            vm.get_global("decoded_ignore"),
+            Some(Value::Str("AB".to_string()))
+        );
+        match vm.get_global("decoded_replace") {
+            Some(Value::Str(text)) => {
+                assert!(text.starts_with('A'));
+                assert!(text.ends_with('B'));
+                assert_eq!(text.chars().count(), 3);
+            }
+            other => panic!("expected decoded replacement string, got {other:?}"),
         }
-        other => panic!("expected decoded replacement string, got {other:?}"),
-    }
-    assert_eq!(vm.get_global("m1_ok"), Some(Value::Bool(true)));
-    assert_eq!(vm.get_global("m2_ok"), Some(Value::Bool(true)));
-    assert_eq!(vm.get_global("m3_ok"), Some(Value::Bool(true)));
-    match vm.get_global("t") {
-        Some(Value::Float(value)) => assert!(value > 0.0),
-        other => panic!("expected time float, got {other:?}"),
-    }
-    match vm.get_global("m") {
-        Some(Value::Float(value)) => assert!(value >= 0.0),
-        other => panic!("expected monotonic float, got {other:?}"),
-    }
-    match vm.get_global("today") {
-        Some(Value::Str(text)) => assert!(text.len() >= 10),
-        other => panic!("expected date string, got {other:?}"),
-    }
-    match vm.get_global("now") {
-        Some(Value::Str(text)) => assert!(text.contains('T')),
-        other => panic!("expected datetime string, got {other:?}"),
-    }
-    match vm.get_global("joined") {
-        Some(Value::Str(text)) => assert!(text.ends_with("foo")),
-        other => panic!("expected joined path string, got {other:?}"),
-    }
-    match vm.get_global("pth") {
-        Some(Value::Str(text)) => assert!(text.ends_with("bar")),
-        other => panic!("expected path string, got {other:?}"),
-    }
+        assert_eq!(vm.get_global("m1_ok"), Some(Value::Bool(true)));
+        assert_eq!(vm.get_global("m2_ok"), Some(Value::Bool(true)));
+        assert_eq!(vm.get_global("m3_ok"), Some(Value::Bool(true)));
+        match vm.get_global("t") {
+            Some(Value::Float(value)) => assert!(value > 0.0),
+            other => panic!("expected time float, got {other:?}"),
+        }
+        match vm.get_global("m") {
+            Some(Value::Float(value)) => assert!(value >= 0.0),
+            other => panic!("expected monotonic float, got {other:?}"),
+        }
+        match vm.get_global("today") {
+            Some(Value::Str(text)) => assert!(text.len() >= 10),
+            other => panic!("expected date string, got {other:?}"),
+        }
+        match vm.get_global("now") {
+            Some(Value::Str(text)) => assert!(text.contains('T')),
+            other => panic!("expected datetime string, got {other:?}"),
+        }
+        match vm.get_global("joined") {
+            Some(Value::Str(text)) => assert!(text.ends_with("foo")),
+            other => panic!("expected joined path string, got {other:?}"),
+        }
+        match vm.get_global("pth") {
+            Some(Value::Str(text)) => assert!(text.ends_with("bar")),
+            other => panic!("expected path string, got {other:?}"),
+        }
 
-    let counter_entries = dict_entries(vm.get_global("counter")).expect("counter dict");
-    assert!(counter_entries.contains(&(Value::Str("a".to_string()), Value::Int(2))));
-    assert!(counter_entries.contains(&(Value::Str("b".to_string()), Value::Int(1))));
-    assert_eq!(
-        list_values(vm.get_global("dq_vals")),
-        Some(vec![Value::Int(4), Value::Int(5)])
-    );
+        assert_eq!(vm.get_global("counter_a"), Some(Value::Int(2)));
+        assert_eq!(vm.get_global("counter_b"), Some(Value::Int(1)));
+        assert_eq!(
+            list_values(vm.get_global("dq_vals")),
+            Some(vec![Value::Int(4), Value::Int(5)])
+        );
+    });
 }
 
 #[test]
