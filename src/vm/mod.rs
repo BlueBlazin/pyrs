@@ -78,7 +78,7 @@ use crate::runtime::{
     ExceptionObject, FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind,
     IteratorObject, MemoryViewObject, ModuleObject, NativeMethodKind, NativeMethodObject, Obj,
     ObjRef, Object, RuntimeError, SuperObject, TestCapiScalarParseKind,
-    TestCapiStringParseKind, Value, format_repr, format_value,
+    TestCapiStringParseKind, Value, clear_obj_drop_hooks_for_heap, format_repr, format_value,
     runtime_get_int_max_str_digits,
 };
 use crate::unicode::{
@@ -1155,6 +1155,12 @@ impl Frame {
     }
 }
 
+#[derive(Clone)]
+enum ExtensionCpythonPtrValueEntry {
+    Strong(Value),
+    WeakObject(Weak<Obj>),
+}
+
 /// Root interpreter state for a single pyrs process.
 ///
 /// `Vm` owns heap/runtime objects, active and pooled frames, import/module state,
@@ -1253,7 +1259,7 @@ pub struct Vm {
     extension_pinned_cpython_allocations: Vec<*mut c_void>,
     extension_pinned_cpython_allocation_set: HashSet<usize>,
     extension_pinned_capsule_names: HashMap<usize, CString>,
-    extension_cpython_ptr_values: HashMap<usize, Value>,
+    extension_cpython_ptr_values: HashMap<usize, ExtensionCpythonPtrValueEntry>,
     extension_cpython_ptr_by_object_id: HashMap<u64, usize>,
     capi_object_registry: CapiObjectRegistry,
     extension_module_def_registry: HashMap<u64, usize>,
@@ -1310,6 +1316,7 @@ pub struct Vm {
 
 impl Drop for Vm {
     fn drop(&mut self) {
+        clear_obj_drop_hooks_for_heap(self.heap.instance_id());
         // Reclaim Python-level cycles before extension/native teardown mutates
         // pointer-backed proxy state.
         self.heap.collect_cycles(&[]);
@@ -1424,6 +1431,137 @@ impl Default for Vm {
 }
 
 impl Vm {
+    fn extension_cpython_ptr_value_entry(value: &Value) -> ExtensionCpythonPtrValueEntry {
+        if matches!(value, Value::Instance(_))
+            && Self::cpython_proxy_raw_ptr_from_value(value).is_some()
+            && let Value::Instance(instance_obj) = value
+        {
+            return ExtensionCpythonPtrValueEntry::WeakObject(instance_obj.downgrade());
+        }
+        ExtensionCpythonPtrValueEntry::Strong(value.clone())
+    }
+
+    fn extension_cpython_ptr_value_from_weak_object(weak: &Weak<Obj>) -> Option<Value> {
+        let obj = ObjRef::from_rc(weak.upgrade()?);
+        enum WeakObjectValueKind {
+            List,
+            Tuple,
+            Dict,
+            DictKeys,
+            DictValues,
+            DictItems,
+            Set,
+            FrozenSet,
+            Bytes,
+            ByteArray,
+            MemoryView,
+            Iterator,
+            Generator,
+            Module,
+            Class,
+            Instance,
+            Super,
+            BoundMethod,
+            Function,
+            Cell,
+        }
+        let value_kind = {
+            let borrowed = obj.kind();
+            match &*borrowed {
+                Object::List(_) => WeakObjectValueKind::List,
+                Object::Tuple(_) => WeakObjectValueKind::Tuple,
+                Object::Dict(_) => WeakObjectValueKind::Dict,
+                Object::DictView(view) => match view.kind {
+                    DictViewKind::Keys => WeakObjectValueKind::DictKeys,
+                    DictViewKind::Values => WeakObjectValueKind::DictValues,
+                    DictViewKind::Items => WeakObjectValueKind::DictItems,
+                },
+                Object::Set(_) => WeakObjectValueKind::Set,
+                Object::FrozenSet(_) => WeakObjectValueKind::FrozenSet,
+                Object::Bytes(_) => WeakObjectValueKind::Bytes,
+                Object::ByteArray(_) => WeakObjectValueKind::ByteArray,
+                Object::MemoryView(_) => WeakObjectValueKind::MemoryView,
+                Object::Iterator(_) => WeakObjectValueKind::Iterator,
+                Object::Generator(_) => WeakObjectValueKind::Generator,
+                Object::Module(_) => WeakObjectValueKind::Module,
+                Object::Class(_) => WeakObjectValueKind::Class,
+                Object::Instance(_) => WeakObjectValueKind::Instance,
+                Object::Super(_) => WeakObjectValueKind::Super,
+                Object::BoundMethod(_) => WeakObjectValueKind::BoundMethod,
+                Object::Function(_) => WeakObjectValueKind::Function,
+                Object::Cell(_) => WeakObjectValueKind::Cell,
+                Object::NativeMethod(_) => return None,
+            }
+        };
+        Some(match value_kind {
+            WeakObjectValueKind::List => Value::List(obj),
+            WeakObjectValueKind::Tuple => Value::Tuple(obj),
+            WeakObjectValueKind::Dict => Value::Dict(obj),
+            WeakObjectValueKind::DictKeys => Value::DictKeys(obj),
+            WeakObjectValueKind::DictValues => Value::DictValues(obj),
+            WeakObjectValueKind::DictItems => Value::DictItems(obj),
+            WeakObjectValueKind::Set => Value::Set(obj),
+            WeakObjectValueKind::FrozenSet => Value::FrozenSet(obj),
+            WeakObjectValueKind::Bytes => Value::Bytes(obj),
+            WeakObjectValueKind::ByteArray => Value::ByteArray(obj),
+            WeakObjectValueKind::MemoryView => Value::MemoryView(obj),
+            WeakObjectValueKind::Iterator => Value::Iterator(obj),
+            WeakObjectValueKind::Generator => Value::Generator(obj),
+            WeakObjectValueKind::Module => Value::Module(obj),
+            WeakObjectValueKind::Class => Value::Class(obj),
+            WeakObjectValueKind::Instance => Value::Instance(obj),
+            WeakObjectValueKind::Super => Value::Super(obj),
+            WeakObjectValueKind::BoundMethod => Value::BoundMethod(obj),
+            WeakObjectValueKind::Function => Value::Function(obj),
+            WeakObjectValueKind::Cell => Value::Cell(obj),
+        })
+    }
+
+    pub(super) fn extension_cpython_ptr_value(&mut self, ptr: usize) -> Option<Value> {
+        let entry = self.extension_cpython_ptr_values.get(&ptr).cloned()?;
+        match entry {
+            ExtensionCpythonPtrValueEntry::Strong(value) => Some(value),
+            ExtensionCpythonPtrValueEntry::WeakObject(weak) => {
+                let value = Self::extension_cpython_ptr_value_from_weak_object(&weak);
+                if value.is_none() {
+                    self.extension_cpython_ptr_values.remove(&ptr);
+                }
+                value
+            }
+        }
+    }
+
+    pub(super) fn extension_cpython_ptr_contains_live(&mut self, ptr: usize) -> bool {
+        self.extension_cpython_ptr_value(ptr).is_some()
+    }
+
+    pub(super) fn extension_cpython_ptr_value_cache_if_absent(
+        &mut self,
+        ptr: usize,
+        value: &Value,
+    ) {
+        if self.extension_cpython_ptr_value(ptr).is_some() {
+            return;
+        }
+        self.extension_cpython_ptr_values
+            .insert(ptr, Self::extension_cpython_ptr_value_entry(value));
+    }
+
+    pub(super) fn extension_cpython_ptr_value_set(&mut self, ptr: usize, value: &Value) {
+        self.extension_cpython_ptr_values
+            .insert(ptr, Self::extension_cpython_ptr_value_entry(value));
+    }
+
+    pub(super) fn extension_cpython_ptr_value_remove(&mut self, ptr: usize) -> Option<Value> {
+        let entry = self.extension_cpython_ptr_values.remove(&ptr)?;
+        match entry {
+            ExtensionCpythonPtrValueEntry::Strong(value) => Some(value),
+            ExtensionCpythonPtrValueEntry::WeakObject(weak) => {
+                Self::extension_cpython_ptr_value_from_weak_object(&weak)
+            }
+        }
+    }
+
     pub fn new() -> Self {
         Self::new_with_host(Arc::new(NativeHost))
     }
@@ -1646,6 +1784,7 @@ impl Vm {
         vm.install_random_module();
         vm.install_stdlib_modules();
         vm.install_builtins();
+        vm.init_testcapi_heaptype_types();
         vm.init_testcapi_structmember_types();
         vm.normalize_bootstrap_module_classes();
         vm.install_builtins_module();
@@ -1700,6 +1839,10 @@ impl Vm {
 
     pub(super) fn capi_registry_pin_external_once(&mut self, ptr: usize) -> bool {
         self.capi_object_registry.pin_external_once(ptr)
+    }
+
+    pub(super) fn capi_registry_unpin_external(&mut self, ptr: usize) {
+        self.capi_object_registry.unpin_external(ptr);
     }
 
     pub(super) fn capi_pin_owned_ptr(&mut self, ptr: usize) -> bool {
@@ -5953,6 +6096,14 @@ impl Vm {
                 ("MethStatic", Value::Class(meth_static_class)),
             ],
         );
+        if let Some(module) = self.modules.get("_testcapi").cloned()
+            && let Object::Module(module_data) = &mut *module.kind_mut()
+        {
+            module_data.globals.insert(
+                "instancemethod".to_string(),
+                Value::Class(self.ensure_instancemethod_runtime_type_class()),
+            );
+        }
     }
 
     fn install_random_module(&mut self) {
@@ -6200,6 +6351,13 @@ impl Vm {
         if let Some(module) = self.modules.get("_testcapi").cloned() {
             self.init_testcapi_structmember_types_via_capi(module)
                 .expect("_testcapi structmember init should succeed");
+        }
+    }
+
+    fn init_testcapi_heaptype_types(&mut self) {
+        if let Some(module) = self.modules.get("_testcapi").cloned() {
+            self.init_testcapi_heaptype_types_via_capi(module)
+                .expect("_testcapi heaptype init should succeed");
         }
     }
 

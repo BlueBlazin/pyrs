@@ -6727,6 +6727,67 @@ impl Vm {
                     self.builtin_getattr(vec![obj, Value::Str(descriptor_name)], HashMap::new())?;
                 Ok(NativeCallResult::Value(value))
             }
+            NativeMethodKind::InstanceMethodTypeNew => {
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::type_error(
+                        "instancemethod() takes no keyword arguments",
+                    ));
+                }
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error(
+                        "instancemethod() takes exactly one argument",
+                    ));
+                }
+                Ok(NativeCallResult::Value(
+                    self.build_instancemethod_descriptor(args.remove(0))?,
+                ))
+            }
+            NativeMethodKind::InstanceMethodDescriptorGet => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new("__get__() expects 1-2 arguments"));
+                }
+                let obj = args.remove(0);
+                let Some(callable) = self.instancemethod_descriptor_callable(&receiver) else {
+                    return Err(RuntimeError::new("invalid instancemethod descriptor"));
+                };
+                if matches!(obj, Value::None) {
+                    return Ok(NativeCallResult::Value(callable));
+                }
+                Ok(NativeCallResult::Value(
+                    self.bind_instancemethod_callable(callable, obj)?,
+                ))
+            }
+            NativeMethodKind::InstanceMethodCall => {
+                let Some(callable) = self.instancemethod_descriptor_callable(&receiver) else {
+                    return Err(RuntimeError::new("invalid instancemethod descriptor"));
+                };
+                match self.call_internal(callable, args, kwargs)? {
+                    InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(value)),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        Ok(NativeCallResult::PropagatedException)
+                    }
+                }
+            }
+            NativeMethodKind::InstanceMethodRepr => {
+                if !kwargs.is_empty() || !args.is_empty() {
+                    return Err(RuntimeError::type_error("__repr__() takes no arguments"));
+                }
+                let Some(callable) = self.instancemethod_descriptor_callable(&receiver) else {
+                    return Err(RuntimeError::new("invalid instancemethod descriptor"));
+                };
+                let callable_name = self
+                    .optional_getattr_value(callable, "__name__")?
+                    .and_then(|value| match value {
+                        Value::Str(text) => Some(text),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "?".to_string());
+                Ok(NativeCallResult::Value(Value::Str(format!(
+                    "<instancemethod {} at 0x{:x}>",
+                    callable_name,
+                    receiver.id()
+                ))))
+            }
             NativeMethodKind::ClassMethodDescriptorGet => {
                 if args.is_empty() || args.len() > 2 {
                     return Err(RuntimeError::new("__get__() expects 1-2 arguments"));

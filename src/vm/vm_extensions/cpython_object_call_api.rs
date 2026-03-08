@@ -750,6 +750,17 @@ pub unsafe extern "C" fn PyObject_CallFinalizer(self_obj: *mut c_void) {
     if type_ptr.is_null() {
         return;
     }
+    if super::super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_DROP") {
+        let type_name = unsafe { c_name_to_string((*type_ptr).tp_name) }
+            .unwrap_or_else(|_| "<invalid>".to_string());
+        eprintln!(
+            "[cpy-proxy-drop] call-finalizer self={:p} type={:p} type_name={} tp_finalize={:p}",
+            self_obj,
+            type_ptr,
+            type_name,
+            unsafe { (*type_ptr).tp_finalize }
+        );
+    }
     // SAFETY: `type_ptr` points to a type object; tp_finalize follows C-API slot ABI.
     let finalize = unsafe { (*type_ptr).tp_finalize };
     if finalize.is_null() {
@@ -888,14 +899,23 @@ pub unsafe extern "C" fn PyInstanceMethod_New(function: *mut c_void) -> *mut c_v
             context.set_error("PyInstanceMethod_New expected non-null function");
             return std::ptr::null_mut();
         }
-        if context.cpython_value_from_borrowed_ptr(function).is_none() {
+        let Some(function_value) = context.cpython_value_from_borrowed_ptr(function) else {
             context.set_error("PyInstanceMethod_New received unknown function pointer");
             return std::ptr::null_mut();
+        };
+        if context.vm.is_null() {
+            context.set_error("PyInstanceMethod_New missing VM context");
+            return std::ptr::null_mut();
         }
-        // CPython returns a new reference to an instance-method wrapper. For now we preserve
-        // callable identity and reference semantics for extension callers.
-        unsafe { Py_XIncRef(function) };
-        function
+        let vm = unsafe { &mut *context.vm };
+        let wrapper = match vm.build_instancemethod_descriptor(function_value) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error_from_runtime_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        context.alloc_cpython_ptr_for_value(wrapper)
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
@@ -1288,11 +1308,7 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
                             false
                         } else {
                             // SAFETY: VM pointer is valid for active C-API context lifetime.
-                            unsafe {
-                                (&*context.vm)
-                                    .extension_cpython_ptr_values
-                                    .contains_key(&(ptr as usize))
-                            }
+                            unsafe { (&mut *context.vm).extension_cpython_ptr_contains_live(ptr as usize) }
                         };
                         if known_handle || mapped_escaped {
                             if let Some(value) = context.cpython_value_from_borrowed_ptr(ptr) {
@@ -1328,8 +1344,8 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
                             false
                         } else {
                             // SAFETY: VM pointer is valid for active context lifetime.
-                            let vm = unsafe { &*context.vm };
-                            vm.extension_cpython_ptr_values.contains_key(&(ptr as usize))
+                            let vm = unsafe { &mut *context.vm };
+                            vm.extension_cpython_ptr_contains_live(ptr as usize)
                         };
                         let probable_external =
                             ModuleCapiContext::is_probable_external_cpython_object_ptr(ptr);

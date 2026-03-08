@@ -18940,6 +18940,65 @@ ok = all(check(cls) for cls in classes)
 }
 
 #[test]
+fn exposes_testcapi_instancemethod_descriptor() {
+    let source = r#"import _testcapi
+
+def testfunction(self):
+    """some doc"""
+    return self
+
+class InstanceMethod:
+    id = _testcapi.instancemethod(id)
+    testfunction = _testcapi.instancemethod(testfunction)
+
+inst = InstanceMethod()
+InstanceMethod.testfunction.attribute = "test"
+
+ok = (
+    id(inst) == inst.id()
+    and inst.testfunction() is inst
+    and inst.testfunction.__doc__ == testfunction.__doc__
+    and InstanceMethod.testfunction.__doc__ == testfunction.__doc__
+    and testfunction.attribute == "test"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn exposes_testcapi_heaptype_subclass_types() {
+    let source = r#"import _testcapi, gc
+
+def check():
+    subclass = _testcapi.HeapCTypeSubclass()
+    if subclass.value != 10 or subclass.value2 != 20:
+        return False
+
+    finalized = _testcapi.HeapCTypeSubclassWithFinalizer()
+    if finalized.value != 10 or finalized.value2 != 20:
+        return False
+
+    del finalized
+    gc.collect()
+    return (
+        hasattr(_testcapi.HeapCTypeSubclassWithFinalizer, "refcnt_in_del")
+        and hasattr(_testcapi.HeapCTypeSubclass, "refcnt_in_del")
+    )
+
+ok = check()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn testcapi_parse_keyword_messages_preserve_invalid_utf8_and_surrogates() {
     let source = r#"import _testcapi
 

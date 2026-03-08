@@ -8965,6 +8965,12 @@ impl Vm {
             return Ok(AttrAccessOutcome::Value(attr));
         }
 
+        if let Some(callable) = self.instancemethod_descriptor_callable(instance)
+            && let Some(attr) = self.optional_getattr_value(callable, attr_name)?
+        {
+            return Ok(AttrAccessOutcome::Value(attr));
+        }
+
         if allow_getattr_fallback
             && let Some(getattr_method) =
                 self.lookup_bound_special_method(&Value::Instance(instance.clone()), "__getattr__")?

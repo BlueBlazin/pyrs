@@ -146,10 +146,18 @@ pub unsafe extern "C" fn _Py_Dealloc(object: *mut c_void) {
         NoContextMatch,
     }
     let action = with_active_cpython_context_mut(|context| {
-        let Some(handle) = context.cpython_handle_from_ptr(object) else {
-            return DeallocAction::NoContextMatch;
+        let handle = match context.cpython_handle_from_ptr(object) {
+            Some(handle) => handle,
+            None => {
+                let _ = context.cpython_value_from_ptr_or_proxy(object);
+                let Some(handle) = context.cpython_handle_from_ptr(object) else {
+                    return DeallocAction::NoContextMatch;
+                };
+                handle
+            }
         };
-        let _ = context.decref(handle);
+        context.set_object_refcount(handle, 0);
+        let _ = context.release_object_handle_after_zero_ref(handle);
         DeallocAction::Handled
     })
     .unwrap_or(DeallocAction::NoContextMatch);

@@ -15,6 +15,7 @@ use std::hash::{Hash, Hasher};
 use std::ops::Index;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering as AtomicOrdering};
+use std::sync::{Mutex, OnceLock};
 
 use crate::bytecode::CodeObject;
 use crate::unicode::{canonical_codepoint_for_internal_char, internal_char_from_codepoint};
@@ -651,6 +652,10 @@ pub enum NativeMethodKind {
     BoundMethodDescriptorGet,
     FunctionDescriptorGet,
     GetSetDescriptorGet,
+    InstanceMethodTypeNew,
+    InstanceMethodDescriptorGet,
+    InstanceMethodCall,
+    InstanceMethodRepr,
     ClassMethodDescriptorGet,
     StaticMethodDescriptorGet,
     FunctionAnnotate,
@@ -696,8 +701,47 @@ impl NativeMethodObject {
 
 /// Heap object header with stable identity and interior-mutability payload.
 pub struct Obj {
+    heap_instance_id: u64,
     id: u64,
     kind: RefCell<Object>,
+}
+
+#[derive(Clone, Copy)]
+pub struct ObjDropHook {
+    pub callback: unsafe fn(u64, u64, usize, usize, usize),
+    pub arg0: usize,
+    pub arg1: usize,
+    pub arg2: usize,
+}
+
+type ObjDropHookKey = (u64, u64);
+
+fn obj_drop_hooks() -> &'static Mutex<HashMap<ObjDropHookKey, ObjDropHook>> {
+    static HOOKS: OnceLock<Mutex<HashMap<ObjDropHookKey, ObjDropHook>>> = OnceLock::new();
+    HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn register_obj_drop_hook(heap_instance_id: u64, object_id: u64, hook: ObjDropHook) {
+    if let Ok(mut hooks) = obj_drop_hooks().lock() {
+        hooks.insert((heap_instance_id, object_id), hook);
+    }
+}
+
+pub fn clear_obj_drop_hook(heap_instance_id: u64, object_id: u64) -> Option<ObjDropHook> {
+    obj_drop_hooks()
+        .lock()
+        .ok()
+        .and_then(|mut hooks| hooks.remove(&(heap_instance_id, object_id)))
+}
+
+pub fn clear_obj_drop_hooks_for_heap(heap_instance_id: u64) {
+    if let Ok(mut hooks) = obj_drop_hooks().lock() {
+        hooks.retain(|(hook_heap_instance_id, _), _| *hook_heap_instance_id != heap_instance_id);
+    }
+}
+
+fn take_obj_drop_hook(heap_instance_id: u64, object_id: u64) -> Option<ObjDropHook> {
+    clear_obj_drop_hook(heap_instance_id, object_id)
 }
 
 #[derive(Clone)]
@@ -710,6 +754,10 @@ pub struct ObjRef(Rc<Obj>);
 impl ObjRef {
     pub fn id(&self) -> u64 {
         self.0.id
+    }
+
+    pub fn heap_instance_id(&self) -> u64 {
+        self.0.heap_instance_id
     }
 
     pub fn kind(&self) -> Ref<'_, Object> {
@@ -1071,6 +1119,7 @@ impl fmt::Debug for Obj {
             .map(|kind| object_variant_name(&kind))
             .unwrap_or("<borrowed mut>");
         f.debug_struct("Obj")
+            .field("heap_instance_id", &self.heap_instance_id)
             .field("id", &self.id)
             .field("kind", &kind)
             .finish()
@@ -1079,6 +1128,17 @@ impl fmt::Debug for Obj {
 
 impl Drop for Obj {
     fn drop(&mut self) {
+        if let Some(hook) = take_obj_drop_hook(self.heap_instance_id, self.id) {
+            unsafe {
+                (hook.callback)(
+                    self.heap_instance_id,
+                    self.id,
+                    hook.arg0,
+                    hook.arg1,
+                    hook.arg2,
+                );
+            }
+        }
         let object = std::mem::replace(self.kind.get_mut(), Object::Bytes(Vec::new()));
         release_owned_items_stack_safe(owned_object_children(object));
     }
@@ -3260,6 +3320,7 @@ impl Heap {
     pub fn alloc(&self, kind: Object) -> ObjRef {
         let id = self.next_id();
         let obj = Rc::new(Obj {
+            heap_instance_id: self.instance_id,
             id,
             kind: RefCell::new(kind),
         });
@@ -11043,8 +11104,12 @@ fn native_method_name(kind: NativeMethodKind) -> Option<String> {
         NativeMethodKind::BoundMethodDescriptorGet
         | NativeMethodKind::FunctionDescriptorGet
         | NativeMethodKind::GetSetDescriptorGet
+        | NativeMethodKind::InstanceMethodDescriptorGet
         | NativeMethodKind::ClassMethodDescriptorGet
         | NativeMethodKind::StaticMethodDescriptorGet => Some("__get__".to_string()),
+        NativeMethodKind::InstanceMethodTypeNew => Some("__new__".to_string()),
+        NativeMethodKind::InstanceMethodCall => Some("__call__".to_string()),
+        NativeMethodKind::InstanceMethodRepr => Some("__repr__".to_string()),
         _ => None,
     }
 }
@@ -11923,6 +11988,18 @@ pub fn format_value(value: &Value) -> String {
                         }
                         NativeMethodKind::GetSetDescriptorGet => {
                             "<bound method getset_descriptor.__get__>".to_string()
+                        }
+                        NativeMethodKind::InstanceMethodTypeNew => {
+                            "<bound method instancemethod.__new__>".to_string()
+                        }
+                        NativeMethodKind::InstanceMethodDescriptorGet => {
+                            "<bound method instancemethod.__get__>".to_string()
+                        }
+                        NativeMethodKind::InstanceMethodCall => {
+                            "<bound method instancemethod.__call__>".to_string()
+                        }
+                        NativeMethodKind::InstanceMethodRepr => {
+                            "<bound method instancemethod.__repr__>".to_string()
                         }
                         NativeMethodKind::ClassMethodDescriptorGet => {
                             "<bound method classmethod.__get__>".to_string()

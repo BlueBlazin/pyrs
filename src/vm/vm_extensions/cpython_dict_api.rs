@@ -291,7 +291,14 @@ pub unsafe extern "C" fn PyDict_SetItem(
             );
             eprintln!("{:?}", std::backtrace::Backtrace::capture());
         }
-        if let Some(target) = context.cpython_value_from_ptr(dict)
+        let target = if !context.vm.is_null()
+            && unsafe { (&*context.vm).capi_ptr_is_owned_compat(dict as usize) }
+        {
+            context.cpython_value_from_ptr_or_proxy(dict)
+        } else {
+            context.cpython_value_from_ptr(dict)
+        };
+        if let Some(target) = target
             && let Value::Dict(dict_obj) = target
         {
             if context.vm.is_null() {

@@ -1217,6 +1217,29 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
         && name_text.contains("__pybind11");
     let trace_seed_setattr = super::super::env_var_present_cached("PYRS_TRACE_NUMPY_SEED_ATTRS")
         && name_text == "_seed_seq";
+    let trace_proxy_finalize_attr =
+        super::super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_DROP")
+            && matches!(name_text.as_str(), "__class__" | "refcnt_in_del");
+    if trace_proxy_finalize_attr {
+        let _ = with_active_cpython_context_mut(|context| {
+            let object_tag = context
+                .cpython_value_from_borrowed_ptr(object)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|| "<unresolved-object>".to_string());
+            let value_tag = if value_ptr.is_null() {
+                "<null>".to_string()
+            } else {
+                context
+                    .cpython_value_from_borrowed_ptr(value_ptr)
+                    .map(|value| cpython_value_debug_tag(&value))
+                    .unwrap_or_else(|| "<unresolved-value>".to_string())
+            };
+            eprintln!(
+                "[cpy-proxy-drop] setattr-enter object={:p} name={} value={:p} object_tag={} value_tag={}",
+                object, name_text, value_ptr, object_tag, value_tag
+            );
+        });
+    }
     if trace_seed_setattr {
         let _ = with_active_cpython_context_mut(|context| {
             let object_tag = context
@@ -1338,6 +1361,12 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             Some(-1)
         });
         if let Some(status) = native_status {
+            if trace_proxy_finalize_attr {
+                eprintln!(
+                    "[cpy-proxy-drop] setattr-native object={:p} name={} value={:p} status={}",
+                    object, name_text, value_ptr, status
+                );
+            }
             if status == 0 {
                 let attr_name_for_sync = name_text.clone();
                 let _ = with_active_cpython_context_mut(|context| {
@@ -1410,6 +1439,12 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
         vec![object_value, Value::Str(name_text), value],
     ) {
         Ok(_) => {
+            if trace_proxy_finalize_attr {
+                eprintln!(
+                    "[cpy-proxy-drop] setattr-builtin object={:p} name={} value={:p} status=0",
+                    object, name_text_for_sync, value_ptr
+                );
+            }
             let _ = with_active_cpython_context_mut(|context| {
                 if let Value::Module(module_obj) = &object_value_for_sync {
                     let _ = context.sync_module_dict_set(
@@ -1437,6 +1472,12 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             0
         }
         Err(err) => {
+            if trace_proxy_finalize_attr {
+                eprintln!(
+                    "[cpy-proxy-drop] setattr-builtin object={:p} name={} value={:p} status=-1 err={}",
+                    object, name_text_for_sync, value_ptr, err
+                );
+            }
             if trace_pybind11_attr {
                 eprintln!(
                     "[pybind11-attr] branch=builtin object={:p} name={} value={:p} status=-1 err={}",

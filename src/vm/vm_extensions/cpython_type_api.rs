@@ -1070,6 +1070,79 @@ pub(super) unsafe extern "C" fn cpython_type_tp_setattro(
         if type_ptr.is_null() {
             return None;
         }
+        if let Some(Value::Class(class_obj)) = context.cpython_value_from_ptr_or_proxy(object) {
+            let runtime_value = if value.is_null() {
+                None
+            } else {
+                let Some(runtime_value) = context.cpython_value_from_ptr_or_proxy(value) else {
+                    context.set_error("type setattr received unknown value pointer");
+                    return Some(-1);
+                };
+                Some(runtime_value)
+            };
+            if context.vm.is_null() {
+                context.set_error("type setattr missing VM context");
+                return Some(-1);
+            }
+            // SAFETY: VM pointer is valid for the active C-API context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            let runtime_status = if let Some(runtime_value) = runtime_value.clone() {
+                vm.builtin_setattr(
+                    vec![
+                        Value::Class(class_obj.clone()),
+                        Value::Str(attr_name.clone()),
+                        runtime_value,
+                    ],
+                    HashMap::new(),
+                )
+            } else {
+                vm.builtin_delattr(
+                    vec![Value::Class(class_obj.clone()), Value::Str(attr_name.clone())],
+                    HashMap::new(),
+                )
+            };
+            if let Err(err) = runtime_status {
+                context.set_error(err.message);
+                return Some(-1);
+            }
+            // Best-effort mirror into the raw type dict for native readers.
+            // Runtime class state remains authoritative for Python-visible behavior.
+            let dict_ptr = unsafe { (*type_ptr).tp_dict };
+            if !dict_ptr.is_null() {
+                let _ = context.cpython_value_from_ptr_or_proxy(dict_ptr);
+                let key_ptr = match context.scratch_c_string_ptr(&attr_name) {
+                    Ok(ptr) => ptr,
+                    Err(err) => {
+                        context.set_error(err);
+                        return Some(-1);
+                    }
+                };
+                let mirror_status = if value.is_null() {
+                    unsafe { PyDict_DelItemString(dict_ptr, key_ptr) }
+                } else {
+                    unsafe { PyDict_SetItemString(dict_ptr, key_ptr, value) }
+                };
+                if mirror_status != 0 {
+                    context.clear_error();
+                    if trace_type_setattr {
+                        eprintln!(
+                            "[cpy-type-setattr] runtime-ok dict-mirror-miss type={} attr={} delete={}",
+                            type_name,
+                            attr_name,
+                            value.is_null()
+                        );
+                    }
+                } else if trace_type_setattr {
+                    eprintln!(
+                        "[cpy-type-setattr] runtime-ok dict-mirror-ok type={} attr={} delete={}",
+                        type_name,
+                        attr_name,
+                        value.is_null()
+                    );
+                }
+            }
+            return Some(0);
+        }
         // SAFETY: type pointer shape is validated by CPython slot dispatch contract.
         let dict_ptr = unsafe { (*type_ptr).tp_dict };
         if dict_ptr.is_null() {
