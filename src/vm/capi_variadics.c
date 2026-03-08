@@ -78,10 +78,16 @@ typedef struct {
 typedef struct pyrs_pytypeobject PyTypeObject;
 
 #define Py_TPFLAGS_DEFAULT 0u
+#define Py_TPFLAGS_HAVE_FINALIZE (1u << 0)
 #define Py_TPFLAGS_BASETYPE (1u << 10)
 
+#define Py_tp_base 48
+#define Py_tp_dealloc 52
+#define Py_tp_doc 56
+#define Py_tp_init 60
 #define Py_tp_new 65
 #define Py_tp_members 72
+#define Py_tp_finalize 80
 
 #define Py_READONLY 1
 
@@ -169,6 +175,7 @@ extern void *PyObject_CallObject(void *callable, void *args);
 extern void *PyObject_CallMethod(void *object, const char *name, const char *format, ...);
 extern void *PyObject_GetAttr(void *object, void *name);
 extern void *PyObject_GetAttrString(void *object, const char *name);
+extern int PyObject_SetAttrString(void *object, const char *name, void *value);
 extern int PyObject_GetBuffer(void *object, void *view, int flags);
 extern void *PyObject_Type(void *object);
 extern void *PyObject_GenericHash(void *object);
@@ -179,9 +186,13 @@ extern void *PyObject_ASCII(void *object);
 extern Py_hash_t PyObject_Hash(void *object);
 extern int PyObject_IsTrue(void *object);
 extern int PyType_IsSubtype(void *subtype, void *type);
+extern void *PyType_FromSpec(void *spec);
+extern void *PyType_FromSpecWithBases(void *spec, void *bases);
 extern void *PyType_FromModuleAndSpec(void *module, void *spec, void *bases);
+extern void *PyType_GetSlot(void *type, int slot);
 extern int PyModule_AddType(void *module, void *type_obj);
 extern void *PyType_GenericAlloc(void *subtype, Py_ssize_t nitems);
+extern void PyObject_Free(void *ptr);
 extern int PyErr_ExceptionMatches(void *exception);
 extern const char *PyUnicode_AsUTF8(void *object);
 extern void *PyThreadState_GetUnchecked(void);
@@ -4944,6 +4955,251 @@ int pyrs_testcapi_init_structmember_types(void *module)
     }
     Py_DecRef(type_obj);
     return 0;
+}
+
+typedef int (*pyrs_initproc)(void *self, void *args, void *kwargs);
+
+typedef struct {
+    PyObject ob_base;
+    int value;
+} pyrs_heapctype_object;
+
+typedef struct {
+    pyrs_heapctype_object base;
+    int value2;
+} pyrs_heapctypesubclass_object;
+
+static void *pyrs_testcapi_heaptype_module = NULL;
+
+static int
+pyrs_heapctype_init(void *self, void *args, void *kwargs)
+{
+    (void)args;
+    (void)kwargs;
+    ((pyrs_heapctype_object *)self)->value = 10;
+    return 0;
+}
+
+static void
+pyrs_heapctype_dealloc(void *op)
+{
+    PyTypeObject *type_obj = (PyTypeObject *)((PyObject *)op)->ob_type;
+    PyObject_Free(op);
+    if (type_obj != NULL) {
+        Py_DecRef(type_obj);
+    }
+}
+
+static PyMemberDef pyrs_heapctype_members[] = {
+    {"value", Py_T_INT, offsetof(pyrs_heapctype_object, value), 0, NULL},
+    {NULL, 0, 0, 0, NULL},
+};
+
+static PyType_Slot pyrs_heapctype_slots[] = {
+    {Py_tp_init, pyrs_heapctype_init},
+    {Py_tp_members, pyrs_heapctype_members},
+    {Py_tp_dealloc, pyrs_heapctype_dealloc},
+    {Py_tp_doc, "Heap type without GC; __init__ sets value to 10."},
+    {0, NULL},
+};
+
+static PyType_Spec pyrs_heapctype_spec = {
+    "_testcapi.HeapCType",
+    (int)sizeof(pyrs_heapctype_object),
+    0,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    pyrs_heapctype_slots,
+};
+
+static int
+pyrs_heapctypesubclass_init(void *self, void *args, void *kwargs)
+{
+    if (pyrs_heapctype_init(self, args, kwargs) < 0) {
+        return -1;
+    }
+    ((pyrs_heapctypesubclass_object *)self)->value2 = 20;
+    return 0;
+}
+
+static PyMemberDef pyrs_heapctypesubclass_members[] = {
+    {"value2", Py_T_INT, offsetof(pyrs_heapctypesubclass_object, value2), 0, NULL},
+    {NULL, 0, 0, 0, NULL},
+};
+
+static PyType_Slot pyrs_heapctypesubclass_slots[] = {
+    {Py_tp_init, pyrs_heapctypesubclass_init},
+    {Py_tp_members, pyrs_heapctypesubclass_members},
+    {Py_tp_doc, "HeapCType subclass; __init__ sets value=10 and value2=20."},
+    {0, NULL},
+};
+
+static PyType_Spec pyrs_heapctypesubclass_spec = {
+    "_testcapi.HeapCTypeSubclass",
+    (int)sizeof(pyrs_heapctypesubclass_object),
+    0,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    pyrs_heapctypesubclass_slots,
+};
+
+static int
+pyrs_heapctypesubclass_with_finalizer_init(void *self, void *args, void *kwargs)
+{
+    PyTypeObject *self_type = (PyTypeObject *)((PyObject *)self)->ob_type;
+    PyTypeObject *base = (PyTypeObject *)PyType_GetSlot((void *)self_type, Py_tp_base);
+    pyrs_initproc base_init = NULL;
+    if (base != NULL) {
+        base_init = (pyrs_initproc)PyType_GetSlot((void *)base, Py_tp_init);
+    }
+    if (base_init != NULL && base_init(self, args, kwargs) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static void
+pyrs_heapctypesubclass_with_finalizer_finalize(void *self)
+{
+    void *old_type = NULL;
+    void *new_type = NULL;
+    void *refcnt = NULL;
+    void *saved_exception = PyErr_GetRaisedException();
+
+    if (pyrs_testcapi_heaptype_module == NULL) {
+        goto cleanup;
+    }
+
+    old_type = PyObject_GetAttrString(
+        pyrs_testcapi_heaptype_module,
+        "HeapCTypeSubclassWithFinalizer"
+    );
+    if (old_type == NULL) {
+        goto cleanup;
+    }
+    new_type = PyObject_GetAttrString(
+        pyrs_testcapi_heaptype_module,
+        "HeapCTypeSubclass"
+    );
+    if (new_type == NULL) {
+        goto cleanup;
+    }
+
+    if (PyObject_SetAttrString(self, "__class__", new_type) < 0) {
+        goto cleanup;
+    }
+
+    refcnt = PyLong_FromSsize_t(((PyObject *)old_type)->ob_refcnt);
+    if (refcnt == NULL) {
+        goto cleanup;
+    }
+    if (PyObject_SetAttrString(old_type, "refcnt_in_del", refcnt) < 0) {
+        goto cleanup;
+    }
+    Py_DecRef(refcnt);
+    refcnt = PyLong_FromSsize_t(((PyObject *)new_type)->ob_refcnt);
+    if (refcnt == NULL) {
+        goto cleanup;
+    }
+    if (PyObject_SetAttrString(new_type, "refcnt_in_del", refcnt) < 0) {
+        goto cleanup;
+    }
+
+cleanup:
+    if (old_type != NULL) {
+        Py_DecRef(old_type);
+    }
+    if (new_type != NULL) {
+        Py_DecRef(new_type);
+    }
+    if (refcnt != NULL) {
+        Py_DecRef(refcnt);
+    }
+    PyErr_SetRaisedException(saved_exception);
+}
+
+static PyType_Slot pyrs_heapctypesubclass_with_finalizer_slots[] = {
+    {Py_tp_init, pyrs_heapctypesubclass_with_finalizer_init},
+    {Py_tp_members, pyrs_heapctypesubclass_members},
+    {Py_tp_finalize, pyrs_heapctypesubclass_with_finalizer_finalize},
+    {Py_tp_doc, "HeapCType subclass whose finalizer reassigns __class__."},
+    {0, NULL},
+};
+
+static PyType_Spec pyrs_heapctypesubclass_with_finalizer_spec = {
+    "_testcapi.HeapCTypeSubclassWithFinalizer",
+    (int)sizeof(pyrs_heapctypesubclass_object),
+    0,
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_FINALIZE,
+    pyrs_heapctypesubclass_with_finalizer_slots,
+};
+
+int pyrs_testcapi_init_heaptype_types(void *module)
+{
+    void *base_type = NULL;
+    void *subclass_bases = NULL;
+    void *subclass_type = NULL;
+    void *finalizer_bases = NULL;
+    void *finalizer_type = NULL;
+
+    pyrs_testcapi_heaptype_module = module;
+
+    base_type = PyType_FromSpec(&pyrs_heapctype_spec);
+    if (base_type == NULL) {
+        goto error;
+    }
+    subclass_bases = PyTuple_Pack(1, base_type);
+    Py_DecRef(base_type);
+    base_type = NULL;
+    if (subclass_bases == NULL) {
+        goto error;
+    }
+    subclass_type = PyType_FromSpecWithBases(&pyrs_heapctypesubclass_spec, subclass_bases);
+    Py_DecRef(subclass_bases);
+    subclass_bases = NULL;
+    if (subclass_type == NULL) {
+        goto error;
+    }
+    if (PyModule_AddType(module, subclass_type) < 0) {
+        goto error;
+    }
+
+    finalizer_bases = PyTuple_Pack(1, subclass_type);
+    if (finalizer_bases == NULL) {
+        goto error;
+    }
+    finalizer_type = PyType_FromSpecWithBases(
+        &pyrs_heapctypesubclass_with_finalizer_spec,
+        finalizer_bases
+    );
+    Py_DecRef(finalizer_bases);
+    finalizer_bases = NULL;
+    if (finalizer_type == NULL) {
+        goto error;
+    }
+    if (PyModule_AddType(module, finalizer_type) < 0) {
+        goto error;
+    }
+
+    Py_DecRef(subclass_type);
+    Py_DecRef(finalizer_type);
+    return 0;
+
+error:
+    if (base_type != NULL) {
+        Py_DecRef(base_type);
+    }
+    if (subclass_bases != NULL) {
+        Py_DecRef(subclass_bases);
+    }
+    if (subclass_type != NULL) {
+        Py_DecRef(subclass_type);
+    }
+    if (finalizer_bases != NULL) {
+        Py_DecRef(finalizer_bases);
+    }
+    if (finalizer_type != NULL) {
+        Py_DecRef(finalizer_type);
+    }
+    return -1;
 }
 
 int _PyArg_CheckPositional(const char *name, Py_ssize_t nargs, Py_ssize_t min, Py_ssize_t max)

@@ -96,8 +96,9 @@ pub(in crate::vm::vm_extensions) fn cpython_codec_stream_fallback_in_context(
             .cloned()
             .ok_or_else(|| format!("codecs.{class_name} unavailable"))?
     };
-    let instance = cpython_call_internal_in_context(context, class_value, Vec::new(), HashMap::new())
-        .map_err(|err| err.message)?;
+    let instance =
+        cpython_call_internal_in_context(context, class_value, Vec::new(), HashMap::new())
+            .map_err(|err| err.message)?;
     if let Value::Instance(instance_obj) = &instance
         && let Object::Instance(instance_data) = &mut *instance_obj.kind_mut()
     {

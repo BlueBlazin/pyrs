@@ -2,7 +2,7 @@ use std::ffi::{CStr, c_char};
 
 use super::Cwchar;
 
-pub(super) unsafe fn c_name_to_string(name: *const c_char) -> Result<String, String> {
+pub(super) unsafe fn c_name_to_bytes(name: *const c_char) -> Result<Vec<u8>, String> {
     const MAX_C_STRING_BYTES: usize = 1 << 20; // 1 MiB safety cap for native C strings.
     const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
     const SCAN_LEN: usize = MAX_C_STRING_BYTES + 1;
@@ -25,8 +25,12 @@ pub(super) unsafe fn c_name_to_string(name: *const c_char) -> Result<String, Str
     let with_nul = &raw_bytes[..=end];
     let c_name = CStr::from_bytes_with_nul(with_nul)
         .map_err(|_| "received invalid C string bytes".to_string())?;
-    c_name
-        .to_str()
+    Ok(c_name.to_bytes().to_vec())
+}
+
+pub(super) unsafe fn c_name_to_string(name: *const c_char) -> Result<String, String> {
+    let bytes = unsafe { c_name_to_bytes(name) }?;
+    std::str::from_utf8(&bytes)
         .map(|text| text.to_string())
         .map_err(|_| "received non-utf8 C string".to_string())
 }

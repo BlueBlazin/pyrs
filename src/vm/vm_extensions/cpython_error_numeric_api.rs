@@ -35,9 +35,7 @@ fn cpython_ssize_t_overflow_error() -> RuntimeError {
 fn cpython_mapped_long_as_ssize_t(value: &Value) -> Option<Result<isize, RuntimeError>> {
     Some(match value {
         Value::Bool(flag) => Ok(if *flag { 1 } else { 0 }),
-        Value::Int(value) => {
-            isize::try_from(*value).map_err(|_| cpython_ssize_t_overflow_error())
-        }
+        Value::Int(value) => isize::try_from(*value).map_err(|_| cpython_ssize_t_overflow_error()),
         Value::BigInt(value) => match value.to_i64() {
             Some(compact) => isize::try_from(compact).map_err(|_| cpython_ssize_t_overflow_error()),
             None => Err(cpython_ssize_t_overflow_error()),

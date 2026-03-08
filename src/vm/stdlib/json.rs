@@ -1563,7 +1563,8 @@ enum JsonNode {
     Object(Vec<(String, JsonNode)>),
 }
 
-const JSON_PARSE_NATIVE_STACK_SAFE_DEPTH: usize = super::super::VM_STACK_SAFE_RECURSION_LIMIT as usize;
+const JSON_PARSE_NATIVE_STACK_SAFE_DEPTH: usize =
+    super::super::VM_STACK_SAFE_RECURSION_LIMIT as usize;
 
 #[derive(Debug, Clone)]
 struct JsonParseError {

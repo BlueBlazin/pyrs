@@ -1313,9 +1313,8 @@ impl Vm {
                     false
                 } else {
                     // SAFETY: VM pointer is valid for active context lifetime.
-                    let vm = unsafe { &*call_ctx.vm };
-                    vm.extension_cpython_ptr_values
-                        .contains_key(&(attr_ptr as usize))
+                    let vm = unsafe { &mut *call_ctx.vm };
+                    vm.extension_cpython_ptr_contains_live(attr_ptr as usize)
                 };
                 // SAFETY: best-effort pointer diagnostics for unknown CPython value mapping.
                 let (refcnt, type_ptr, type_refcnt) = unsafe {

@@ -1097,7 +1097,10 @@ pub(super) unsafe extern "C" fn cpython_type_tp_setattro(
                 )
             } else {
                 vm.builtin_delattr(
-                    vec![Value::Class(class_obj.clone()), Value::Str(attr_name.clone())],
+                    vec![
+                        Value::Class(class_obj.clone()),
+                        Value::Str(attr_name.clone()),
+                    ],
                     HashMap::new(),
                 )
             };

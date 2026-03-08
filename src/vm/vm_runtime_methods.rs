@@ -1,8 +1,8 @@
 use super::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome, HashMap,
     InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, ModuleObject,
-    NativeMethodKind, ObjRef, Object, Ordering, RuntimeError, Value, Vm,
-    builtin_exception_parent, class_attr_lookup, class_name_for_instance, ensure_hashable, format_repr, memoryview_bounds,
+    NativeMethodKind, ObjRef, Object, Ordering, RuntimeError, Value, Vm, builtin_exception_parent,
+    class_attr_lookup, class_name_for_instance, ensure_hashable, format_repr, memoryview_bounds,
     memoryview_decode_element, memoryview_element_offset, memoryview_format_for_view,
     memoryview_layout_1d, memoryview_logical_nbytes, memoryview_shape_and_strides_from_parts,
     module_globals_version, runtime_error_matches_exception, slice_bounds_for_step_one,
@@ -3990,8 +3990,9 @@ impl Vm {
     pub(super) fn ensure_instancemethod_runtime_type_class(&mut self) -> ObjRef {
         if let Some(module) = self.modules.get("builtins").cloned()
             && let Object::Module(module_data) = &*module.kind()
-            && let Some(Value::Class(class)) =
-                module_data.globals.get("__pyrs_instancemethod_type_class__")
+            && let Some(Value::Class(class)) = module_data
+                .globals
+                .get("__pyrs_instancemethod_type_class__")
         {
             return class.clone();
         }
@@ -4000,10 +4001,10 @@ impl Vm {
             Some(Value::Class(class)) => vec![class.clone()],
             _ => Vec::new(),
         };
-        let class = match self
-            .heap
-            .alloc_class(ClassObject::new("instancemethod".to_string(), bases.clone()))
-        {
+        let class = match self.heap.alloc_class(ClassObject::new(
+            "instancemethod".to_string(),
+            bases.clone(),
+        )) {
             Value::Class(class) => class,
             _ => unreachable!(),
         };
@@ -4018,9 +4019,10 @@ impl Vm {
             class_data
                 .attrs
                 .insert("__module__".to_string(), Value::Str("builtins".to_string()));
-            class_data
-                .attrs
-                .insert("__qualname__".to_string(), Value::Str("instancemethod".to_string()));
+            class_data.attrs.insert(
+                "__qualname__".to_string(),
+                Value::Str("instancemethod".to_string()),
+            );
             class_data.attrs.insert(
                 "__new__".to_string(),
                 self.alloc_native_unbound_method(
@@ -4077,7 +4079,9 @@ impl Vm {
         instance
             .attrs
             .insert("__pyrs_instancemethod__".to_string(), Value::Bool(true));
-        instance.attrs.insert("__func__".to_string(), callable.clone());
+        instance
+            .attrs
+            .insert("__func__".to_string(), callable.clone());
         instance.attrs.insert("__wrapped__".to_string(), callable);
         Ok(self.heap.alloc_instance(instance))
     }
@@ -4102,10 +4106,9 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         let receiver_ref = self.receiver_from_value(&receiver)?;
         match callable {
-            Value::Function(function) => Ok(self.heap.alloc_bound_method(BoundMethod::new(
-                function,
-                receiver_ref,
-            ))),
+            Value::Function(function) => Ok(self
+                .heap
+                .alloc_bound_method(BoundMethod::new(function, receiver_ref))),
             Value::Builtin(builtin) => Ok(self.alloc_builtin_bound_method(builtin, receiver_ref)),
             Value::ExceptionType(name) => {
                 let class = self.alloc_synthetic_exception_class(&name);
@@ -4113,10 +4116,9 @@ impl Vm {
                     .heap
                     .alloc_bound_method(BoundMethod::new(class, receiver_ref)))
             }
-            Value::BoundMethod(function) => Ok(self.heap.alloc_bound_method(BoundMethod::new(
-                function,
-                receiver_ref,
-            ))),
+            Value::BoundMethod(function) => Ok(self
+                .heap
+                .alloc_bound_method(BoundMethod::new(function, receiver_ref))),
             Value::Class(function)
             | Value::Instance(function)
             | Value::Super(function)
@@ -4134,9 +4136,9 @@ impl Vm {
             | Value::ByteArray(function)
             | Value::MemoryView(function)
             | Value::Iterator(function)
-            | Value::Cell(function) => {
-                Ok(self.heap.alloc_bound_method(BoundMethod::new(function, receiver_ref)))
-            }
+            | Value::Cell(function) => Ok(self
+                .heap
+                .alloc_bound_method(BoundMethod::new(function, receiver_ref))),
             other => Err(RuntimeError::type_error(format!(
                 "'{}' object is not callable",
                 self.value_type_name_for_error(&other)

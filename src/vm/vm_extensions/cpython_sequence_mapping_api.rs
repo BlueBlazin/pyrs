@@ -394,7 +394,11 @@ pub unsafe extern "C" fn PySequence_Tuple(object: *mut c_void) -> *mut c_void {
             return std::ptr::null_mut();
         }
         let vm = unsafe { &mut *context.vm };
-        match vm.call_internal(Value::Builtin(BuiltinFunction::Tuple), vec![value], HashMap::new()) {
+        match vm.call_internal(
+            Value::Builtin(BuiltinFunction::Tuple),
+            vec![value],
+            HashMap::new(),
+        ) {
             Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
             Ok(InternalCallOutcome::CallerExceptionHandled) => {
                 set_context_error_from_runtime_error(
@@ -427,7 +431,11 @@ pub unsafe extern "C" fn PySequence_List(object: *mut c_void) -> *mut c_void {
             return std::ptr::null_mut();
         }
         let vm = unsafe { &mut *context.vm };
-        match vm.call_internal(Value::Builtin(BuiltinFunction::List), vec![value], HashMap::new()) {
+        match vm.call_internal(
+            Value::Builtin(BuiltinFunction::List),
+            vec![value],
+            HashMap::new(),
+        ) {
             Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
             Ok(InternalCallOutcome::CallerExceptionHandled) => {
                 set_context_error_from_runtime_error(
@@ -461,7 +469,11 @@ pub unsafe extern "C" fn PySequence_Fast(object: *mut c_void, msg: *const c_char
                 return std::ptr::null_mut();
             }
             let vm = unsafe { &mut *context.vm };
-            match vm.call_internal(Value::Builtin(BuiltinFunction::Tuple), vec![value], HashMap::new()) {
+            match vm.call_internal(
+                Value::Builtin(BuiltinFunction::Tuple),
+                vec![value],
+                HashMap::new(),
+            ) {
                 Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
                 Ok(InternalCallOutcome::CallerExceptionHandled) => {
                     let err = vm.runtime_error_from_active_exception("tuple() failed");

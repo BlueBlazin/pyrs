@@ -1170,7 +1170,7 @@ impl Vm {
                 out.push(ch);
                 continue;
             }
-            let code = ch as u32;
+            let code = crate::unicode::canonical_codepoint_for_internal_char(ch);
             if code <= 0xFF {
                 out.push_str(&format!("\\x{code:02x}"));
             } else if code <= 0xFFFF {

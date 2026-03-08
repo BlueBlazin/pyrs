@@ -5361,10 +5361,12 @@ impl Vm {
             Value::Str(text) => text,
             _ => return Err(RuntimeError::new("encode() argument must be str")),
         };
-        let encoding =
-            normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
+        let encoding = match encoding.unwrap_or(Value::Str("utf-8".to_string())) {
+            Value::Str(encoding) => encoding,
+            _ => return Err(RuntimeError::new("encoding must be string")),
+        };
         let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
-        let encoded = encode_text_bytes(&text, &encoding, &errors)?;
+        let encoded = self.encode_text_bytes_with_codec_fallback(&text, &encoding, &errors)?;
         Ok(self.heap.alloc_bytes(encoded))
     }
 

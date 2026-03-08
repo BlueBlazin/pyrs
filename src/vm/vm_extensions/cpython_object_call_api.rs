@@ -1308,7 +1308,9 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
                             false
                         } else {
                             // SAFETY: VM pointer is valid for active C-API context lifetime.
-                            unsafe { (&mut *context.vm).extension_cpython_ptr_contains_live(ptr as usize) }
+                            unsafe {
+                                (&mut *context.vm).extension_cpython_ptr_contains_live(ptr as usize)
+                            }
                         };
                         if known_handle || mapped_escaped {
                             if let Some(value) = context.cpython_value_from_borrowed_ptr(ptr) {

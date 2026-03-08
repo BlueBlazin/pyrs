@@ -11,13 +11,12 @@ use super::{
     PyBytes_AsString, PyErr_BadArgument, PyErr_BadInternalCall, PyErr_Clear, PyErr_NoMemory,
     PyErr_Occurred, PyErr_WarnEx, PyExc_IndexError, PyExc_RuntimeError, PyExc_RuntimeWarning,
     PyExc_SystemError, PyExc_TypeError, PyExc_UnicodeDecodeError, PyExc_UnicodeEncodeError,
-    PyExc_ValueError, PyMem_Malloc, PyOS_FSPath, c_name_to_bytes,
-    cpython_call_internal_in_context, cpython_call_method_for_capi,
-    cpython_codec_error_name_optional, cpython_codec_module_in_context,
-    cpython_codec_name_or_default, cpython_getattr_in_context, cpython_lookup_interned_unicode_ptr,
-    cpython_new_bytes_ptr, cpython_new_ptr_for_value, cpython_register_interned_unicode,
-    cpython_resolve_vectorcall, cpython_set_error, cpython_set_typed_error,
-    cpython_stable_utf8_ptr, cpython_string_to_wide_units,
+    PyExc_ValueError, PyMem_Malloc, PyOS_FSPath, c_name_to_bytes, cpython_call_internal_in_context,
+    cpython_call_method_for_capi, cpython_codec_error_name_optional,
+    cpython_codec_module_in_context, cpython_codec_name_or_default, cpython_getattr_in_context,
+    cpython_lookup_interned_unicode_ptr, cpython_new_bytes_ptr, cpython_new_ptr_for_value,
+    cpython_register_interned_unicode, cpython_resolve_vectorcall, cpython_set_error,
+    cpython_set_typed_error, cpython_stable_utf8_ptr, cpython_string_to_wide_units,
     cpython_unicode_decode_with_codec_in_context, cpython_unicode_encode_with_codec_in_context,
     cpython_unicode_text_from_value, cpython_value_debug_tag, cpython_value_from_ptr,
     cpython_wide_ptr_to_string, with_active_cpython_context_mut,
@@ -62,7 +61,11 @@ fn cpython_rot13_text(text: &str) -> String {
         .collect()
 }
 
-fn cpython_utf8_decode_reason(bytes: &[u8], start: usize, error_len: Option<usize>) -> &'static str {
+fn cpython_utf8_decode_reason(
+    bytes: &[u8],
+    start: usize,
+    error_len: Option<usize>,
+) -> &'static str {
     if error_len.is_none() {
         return "unexpected end of data";
     }
@@ -126,9 +129,7 @@ pub unsafe extern "C" fn PyUnicode_FromString(value: *const c_char) -> *mut c_vo
         Ok(text) => text,
         Err(()) => return std::ptr::null_mut(),
     };
-    with_active_cpython_context_mut(|context| {
-            context.alloc_cpython_ptr_for_value(Value::Str(text))
-        })
+    with_active_cpython_context_mut(|context| context.alloc_cpython_ptr_for_value(Value::Str(text)))
         .unwrap_or_else(|err| {
             cpython_set_error(err);
             std::ptr::null_mut()

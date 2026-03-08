@@ -779,7 +779,10 @@ impl Vm {
                         let message = if super::super::env_var_present_cached(
                             "PYRS_TRACE_ACTIVE_EXCEPTION_TRACEBACK",
                         ) {
-                            self.format_traceback(&[], &Value::Exception(Box::new(exception.clone())))
+                            self.format_traceback(
+                                &[],
+                                &Value::Exception(Box::new(exception.clone())),
+                            )
                         } else {
                             self.format_exception_object(&exception)
                         };

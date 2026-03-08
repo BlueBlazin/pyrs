@@ -818,10 +818,16 @@ impl Vm {
                 crate::runtime::TestCapiStringParseKind::LowerYHash => "getargs_y_hash".to_string(),
                 crate::runtime::TestCapiStringParseKind::LowerEs => "getargs_es".to_string(),
                 crate::runtime::TestCapiStringParseKind::LowerEt => "getargs_et".to_string(),
-                crate::runtime::TestCapiStringParseKind::LowerEsHash => "getargs_es_hash".to_string(),
-                crate::runtime::TestCapiStringParseKind::LowerEtHash => "getargs_et_hash".to_string(),
+                crate::runtime::TestCapiStringParseKind::LowerEsHash => {
+                    "getargs_es_hash".to_string()
+                }
+                crate::runtime::TestCapiStringParseKind::LowerEtHash => {
+                    "getargs_et_hash".to_string()
+                }
                 crate::runtime::TestCapiStringParseKind::WStar => "getargs_w_star".to_string(),
-                crate::runtime::TestCapiStringParseKind::WStarOpt => "getargs_w_star_opt".to_string(),
+                crate::runtime::TestCapiStringParseKind::WStarOpt => {
+                    "getargs_w_star_opt".to_string()
+                }
                 crate::runtime::TestCapiStringParseKind::Gh99240ClearArgs => {
                     "gh_99240_clear_args".to_string()
                 }

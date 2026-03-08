@@ -4842,12 +4842,10 @@ impl Vm {
         let Some(Value::Class(class_ref)) = args.first() else {
             return Ok(Value::Bool(false));
         };
-        if let Some(abstract_methods) =
-            self.optional_internal_getattr_value(
-                Value::Class(class_ref.clone()),
-                "__abstractmethods__",
-            )?
-            && self.truthy_from_value(&abstract_methods)?
+        if let Some(abstract_methods) = self.optional_internal_getattr_value(
+            Value::Class(class_ref.clone()),
+            "__abstractmethods__",
+        )? && self.truthy_from_value(&abstract_methods)?
         {
             return Ok(Value::Bool(true));
         }
