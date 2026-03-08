@@ -36,10 +36,6 @@ impl Default for JsonDumpsOptions {
     }
 }
 
-const JSON_SCANNER_CLASS_ATTR: &str = "__pyrs_scanner_class__";
-const JSON_SCANNER_PARSE_OBJECT_ATTR: &str = "__pyrs_json_parse_object__";
-const JSON_SCANNER_PARSE_ARRAY_ATTR: &str = "__pyrs_json_parse_array__";
-const JSON_SCANNER_PARSE_STRING_ATTR: &str = "__pyrs_json_parse_string__";
 const JSON_SCANNER_RECURSIVE_SCANNER_ATTR: &str = "__pyrs_json_scanner__";
 const JSON_SCANNER_MEMO_ATTR: &str = "__pyrs_json_memo__";
 
@@ -51,9 +47,6 @@ struct JsonScannerState {
     parse_float: Value,
     parse_int: Value,
     parse_constant: Value,
-    parse_object: Value,
-    parse_array: Value,
-    parse_string: Value,
 }
 
 impl Vm {
@@ -591,20 +584,20 @@ impl Vm {
             ],
             HashMap::new(),
         )?;
-        let parse_object = self.builtin_getattr(
+        self.builtin_getattr(
             vec![context.clone(), Value::Str("parse_object".to_string())],
             HashMap::new(),
         )?;
-        let parse_array = self.builtin_getattr(
+        self.builtin_getattr(
             vec![context.clone(), Value::Str("parse_array".to_string())],
             HashMap::new(),
         )?;
-        let parse_string = self.builtin_getattr(
+        self.builtin_getattr(
             vec![context, Value::Str("parse_string".to_string())],
             HashMap::new(),
         )?;
 
-        let scanner_class = self.json_scanner_runtime_class()?;
+        let scanner_class = self.ensure_json_scanner_class();
         let scanner = match self.heap.alloc_instance(InstanceObject::new(scanner_class)) {
             Value::Instance(instance) => instance,
             _ => unreachable!(),
@@ -628,15 +621,6 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("parse_constant".to_string(), parse_constant.clone());
-            instance_data
-                .attrs
-                .insert(JSON_SCANNER_PARSE_OBJECT_ATTR.to_string(), parse_object);
-            instance_data
-                .attrs
-                .insert(JSON_SCANNER_PARSE_ARRAY_ATTR.to_string(), parse_array);
-            instance_data
-                .attrs
-                .insert(JSON_SCANNER_PARSE_STRING_ATTR.to_string(), parse_string);
         }
         Ok(Value::Instance(scanner))
     }
@@ -714,21 +698,15 @@ impl Vm {
         self.json_scanner_scan_once_impl(&scanner, memo, recursive_scan_once, source, idx)
     }
 
-    fn json_scanner_runtime_class(&self) -> Result<ObjRef, RuntimeError> {
-        let module = self
-            .modules
-            .get("_json")
-            .cloned()
-            .ok_or_else(|| RuntimeError::runtime_error("_json module is unavailable"))?;
-        match &*module.kind() {
-            Object::Module(module_data) => match module_data.globals.get(JSON_SCANNER_CLASS_ATTR) {
-                Some(Value::Class(class)) => Ok(class.clone()),
-                _ => Err(RuntimeError::runtime_error(
-                    "_json scanner type is unavailable",
-                )),
-            },
-            _ => Err(RuntimeError::runtime_error("_json module is invalid")),
+    pub(in crate::vm) fn ensure_json_scanner_class(&mut self) -> ObjRef {
+        let class = self.synthetic_runtime_type_class("_json", "Scanner");
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.attrs.insert(
+                "__call__".to_string(),
+                Value::Builtin(BuiltinFunction::JsonScannerCall),
+            );
         }
+        class
     }
 
     fn json_scanner_parse_call_args(
@@ -812,9 +790,6 @@ impl Vm {
             parse_float: get_attr("parse_float")?,
             parse_int: get_attr("parse_int")?,
             parse_constant: get_attr("parse_constant")?,
-            parse_object: get_attr(JSON_SCANNER_PARSE_OBJECT_ATTR)?,
-            parse_array: get_attr(JSON_SCANNER_PARSE_ARRAY_ATTR)?,
-            parse_string: get_attr(JSON_SCANNER_PARSE_STRING_ATTR)?,
         })
     }
 
@@ -832,11 +807,521 @@ impl Vm {
         }
     }
 
+    fn json_scanner_stop_iteration_at_byte(
+        &mut self,
+        source: &str,
+        byte_idx: usize,
+    ) -> RuntimeError {
+        let char_idx = utf8_byte_index_to_char(source, byte_idx)
+            .unwrap_or_else(|| source.chars().count());
+        self.stop_iteration_runtime_error(Value::Int(char_idx as i64))
+    }
+
+    fn json_scanner_parse_string_native(
+        &mut self,
+        source: &str,
+        start_quote_byte: usize,
+        strict: bool,
+    ) -> Result<(String, usize), RuntimeError> {
+        let bytes = source.as_bytes();
+        if bytes.get(start_quote_byte) != Some(&b'"') {
+            return Err(json_decode_error_runtime_error(
+                "Expecting value",
+                source,
+                start_quote_byte,
+            ));
+        }
+        let mut idx = start_quote_byte + 1;
+        let mut out = String::new();
+        while let Some(&byte) = bytes.get(idx) {
+            idx += 1;
+            match byte {
+                b'"' => return Ok((out, idx)),
+                b'\\' => {
+                    let Some(&esc) = bytes.get(idx) else {
+                        return Err(json_decode_error_runtime_error(
+                            "Invalid \\escape",
+                            source,
+                            idx,
+                        ));
+                    };
+                    idx += 1;
+                    match esc {
+                        b'"' => out.push('"'),
+                        b'\\' => out.push('\\'),
+                        b'/' => out.push('/'),
+                        b'b' => out.push('\u{0008}'),
+                        b'f' => out.push('\u{000C}'),
+                        b'n' => out.push('\n'),
+                        b'r' => out.push('\r'),
+                        b't' => out.push('\t'),
+                        b'u' => {
+                            let parse_hex = |slice: &[u8]| -> Option<u16> {
+                                if slice.len() != 4 {
+                                    return None;
+                                }
+                                let mut value = 0u16;
+                                for &digit in slice {
+                                    value <<= 4;
+                                    value |= match digit {
+                                        b'0'..=b'9' => (digit - b'0') as u16,
+                                        b'a'..=b'f' => (digit - b'a' + 10) as u16,
+                                        b'A'..=b'F' => (digit - b'A' + 10) as u16,
+                                        _ => return None,
+                                    };
+                                }
+                                Some(value)
+                            };
+
+                            let Some(code) = bytes
+                                .get(idx..idx + 4)
+                                .and_then(parse_hex)
+                            else {
+                                return Err(json_decode_error_runtime_error(
+                                    "Invalid \\uXXXX escape",
+                                    source,
+                                    idx.saturating_sub(2),
+                                ));
+                            };
+                            idx += 4;
+                            if (0xD800..=0xDBFF).contains(&code) {
+                                let pair_escape_idx = idx;
+                                if bytes.get(idx) == Some(&b'\\') && bytes.get(idx + 1) == Some(&b'u')
+                                {
+                                    let low_digits_start = idx + 2;
+                                    if let Some(low) = bytes
+                                        .get(low_digits_start..low_digits_start + 4)
+                                        .and_then(parse_hex)
+                                        && (0xDC00..=0xDFFF).contains(&low)
+                                    {
+                                        idx = low_digits_start + 4;
+                                        let scalar = 0x10000
+                                            + (((code as u32 - 0xD800) << 10)
+                                                | (low as u32 - 0xDC00));
+                                        let ch = char::from_u32(scalar).ok_or_else(|| {
+                                            json_decode_error_runtime_error(
+                                                "Invalid \\uXXXX escape",
+                                                source,
+                                                pair_escape_idx,
+                                            )
+                                        })?;
+                                        out.push(ch);
+                                        continue;
+                                    }
+                                }
+                                let ch = internal_char_from_codepoint(code as u32).ok_or_else(|| {
+                                    json_decode_error_runtime_error(
+                                        "Invalid \\uXXXX escape",
+                                        source,
+                                        idx.saturating_sub(6),
+                                    )
+                                })?;
+                                out.push(ch);
+                            } else if (0xDC00..=0xDFFF).contains(&code) {
+                                let ch = internal_char_from_codepoint(code as u32).ok_or_else(|| {
+                                    json_decode_error_runtime_error(
+                                        "Invalid \\uXXXX escape",
+                                        source,
+                                        idx.saturating_sub(6),
+                                    )
+                                })?;
+                                out.push(ch);
+                            } else {
+                                let ch = char::from_u32(code as u32).ok_or_else(|| {
+                                    json_decode_error_runtime_error(
+                                        "Invalid \\uXXXX escape",
+                                        source,
+                                        idx.saturating_sub(6),
+                                    )
+                                })?;
+                                out.push(ch);
+                            }
+                        }
+                        _ => {
+                            return Err(json_decode_error_runtime_error(
+                                "Invalid \\escape",
+                                source,
+                                idx.saturating_sub(2),
+                            ));
+                        }
+                    }
+                }
+                b if b < 0x20 => {
+                    if strict {
+                        return Err(json_decode_error_runtime_error(
+                            "Invalid control character at",
+                            source,
+                            idx.saturating_sub(1),
+                        ));
+                    }
+                    out.push(b as char);
+                }
+                b if b < 0x80 => out.push(b as char),
+                b => {
+                    let width = if b >> 5 == 0b110 {
+                        2
+                    } else if b >> 4 == 0b1110 {
+                        3
+                    } else if b >> 3 == 0b11110 {
+                        4
+                    } else {
+                        return Err(json_decode_error_runtime_error(
+                            "Invalid UTF-8 in JSON string",
+                            source,
+                            idx.saturating_sub(1),
+                        ));
+                    };
+                    let Some(slice) = bytes.get(idx - 1..idx - 1 + width) else {
+                        return Err(json_decode_error_runtime_error(
+                            "Invalid UTF-8 in JSON string",
+                            source,
+                            idx.saturating_sub(1),
+                        ));
+                    };
+                    let text = std::str::from_utf8(slice).map_err(|_| {
+                        json_decode_error_runtime_error(
+                            "Invalid UTF-8 in JSON string",
+                            source,
+                            idx.saturating_sub(1),
+                        )
+                    })?;
+                    let ch = text.chars().next().ok_or_else(|| {
+                        json_decode_error_runtime_error(
+                            "Invalid UTF-8 in JSON string",
+                            source,
+                            idx.saturating_sub(1),
+                        )
+                    })?;
+                    out.push(ch);
+                    idx = idx - 1 + width;
+                }
+            }
+        }
+        Err(json_decode_error_runtime_error(
+            "Unterminated string starting at",
+            source,
+            start_quote_byte,
+        ))
+    }
+
+    fn json_scanner_parse_number_native(
+        &mut self,
+        state: &JsonScannerState,
+        source: &str,
+        start_byte: usize,
+    ) -> Result<(Value, usize), RuntimeError> {
+        let Some(end_byte) = json_scan_number_end_byte(source, start_byte) else {
+            return Err(self.json_scanner_stop_iteration_at_byte(source, start_byte));
+        };
+        let number_text = source[start_byte..end_byte].to_string();
+        let value = if number_text
+            .bytes()
+            .any(|byte| matches!(byte, b'.' | b'e' | b'E'))
+        {
+            if json_is_default_parse_float(&state.parse_float) {
+                let parsed = number_text.parse::<f64>().map_err(|_| {
+                    json_decode_error_runtime_error("Expecting value", source, start_byte)
+                })?;
+                Value::Float(parsed)
+            } else {
+                self.json_scanner_call_callback(
+                    state.parse_float.clone(),
+                    vec![Value::Str(number_text)],
+                    "json scanner parse_float failed",
+                )?
+            }
+        } else if json_is_default_parse_int(&state.parse_int) {
+            if let Ok(parsed) = number_text.parse::<i64>() {
+                Value::Int(parsed)
+            } else {
+                let (negative, digits) = match number_text.strip_prefix('-') {
+                    Some(rest) => (true, rest),
+                    None => (false, number_text.as_str()),
+                };
+                json_validate_int_digits_limit(digits)?;
+                let mut parsed = BigInt::from_str_radix(digits, 10).ok_or_else(|| {
+                    json_decode_error_runtime_error("Expecting value", source, start_byte)
+                })?;
+                if negative {
+                    parsed = parsed.negated();
+                }
+                Value::BigInt(Box::new(parsed))
+            }
+        } else {
+            self.json_scanner_call_callback(
+                state.parse_int.clone(),
+                vec![Value::Str(number_text)],
+                "json scanner parse_int failed",
+            )?
+        };
+        Ok((value, end_byte))
+    }
+
+    fn json_scanner_parse_constant_native(
+        &mut self,
+        state: &JsonScannerState,
+        _source: &str,
+        start_byte: usize,
+        constant: &'static str,
+        value: Value,
+    ) -> Result<(Value, usize), RuntimeError> {
+        let parsed = if json_is_default_parse_constant(&state.parse_constant) {
+            value
+        } else {
+            self.json_scanner_call_callback(
+                state.parse_constant.clone(),
+                vec![Value::Str(constant.to_string())],
+                "json scanner parse_constant failed",
+            )?
+        };
+        Ok((parsed, start_byte + constant.len()))
+    }
+
+    fn json_scanner_parse_array_native(
+        &mut self,
+        state: &JsonScannerState,
+        source: &str,
+        mut idx: usize,
+        depth: usize,
+        depth_limit: usize,
+    ) -> Result<(Value, usize), RuntimeError> {
+        let bytes = source.as_bytes();
+        let mut values = Vec::new();
+        idx = json_skip_ws(bytes, idx);
+        if bytes.get(idx) == Some(&b']') {
+            return Ok((self.heap.alloc_list(values), idx + 1));
+        }
+        let mut trailing_comma_pos = None;
+        loop {
+            if let Some(comma_pos) = trailing_comma_pos.take()
+                && bytes.get(idx) == Some(&b']')
+            {
+                return Err(json_decode_error_runtime_error(
+                    "Illegal trailing comma before end of array",
+                    source,
+                    comma_pos,
+                ));
+            }
+            let (value, next_idx) =
+                self.json_scanner_parse_value_native(state, source, idx, depth, depth_limit)?;
+            values.push(value);
+            idx = json_skip_ws(bytes, next_idx);
+            match bytes.get(idx) {
+                Some(b']') => return Ok((self.heap.alloc_list(values), idx + 1)),
+                Some(b',') => {
+                    trailing_comma_pos = Some(idx);
+                    idx = json_skip_ws(bytes, idx + 1);
+                    if idx >= bytes.len() {
+                        return Err(json_decode_error_runtime_error(
+                            "Expecting value",
+                            source,
+                            idx,
+                        ));
+                    }
+                }
+                Some(_) => {
+                    return Err(json_decode_error_runtime_error(
+                        "Expecting ',' delimiter",
+                        source,
+                        idx,
+                    ));
+                }
+                None => {
+                    return Err(json_decode_error_runtime_error(
+                        "Expecting ',' delimiter",
+                        source,
+                        idx,
+                    ));
+                }
+            }
+        }
+    }
+
+    fn json_scanner_parse_object_native(
+        &mut self,
+        state: &JsonScannerState,
+        source: &str,
+        mut idx: usize,
+        depth: usize,
+        depth_limit: usize,
+    ) -> Result<(Value, usize), RuntimeError> {
+        let bytes = source.as_bytes();
+        let mut pairs = Vec::new();
+        idx = json_skip_ws(bytes, idx);
+        if bytes.get(idx) == Some(&b'}') {
+            return Ok((self.heap.alloc_dict(Vec::new()), idx + 1));
+        }
+        let mut trailing_comma_pos = None;
+        loop {
+            if let Some(comma_pos) = trailing_comma_pos.take()
+                && bytes.get(idx) == Some(&b'}')
+            {
+                return Err(json_decode_error_runtime_error(
+                    "Illegal trailing comma before end of object",
+                    source,
+                    comma_pos,
+                ));
+            }
+            if bytes.get(idx) != Some(&b'"') {
+                return Err(json_decode_error_runtime_error(
+                    "Expecting property name enclosed in double quotes",
+                    source,
+                    idx,
+                ));
+            }
+            let (key, key_end) = self.json_scanner_parse_string_native(source, idx, state.strict)?;
+            idx = json_skip_ws(bytes, key_end);
+            if bytes.get(idx) != Some(&b':') {
+                return Err(json_decode_error_runtime_error(
+                    "Expecting ':' delimiter",
+                    source,
+                    idx,
+                ));
+            }
+            idx = json_skip_ws(bytes, idx + 1);
+            let (value, next_idx) =
+                self.json_scanner_parse_value_native(state, source, idx, depth, depth_limit)?;
+            pairs.push((key, value));
+            idx = json_skip_ws(bytes, next_idx);
+            match bytes.get(idx) {
+                Some(b'}') => {
+                    let value = if !matches!(state.object_pairs_hook, Value::None) {
+                        let pair_values = pairs
+                            .iter()
+                            .map(|(key, value)| {
+                                self.heap.alloc_tuple(vec![Value::Str(key.clone()), value.clone()])
+                            })
+                            .collect::<Vec<_>>();
+                        self.json_scanner_call_callback(
+                            state.object_pairs_hook.clone(),
+                            vec![self.heap.alloc_list(pair_values)],
+                            "json scanner object_pairs_hook failed",
+                        )?
+                    } else {
+                        let dict = self.heap.alloc_dict(
+                            pairs.into_iter()
+                                .map(|(key, value)| (Value::Str(key), value))
+                                .collect(),
+                        );
+                        if matches!(state.object_hook, Value::None) {
+                            dict
+                        } else {
+                            self.json_scanner_call_callback(
+                                state.object_hook.clone(),
+                                vec![dict],
+                                "json scanner object_hook failed",
+                            )?
+                        }
+                    };
+                    return Ok((value, idx + 1));
+                }
+                Some(b',') => {
+                    trailing_comma_pos = Some(idx);
+                    idx = json_skip_ws(bytes, idx + 1);
+                    if idx >= bytes.len() {
+                        return Err(json_decode_error_runtime_error(
+                            "Expecting property name enclosed in double quotes",
+                            source,
+                            idx,
+                        ));
+                    }
+                }
+                Some(_) => {
+                    return Err(json_decode_error_runtime_error(
+                        "Expecting ',' delimiter",
+                        source,
+                        idx,
+                    ));
+                }
+                None => {
+                    return Err(json_decode_error_runtime_error(
+                        "Expecting ',' delimiter",
+                        source,
+                        idx,
+                    ));
+                }
+            }
+        }
+    }
+
+    fn json_scanner_parse_value_native(
+        &mut self,
+        state: &JsonScannerState,
+        source: &str,
+        start_byte: usize,
+        depth: usize,
+        depth_limit: usize,
+    ) -> Result<(Value, usize), RuntimeError> {
+        if depth >= depth_limit {
+            return Err(self.recursion_limit_error());
+        }
+        let bytes = source.as_bytes();
+        let Some(&first) = bytes.get(start_byte) else {
+            return Err(self.json_scanner_stop_iteration_at_byte(source, start_byte));
+        };
+        match first {
+            b'"' => {
+                let (value, end_byte) =
+                    self.json_scanner_parse_string_native(source, start_byte, state.strict)?;
+                Ok((Value::Str(value), end_byte))
+            }
+            b'{' => self.json_scanner_parse_object_native(
+                state,
+                source,
+                start_byte + 1,
+                depth + 1,
+                depth_limit,
+            ),
+            b'[' => self.json_scanner_parse_array_native(
+                state,
+                source,
+                start_byte + 1,
+                depth + 1,
+                depth_limit,
+            ),
+            b'n' if bytes.get(start_byte..start_byte + 4) == Some(b"null") => {
+                Ok((Value::None, start_byte + 4))
+            }
+            b't' if bytes.get(start_byte..start_byte + 4) == Some(b"true") => {
+                Ok((Value::Bool(true), start_byte + 4))
+            }
+            b'f' if bytes.get(start_byte..start_byte + 5) == Some(b"false") => {
+                Ok((Value::Bool(false), start_byte + 5))
+            }
+            b'N' if bytes.get(start_byte..start_byte + 3) == Some(b"NaN") => self
+                .json_scanner_parse_constant_native(
+                    state,
+                    source,
+                    start_byte,
+                    "NaN",
+                    Value::Float(f64::NAN),
+                ),
+            b'I' if bytes.get(start_byte..start_byte + 8) == Some(b"Infinity") => self
+                .json_scanner_parse_constant_native(
+                    state,
+                    source,
+                    start_byte,
+                    "Infinity",
+                    Value::Float(f64::INFINITY),
+                ),
+            b'-' if bytes.get(start_byte..start_byte + 9) == Some(b"-Infinity") => self
+                .json_scanner_parse_constant_native(
+                    state,
+                    source,
+                    start_byte,
+                    "-Infinity",
+                    Value::Float(f64::NEG_INFINITY),
+                ),
+            b'-' | b'0'..=b'9' => self.json_scanner_parse_number_native(state, source, start_byte),
+            _ => Err(self.json_scanner_stop_iteration_at_byte(source, start_byte)),
+        }
+    }
+
     fn json_scanner_scan_once_impl(
         &mut self,
         scanner: &ObjRef,
-        memo: Value,
-        recursive_scan_once: Value,
+        _memo: Value,
+        _recursive_scan_once: Value,
         source: String,
         idx: i64,
     ) -> Result<Value, RuntimeError> {
@@ -848,109 +1333,14 @@ impl Vm {
             return Err(self.stop_iteration_runtime_error(Value::Int(idx as i64)));
         };
         let state = self.json_scanner_state(scanner)?;
-        let bytes = source.as_bytes();
-        let Some(&first) = bytes.get(start_byte) else {
-            return Err(self.stop_iteration_runtime_error(Value::Int(idx as i64)));
-        };
-
-        let tuple_result = match first {
-            b'"' => self.json_scanner_call_callback(
-                state.parse_string,
-                vec![
-                    Value::Str(source),
-                    Value::Int(idx as i64 + 1),
-                    Value::Bool(state.strict),
-                ],
-                "json scanner string parse failed",
-            )?,
-            b'{' => self.json_scanner_call_callback(
-                state.parse_object,
-                vec![
-                    self.heap
-                        .alloc_tuple(vec![Value::Str(source), Value::Int(idx as i64 + 1)]),
-                    Value::Bool(state.strict),
-                    recursive_scan_once,
-                    state.object_hook,
-                    state.object_pairs_hook,
-                    memo,
-                ],
-                "json scanner object parse failed",
-            )?,
-            b'[' => self.json_scanner_call_callback(
-                state.parse_array,
-                vec![
-                    self.heap
-                        .alloc_tuple(vec![Value::Str(source), Value::Int(idx as i64 + 1)]),
-                    recursive_scan_once,
-                ],
-                "json scanner array parse failed",
-            )?,
-            b'n' if bytes.get(start_byte..start_byte + 4) == Some(b"null") => {
-                self.heap.alloc_tuple(vec![Value::None, Value::Int(idx as i64 + 4)])
-            }
-            b't' if bytes.get(start_byte..start_byte + 4) == Some(b"true") => {
-                self.heap.alloc_tuple(vec![Value::Bool(true), Value::Int(idx as i64 + 4)])
-            }
-            b'f' if bytes.get(start_byte..start_byte + 5) == Some(b"false") => {
-                self.heap.alloc_tuple(vec![Value::Bool(false), Value::Int(idx as i64 + 5)])
-            }
-            b'N' if bytes.get(start_byte..start_byte + 3) == Some(b"NaN") => {
-                let value = self.json_scanner_call_callback(
-                    state.parse_constant,
-                    vec![Value::Str("NaN".to_string())],
-                    "json scanner parse_constant failed",
-                )?;
-                self.heap
-                    .alloc_tuple(vec![value, Value::Int(idx as i64 + 3)])
-            }
-            b'I' if bytes.get(start_byte..start_byte + 8) == Some(b"Infinity") => {
-                let value = self.json_scanner_call_callback(
-                    state.parse_constant,
-                    vec![Value::Str("Infinity".to_string())],
-                    "json scanner parse_constant failed",
-                )?;
-                self.heap
-                    .alloc_tuple(vec![value, Value::Int(idx as i64 + 8)])
-            }
-            b'-' if bytes.get(start_byte..start_byte + 9) == Some(b"-Infinity") => {
-                let value = self.json_scanner_call_callback(
-                    state.parse_constant,
-                    vec![Value::Str("-Infinity".to_string())],
-                    "json scanner parse_constant failed",
-                )?;
-                self.heap
-                    .alloc_tuple(vec![value, Value::Int(idx as i64 + 9)])
-            }
-            b'-' | b'0'..=b'9' => {
-                let Some(end_byte) = json_scan_number_end_byte(&source, start_byte) else {
-                    return Err(self.stop_iteration_runtime_error(Value::Int(idx as i64)));
-                };
-                let number_text = source[start_byte..end_byte].to_string();
-                let end_char = utf8_byte_index_to_char(&source, end_byte)
-                    .ok_or_else(|| RuntimeError::runtime_error("json scanner index is invalid"))?;
-                let value = if number_text
-                    .bytes()
-                    .any(|byte| matches!(byte, b'.' | b'e' | b'E'))
-                {
-                    self.json_scanner_call_callback(
-                        state.parse_float,
-                        vec![Value::Str(number_text)],
-                        "json scanner parse_float failed",
-                    )?
-                } else {
-                    self.json_scanner_call_callback(
-                        state.parse_int,
-                        vec![Value::Str(number_text)],
-                        "json scanner parse_int failed",
-                    )?
-                };
-                self.heap
-                    .alloc_tuple(vec![value, Value::Int(end_char as i64)])
-            }
-            _ => return Err(self.stop_iteration_runtime_error(Value::Int(idx as i64))),
-        };
-
-        Ok(tuple_result)
+        let depth_limit = json_parse_depth_limit(self);
+        let (value, end_byte) =
+            self.json_scanner_parse_value_native(&state, &source, start_byte, 0, depth_limit)?;
+        let end_char = utf8_byte_index_to_char(&source, end_byte)
+            .ok_or_else(|| RuntimeError::runtime_error("json scanner index is invalid"))?;
+        Ok(self
+            .heap
+            .alloc_tuple(vec![value, Value::Int(end_char as i64)]))
     }
 
     pub(in crate::vm) fn builtin_json_decoder_scanstring(
@@ -2347,6 +2737,13 @@ fn parse_json_node_from_index_with_limit_detail(
     parser.pos = idx;
     let node = parser.parse_value(0)?;
     Ok((node, parser.pos))
+}
+
+fn json_skip_ws(source: &[u8], mut idx: usize) -> usize {
+    while matches!(source.get(idx), Some(b' ' | b'\n' | b'\r' | b'\t')) {
+        idx += 1;
+    }
+    idx
 }
 
 fn utf8_char_index_to_byte(source: &str, char_index: usize) -> Option<usize> {

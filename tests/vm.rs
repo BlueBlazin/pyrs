@@ -21729,6 +21729,142 @@ ok = (seen == "present" and missing == "fallback")
 }
 
 #[test]
+fn vm_new_with_seeded_cpython_lib_keeps_json_imports_on_single_stdlib_root() {
+    use pyrs::host::{HostCapability, NativeHost, VmHost};
+    use std::ffi::OsString;
+
+    #[derive(Debug)]
+    struct SeededEnvHost {
+        base: NativeHost,
+        seeded: Vec<(String, String)>,
+    }
+
+    impl VmHost for SeededEnvHost {
+        fn current_dir(&self) -> Result<PathBuf, String> {
+            self.base.current_dir()
+        }
+
+        fn env_var(&self, name: &str) -> Option<String> {
+            self.seeded
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+                .or_else(|| self.base.env_var(name))
+        }
+
+        fn env_var_os(&self, name: &str) -> Option<OsString> {
+            self.seeded
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| OsString::from(value))
+                .or_else(|| self.base.env_var_os(name))
+        }
+
+        fn env_vars(&self) -> Vec<(String, String)> {
+            self.seeded.clone()
+        }
+
+        fn path_is_dir(&self, path: &std::path::Path) -> bool {
+            self.base.path_is_dir(path)
+        }
+
+        fn process_args(&self) -> Vec<String> {
+            self.base.process_args()
+        }
+
+        fn current_exe(&self) -> Option<PathBuf> {
+            self.base.current_exe()
+        }
+
+        fn os_name(&self) -> &'static str {
+            self.base.os_name()
+        }
+
+        fn supports(&self, capability: HostCapability) -> bool {
+            self.base.supports(capability)
+        }
+    }
+
+    let lib_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".local/Python-3.14.3/Lib");
+    assert!(
+        lib_path.join("site.py").is_file(),
+        "expected local CPython stdlib at {}",
+        lib_path.display()
+    );
+    let lib_literal = lib_path.to_string_lossy().to_string();
+    let source = format!(
+        "import enum\nimport json\nimport os\nimport re\nimport sys\nimport types\n\
+root = {lib_literal:?}.replace('\\\\\\\\', '/')\n\
+module_files = [json.__file__, re.__file__, enum.__file__, types.__file__]\n\
+normalized = [path.replace('\\\\\\\\', '/') for path in module_files]\n\
+ok = all(path.startswith(root) for path in normalized)\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let host = SeededEnvHost {
+        base: NativeHost,
+        seeded: vec![("PYRS_CPYTHON_LIB".to_string(), lib_literal)],
+    };
+    let mut vm = Vm::new_with_host(Arc::new(host));
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn vm_new_default_host_keeps_json_imports_on_single_local_stdlib_root() {
+    let lib_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".local/Python-3.14.3/Lib");
+    assert!(
+        lib_path.join("site.py").is_file(),
+        "expected local CPython stdlib at {}",
+        lib_path.display()
+    );
+    let lib_literal = lib_path.to_string_lossy().to_string();
+    let source = format!(
+        "import enum\nimport json\nimport os\nimport re\nimport sys\nimport types\n\
+root = {lib_literal:?}.replace('\\\\\\\\', '/')\n\
+module_files = [json.__file__, re.__file__, enum.__file__, types.__file__]\n\
+normalized = [path.replace('\\\\\\\\', '/') for path in module_files]\n\
+ok = all(path.startswith(root) for path in normalized)\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn vm_json_loads_runs_on_default_stack() {
+    let source = r#"import json
+result = json.loads('{"x": 1, "arr": [2, 3]}')
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert!(vm.get_global("result").is_some());
+}
+
+#[test]
+fn vm_json_dumps_with_default_and_sort_keys_runs_on_default_stack() {
+    let source = r#"import json
+class Unknown:
+    pass
+def fallback(value):
+    return {"kind": value.__class__.__name__, "emoji": "☺"}
+result = {
+    "sorted": json.dumps({"b": 1, "a": "☺"}, sort_keys=True, separators=(",", ":"), ensure_ascii=True),
+    "fallback": json.dumps(Unknown(), default=fallback, sort_keys=True, separators=(",", ":"), ensure_ascii=True),
+}
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert!(vm.get_global("result").is_some());
+}
+
+#[test]
 fn os_putenv_and_unsetenv_update_lookup_surfaces() {
     let source = r#"import os
 key = "__PYRS_ENV_PUTENV_TEST__"

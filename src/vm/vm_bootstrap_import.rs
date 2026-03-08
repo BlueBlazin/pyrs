@@ -9823,22 +9823,7 @@ class BufferedIncrementalDecoder(IncrementalDecoder):
     }
 
     fn install_json_accelerator_module(&mut self) {
-        let scanner_class = match self
-            .heap
-            .alloc_class(ClassObject::new("Scanner".to_string(), Vec::new()))
-        {
-            Value::Class(class) => class,
-            _ => unreachable!(),
-        };
-        if let Object::Class(class_data) = &mut *scanner_class.kind_mut() {
-            class_data
-                .attrs
-                .insert("__module__".to_string(), Value::Str("_json".to_string()));
-            class_data.attrs.insert(
-                "__call__".to_string(),
-                Value::Builtin(BuiltinFunction::JsonScannerCall),
-            );
-        }
+        let _scanner_class = self.ensure_json_scanner_class();
         self.install_builtin_module(
             "_json",
             &[
@@ -9851,7 +9836,7 @@ class BufferedIncrementalDecoder(IncrementalDecoder):
                 ("make_scanner", BuiltinFunction::JsonScannerMakeScanner),
                 ("scanstring", BuiltinFunction::JsonDecoderScanString),
             ],
-            vec![("__pyrs_scanner_class__", Value::Class(scanner_class))],
+            Vec::new(),
         );
     }
 

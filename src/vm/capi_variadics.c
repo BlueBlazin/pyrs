@@ -18,6 +18,7 @@
 #include <limits.h>
 #if defined(__unix__) || defined(__APPLE__)
 #include <dlfcn.h>
+#include <pthread.h>
 #define PYRS_HAVE_DLADDR 1
 #endif
 #include <wchar.h>
@@ -28,16 +29,6 @@
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#endif
-
-#if defined(_WIN32) && defined(_MSC_VER)
-#pragma section(".CRT$XCU", read)
-#define PYRS_CONSTRUCTOR_FUNC(func_name) \
-    static void __cdecl func_name(void); \
-    __declspec(allocate(".CRT$XCU")) void (__cdecl *func_name##_init_)(void) = func_name; \
-    static void __cdecl func_name(void)
-#else
-#define PYRS_CONSTRUCTOR_FUNC(func_name) static void __attribute__((constructor)) func_name(void)
 #endif
 
 static int pyrs_clock_gettime_monotonic(struct timespec *ts);
@@ -7052,7 +7043,7 @@ static int pyrs_clock_gettime_realtime(struct timespec *ts)
 #endif
 }
 
-PYRS_CONSTRUCTOR_FUNC(pyrs_init_pyctype_tables)
+static void pyrs_init_pyctype_tables_impl(void)
 {
     for (int i = 0; i < 256; i++) {
         if (i >= 'A' && i <= 'Z') {
@@ -7073,4 +7064,29 @@ PYRS_CONSTRUCTOR_FUNC(pyrs_init_pyctype_tables)
         _Py_HashSecret.siphash.k1 = ((uint64_t)ts.tv_nsec << 32) ^ (uint64_t)(uintptr_t)&_Py_HashSecret;
         _Py_HashSecret.expat.hashsalt = (Py_hash_t)(_Py_HashSecret.siphash.k0 ^ _Py_HashSecret.siphash.k1);
     }
+}
+
+#if defined(_WIN32)
+static INIT_ONCE pyrs_pyctype_tables_once = INIT_ONCE_STATIC_INIT;
+
+static BOOL CALLBACK pyrs_init_pyctype_tables_once(PINIT_ONCE init_once, PVOID param, PVOID *context)
+{
+    (void)init_once;
+    (void)param;
+    (void)context;
+    pyrs_init_pyctype_tables_impl();
+    return TRUE;
+}
+#else
+static pthread_once_t pyrs_pyctype_tables_once = PTHREAD_ONCE_INIT;
+#endif
+
+__attribute__((used, visibility("default")))
+void pyrs_capi_ensure_runtime_tables(void)
+{
+#if defined(_WIN32)
+    InitOnceExecuteOnce(&pyrs_pyctype_tables_once, pyrs_init_pyctype_tables_once, NULL, NULL);
+#else
+    pthread_once(&pyrs_pyctype_tables_once, pyrs_init_pyctype_tables_impl);
+#endif
 }

@@ -81,6 +81,7 @@ use crate::runtime::{
     Value, clear_obj_drop_hooks_for_heap, format_repr, format_value,
     runtime_get_int_max_str_digits,
 };
+use crate::stdlib_paths::detect_cpython_stdlib_paths as detect_shared_cpython_stdlib_paths;
 use crate::unicode::{
     canonical_codepoint_for_internal_char, internal_char_from_codepoint,
     surrogate_codepoint_from_internal_char,
@@ -95,6 +96,7 @@ struct Block {
 unsafe extern "C" {
     fn free(ptr: *mut c_void);
     fn Py_MakePendingCalls() -> c_int;
+    fn pyrs_capi_ensure_runtime_tables();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1577,6 +1579,7 @@ impl Vm {
 
     pub fn new_with_host(host: Arc<dyn VmHost>) -> Self {
         configure_env_presence_probe_source(host.as_ref());
+        unsafe { pyrs_capi_ensure_runtime_tables() };
         let heap = Heap::new();
         let main_module = match heap.alloc_module(ModuleObject::new("__main__")) {
             Value::Module(obj) => obj,
@@ -1788,13 +1791,14 @@ impl Vm {
             Vec::new(),
             false,
         );
-        if let Some(stdlib_root) = vm.detect_cpython_stdlib_root()
-            && !vm
+        for stdlib_path in detect_shared_cpython_stdlib_paths(host.as_ref()).paths {
+            if !vm
                 .module_paths
                 .iter()
-                .any(|existing| existing == &stdlib_root)
-        {
-            vm.module_paths.push(stdlib_root);
+                .any(|existing| existing == &stdlib_path)
+            {
+                vm.module_paths.push(stdlib_path);
+            }
         }
         vm.install_sys_module();
         vm.install_importlib_modules();
