@@ -11120,11 +11120,10 @@ impl ModuleCapiContext {
         &mut self,
         handle: PyrsObjectHandle,
     ) -> Result<(), String> {
-        let ptr = self
-            .cpython_ptr_by_handle
-            .get(&handle)
-            .copied()
-            .ok_or_else(|| format!("invalid object handle {}", handle))?;
+        let Some(ptr) = self.cpython_ptr_by_handle.get(&handle).copied() else {
+            let _ = self.forget_released_object_handle(handle);
+            return Ok(());
+        };
         if ptr.is_null() {
             let _ = self.forget_released_object_handle(handle);
             return Ok(());
