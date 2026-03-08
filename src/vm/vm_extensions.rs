@@ -5067,10 +5067,11 @@ impl ModuleCapiContext {
                         vm.value_type_name_for_error(&Value::Instance(instance))
                     );
                 }
-                vm.exception_message_for_instance(&instance).unwrap_or_else(|| {
-                    vm.exception_class_name_for_instance(&instance)
-                        .unwrap_or_else(|| "error".to_string())
-                })
+                vm.exception_message_for_instance(&instance)
+                    .unwrap_or_else(|| {
+                        vm.exception_class_name_for_instance(&instance)
+                            .unwrap_or_else(|| "error".to_string())
+                    })
             }
             Some(other) => {
                 if self.vm.is_null() {
@@ -7939,7 +7940,10 @@ impl ModuleCapiContext {
         }
         if let Some(value) = self.cpython_value_from_ptr(object) {
             if !self.owns_cpython_allocation_ptr(object)
-                && matches!(external_ref_kind, CpythonProxyPtrOwnership::ExternalOwnedRef)
+                && matches!(
+                    external_ref_kind,
+                    CpythonProxyPtrOwnership::ExternalOwnedRef
+                )
             {
                 unsafe {
                     Py_DecRef(object);
@@ -8023,8 +8027,7 @@ impl ModuleCapiContext {
                 } else {
                     external_ref_kind
                 };
-                let proxy =
-                    self.cache_cpython_proxy_value_for_ptr(object, proxy, ownership, true);
+                let proxy = self.cache_cpython_proxy_value_for_ptr(object, proxy, ownership, true);
                 if super::env_var_present_cached("PYRS_TRACE_CPY_UNKNOWN_PTR") {
                     eprintln!(
                         "[cpy-proxy-type-fallback] ptr={:p} owns={} probable=false type_like={}",
@@ -8082,8 +8085,7 @@ impl ModuleCapiContext {
                 | CpythonProxyPtrOwnership::ExternalOwnedRef => {
                     self.capi_registry_register_external_ptr(object, proxy_object_id);
                     let inserted = self.capi_registry_pin_external_once_ptr(object);
-                    if super::env_var_present_cached("PYRS_TRACE_CPY_PIN") || force_trace_fallback
-                    {
+                    if super::env_var_present_cached("PYRS_TRACE_CPY_PIN") || force_trace_fallback {
                         eprintln!(
                             "[cpy-pin] ptr={:p} branch=external ownership={:?} inserted={}",
                             object, ownership, inserted
@@ -14669,87 +14671,74 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         type TestCapiHelper = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
         let (helper, label) = match kind {
-            TestCapiStringParseKind::LowerC => {
-                (pyrs_testcapi_getargs_c as TestCapiHelper, "getargs_c failed")
-            }
-            TestCapiStringParseKind::UpperC => {
-                (pyrs_testcapi_getargs_C as TestCapiHelper, "getargs_C failed")
-            }
-            TestCapiStringParseKind::LowerS => {
-                (pyrs_testcapi_getargs_s as TestCapiHelper, "getargs_s failed")
-            }
-            TestCapiStringParseKind::LowerSStar => {
-                (
-                    pyrs_testcapi_getargs_s_star as TestCapiHelper,
-                    "getargs_s_star failed",
-                )
-            }
-            TestCapiStringParseKind::LowerSHash => {
-                (
-                    pyrs_testcapi_getargs_s_hash as TestCapiHelper,
-                    "getargs_s_hash failed",
-                )
-            }
-            TestCapiStringParseKind::LowerZ => {
-                (pyrs_testcapi_getargs_z as TestCapiHelper, "getargs_z failed")
-            }
-            TestCapiStringParseKind::LowerZStar => {
-                (
-                    pyrs_testcapi_getargs_z_star as TestCapiHelper,
-                    "getargs_z_star failed",
-                )
-            }
-            TestCapiStringParseKind::LowerZHash => {
-                (
-                    pyrs_testcapi_getargs_z_hash as TestCapiHelper,
-                    "getargs_z_hash failed",
-                )
-            }
-            TestCapiStringParseKind::LowerY => {
-                (pyrs_testcapi_getargs_y as TestCapiHelper, "getargs_y failed")
-            }
-            TestCapiStringParseKind::LowerYStar => {
-                (
-                    pyrs_testcapi_getargs_y_star as TestCapiHelper,
-                    "getargs_y_star failed",
-                )
-            }
-            TestCapiStringParseKind::LowerYHash => {
-                (
-                    pyrs_testcapi_getargs_y_hash as TestCapiHelper,
-                    "getargs_y_hash failed",
-                )
-            }
-            TestCapiStringParseKind::LowerEs => {
-                (pyrs_testcapi_getargs_es as TestCapiHelper, "getargs_es failed")
-            }
-            TestCapiStringParseKind::LowerEt => {
-                (pyrs_testcapi_getargs_et as TestCapiHelper, "getargs_et failed")
-            }
-            TestCapiStringParseKind::LowerEsHash => {
-                (
-                    pyrs_testcapi_getargs_es_hash as TestCapiHelper,
-                    "getargs_es_hash failed",
-                )
-            }
-            TestCapiStringParseKind::LowerEtHash => {
-                (
-                    pyrs_testcapi_getargs_et_hash as TestCapiHelper,
-                    "getargs_et_hash failed",
-                )
-            }
-            TestCapiStringParseKind::WStar => {
-                (
-                    pyrs_testcapi_getargs_w_star as TestCapiHelper,
-                    "getargs_w_star failed",
-                )
-            }
-            TestCapiStringParseKind::WStarOpt => {
-                (
-                    pyrs_testcapi_getargs_w_star_opt as TestCapiHelper,
-                    "getargs_w_star_opt failed",
-                )
-            }
+            TestCapiStringParseKind::LowerC => (
+                pyrs_testcapi_getargs_c as TestCapiHelper,
+                "getargs_c failed",
+            ),
+            TestCapiStringParseKind::UpperC => (
+                pyrs_testcapi_getargs_C as TestCapiHelper,
+                "getargs_C failed",
+            ),
+            TestCapiStringParseKind::LowerS => (
+                pyrs_testcapi_getargs_s as TestCapiHelper,
+                "getargs_s failed",
+            ),
+            TestCapiStringParseKind::LowerSStar => (
+                pyrs_testcapi_getargs_s_star as TestCapiHelper,
+                "getargs_s_star failed",
+            ),
+            TestCapiStringParseKind::LowerSHash => (
+                pyrs_testcapi_getargs_s_hash as TestCapiHelper,
+                "getargs_s_hash failed",
+            ),
+            TestCapiStringParseKind::LowerZ => (
+                pyrs_testcapi_getargs_z as TestCapiHelper,
+                "getargs_z failed",
+            ),
+            TestCapiStringParseKind::LowerZStar => (
+                pyrs_testcapi_getargs_z_star as TestCapiHelper,
+                "getargs_z_star failed",
+            ),
+            TestCapiStringParseKind::LowerZHash => (
+                pyrs_testcapi_getargs_z_hash as TestCapiHelper,
+                "getargs_z_hash failed",
+            ),
+            TestCapiStringParseKind::LowerY => (
+                pyrs_testcapi_getargs_y as TestCapiHelper,
+                "getargs_y failed",
+            ),
+            TestCapiStringParseKind::LowerYStar => (
+                pyrs_testcapi_getargs_y_star as TestCapiHelper,
+                "getargs_y_star failed",
+            ),
+            TestCapiStringParseKind::LowerYHash => (
+                pyrs_testcapi_getargs_y_hash as TestCapiHelper,
+                "getargs_y_hash failed",
+            ),
+            TestCapiStringParseKind::LowerEs => (
+                pyrs_testcapi_getargs_es as TestCapiHelper,
+                "getargs_es failed",
+            ),
+            TestCapiStringParseKind::LowerEt => (
+                pyrs_testcapi_getargs_et as TestCapiHelper,
+                "getargs_et failed",
+            ),
+            TestCapiStringParseKind::LowerEsHash => (
+                pyrs_testcapi_getargs_es_hash as TestCapiHelper,
+                "getargs_es_hash failed",
+            ),
+            TestCapiStringParseKind::LowerEtHash => (
+                pyrs_testcapi_getargs_et_hash as TestCapiHelper,
+                "getargs_et_hash failed",
+            ),
+            TestCapiStringParseKind::WStar => (
+                pyrs_testcapi_getargs_w_star as TestCapiHelper,
+                "getargs_w_star failed",
+            ),
+            TestCapiStringParseKind::WStarOpt => (
+                pyrs_testcapi_getargs_w_star_opt as TestCapiHelper,
+                "getargs_w_star_opt failed",
+            ),
             TestCapiStringParseKind::Gh99240ClearArgs => (
                 pyrs_testcapi_gh_99240_clear_args as TestCapiHelper,
                 "gh_99240_clear_args failed",

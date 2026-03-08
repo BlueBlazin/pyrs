@@ -9107,7 +9107,9 @@ run(PyObject *self, PyObject *args) {
 
     PyObject *conv_slot = 0;
     int conv_ok = text ? PyUnicode_FSConverter(text, &conv_slot) : 0;
-    int fs_converter_ok = conv_ok == 1 && conv_slot && bytes_equals(conv_slot, "abc", 3);
+    int fs_converter_ok = conv_ok == Py_CLEANUP_SUPPORTED &&
+                          conv_slot &&
+                          bytes_equals(conv_slot, "abc", 3);
     Py_XDECREF(conv_slot);
     conv_slot = 0;
     int fs_converter_cleanup_ok = (PyUnicode_FSConverter(0, &conv_slot) == 1 && conv_slot == 0) ? 1 : 0;
@@ -9115,7 +9117,9 @@ run(PyObject *self, PyObject *args) {
     PyObject *bytes_path = PyBytes_FromString("abc");
     PyObject *decode_slot = 0;
     int dec_ok = bytes_path ? PyUnicode_FSDecoder(bytes_path, &decode_slot) : 0;
-    int fs_decoder_ok = dec_ok == 1 && decode_slot && utf8_equals(decode_slot, "abc");
+    int fs_decoder_ok = dec_ok == Py_CLEANUP_SUPPORTED &&
+                        decode_slot &&
+                        utf8_equals(decode_slot, "abc");
     Py_XDECREF(decode_slot);
     decode_slot = 0;
     int fs_decoder_cleanup_ok = (PyUnicode_FSDecoder(0, &decode_slot) == 1 && decode_slot == 0) ? 1 : 0;

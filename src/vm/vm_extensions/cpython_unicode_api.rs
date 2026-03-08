@@ -2825,6 +2825,7 @@ pub unsafe extern "C" fn PyUnicode_FSConverter(arg: *mut c_void, addr: *mut c_vo
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_FSDecoder(arg: *mut c_void, addr: *mut c_void) -> c_int {
+    const PY_CLEANUP_SUPPORTED: c_int = 0x20000;
     if addr.is_null() {
         unsafe { PyErr_BadInternalCall() };
         return 0;
@@ -2873,11 +2874,25 @@ pub unsafe extern "C" fn PyUnicode_FSDecoder(arg: *mut c_void, addr: *mut c_void
         }
     };
     // SAFETY: caller provides writable PyObject** slot in addr.
+    let output_has_embedded_nul = match cpython_value_from_ptr(output) {
+        Ok(value) => cpython_unicode_text_from_value(&value)
+            .is_some_and(|text| text.chars().any(|ch| ch == '\0')),
+        Err(err) => {
+            unsafe { Py_DecRef(output) };
+            cpython_set_error(err);
+            return 0;
+        }
+    };
+    if output_has_embedded_nul {
+        unsafe { Py_DecRef(output) };
+        cpython_set_typed_error(unsafe { PyExc_ValueError }, "embedded null character");
+        return 0;
+    }
     unsafe {
         let slot = addr.cast::<*mut c_void>();
         *slot = output;
     }
-    1
+    PY_CLEANUP_SUPPORTED
 }
 
 #[unsafe(no_mangle)]

@@ -2061,7 +2061,9 @@ void *PyObject_CallMethodObjArgs(void *object, void *name, ...)
 }
 
 typedef int (*arg_converter_fn)(void *value, void *output);
-#define PYRS_PY_CLEANUP_SUPPORTED 0x20000
+#ifndef Py_CLEANUP_SUPPORTED
+#define Py_CLEANUP_SUPPORTED 0x20000
+#endif
 typedef enum {
     PYRS_ARG_CLEANUP_CONVERTER = 0,
     PYRS_ARG_CLEANUP_BUFFER = 1,
@@ -3285,7 +3287,7 @@ static int pyrs_convert_value_for_format_unit(
                     }
                     return 0;
                 }
-                if (converted == PYRS_PY_CLEANUP_SUPPORTED &&
+                if (converted == Py_CLEANUP_SUPPORTED &&
                     !pyrs_push_converter_cleanup(cleanups, cleanup_count, converter, output)) {
                     return 0;
                 }

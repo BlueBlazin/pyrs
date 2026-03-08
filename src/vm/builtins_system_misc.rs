@@ -294,10 +294,7 @@ impl Vm {
     }
 
     fn capi_warning_module(&mut self) -> Result<ObjRef, RuntimeError> {
-        if let Some(module) = self.modules.get("warnings").cloned() {
-            return Ok(module);
-        }
-        self.load_module("warnings")
+        self.import_module_object("warnings")
     }
 
     fn capi_warning_module_name(filename: &str) -> String {
@@ -7492,7 +7489,7 @@ impl Vm {
                 self.clear_active_exception();
             }
         }
-        if let Ok(module) = self.load_module("_py_warnings")
+        if let Ok(module) = self.import_module_object("_py_warnings")
             && let Ok(callable) = self.load_attr_module(&module, attr_name)
             && !matches!(callable, Value::Builtin(builtin) if builtin == recursive_builtin)
         {
@@ -7695,7 +7692,7 @@ impl Vm {
 
         self.warnings_bless_my_loader_depth += 1;
         let bless_result = (|| {
-            let external = match self.load_module("importlib._bootstrap_external") {
+            let external = match self.import_module_object("importlib._bootstrap_external") {
                 Ok(module) => module,
                 Err(err)
                     if runtime_error_matches_exception(&err, "ImportError")
@@ -7982,7 +7979,7 @@ impl Vm {
             }
         };
 
-        let traceback = self.load_module("traceback")?;
+        let traceback = self.import_module_object("traceback")?;
         let print_exception = self.load_attr_module(&traceback, "print_exception")?;
         let call_args = if legacy {
             let Value::Exception(exception) = &normalized else {

@@ -7208,7 +7208,7 @@ impl Vm {
                     let typing_module = if let Some(module) = self.modules.get("typing").cloned() {
                         module
                     } else {
-                        self.load_module("typing")?
+                        self.import_module_object("typing")?
                     };
                     let annotated = self.builtin_getattr(
                         vec![
@@ -9030,7 +9030,7 @@ impl Vm {
         let annotationlib = if let Some(module) = self.modules.get("annotationlib").cloned() {
             module
         } else {
-            self.load_module("annotationlib")?
+            self.import_module_object("annotationlib")?
         };
         let forward_ref_ctor = self.builtin_getattr(
             vec![

@@ -88,6 +88,10 @@ typedef enum {
 #define Py_PRINT_RAW 0x0001
 #endif
 
+#ifndef Py_CLEANUP_SUPPORTED
+#define Py_CLEANUP_SUPPORTED 0x20000
+#endif
+
 #ifndef Py_DTSF_SIGN
 #define Py_DTSF_SIGN 0x01
 #define Py_DTSF_ADD_DOT_0 0x02

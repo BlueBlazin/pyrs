@@ -11,8 +11,8 @@ use super::LoadFastSiteCacheEntry;
 use super::{
     AttrAccessOutcome, AttrMutationOutcome, Block, BoundArguments, BoundMethod, BuiltinFunction,
     CallKeywordArgs, ClassBuildOutcome, ClassObject, CodeObject, ExceptionObject, Frame,
-    FunctionObject, GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome, HashMap,
-    HashSet, INSTANCE_DICT_STORAGE_ATTR, ImportReturnPolicy, InstanceObject, Instruction,
+    FunctionObject, GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome, HashMap, HashSet,
+    INSTANCE_DICT_STORAGE_ATTR, ImportReturnPolicy, InstanceObject, Instruction,
     InternalCallOutcome, LoadAttrSiteCacheEntry, LoadAttrSiteCacheKind, LoadGlobalSiteCacheEntry,
     MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeMethodKind, NativeMethodObject, ObjRef, Object,
     OneArgCallHotPath, OneArgCallSiteCacheEntry, Opcode, PY_TPFLAGS_HEAPTYPE,
@@ -934,213 +934,213 @@ impl Vm {
         self.active_run_depth = self.active_run_depth.saturating_add(1);
         let result = (|| {
             loop {
-            if let Some(stop_depth) = self.run_stop_depth
-                && self.frames.len() <= stop_depth
-            {
-                return Ok(Value::None);
-            }
-            if self.frames.is_empty() {
-                return Ok(Value::None);
-            }
-            if let Some(target) = self.active_generator_resume {
-                if self.generator_resume_outcome.is_some() {
+                if let Some(stop_depth) = self.run_stop_depth
+                    && self.frames.len() <= stop_depth
+                {
                     return Ok(Value::None);
                 }
-                let target_active = self.frames.iter().any(|frame| {
-                    frame
-                        .generator_owner
-                        .as_ref()
-                        .map(|owner| owner.id() == target)
-                        .unwrap_or(false)
-                });
-                if !target_active {
-                    self.generator_resume_outcome =
-                        Some(GeneratorResumeOutcome::PropagatedException);
+                if self.frames.is_empty() {
                     return Ok(Value::None);
                 }
-            }
+                if let Some(target) = self.active_generator_resume {
+                    if self.generator_resume_outcome.is_some() {
+                        return Ok(Value::None);
+                    }
+                    let target_active = self.frames.iter().any(|frame| {
+                        frame
+                            .generator_owner
+                            .as_ref()
+                            .map(|owner| owner.id() == target)
+                            .unwrap_or(false)
+                    });
+                    if !target_active {
+                        self.generator_resume_outcome =
+                            Some(GeneratorResumeOutcome::PropagatedException);
+                        return Ok(Value::None);
+                    }
+                }
 
-            let pending_resume = {
-                let frame = self.frames.last_mut().expect("frame exists");
-                if frame.generator_owner.is_some() && frame.generator_awaiting_resume_value {
-                    frame.generator_awaiting_resume_value = false;
-                    let thrown = frame.generator_pending_throw.take();
-                    let sent = frame.generator_resume_value.take().unwrap_or(Value::None);
-                    Some((thrown, sent))
-                } else {
-                    None
-                }
-            };
-            if let Some((thrown, sent)) = pending_resume {
-                if let Some(exc) = thrown {
-                    self.raise_exception(exc)?;
-                    continue;
-                }
-                self.push_value(sent);
-            }
-
-            match self.run_pending_callback_queues() {
-                Ok(()) => {}
-                Err(err) => match self.handle_runtime_error(err) {
-                    Ok(()) => continue,
-                    Err(err) => return Err(err),
-                },
-            }
-
-            let should_return = {
-                let frame = self.frames.last().expect("frame exists");
-                frame.ip >= frame.code.instructions.len()
-            };
-
-            if should_return {
-                if let Some(filter) = self.trace_text_filters.module_return_ip.as_ref()
-                    && let Some(frame) = self.frames.last()
-                    && frame.is_module
-                    && frame.code.filename.contains(filter)
-                {
-                    eprintln!(
-                        "[module-return] file={} ip={} instr_len={} active_exc={} blocks={}",
-                        frame.code.filename,
-                        frame.ip,
-                        frame.code.instructions.len(),
-                        frame.active_exception.is_some(),
-                        frame.blocks.len()
-                    );
-                }
-                if let Some(frame) = self.frames.last_mut()
-                    && frame.is_module
-                    && let Some(exc) = frame.active_exception.take()
-                {
-                    self.unwind_exception(exc)?;
-                    continue;
-                }
-                let mut frame = self.frames.pop().expect("frame exists");
-                if let Some(module_dict) = frame.module_locals_dict.take() {
-                    self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
-                }
-                self.finalize_module_frame_success(&frame);
-                let can_recycle = !frame.is_module
-                    && frame.generator_owner.is_none()
-                    && !frame.return_class
-                    && frame.return_instance.is_none()
-                    && !frame.return_module;
-                if let Some(owner) = frame.generator_owner.take() {
-                    self.finish_generator_resume(owner, Value::None);
-                    continue;
-                }
-                if can_recycle {
-                    let discard = frame.discard_result;
-                    if let Some(caller) = self.frames.last_mut() {
-                        if !discard {
-                            caller.stack.push(Value::None);
-                        }
-                        self.recycle_frame(frame);
+                let pending_resume = {
+                    let frame = self.frames.last_mut().expect("frame exists");
+                    if frame.generator_owner.is_some() && frame.generator_awaiting_resume_value {
+                        frame.generator_awaiting_resume_value = false;
+                        let thrown = frame.generator_pending_throw.take();
+                        let sent = frame.generator_resume_value.take().unwrap_or(Value::None);
+                        Some((thrown, sent))
+                    } else {
+                        None
+                    }
+                };
+                if let Some((thrown, sent)) = pending_resume {
+                    if let Some(exc) = thrown {
+                        self.raise_exception(exc)?;
                         continue;
                     }
-                    self.recycle_frame(frame);
-                    return Ok(Value::None);
+                    self.push_value(sent);
                 }
-                let value = if frame.return_class {
-                    match self.class_value_from_module(
-                        &frame.module,
-                        frame.class_bases,
-                        frame.class_orig_bases,
-                        frame.class_metaclass,
-                        frame.class_keywords,
-                        frame.class_namespace,
-                        Some(frame.function_globals.clone()),
-                        frame.locals_fallback.clone(),
-                        frame.code.future_annotations_import,
-                    )? {
-                        ClassBuildOutcome::Value(value) => value,
-                        ClassBuildOutcome::ExceptionHandled => continue,
-                    }
-                } else if let Some(instance) = frame.return_instance {
-                    Value::Instance(instance)
-                } else if frame.return_module {
-                    Value::Module(frame.module.clone())
-                } else {
-                    Value::None
-                };
-                if let Some(caller) = self.frames.last_mut() {
-                    if !frame.discard_result {
-                        caller.stack.push(value);
-                    }
-                    continue;
-                }
-                return Ok(value);
-            }
 
-            let instr = {
-                let frame = self.frames.last_mut().expect("frame exists");
-                frame.last_ip = frame.ip;
-                let instr = frame.code.instructions[frame.ip];
-                frame.ip += 1;
-                instr
-            };
-            if let Some(limit) = self.instruction_step_limit {
-                self.instruction_steps = self.instruction_steps.saturating_add(1);
-                if self.instruction_steps > limit {
+                match self.run_pending_callback_queues() {
+                    Ok(()) => {}
+                    Err(err) => match self.handle_runtime_error(err) {
+                        Ok(()) => continue,
+                        Err(err) => return Err(err),
+                    },
+                }
+
+                let should_return = {
+                    let frame = self.frames.last().expect("frame exists");
+                    frame.ip >= frame.code.instructions.len()
+                };
+
+                if should_return {
+                    if let Some(filter) = self.trace_text_filters.module_return_ip.as_ref()
+                        && let Some(frame) = self.frames.last()
+                        && frame.is_module
+                        && frame.code.filename.contains(filter)
+                    {
+                        eprintln!(
+                            "[module-return] file={} ip={} instr_len={} active_exc={} blocks={}",
+                            frame.code.filename,
+                            frame.ip,
+                            frame.code.instructions.len(),
+                            frame.active_exception.is_some(),
+                            frame.blocks.len()
+                        );
+                    }
+                    if let Some(frame) = self.frames.last_mut()
+                        && frame.is_module
+                        && let Some(exc) = frame.active_exception.take()
+                    {
+                        self.unwind_exception(exc)?;
+                        continue;
+                    }
+                    let mut frame = self.frames.pop().expect("frame exists");
+                    if let Some(module_dict) = frame.module_locals_dict.take() {
+                        self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
+                    }
+                    self.finalize_module_frame_success(&frame);
+                    let can_recycle = !frame.is_module
+                        && frame.generator_owner.is_none()
+                        && !frame.return_class
+                        && frame.return_instance.is_none()
+                        && !frame.return_module;
+                    if let Some(owner) = frame.generator_owner.take() {
+                        self.finish_generator_resume(owner, Value::None);
+                        continue;
+                    }
+                    if can_recycle {
+                        let discard = frame.discard_result;
+                        if let Some(caller) = self.frames.last_mut() {
+                            if !discard {
+                                caller.stack.push(Value::None);
+                            }
+                            self.recycle_frame(frame);
+                            continue;
+                        }
+                        self.recycle_frame(frame);
+                        return Ok(Value::None);
+                    }
+                    let value = if frame.return_class {
+                        match self.class_value_from_module(
+                            &frame.module,
+                            frame.class_bases,
+                            frame.class_orig_bases,
+                            frame.class_metaclass,
+                            frame.class_keywords,
+                            frame.class_namespace,
+                            Some(frame.function_globals.clone()),
+                            frame.locals_fallback.clone(),
+                            frame.code.future_annotations_import,
+                        )? {
+                            ClassBuildOutcome::Value(value) => value,
+                            ClassBuildOutcome::ExceptionHandled => continue,
+                        }
+                    } else if let Some(instance) = frame.return_instance {
+                        Value::Instance(instance)
+                    } else if frame.return_module {
+                        Value::Module(frame.module.clone())
+                    } else {
+                        Value::None
+                    };
+                    if let Some(caller) = self.frames.last_mut() {
+                        if !frame.discard_result {
+                            caller.stack.push(value);
+                        }
+                        continue;
+                    }
+                    return Ok(value);
+                }
+
+                let instr = {
+                    let frame = self.frames.last_mut().expect("frame exists");
+                    frame.last_ip = frame.ip;
+                    let instr = frame.code.instructions[frame.ip];
+                    frame.ip += 1;
+                    instr
+                };
+                if let Some(limit) = self.instruction_step_limit {
+                    self.instruction_steps = self.instruction_steps.saturating_add(1);
+                    if self.instruction_steps > limit {
+                        let frame = self.frames.last().expect("frame exists");
+                        return Err(RuntimeError::new(format!(
+                            "instruction step limit exceeded at {}:{} in {} ({:?})",
+                            frame.code.filename, frame.last_ip, frame.code.name, instr.opcode
+                        )));
+                    }
+                }
+                if self.execution_deadline_reached() {
                     let frame = self.frames.last().expect("frame exists");
                     return Err(RuntimeError::new(format!(
-                        "instruction step limit exceeded at {}:{} in {} ({:?})",
+                        "execution timeout exceeded at {}:{} in {} ({:?})",
                         frame.code.filename, frame.last_ip, frame.code.name, instr.opcode
                     )));
                 }
-            }
-            if self.execution_deadline_reached() {
-                let frame = self.frames.last().expect("frame exists");
-                return Err(RuntimeError::new(format!(
-                    "execution timeout exceeded at {}:{} in {} ({:?})",
-                    frame.code.filename, frame.last_ip, frame.code.name, instr.opcode
-                )));
-            }
-            let step_result = self.execute_instruction(instr);
+                let step_result = self.execute_instruction(instr);
 
-            match step_result {
-                Ok(Some(value)) => return Ok(value),
-                Ok(None) => {}
-                Err(err) => match self.handle_runtime_error(err) {
-                    Ok(()) => {}
-                    Err(err) => return Err(err),
-                },
-            }
-            let safe_for_gc_auto = self
-                .frames
-                .last()
-                .map(|frame| {
-                    frame.code.name != "__del__"
-                        && frame.generator_owner.is_none()
-                        && self.active_generator_resume.is_none()
-                })
-                .unwrap_or(false);
-            if self.gc_auto_collect_enabled
-                && !self.running_pending_del_finalizers
-                && safe_for_gc_auto
-            {
-                self.maybe_gc_collect_automatic();
-            }
-            if !self.pending_del_instances.is_empty() || !self.weakref_finalizers.is_empty() {
-                if self.trace_flags.disable_pending_finalizers {
-                    continue;
+                match step_result {
+                    Ok(Some(value)) => return Ok(value),
+                    Ok(None) => {}
+                    Err(err) => match self.handle_runtime_error(err) {
+                        Ok(()) => {}
+                        Err(err) => return Err(err),
+                    },
                 }
-                // Keep __del__ suppressed only while an active exception is being processed.
-                // Refcount-style cleanup in CPython can happen while ordinary operands are live,
-                // and several stdlib paths (tempfile/shutil) rely on that eagerness.
-                let safe_for_pending_finalizers = self
+                let safe_for_gc_auto = self
                     .frames
                     .last()
                     .map(|frame| {
-                        frame.active_exception.is_none()
-                            && frame.code.name != "__del__"
+                        frame.code.name != "__del__"
                             && frame.generator_owner.is_none()
                             && self.active_generator_resume.is_none()
                     })
                     .unwrap_or(false);
-                if safe_for_pending_finalizers {
-                    self.run_pending_del_finalizers(false);
+                if self.gc_auto_collect_enabled
+                    && !self.running_pending_del_finalizers
+                    && safe_for_gc_auto
+                {
+                    self.maybe_gc_collect_automatic();
                 }
-            }
+                if !self.pending_del_instances.is_empty() || !self.weakref_finalizers.is_empty() {
+                    if self.trace_flags.disable_pending_finalizers {
+                        continue;
+                    }
+                    // Keep __del__ suppressed only while an active exception is being processed.
+                    // Refcount-style cleanup in CPython can happen while ordinary operands are live,
+                    // and several stdlib paths (tempfile/shutil) rely on that eagerness.
+                    let safe_for_pending_finalizers = self
+                        .frames
+                        .last()
+                        .map(|frame| {
+                            frame.active_exception.is_none()
+                                && frame.code.name != "__del__"
+                                && frame.generator_owner.is_none()
+                                && self.active_generator_resume.is_none()
+                        })
+                        .unwrap_or(false);
+                    if safe_for_pending_finalizers {
+                        self.run_pending_del_finalizers(false);
+                    }
+                }
             }
         })();
         self.active_run_depth = self.active_run_depth.saturating_sub(1);
@@ -2303,10 +2303,7 @@ impl Vm {
                                 cached_attr
                             } else {
                                 let (loaded_outcome, site_cache_entry) =
-                                    self.load_attr_instance_with_site_cache(
-                                        &instance,
-                                        &attr_name,
-                                    )?;
+                                    self.load_attr_instance_with_site_cache(&instance, &attr_name)?;
                                 let loaded = match loaded_outcome {
                                     AttrAccessOutcome::Value(attr) => attr,
                                     AttrAccessOutcome::ExceptionHandled => {
@@ -2317,8 +2314,7 @@ impl Vm {
                                 };
                                 if let Some(entry) = site_cache_entry {
                                     self.insert_load_attr_instance_site_cache_entry(
-                                        site_index,
-                                        entry,
+                                        site_index, entry,
                                     );
                                 } else {
                                     self.clear_load_attr_site_cache(site_index);
@@ -6322,7 +6318,9 @@ impl Vm {
                 let func = self.pop_value()?;
                 let kwargs = match kwargs_value {
                     Value::Dict(obj) => match &*obj.kind() {
-                        Object::Dict(entries) => self.call_keyword_args_from_mapping_entries(entries)?,
+                        Object::Dict(entries) => {
+                            self.call_keyword_args_from_mapping_entries(entries)?
+                        }
                         _ => return Err(RuntimeError::new("call kwargs must be dict")),
                     },
                     _ => return Err(RuntimeError::new("call kwargs must be dict")),
@@ -6386,7 +6384,9 @@ impl Vm {
                         .stack
                         .get(stack_len.saturating_sub(2))
                         .cloned()
-                        .ok_or_else(|| RuntimeError::new("stack underflow (ImportNameCpython level)"))?;
+                        .ok_or_else(|| {
+                            RuntimeError::new("stack underflow (ImportNameCpython level)")
+                        })?;
                     value_to_int(level_value)?
                 };
                 if level < 0 {
@@ -6475,7 +6475,9 @@ impl Vm {
                 let kwargs = match kwargs_value {
                     Value::None => CallKeywordArgs::new(),
                     Value::Dict(obj) => match &*obj.kind() {
-                        Object::Dict(entries) => self.call_keyword_args_from_mapping_entries(entries)?,
+                        Object::Dict(entries) => {
+                            self.call_keyword_args_from_mapping_entries(entries)?
+                        }
                         _ => return Err(RuntimeError::type_error("call kwargs must be dict")),
                     },
                     _ => return Err(RuntimeError::type_error("call kwargs must be dict")),
@@ -8202,7 +8204,8 @@ impl Vm {
             if skip_current_frame_trace {
                 skip_current_frame_trace = false;
             } else {
-                traceback_dirty |= Self::push_traceback_frame(&mut traceback, Self::frame_trace(frame));
+                traceback_dirty |=
+                    Self::push_traceback_frame(&mut traceback, Self::frame_trace(frame));
             }
 
             if let Some(block) = frame.blocks.pop() {
@@ -14044,10 +14047,9 @@ impl Vm {
                 Err(err) => Err(err),
             },
             Value::Instance(instance) => match self.load_attr_instance(&instance, attr_name) {
-                Ok(outcome) => self.attr_access_outcome_to_option(
-                    outcome,
-                    "instance attribute lookup failed",
-                ),
+                Ok(outcome) => {
+                    self.attr_access_outcome_to_option(outcome, "instance attribute lookup failed")
+                }
                 Err(err) if runtime_error_matches_exception(&err, "AttributeError") => Ok(None),
                 Err(err) => Err(err),
             },

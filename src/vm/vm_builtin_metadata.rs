@@ -6654,6 +6654,30 @@ impl Vm {
         Ok(InternalCallOutcome::Value(value))
     }
 
+    fn push_internal_caller_frame_if_needed(&mut self) -> Result<bool, RuntimeError> {
+        if !self.frames.is_empty() {
+            return Ok(false);
+        }
+        let code = Rc::new(CodeObject::new("<internal>", "<internal>"));
+        let frame = Frame::new(
+            code,
+            self.main_module.clone(),
+            true,
+            false,
+            Vec::new(),
+            None,
+        );
+        self.push_frame_checked(Box::new(frame))?;
+        Ok(true)
+    }
+
+    fn pop_internal_caller_frame_if_needed(&mut self, pushed: bool) {
+        if pushed {
+            let frame = self.frames.pop();
+            debug_assert!(frame.is_some(), "synthetic internal caller frame missing");
+        }
+    }
+
     pub(super) fn call_internal_with_kwarg_order(
         &mut self,
         callable: Value,
@@ -6671,113 +6695,79 @@ impl Vm {
         args: Vec<Value>,
         kwargs: CallKeywordArgs,
     ) -> Result<InternalCallOutcome, RuntimeError> {
-        if env_var_present_cached("PYRS_TRACE_CALLABLE_NONE_BT") && matches!(callable, Value::None)
-        {
-            let args_summary = args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
-            let mut kw_entries = kwargs.iter().collect::<Vec<_>>();
-            kw_entries.sort_by(|left, right| left.normalized_name.cmp(&right.normalized_name));
-            let kwargs_summary = kw_entries
-                .into_iter()
-                .map(|entry| format!("{}={}", entry.normalized_name, format_repr(&entry.value)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            eprintln!(
-                "[call-none-entry] positional=[{}] kwargs=[{}]\n{:?}",
-                args_summary,
-                kwargs_summary,
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
-        let (call_depth_guard, call_depth) = CallInternalDepthGuard::enter();
-        let _call_depth_guard = call_depth_guard;
-        let caller_depth = self.frames.len();
-        if caller_depth == 0 {
-            return Err(RuntimeError::new(
-                "internal call requires an active execution frame",
-            ));
-        }
-        let hard_limit = self
-            .host
-            .env_var("PYRS_DEBUG_CALL_DEPTH_HARD_LIMIT")
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|limit| *limit > 0)
-            .unwrap_or_else(|| self.effective_recursion_limit() as usize * 4);
-        if env_var_present_cached("PYRS_TRACE_CALL_DEPTH")
-            && call_depth >= hard_limit.saturating_sub(16)
-        {
-            self.trace_internal_call_depth(
-                call_depth,
-                hard_limit,
-                &callable,
-                args.len(),
-                kwargs.len(),
-            );
-        }
-        if call_depth > hard_limit {
-            return Err(self.recursion_limit_error());
-        }
-        self.ensure_can_push_python_frame()?;
-        let (caller_ip, caller_active_exception_fingerprint) = self
-            .frames
-            .last()
-            .map(|frame| {
-                (
-                    frame.ip,
-                    Self::active_exception_fingerprint(frame.active_exception.as_ref()),
-                )
-            })
-            .unwrap_or((0, None));
-        let trace_class_call = env_var_present_cached("PYRS_TRACE_CLASS_CALL_RUNTIME");
-        let callable_was_class = matches!(&callable, Value::Class(_));
-        let trace_callable_repr =
-            (trace_class_call && callable_was_class).then(|| format_repr(&callable));
-        let mut callable = callable;
-        let mut args = args;
-        let mut kwargs = kwargs;
-        let needs_run = loop {
-            match callable {
-                Value::Function(func) => {
-                    break self.dispatch_internal_function_call(func, args, kwargs)?;
-                }
-                Value::BoundMethod(method) => match self.dispatch_internal_bound_method_call(
-                    method,
-                    args,
-                    kwargs,
-                    caller_depth,
-                    caller_ip,
-                )? {
-                    InternalCallDispatch::TailCall {
-                        callable: next_callable,
-                        args: next_args,
-                        kwargs: next_kwargs,
-                    } => {
-                        callable = next_callable;
-                        args = next_args;
-                        kwargs = next_kwargs;
+        let pushed_internal_caller = self.push_internal_caller_frame_if_needed()?;
+        let outcome = (|| {
+            if env_var_present_cached("PYRS_TRACE_CALLABLE_NONE_BT")
+                && matches!(callable, Value::None)
+            {
+                let args_summary = args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
+                let mut kw_entries = kwargs.iter().collect::<Vec<_>>();
+                kw_entries.sort_by(|left, right| left.normalized_name.cmp(&right.normalized_name));
+                let kwargs_summary = kw_entries
+                    .into_iter()
+                    .map(|entry| format!("{}={}", entry.normalized_name, format_repr(&entry.value)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                eprintln!(
+                    "[call-none-entry] positional=[{}] kwargs=[{}]\n{:?}",
+                    args_summary,
+                    kwargs_summary,
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+            let (call_depth_guard, call_depth) = CallInternalDepthGuard::enter();
+            let _call_depth_guard = call_depth_guard;
+            let caller_depth = self.frames.len();
+            let hard_limit = self
+                .host
+                .env_var("PYRS_DEBUG_CALL_DEPTH_HARD_LIMIT")
+                .and_then(|value| value.parse::<usize>().ok())
+                .filter(|limit| *limit > 0)
+                .unwrap_or_else(|| self.effective_recursion_limit() as usize * 4);
+            if env_var_present_cached("PYRS_TRACE_CALL_DEPTH")
+                && call_depth >= hard_limit.saturating_sub(16)
+            {
+                self.trace_internal_call_depth(
+                    call_depth,
+                    hard_limit,
+                    &callable,
+                    args.len(),
+                    kwargs.len(),
+                );
+            }
+            if call_depth > hard_limit {
+                return Err(self.recursion_limit_error());
+            }
+            self.ensure_can_push_python_frame()?;
+            let (caller_ip, caller_active_exception_fingerprint) = self
+                .frames
+                .last()
+                .map(|frame| {
+                    (
+                        frame.ip,
+                        Self::active_exception_fingerprint(frame.active_exception.as_ref()),
+                    )
+                })
+                .unwrap_or((0, None));
+            let trace_class_call = env_var_present_cached("PYRS_TRACE_CLASS_CALL_RUNTIME");
+            let callable_was_class = matches!(&callable, Value::Class(_));
+            let trace_callable_repr =
+                (trace_class_call && callable_was_class).then(|| format_repr(&callable));
+            let mut callable = callable;
+            let mut args = args;
+            let mut kwargs = kwargs;
+            let needs_run = loop {
+                match callable {
+                    Value::Function(func) => {
+                        break self.dispatch_internal_function_call(func, args, kwargs)?;
                     }
-                    InternalCallDispatch::NeedsRun(needs_run) => break needs_run,
-                    InternalCallDispatch::Return(outcome) => return Ok(outcome),
-                },
-                Value::Builtin(builtin) => {
-                    return match self.call_builtin_with_keywords(builtin, args, kwargs) {
-                        Ok(result) => {
-                            if self.caller_exception_handled(caller_depth, caller_ip) {
-                                Ok(InternalCallOutcome::CallerExceptionHandled)
-                            } else {
-                                Ok(InternalCallOutcome::Value(result))
-                            }
-                        }
-                        Err(err) => {
-                            if self.caller_exception_handled(caller_depth, caller_ip) {
-                                Ok(InternalCallOutcome::CallerExceptionHandled)
-                            } else {
-                                Err(err)
-                            }
-                        }
-                    };
-                }
-                Value::Instance(instance) => {
-                    match self.dispatch_internal_instance_call(instance, args, kwargs)? {
+                    Value::BoundMethod(method) => match self.dispatch_internal_bound_method_call(
+                        method,
+                        args,
+                        kwargs,
+                        caller_depth,
+                        caller_ip,
+                    )? {
                         InternalCallDispatch::TailCall {
                             callable: next_callable,
                             args: next_args,
@@ -6789,53 +6779,88 @@ impl Vm {
                         }
                         InternalCallDispatch::NeedsRun(needs_run) => break needs_run,
                         InternalCallDispatch::Return(outcome) => return Ok(outcome),
+                    },
+                    Value::Builtin(builtin) => {
+                        return match self.call_builtin_with_keywords(builtin, args, kwargs) {
+                            Ok(result) => {
+                                if self.caller_exception_handled(caller_depth, caller_ip) {
+                                    Ok(InternalCallOutcome::CallerExceptionHandled)
+                                } else {
+                                    Ok(InternalCallOutcome::Value(result))
+                                }
+                            }
+                            Err(err) => {
+                                if self.caller_exception_handled(caller_depth, caller_ip) {
+                                    Ok(InternalCallOutcome::CallerExceptionHandled)
+                                } else {
+                                    Err(err)
+                                }
+                            }
+                        };
+                    }
+                    Value::Instance(instance) => {
+                        match self.dispatch_internal_instance_call(instance, args, kwargs)? {
+                            InternalCallDispatch::TailCall {
+                                callable: next_callable,
+                                args: next_args,
+                                kwargs: next_kwargs,
+                            } => {
+                                callable = next_callable;
+                                args = next_args;
+                                kwargs = next_kwargs;
+                            }
+                            InternalCallDispatch::NeedsRun(needs_run) => break needs_run,
+                            InternalCallDispatch::Return(outcome) => return Ok(outcome),
+                        }
+                    }
+                    Value::Class(class) => match self.dispatch_internal_class_call(
+                        class,
+                        args,
+                        kwargs,
+                        trace_class_call,
+                    )? {
+                        InternalCallDispatch::TailCall {
+                            callable: next_callable,
+                            args: next_args,
+                            kwargs: next_kwargs,
+                        } => {
+                            callable = next_callable;
+                            args = next_args;
+                            kwargs = next_kwargs;
+                        }
+                        InternalCallDispatch::NeedsRun(needs_run) => break needs_run,
+                        InternalCallDispatch::Return(outcome) => return Ok(outcome),
+                    },
+                    Value::ExceptionType(name) => {
+                        let value = self.instantiate_exception_type(
+                            &name,
+                            &args,
+                            &kwargs.cloned_normalized_map(),
+                        )?;
+                        return Ok(InternalCallOutcome::Value(value));
+                    }
+                    other => {
+                        self.report_non_function_internal_call(&other, &args, &kwargs);
+                        return Err(RuntimeError::type_error("attempted to call non-function"));
                     }
                 }
-                Value::Class(class) => match self.dispatch_internal_class_call(
-                    class,
-                    args,
-                    kwargs,
-                    trace_class_call,
-                )? {
-                    InternalCallDispatch::TailCall {
-                        callable: next_callable,
-                        args: next_args,
-                        kwargs: next_kwargs,
-                    } => {
-                        callable = next_callable;
-                        args = next_args;
-                        kwargs = next_kwargs;
-                    }
-                    InternalCallDispatch::NeedsRun(needs_run) => break needs_run,
-                    InternalCallDispatch::Return(outcome) => return Ok(outcome),
-                },
-                Value::ExceptionType(name) => {
-                    let value = self.instantiate_exception_type(
-                        &name,
-                        &args,
-                        &kwargs.cloned_normalized_map(),
-                    )?;
-                    return Ok(InternalCallOutcome::Value(value));
-                }
-                other => {
-                    self.report_non_function_internal_call(&other, &args, &kwargs);
-                    return Err(RuntimeError::type_error("attempted to call non-function"));
-                }
-            }
-        };
+            };
 
-        if !needs_run {
-            let value = self.pop_value()?;
-            return Ok(InternalCallOutcome::Value(value));
-        }
-        self.finish_internal_call_after_run(
-            caller_depth,
-            caller_ip,
-            caller_active_exception_fingerprint,
-            trace_class_call,
-            callable_was_class,
-            &trace_callable_repr,
-        )
+            if !needs_run {
+                let value = self.pop_value()?;
+                return Ok(InternalCallOutcome::Value(value));
+            }
+            self.finish_internal_call_after_run(
+                caller_depth,
+                caller_ip,
+                caller_active_exception_fingerprint,
+                trace_class_call,
+                callable_was_class,
+                &trace_callable_repr,
+            )
+        })();
+        self.pop_internal_caller_frame_if_needed(pushed_internal_caller);
+        outcome
     }
 
     pub(super) fn call_internal_preserving_caller(

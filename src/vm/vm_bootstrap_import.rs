@@ -9879,6 +9879,10 @@ class BufferedIncrementalDecoder(IncrementalDecoder):
         }
     }
 
+    // Raw loader entry point used by the import subsystem. This may queue
+    // module execution and return an initializing placeholder; callers that
+    // need CPython-style synchronous import semantics must use
+    // `import_module_object`.
     pub(super) fn load_module(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
         if self.host.env_var_os("PYRS_TRACE_MODULE_LOAD").is_some() {
             eprintln!("[module-load] {name}");
