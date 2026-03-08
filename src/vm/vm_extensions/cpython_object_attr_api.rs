@@ -196,9 +196,13 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                 // (e.g. module attrs like numpy.dot) stay authoritative.
                 let is_generic_getattro = tp_getattro == PyObject_GetAttr as *mut c_void
                     || tp_getattro == PyObject_GenericGetAttr as *mut c_void;
-                // For mapped runtime values, route through pyrs generic getattr so descriptor
-                // protocol semantics on runtime objects stay authoritative.
-                if is_generic_getattro && context.cpython_value_from_ptr(object).is_some() {
+                // Only compat objects owned by this runtime should bypass generic tp_getattro.
+                // External host objects must keep CPython's generic attribute binding so bound
+                // methods like `_decimal.ContextManager.__enter__` materialize correctly.
+                if is_generic_getattro
+                    && is_owned
+                    && context.cpython_value_from_ptr(object).is_some()
+                {
                     return None;
                 }
                 if trace_getattr_slots {
@@ -785,11 +789,14 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                 || tp_getattro == PyObject_GetAttr as *mut c_void
                 || tp_getattro == PyObject_GenericGetAttr as *mut c_void
             {
-                // Preserve descriptor/binding semantics for mapped runtime values.
-                if context.cpython_value_from_ptr(object).is_some() {
+                // Compat objects owned by this runtime should still resolve through pyrs
+                // attribute machinery. External objects using generic getattr should stay on
+                // the C-API tp_dict path so descriptor binding remains CPython-shaped.
+                if is_owned && context.cpython_value_from_ptr(object).is_some() {
                     return None;
                 }
-                // For unmapped foreign objects, best-effort raw tp_dict fallback.
+                // Generic external-object lookup runs through tp_dict/MRO resolution, including
+                // descriptor binding via tp_descr_get when present.
                 if let Some(attr_name) = attr_name.as_ref()
                     && let Some(result) = context.lookup_type_attr_via_tp_dict(object, attr_name)
                 {

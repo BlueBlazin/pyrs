@@ -595,6 +595,14 @@ impl Vm {
         method_name: &str,
     ) -> Result<Option<Value>, RuntimeError> {
         let trace = self.trace_flags.load_special;
+        if Self::cpython_proxy_raw_ptr_from_value(receiver).is_some()
+            && let Some(method) = self.load_cpython_proxy_attr_for_value(receiver, method_name)
+        {
+            if trace && method_name == "__exit__" {
+                eprintln!("[load-special] proxy attr preferred");
+            }
+            return Ok(Some(method));
+        }
         if trace && method_name == "__exit__" {
             eprintln!(
                 "[load-special] start receiver_type={}",
@@ -612,14 +620,6 @@ impl Vm {
                     return Ok(Some(self.alloc_native_bound_method(kind, view.clone())));
                 }
             }
-            if Self::cpython_proxy_raw_ptr_from_value(receiver).is_some()
-                && let Some(method) = self.load_cpython_proxy_attr_for_value(receiver, method_name)
-            {
-                if trace && method_name == "__exit__" {
-                    eprintln!("[load-special] proxy attr hit (no class)");
-                }
-                return Ok(Some(method));
-            }
             if trace && method_name == "__exit__" {
                 eprintln!("[load-special] no class");
             }
@@ -635,14 +635,6 @@ impl Vm {
                 if let Some(kind) = method_kind {
                     return Ok(Some(self.alloc_native_bound_method(kind, view.clone())));
                 }
-            }
-            if Self::cpython_proxy_raw_ptr_from_value(receiver).is_some()
-                && let Some(method) = self.load_cpython_proxy_attr_for_value(receiver, method_name)
-            {
-                if trace && method_name == "__exit__" {
-                    eprintln!("[load-special] proxy attr hit");
-                }
-                return Ok(Some(method));
             }
             if trace && method_name == "__exit__" {
                 eprintln!("[load-special] miss");

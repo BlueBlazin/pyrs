@@ -17436,12 +17436,26 @@ fn executes_atexit_register_unregister_run_and_clear() {
 
 #[test]
 fn executes_decimal_context_helpers() {
-    let source = "import decimal\nctx = decimal.getcontext()\ndecimal.setcontext(ctx)\nwith decimal.localcontext() as ctx2:\n    same = (ctx2 is decimal.getcontext())\nok = same\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    run_with_large_stack("executes_decimal_context_helpers", || {
+        let source = "import decimal\nctx = decimal.getcontext()\ndecimal.setcontext(ctx)\nwith decimal.localcontext() as ctx2:\n    same = (ctx2 is decimal.getcontext())\nok = same\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn executes_decimal_context_manager_dunder_enter_and_exit() {
+    run_with_large_stack("executes_decimal_context_manager_dunder_enter_and_exit", || {
+        let source = "import decimal\nmgr = decimal.localcontext()\nenter = mgr.__enter__\nexit = mgr.__exit__\nctx = enter()\nsame = (ctx is decimal.getcontext())\nexit(None, None, None)\nok = callable(enter) and callable(exit) and same\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
