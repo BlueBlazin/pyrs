@@ -1037,6 +1037,116 @@ FrozenImporter.exec_module = staticmethod(_FrozenImporter_exec_module)
         )
     }
 
+    pub(super) fn install_frozen_importlib_modulespec_helpers(
+        &mut self,
+    ) -> Result<(), RuntimeError> {
+        let Some(module) = self.modules.get("_frozen_importlib").cloned() else {
+            return Ok(());
+        };
+        let has_modulespec_methods = if let Object::Module(module_data) = &*module.kind() {
+            matches!(
+                module_data.globals.get("ModuleSpec"),
+                Some(Value::Class(class))
+                    if matches!(
+                        &*class.kind(),
+                        Object::Class(class_data)
+                            if class_data.attrs.contains_key("__init__")
+                                && class_data.attrs.contains_key("__repr__")
+                                && class_data.attrs.contains_key("__eq__")
+                                && class_data.attrs.contains_key("cached")
+                                && class_data.attrs.contains_key("parent")
+                                && class_data.attrs.contains_key("has_location")
+                    )
+            )
+        } else {
+            false
+        };
+        if has_modulespec_methods {
+            return Ok(());
+        }
+        if let Some(external) = self.modules.get("_frozen_importlib_external").cloned()
+            && let Object::Module(module_data) = &mut *module.kind_mut()
+        {
+            module_data
+                .globals
+                .entry("_bootstrap_external".to_string())
+                .or_insert(Value::Module(external));
+        }
+        let source = r#"
+def _ModuleSpec_init(self, name, loader, *, origin=None, loader_state=None, is_package=None):
+    self.name = name
+    self.loader = loader
+    self.origin = origin
+    self.loader_state = loader_state
+    self.submodule_search_locations = [] if is_package else None
+    self._uninitialized_submodules = []
+    self._set_fileattr = False
+    self._cached = None
+
+ModuleSpec.__init__ = _ModuleSpec_init
+
+def _ModuleSpec_repr(self):
+    args = [f'name={self.name!r}', f'loader={self.loader!r}']
+    if self.origin is not None:
+        args.append(f'origin={self.origin!r}')
+    if self.submodule_search_locations is not None:
+        args.append(f'submodule_search_locations={self.submodule_search_locations}')
+    return f"{self.__class__.__name__}({', '.join(args)})"
+
+ModuleSpec.__repr__ = _ModuleSpec_repr
+
+def _ModuleSpec_eq(self, other):
+    smsl = self.submodule_search_locations
+    try:
+        return (
+            self.name == other.name
+            and self.loader == other.loader
+            and self.origin == other.origin
+            and smsl == other.submodule_search_locations
+            and self.cached == other.cached
+            and self.has_location == other.has_location
+        )
+    except AttributeError:
+        return NotImplemented
+
+ModuleSpec.__eq__ = _ModuleSpec_eq
+
+def _ModuleSpec_get_cached(self):
+    if self._cached is None:
+        if self.origin is not None and self._set_fileattr:
+            if _bootstrap_external is None:
+                raise NotImplementedError
+            self._cached = _bootstrap_external._get_cached(self.origin)
+    return self._cached
+
+def _ModuleSpec_set_cached(self, cached):
+    self._cached = cached
+
+ModuleSpec.cached = property(_ModuleSpec_get_cached, _ModuleSpec_set_cached)
+
+def _ModuleSpec_get_parent(self):
+    if self.submodule_search_locations is None:
+        return self.name.rpartition('.')[0]
+    return self.name
+
+ModuleSpec.parent = property(_ModuleSpec_get_parent)
+
+def _ModuleSpec_get_has_location(self):
+    return self._set_fileattr
+
+def _ModuleSpec_set_has_location(self, value):
+    self._set_fileattr = bool(value)
+
+ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set_has_location)
+"#;
+        self.execute_source_module_from_text(
+            &module,
+            "_frozen_importlib",
+            "<bootstrap _frozen_importlib modulespec>",
+            source.to_string(),
+        )
+    }
+
     pub(super) fn install_frozen_module_loader_state(
         &mut self,
         module_name: &str,
@@ -11868,6 +11978,16 @@ FrozenImporter.exec_module = staticmethod(_FrozenImporter_exec_module)
             instance_data
                 .attrs
                 .insert("loader_state".to_string(), Value::None);
+            instance_data.attrs.insert(
+                "_uninitialized_submodules".to_string(),
+                self.heap.alloc_list(Vec::new()),
+            );
+            instance_data
+                .attrs
+                .insert("_set_fileattr".to_string(), Value::Bool(origin.is_some()));
+            instance_data
+                .attrs
+                .insert("_cached".to_string(), cached_value.clone());
             instance_data
                 .attrs
                 .insert("parent".to_string(), Value::Str(parent));
@@ -11903,6 +12023,13 @@ FrozenImporter.exec_module = staticmethod(_FrozenImporter_exec_module)
             }
             Value::Instance(spec_obj) => {
                 if let Object::Instance(instance_data) = &mut *spec_obj.kind_mut() {
+                    if field == "has_location" {
+                        instance_data
+                            .attrs
+                            .insert("_set_fileattr".to_string(), value.clone());
+                    } else if field == "cached" {
+                        instance_data.attrs.insert("_cached".to_string(), value.clone());
+                    }
                     instance_data.attrs.insert(field.to_string(), value);
                 }
             }

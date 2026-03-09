@@ -19046,6 +19046,22 @@ fn os_path_aliases_to_posixpath_when_cpython_lib_path_is_added() {
 }
 
 #[test]
+fn importlib_modulespec_constructor_exposes_cpython_core_fields() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-importlib-modulespec-ctor", move || {
+        let source = "import importlib.machinery as machinery\nclass Loader:\n    pass\nloader = Loader()\nspec = machinery.ModuleSpec('pkg.mod', loader, origin='x.py', is_package=False)\nspec.has_location = True\nspec.cached = 'x.pyc'\nok = (spec.loader is loader and spec.name == 'pkg.mod' and spec.origin == 'x.py' and spec.parent == 'pkg' and spec.submodule_search_locations is None and spec.has_location and spec.cached == 'x.pyc')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn frozen_module_repr_uses_spec_origin() {
     let Some(lib_path) = cpython_lib_path() else {
         return;

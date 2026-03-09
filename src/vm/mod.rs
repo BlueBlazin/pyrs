@@ -1642,6 +1642,8 @@ impl Vm {
             .expect("install _frozen_importlib lock helpers");
         vm.install_frozen_importlib_importer_helpers()
             .expect("install _frozen_importlib importer helpers");
+        vm.install_frozen_importlib_modulespec_helpers()
+            .expect("install _frozen_importlib ModuleSpec helpers");
         vm.normalize_bootstrap_module_classes();
         vm.install_builtins_module();
         vm.refresh_warnings_fallback_defaults();

@@ -137,6 +137,7 @@ Resolved locally since this snapshot and awaiting the next full benchmark rerun:
 - builtin `slice` now exposes `start` / `stop` / `step` plus bound and unbound `indices()`, which cleared `Path.parents` slicing in `test.test_pathlib`
 - builtin `os.path.splitroot()` is now exposed with CPython-compatible POSIX results, which cleared `Path.with_name()` / `Path.with_segments()` fallback failures in `test.test_pathlib`
 - when the CPython stdlib path is active, `os.path` now aliases the real platform path module (`posixpath` on POSIX), so `pathlib.Path.parser` matches CPython and Windows-only `pathlib` cases stop running on POSIX
+- bootstrap `_frozen_importlib.ModuleSpec` now has the CPython constructor/property surface needed by fresh `importlib` bootstrap, so the source-importlib lane no longer dies on placeholder-spec objects before hitting real loader behavior
 - `from email import policy` no longer leaks a partially initialized `email.policy` module during bootstrap import
 - `test.test_email.test_pickleable` no longer overflows while materializing address headers (`header_store_parse` pyc name layout and `Message.__setitem__` operator dispatch fixed locally)
 
