@@ -8733,7 +8733,42 @@ try:
     "abc".index("z")
 except ValueError:
     raised = True
-ok = ("abc".index("b") == 1 and "abc".find("b") == 1 and str.index("abc", "b") == 1 and raised)
+ok = (
+    "abc".index("b") == 1
+    and "abc".find("b") == 1
+    and str.find("abc", "b") == 1
+    and str.index("abc", "b") == 1
+    and raised
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn str_rindex_matches_rfind_and_raises_value_error_when_missing() {
+    let source = r#"missing_raised = False
+empty_slice_raised = False
+try:
+    "abc".rindex("z")
+except ValueError:
+    missing_raised = True
+try:
+    "abc".rindex("a", 2, 1)
+except ValueError:
+    empty_slice_raised = True
+ok = (
+    "abcabc".rindex("b") == 4
+    and "abcabc".rfind("b") == 4
+    and str.rfind("abcabc", "b") == 4
+    and str.rindex("abcabc", "b") == 4
+    and "abc".rindex("") == 3
+    and missing_raised
+    and empty_slice_raised
+)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -19255,6 +19290,26 @@ fn builtin_relative_import_without_fromlist_returns_resolved_module() {
 #[test]
 fn builtin_relative_import_malicious_dotted_name_preserves_cpython_keyerror() {
     let source = "import builtins\nimport sys\nloooong = ''.ljust(0x23000, 'b')\nname = f'a.{loooong}.c'\nsys.modules[name] = {}\nok = False\ntry:\n    builtins.__import__(f'{loooong}.c', {'__package__': 'a'}, level=1)\nexcept KeyError as exc:\n    text = str(exc)\n    ok = text.startswith('\"\\'a.b') and text.endswith(\"not in sys.modules as expected\\\"\")\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn builtin_relative_import_without_globals_raises_keyerror() {
+    let source = "import builtins\ntext = ''\ntry:\n    builtins.__import__('sys', level=1)\nexcept KeyError as exc:\n    text = str(exc)\nok = (\"'__name__' not in globals\" in text)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn builtin_relative_import_empty_package_raises_importerror() {
+    let source = "import builtins\ntext = ''\ntry:\n    builtins.__import__('sys', {'__package__': '', '__spec__': None}, level=1)\nexcept ImportError as exc:\n    text = str(exc)\nok = (text == 'attempted relative import with no known parent package')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

@@ -634,6 +634,7 @@ pub enum NativeMethodKind {
     StrTranslate,
     StrIndex,
     StrRFind,
+    StrRIndex,
     StrLStrip,
     StrRStrip,
     StrStrip,
@@ -12033,6 +12034,7 @@ pub fn format_value(value: &Value) -> String {
                         }
                         NativeMethodKind::StrIndex => "<bound method str.index>".to_string(),
                         NativeMethodKind::StrRFind => "<bound method str.rfind>".to_string(),
+                        NativeMethodKind::StrRIndex => "<bound method str.rindex>".to_string(),
                         NativeMethodKind::StrLStrip => "<bound method str.lstrip>".to_string(),
                         NativeMethodKind::StrRStrip => "<bound method str.rstrip>".to_string(),
                         NativeMethodKind::StrStrip => "<bound method str.strip>".to_string(),

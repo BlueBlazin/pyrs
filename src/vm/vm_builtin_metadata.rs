@@ -2099,6 +2099,21 @@ impl Vm {
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::StrCount, receiver))
             }
+            "find" if builtin == BuiltinFunction::Str => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::StrFind, receiver))
+            }
             "index" if builtin == BuiltinFunction::Str => {
                 let receiver = match self
                     .heap
@@ -2113,6 +2128,36 @@ impl Vm {
                         .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::StrIndex, receiver))
+            }
+            "rfind" if builtin == BuiltinFunction::Str => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::StrRFind, receiver))
+            }
+            "rindex" if builtin == BuiltinFunction::Str => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::StrRIndex, receiver))
             }
             "startswith" if builtin == BuiltinFunction::Str => {
                 let receiver = match self
@@ -2945,6 +2990,7 @@ impl Vm {
             "translate" => NativeMethodKind::StrTranslate,
             "index" => NativeMethodKind::StrIndex,
             "rfind" => NativeMethodKind::StrRFind,
+            "rindex" => NativeMethodKind::StrRIndex,
             "lstrip" => NativeMethodKind::StrLStrip,
             "rstrip" => NativeMethodKind::StrRStrip,
             "strip" => NativeMethodKind::StrStrip,

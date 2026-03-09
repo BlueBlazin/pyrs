@@ -657,6 +657,7 @@ impl Vm {
                     | NativeMethodKind::StrFind
                     | NativeMethodKind::StrIndex
                     | NativeMethodKind::StrRFind
+                    | NativeMethodKind::StrRIndex
                     | NativeMethodKind::QueueSimpleQueuePut
                     | NativeMethodKind::QueueSimpleQueueGet
                     | NativeMethodKind::BytesDecode
@@ -5465,11 +5466,15 @@ impl Vm {
                 }
                 Ok(NativeCallResult::Value(Value::Int(count)))
             }
-            NativeMethodKind::StrFind | NativeMethodKind::StrIndex | NativeMethodKind::StrRFind => {
+            NativeMethodKind::StrFind
+            | NativeMethodKind::StrIndex
+            | NativeMethodKind::StrRFind
+            | NativeMethodKind::StrRIndex => {
                 let method_name = match kind {
                     NativeMethodKind::StrFind => "find",
                     NativeMethodKind::StrIndex => "index",
                     NativeMethodKind::StrRFind => "rfind",
+                    NativeMethodKind::StrRIndex => "rindex",
                     _ => unreachable!(),
                 };
                 if !kwargs.is_empty() {
@@ -5537,6 +5542,9 @@ impl Vm {
                 start = start.clamp(0, len);
                 end = end.clamp(0, len);
                 if end < start {
+                    if matches!(kind, NativeMethodKind::StrIndex | NativeMethodKind::StrRIndex) {
+                        return Err(RuntimeError::value_error("substring not found"));
+                    }
                     return Ok(NativeCallResult::Value(Value::Int(-1)));
                 }
                 let start_idx = start as usize;
@@ -5552,7 +5560,7 @@ impl Vm {
                 let Some(slice) = text.get(start_byte..end_byte) else {
                     return Ok(NativeCallResult::Value(Value::Int(-1)));
                 };
-                let found = if matches!(kind, NativeMethodKind::StrRFind) {
+                let found = if matches!(kind, NativeMethodKind::StrRFind | NativeMethodKind::StrRIndex) {
                     slice.rfind(&needle)
                 } else {
                     slice.find(&needle)
@@ -5563,7 +5571,9 @@ impl Vm {
                         text[..absolute_byte].chars().count() as i64
                     })
                     .unwrap_or(-1);
-                if matches!(kind, NativeMethodKind::StrIndex) && found < 0 {
+                if matches!(kind, NativeMethodKind::StrIndex | NativeMethodKind::StrRIndex)
+                    && found < 0
+                {
                     return Err(RuntimeError::value_error("substring not found"));
                 }
                 Ok(NativeCallResult::Value(Value::Int(found)))

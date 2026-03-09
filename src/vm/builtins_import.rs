@@ -177,7 +177,7 @@ impl Vm {
             let package = match self.import_globals_item(globals, "__name__") {
                 Some(Value::Str(name)) => name,
                 Some(_) => return Err(RuntimeError::new("__name__ must be a string")),
-                None => return Err(RuntimeError::new("'__name__' not in globals")),
+                None => return Err(RuntimeError::key_error("'__name__' not in globals")),
             };
             if self.import_globals_contains(globals, "__path__") {
                 package
@@ -188,6 +188,11 @@ impl Vm {
                     .unwrap_or_default()
             }
         };
+        if package.is_empty() {
+            return Err(RuntimeError::new(
+                "attempted relative import with no known parent package",
+            ));
+        }
 
         self.resolve_import_name_from_package(&package, requested, level)
     }
@@ -532,9 +537,18 @@ impl Vm {
         } else {
             Value::None
         };
+        let relative_globals = if level > 0 {
+            Some(if matches!(globals_value, Value::None) {
+                self.heap.alloc_dict(Vec::new())
+            } else {
+                globals_value.clone()
+            })
+        } else {
+            None
+        };
         let has_fromlist = self.fromlist_requested(&fromlist);
-        let resolved_name = if level > 0 && !matches!(globals_value, Value::None) {
-            self.resolve_import_name_from_globals(&name, &globals_value, level as usize)?
+        let resolved_name = if let Some(globals) = relative_globals.as_ref() {
+            self.resolve_import_name_from_globals(&name, globals, level as usize)?
         } else {
             self.resolve_import_name(&name, level as usize)?
         };
@@ -542,15 +556,13 @@ impl Vm {
             None
         } else if level > 0 {
             let requested_head = name.split('.').next().unwrap_or_default();
-            Some(if !matches!(globals_value, Value::None) {
-                self.resolve_import_name_from_globals(
-                    requested_head,
-                    &globals_value,
-                    level as usize,
-                )?
-            } else {
-                self.resolve_import_name(requested_head, level as usize)?
-            })
+            Some(self.resolve_import_name_from_globals(
+                requested_head,
+                relative_globals
+                    .as_ref()
+                    .expect("relative globals must exist for level > 0"),
+                level as usize,
+            )?)
         } else {
             Some(name.split('.').next().unwrap_or(name.as_str()).to_string())
         };
