@@ -13163,6 +13163,32 @@ ok = run()
 }
 
 #[test]
+fn with_statement_calls_exit_on_return() {
+    let source = r#"events = []
+
+class C:
+    def __enter__(self):
+        events.append("enter")
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        events.append("exit")
+        return False
+
+def f():
+    with C():
+        return 1
+
+result = f()
+ok = (result == 1 and events == ["enter", "exit"])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn namedexpr_in_method_is_local_and_does_not_leak_to_module() {
     let source = r#"class C:
     def method(self):
@@ -15044,6 +15070,59 @@ ok = (
     and (wr == weakref.ref(int))
     and (wk[int] == "ok")
 )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn nested_function_without_freevars_does_not_pin_unrelated_locals() {
+    let source = r#"import gc
+import weakref
+
+class Box:
+    pass
+
+def outer():
+    box = Box()
+    wr = weakref.ref(box)
+    def callback():
+        return 1
+    del box
+    gc.collect()
+    return wr() is None and callback() == 1
+
+ok = outer()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn weakref_callback_allows_collection_for_nested_callback() {
+    let source = r#"import gc
+import weakref
+
+class Box:
+    pass
+
+def make_result():
+    events = []
+    box = Box()
+    def callback(ref):
+        events.append("cb")
+    wr = weakref.ref(box, callback)
+    del box
+    gc.collect()
+    return wr() is None and events == ["cb"]
+
+ok = make_result()
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -18606,6 +18685,32 @@ fn executes_frozen_importlib_spec_from_loader_helper() {
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_frozen_importlib_module_lock_helpers() {
+    let source = "import _frozen_importlib as frozen\nimport gc\nimport weakref\nlock = frozen._get_module_lock('demo')\nwr = weakref.ref(lock)\nacquired_once = lock.acquire()\nacquired_twice = lock.acquire()\nlocked_before_release = lock.locked()\nlock.release()\nlocked_after_one_release = lock.locked()\nlock.release()\nlocked_after_two_releases = lock.locked()\nhas_helpers = (hasattr(frozen, '_ModuleLock') and hasattr(frozen, '_DeadlockError') and hasattr(frozen, '_module_locks') and hasattr(frozen, '_blocking_on') and hasattr(frozen, '_get_module_lock') and hasattr(frozen, '_lock_unlock_module'))\ndel lock\ngc.collect()\ncollected = ('demo' not in frozen._module_locks and wr() is None)\nok = (has_helpers and acquired_once and acquired_twice and locked_before_release and locked_after_one_release and (not locked_after_two_releases) and collected)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn imports_cpython_importlib_test_locks_with_frozen_module_lock_support() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-importlib-test-locks", move || {
+        let source = "import test.test_importlib.test_locks\nok = hasattr(test.test_importlib.test_locks, 'LOCK_TYPES') and hasattr(test.test_importlib.test_locks, 'DEADLOCK_ERRORS')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]

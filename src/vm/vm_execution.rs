@@ -660,6 +660,45 @@ impl Vm {
         }
     }
 
+    fn current_frame_annotation_locals(&self) -> Option<HashMap<String, Value>> {
+        self.frames.last().and_then(|frame| {
+            if frame.is_module && !frame.return_class {
+                return None;
+            }
+            let mut map = frame.locals.clone();
+            if let Some(fallback_locals) = &frame.locals_fallback {
+                for (name, value) in fallback_locals {
+                    map.entry(name.clone()).or_insert_with(|| value.clone());
+                }
+            }
+            for (idx, slot) in frame.fast_locals.iter().enumerate() {
+                if let Some(value) = slot
+                    && let Some(name) = frame.code.names.get(idx)
+                {
+                    map.insert(name.clone(), value.clone());
+                }
+            }
+            for (idx, name) in frame.code.cellvars.iter().enumerate() {
+                if !map.contains_key(name)
+                    && let Some(cell) = frame.cells.get(idx)
+                    && let Object::Cell(cell_data) = &*cell.kind()
+                {
+                    map.insert(name.clone(), cell_data.value.clone().unwrap_or(Value::None));
+                }
+            }
+            let cell_offset = frame.code.cellvars.len();
+            for (idx, name) in frame.code.freevars.iter().enumerate() {
+                if !map.contains_key(name)
+                    && let Some(cell) = frame.cells.get(cell_offset + idx)
+                    && let Object::Cell(cell_data) = &*cell.kind()
+                {
+                    map.insert(name.clone(), cell_data.value.clone().unwrap_or(Value::None));
+                }
+            }
+            if map.is_empty() { None } else { Some(map) }
+        })
+    }
+
     fn import_star_entries_from_module(
         &mut self,
         module_obj: &ObjRef,
@@ -5211,49 +5250,6 @@ impl Vm {
                         frame.return_class,
                     )
                 };
-                let annotation_locals = self.frames.last().and_then(|frame| {
-                    if frame.is_module && !frame.return_class {
-                        return None;
-                    } else {
-                        let mut map = frame.locals.clone();
-                        if let Some(fallback_locals) = &frame.locals_fallback {
-                            for (name, value) in fallback_locals {
-                                map.entry(name.clone()).or_insert_with(|| value.clone());
-                            }
-                        }
-                        for (idx, slot) in frame.fast_locals.iter().enumerate() {
-                            if let Some(value) = slot
-                                && let Some(name) = frame.code.names.get(idx)
-                            {
-                                map.insert(name.clone(), value.clone());
-                            }
-                        }
-                        for (idx, name) in frame.code.cellvars.iter().enumerate() {
-                            if !map.contains_key(name)
-                                && let Some(cell) = frame.cells.get(idx)
-                                && let Object::Cell(cell_data) = &*cell.kind()
-                            {
-                                map.insert(
-                                    name.clone(),
-                                    cell_data.value.clone().unwrap_or(Value::None),
-                                );
-                            }
-                        }
-                        let cell_offset = frame.code.cellvars.len();
-                        for (idx, name) in frame.code.freevars.iter().enumerate() {
-                            if !map.contains_key(name)
-                                && let Some(cell) = frame.cells.get(cell_offset + idx)
-                                && let Object::Cell(cell_data) = &*cell.kind()
-                            {
-                                map.insert(
-                                    name.clone(),
-                                    cell_data.value.clone().unwrap_or(Value::None),
-                                );
-                            }
-                        }
-                        if map.is_empty() { None } else { Some(map) }
-                    }
-                });
                 let function_qualname = self.current_frame_function_qualname(&code.name);
                 let func = FunctionObject::new(
                     code,
@@ -5272,18 +5268,6 @@ impl Vm {
                         "__qualname__".to_string(),
                         Value::Str(function_qualname),
                     )?;
-                    if let Some(annotation_locals) = annotation_locals {
-                        let entries = annotation_locals
-                            .into_iter()
-                            .map(|(name, value)| (Value::Str(name), value))
-                            .collect::<Vec<_>>();
-                        let annotation_locals_dict = self.heap.alloc_dict(entries);
-                        self.dict_set_str_key(
-                            &function_dict,
-                            "__pyrs_annotation_locals__".to_string(),
-                            annotation_locals_dict,
-                        )?;
-                    }
                 }
                 self.push_value(func_value);
             }
@@ -5672,49 +5656,6 @@ impl Vm {
                         frame.return_class,
                     )
                 };
-                let annotation_locals = self.frames.last().and_then(|frame| {
-                    if frame.is_module && !frame.return_class {
-                        return None;
-                    } else {
-                        let mut map = frame.locals.clone();
-                        if let Some(fallback_locals) = &frame.locals_fallback {
-                            for (name, value) in fallback_locals {
-                                map.entry(name.clone()).or_insert_with(|| value.clone());
-                            }
-                        }
-                        for (idx, slot) in frame.fast_locals.iter().enumerate() {
-                            if let Some(value) = slot
-                                && let Some(name) = frame.code.names.get(idx)
-                            {
-                                map.insert(name.clone(), value.clone());
-                            }
-                        }
-                        for (idx, name) in frame.code.cellvars.iter().enumerate() {
-                            if !map.contains_key(name)
-                                && let Some(cell) = frame.cells.get(idx)
-                                && let Object::Cell(cell_data) = &*cell.kind()
-                            {
-                                map.insert(
-                                    name.clone(),
-                                    cell_data.value.clone().unwrap_or(Value::None),
-                                );
-                            }
-                        }
-                        let cell_offset = frame.code.cellvars.len();
-                        for (idx, name) in frame.code.freevars.iter().enumerate() {
-                            if !map.contains_key(name)
-                                && let Some(cell) = frame.cells.get(cell_offset + idx)
-                                && let Object::Cell(cell_data) = &*cell.kind()
-                            {
-                                map.insert(
-                                    name.clone(),
-                                    cell_data.value.clone().unwrap_or(Value::None),
-                                );
-                            }
-                        }
-                        if map.is_empty() { None } else { Some(map) }
-                    }
-                });
                 let function_qualname = self.current_frame_function_qualname(&code.name);
                 let func = FunctionObject::new(
                     code,
@@ -5733,18 +5674,6 @@ impl Vm {
                         "__qualname__".to_string(),
                         Value::Str(function_qualname),
                     )?;
-                    if let Some(annotation_locals) = annotation_locals {
-                        let entries = annotation_locals
-                            .into_iter()
-                            .map(|(name, value)| (Value::Str(name), value))
-                            .collect::<Vec<_>>();
-                        let annotation_locals_dict = self.heap.alloc_dict(entries);
-                        self.dict_set_str_key(
-                            &function_dict,
-                            "__pyrs_annotation_locals__".to_string(),
-                            annotation_locals_dict,
-                        )?;
-                    }
                 }
                 self.push_value(func_value);
             }
@@ -5812,6 +5741,19 @@ impl Vm {
                         };
                         if let Object::Function(func_data) = &mut *func.kind_mut() {
                             func_data.annotations = Some(annotations);
+                        }
+                        if let Some(annotation_locals) = self.current_frame_annotation_locals() {
+                            let entries = annotation_locals
+                                .into_iter()
+                                .map(|(name, value)| (Value::Str(name), value))
+                                .collect::<Vec<_>>();
+                            let annotation_locals_dict = self.heap.alloc_dict(entries);
+                            let dict = self.ensure_function_dict(&func)?;
+                            self.dict_set_str_key(
+                                &dict,
+                                "__pyrs_annotation_locals__".to_string(),
+                                annotation_locals_dict,
+                            )?;
                         }
                     }
                     0x10 => {

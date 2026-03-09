@@ -1634,6 +1634,8 @@ impl Vm {
         vm.install_random_module();
         vm.install_stdlib_modules();
         vm.install_builtins();
+        vm.install_frozen_importlib_lock_helpers()
+            .expect("install _frozen_importlib lock helpers");
         vm.normalize_bootstrap_module_classes();
         vm.install_builtins_module();
         vm.refresh_warnings_fallback_defaults();
@@ -1910,6 +1912,61 @@ impl Vm {
                     }
                 }
             }
+        }
+    }
+
+    fn clear_dead_runtime_weakrefs(&mut self) {
+        let mut target_ids = HashSet::new();
+        for object in self.heap.snapshot_objects() {
+            let (target_id, cleared) = match &*object.kind() {
+                Object::Module(module_data) => {
+                    if !matches!(
+                        module_data.globals.get("__pyrs_weakref_ref__"),
+                        Some(Value::Bool(true))
+                    ) {
+                        continue;
+                    }
+                    let target_id = match module_data.globals.get("target_id") {
+                        Some(Value::Int(value)) if *value >= 0 => *value as u64,
+                        _ => continue,
+                    };
+                    let cleared = matches!(
+                        module_data.globals.get("__pyrs_weakref_cleared__"),
+                        Some(Value::Bool(true))
+                    );
+                    (target_id, cleared)
+                }
+                Object::Instance(instance_data) => {
+                    if !matches!(
+                        instance_data.attrs.get("__pyrs_weakref_ref__"),
+                        Some(Value::Bool(true))
+                    ) {
+                        continue;
+                    }
+                    let target_id = match instance_data.attrs.get("target_id") {
+                        Some(Value::Int(value)) if *value >= 0 => *value as u64,
+                        _ => continue,
+                    };
+                    let cleared = matches!(
+                        instance_data.attrs.get("__pyrs_weakref_cleared__"),
+                        Some(Value::Bool(true))
+                    );
+                    (target_id, cleared)
+                }
+                _ => continue,
+            };
+            if cleared {
+                continue;
+            }
+            if self.finalized_del_objects.contains(&target_id)
+                || self.cleared_weakref_objects.contains(&target_id)
+                || self.heap.find_object_by_id(target_id).is_none()
+            {
+                target_ids.insert(target_id);
+            }
+        }
+        for target_id in target_ids {
+            self.clear_runtime_weakrefs_for_target_id(target_id);
         }
     }
 
@@ -3404,6 +3461,7 @@ impl Vm {
 
     pub fn gc_collect(&mut self) -> usize {
         self.run_pending_del_finalizers(false);
+        self.clear_dead_runtime_weakrefs();
         let initial_roots = self.collect_gc_roots();
         let unreachable = self.heap.unreachable_objects(&initial_roots);
         let unreachable_count = unreachable.len();
@@ -3454,7 +3512,12 @@ impl Vm {
         } else {
             initial_roots
         };
+        let final_unreachable = self.heap.unreachable_objects(&roots);
+        for obj in &final_unreachable {
+            self.clear_runtime_weakrefs_for_target_id(obj.id());
+        }
         self.heap.collect_cycles(&roots);
+        self.clear_dead_runtime_weakrefs();
         self.gc_last_allocation_count = self.heap.total_allocations();
         self.gc_counts[0] = 0;
         self.gc_auto_check_budget = GC_AUTO_CHECK_INTERVAL;

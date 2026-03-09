@@ -5727,12 +5727,21 @@ impl Compiler {
             self.emit(Opcode::PopTop, None);
         }
 
+        self.push_finally_return_context()?;
         let setup_except = self.emit_jump(Opcode::SetupExcept);
-        for stmt in body {
-            self.compile_stmt(stmt)?;
-        }
+        let compile_result = (|| -> Result<(), CompileError> {
+            for stmt in body {
+                self.compile_stmt(stmt)?;
+            }
+            Ok(())
+        })();
+        let mut return_context = self.pop_finally_return_context()?;
+        compile_result?;
         self.emit(Opcode::PopBlock, None);
+        let normal_exit_start = self.current_ip();
+        self.patch_deferred_returns_to(&mut return_context, normal_exit_start)?;
         self.emit_with_exit(&ctx_temp)?;
+        self.emit_finally_return_epilogue(&return_context)?;
         let jump_to_end = self.emit_jump(Opcode::Jump);
 
         let handler_start = self.current_ip();

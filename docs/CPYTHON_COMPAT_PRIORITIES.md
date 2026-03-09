@@ -122,19 +122,25 @@ Why second:
 - those rows hide `10,332` discoverable cases
 - remaining failures are shared parser/import/class-subclass substrate defects
 
-Current signatures:
+Current snapshot signatures still to address:
+
+- `test.test_capi` load/import substrate gaps
+- `test.test_ctypes` load/import substrate gaps
+- `test.test_idle` configparser/string-method substrate gaps
+
+Resolved locally since this snapshot and awaiting the next full benchmark rerun:
 
 - `RuntimeError: parse error in module 'test.test_pathlib.test_pathlib' ... expected Colon`
 - `TypeError: object.__init_subclass__() takes no keyword arguments`
 - `AttributeError: module '_frozen_importlib' has no attribute '_ModuleLock'`
 
-High-value modules:
+High-value modules after this checkpoint:
 
-- `test.test_pathlib`
-- `test.test_importlib`
 - `test.test_capi`
 - `test.test_ctypes`
 - `test.test_idle`
+- `test.test_email`
+- `test.test_datetime`
 
 Closure evidence:
 

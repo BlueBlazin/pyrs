@@ -667,6 +667,221 @@ impl Vm {
         Ok(())
     }
 
+    fn execute_source_module_from_text(
+        &mut self,
+        module: &ObjRef,
+        name: &str,
+        source_filename: &str,
+        source: String,
+    ) -> Result<(), RuntimeError> {
+        self.queue_source_module_execution_from_text(module, name, source_filename, source)?;
+        let result = self.run().map(|_| ());
+        if result.is_err() {
+            self.clear_host_error_indicators();
+        }
+        result
+    }
+
+    pub(super) fn install_frozen_importlib_lock_helpers(&mut self) -> Result<(), RuntimeError> {
+        let Some(module) = self.modules.get("_frozen_importlib").cloned() else {
+            return Ok(());
+        };
+        if let Object::Module(module_data) = &*module.kind()
+            && module_data.globals.contains_key("_ModuleLock")
+        {
+            return Ok(());
+        }
+        let Some(thread_module) = self.modules.get("_thread").cloned() else {
+            return Ok(());
+        };
+        let Some(weakref_module) = self.modules.get("_weakref").cloned() else {
+            return Ok(());
+        };
+        let Some(imp_module) = self.modules.get("_imp").cloned() else {
+            return Ok(());
+        };
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data
+                .globals
+                .insert("_thread".to_string(), Value::Module(thread_module));
+            module_data
+                .globals
+                .insert("_weakref".to_string(), Value::Module(weakref_module));
+            module_data
+                .globals
+                .insert("_imp".to_string(), Value::Module(imp_module));
+        }
+        let source = r#"
+_module_locks = {}
+_blocking_on = {}
+
+class _BlockingOnManager:
+    def __init__(self, thread_id, lock):
+        self.thread_id = thread_id
+        self.lock = lock
+
+    def __enter__(self):
+        self.blocked_on = _blocking_on.setdefault(self.thread_id, [])
+        self.blocked_on.append(self.lock)
+
+    def __exit__(self, *args, **kwargs):
+        self.blocked_on.remove(self.lock)
+        if not self.blocked_on:
+            _blocking_on.pop(self.thread_id, None)
+
+
+class _DeadlockError(RuntimeError):
+    pass
+
+
+def _has_deadlocked(target_id, *, seen_ids, candidate_ids, blocking_on):
+    if target_id in candidate_ids:
+        return True
+    for tid in candidate_ids:
+        candidate_blocking_on = blocking_on.get(tid)
+        if not candidate_blocking_on:
+            continue
+        if tid in seen_ids:
+            return False
+        seen_ids.add(tid)
+        edges = [lock.owner for lock in candidate_blocking_on]
+        if _has_deadlocked(
+            target_id,
+            seen_ids=seen_ids,
+            candidate_ids=edges,
+            blocking_on=blocking_on,
+        ):
+            return True
+    return False
+
+
+class _ModuleLock:
+    def __init__(self, name):
+        self.lock = _thread.RLock()
+        self.wakeup = _thread.allocate_lock()
+        self.name = name
+        self.owner = None
+        self.count = []
+        self.waiters = []
+
+    def has_deadlock(self):
+        return _has_deadlocked(
+            target_id=_thread.get_ident(),
+            seen_ids=set(),
+            candidate_ids=[self.owner],
+            blocking_on=_blocking_on,
+        )
+
+    def acquire(self):
+        tid = _thread.get_ident()
+        with _BlockingOnManager(tid, self):
+            while True:
+                with self.lock:
+                    if self.count == [] or self.owner == tid:
+                        self.owner = tid
+                        self.count.append(True)
+                        return True
+                    if self.has_deadlock():
+                        raise _DeadlockError(f'deadlock detected by {self!r}')
+                    if self.wakeup.acquire(False):
+                        self.waiters.append(None)
+                self.wakeup.acquire()
+                self.wakeup.release()
+
+    def release(self):
+        tid = _thread.get_ident()
+        with self.lock:
+            if self.owner != tid:
+                raise RuntimeError('cannot release un-acquired lock')
+            self.count.pop()
+            if not self.count:
+                self.owner = None
+                if self.waiters:
+                    self.waiters.pop()
+                    self.wakeup.release()
+
+    def locked(self):
+        return bool(self.count)
+
+    def __repr__(self):
+        return f'_ModuleLock({self.name!r}) at {id(self)}'
+
+
+class _DummyModuleLock:
+    def __init__(self, name):
+        self.name = name
+        self.count = 0
+
+    def acquire(self):
+        self.count += 1
+        return True
+
+    def release(self):
+        if self.count == 0:
+            raise RuntimeError('cannot release un-acquired lock')
+        self.count -= 1
+
+    def __repr__(self):
+        return f'_DummyModuleLock({self.name!r}) at {id(self)}'
+
+
+class _ModuleLockManager:
+    def __init__(self, name):
+        self._name = name
+        self._lock = None
+
+    def __enter__(self):
+        self._lock = _get_module_lock(self._name)
+        self._lock.acquire()
+
+    def __exit__(self, *args, **kwargs):
+        self._lock.release()
+
+
+def _get_module_lock(name):
+    _imp.acquire_lock()
+    try:
+        try:
+            lock = _module_locks[name]()
+        except KeyError:
+            lock = None
+        if lock is None:
+            if _thread is None:
+                lock = _DummyModuleLock(name)
+            else:
+                lock = _ModuleLock(name)
+
+            def cb(ref, name=name):
+                _imp.acquire_lock()
+                try:
+                    if _module_locks.get(name) is ref:
+                        del _module_locks[name]
+                finally:
+                    _imp.release_lock()
+
+            _module_locks[name] = _weakref.ref(lock, cb)
+    finally:
+        _imp.release_lock()
+    return lock
+
+
+def _lock_unlock_module(name):
+    lock = _get_module_lock(name)
+    try:
+        lock.acquire()
+    except _DeadlockError:
+        pass
+    else:
+        lock.release()
+"#;
+        self.execute_source_module_from_text(
+            &module,
+            "_frozen_importlib",
+            "<bootstrap _frozen_importlib locks>",
+            source.to_string(),
+        )
+    }
+
     pub(super) fn set_module_class_bases(
         &mut self,
         module_name: &str,
