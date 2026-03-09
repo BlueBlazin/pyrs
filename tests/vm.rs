@@ -5006,6 +5006,7 @@ fn socket_import_prefers_cpython_pure_module_when_lib_path_is_added() {
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
             let source = r#"import socket
+import _socket
 origin = getattr(socket, '__file__', '')
 norm = origin.replace("\\", "/")
 timeout_before = socket.getdefaulttimeout()
@@ -5018,6 +5019,12 @@ ok = (
     and isinstance(socket.AF_INET, int)
     and callable(socket.socket)
     and timeout_after == 1.25
+    and socket.IPPROTO_TCP == _socket.IPPROTO_TCP
+    and socket.IPPROTO_UDP == _socket.IPPROTO_UDP
+    and socket.TCP_NODELAY == _socket.TCP_NODELAY
+    and socket.SO_REUSEADDR == _socket.SO_REUSEADDR
+    and socket.SOCK_RDM == _socket.SOCK_RDM
+    and socket.SOCK_SEQPACKET == _socket.SOCK_SEQPACKET
 )
 "#;
             let module = parser::parse_module(source).expect("parse should succeed");
@@ -14112,6 +14119,26 @@ fn executes_asyncio_run_with_pure_cpython_lib_path() {
 }
 
 #[test]
+fn imports_cpython_asyncio_test_utils_with_socket_protocol_constants() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping asyncio test-utils import probe (CPython Lib path not available)");
+        return;
+    };
+    run_with_large_stack(
+        "imports_cpython_asyncio_test_utils_with_socket_protocol_constants",
+        move || {
+            let source = "import sys\nsys.modules.pop('socket', None)\nfrom test.test_asyncio import utils\nok = callable(utils.mock_nonblocking_socket)\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib_path.clone());
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        },
+    );
+}
+
+#[test]
 fn sys_asyncgen_hooks_roundtrip_supports_asyncio_contract() {
     let source = "import sys\norig = sys.get_asyncgen_hooks()\ndef firstiter(agen):\n    return None\ndef finalizer(agen):\n    return None\nsys.set_asyncgen_hooks(firstiter=firstiter, finalizer=finalizer)\ncurrent = sys.get_asyncgen_hooks()\nsys.set_asyncgen_hooks(*orig)\nrestored = sys.get_asyncgen_hooks()\nok = (isinstance(orig, tuple) and len(orig) == 2 and current[0] is firstiter and current[1] is finalizer and restored == orig)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -18624,7 +18651,7 @@ fn socket_byteorder_and_timeout_helpers_work() {
 
 #[test]
 fn socket_hostname_addrinfo_and_fromfd_smoke() {
-    let source = "import _socket\nimport socket\nname = _socket.gethostname()\nhost = _socket.gethostbyname('127.0.0.1')\ninfo = _socket.getaddrinfo('127.0.0.1', 80)\nok = (isinstance(name, str) and len(name) >= 1 and host == '127.0.0.1' and len(info) >= 1 and hasattr(socket, 'fromfd') and callable(socket.fromfd))\n";
+    let source = "import _socket\nimport socket\nname = _socket.gethostname()\nhost = _socket.gethostbyname('127.0.0.1')\ninfo = _socket.getaddrinfo('127.0.0.1', 80)\nok = (\n    isinstance(name, str)\n    and len(name) >= 1\n    and host == '127.0.0.1'\n    and len(info) >= 1\n    and hasattr(socket, 'fromfd')\n    and callable(socket.fromfd)\n    and socket.IPPROTO_TCP == _socket.IPPROTO_TCP\n    and socket.IPPROTO_UDP == _socket.IPPROTO_UDP\n    and socket.TCP_NODELAY == _socket.TCP_NODELAY\n    and socket.SO_REUSEADDR == _socket.SO_REUSEADDR\n    and socket.SOCK_RDM == _socket.SOCK_RDM\n    and socket.SOCK_SEQPACKET == _socket.SOCK_SEQPACKET\n)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
