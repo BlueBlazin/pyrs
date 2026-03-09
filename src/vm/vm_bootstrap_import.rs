@@ -12028,7 +12028,9 @@ ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set
                             .attrs
                             .insert("_set_fileattr".to_string(), value.clone());
                     } else if field == "cached" {
-                        instance_data.attrs.insert("_cached".to_string(), value.clone());
+                        instance_data
+                            .attrs
+                            .insert("_cached".to_string(), value.clone());
                     }
                     instance_data.attrs.insert(field.to_string(), value);
                 }
@@ -12533,9 +12535,45 @@ ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set
                     }
                 }
             }
+            if exec_module.is_some() {
+                created_module = match created_module.take() {
+                    Some(Value::Module(module)) => {
+                        self.initialize_module_from_spec(&module, &spec)?;
+                        Some(Value::Module(module))
+                    }
+                    Some(value) => Some(value),
+                    None => Some(Value::Module(self.alloc_module_from_spec(&spec)?)),
+                };
+            }
             if let (Some(exec_callable), Some(module_value)) = (exec_module, created_module.clone())
             {
-                let _ = self.call_internal(exec_callable, vec![module_value], HashMap::new());
+                if let Value::Module(module) = &module_value {
+                    self.register_module(name, module.clone());
+                    self.link_module_chain(name, module.clone());
+                    self.mark_module_initializing(module);
+                }
+                match self.call_internal(exec_callable, vec![module_value], HashMap::new()) {
+                    Ok(super::InternalCallOutcome::Value(_)) => {}
+                    Ok(super::InternalCallOutcome::CallerExceptionHandled) => {
+                        if let Some(Value::Module(module)) = created_module.as_ref() {
+                            self.clear_module_initializing(module);
+                        }
+                        self.remove_module_entry_and_parent_binding(name);
+                        return Err(self.runtime_error_from_active_exception(
+                            "import loader exec_module() failed",
+                        ));
+                    }
+                    Err(err) => {
+                        if let Some(Value::Module(module)) = created_module.as_ref() {
+                            self.clear_module_initializing(module);
+                        }
+                        self.remove_module_entry_and_parent_binding(name);
+                        return Err(err);
+                    }
+                }
+                if let Some(Value::Module(module)) = created_module.as_ref() {
+                    self.clear_module_initializing(module);
+                }
             }
 
             self.run_pending_import_frames(caller_depth)?;

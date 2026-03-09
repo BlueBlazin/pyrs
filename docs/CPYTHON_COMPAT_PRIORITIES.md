@@ -138,6 +138,8 @@ Resolved locally since this snapshot and awaiting the next full benchmark rerun:
 - builtin `os.path.splitroot()` is now exposed with CPython-compatible POSIX results, which cleared `Path.with_name()` / `Path.with_segments()` fallback failures in `test.test_pathlib`
 - when the CPython stdlib path is active, `os.path` now aliases the real platform path module (`posixpath` on POSIX), so `pathlib.Path.parser` matches CPython and Windows-only `pathlib` cases stop running on POSIX
 - bootstrap `_frozen_importlib.ModuleSpec` now has the CPython constructor/property surface needed by fresh `importlib` bootstrap, so the source-importlib lane no longer dies on placeholder-spec objects before hitting real loader behavior
+- meta-path loader execution now applies CPython `module_from_spec` semantics when `create_module()` returns `None` or a module object, registering the module before `exec_module()`, so `test.test_importlib` no longer falls back to `ModuleNotFoundError` at the first PEP 451 loader case
+- builtin `__import__` now honors explicit `globals['__package__']` / `globals['__spec__']` package context for relative imports, so `test.test_importlib.import_.test___package__` moved past the earlier caller-frame resolution failure and is now down to later package-attribute semantics
 - `from email import policy` no longer leaks a partially initialized `email.policy` module during bootstrap import
 - `test.test_email.test_pickleable` no longer overflows while materializing address headers (`header_store_parse` pyc name layout and `Message.__setitem__` operator dispatch fixed locally)
 

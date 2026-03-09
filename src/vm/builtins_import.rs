@@ -75,6 +75,123 @@ impl Vm {
         }
     }
 
+    fn import_globals_item(&self, globals: &Value, key: &str) -> Option<Value> {
+        match globals {
+            Value::Dict(obj) => match &*obj.kind() {
+                Object::Dict(entries) => entries.find(&Value::Str(key.to_string())).cloned(),
+                _ => None,
+            },
+            Value::Module(obj) => match &*obj.kind() {
+                Object::Module(module_data) => module_data.globals.get(key).cloned(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn import_globals_contains(&self, globals: &Value, key: &str) -> bool {
+        match globals {
+            Value::Dict(obj) => match &*obj.kind() {
+                Object::Dict(entries) => entries.find(&Value::Str(key.to_string())).is_some(),
+                _ => false,
+            },
+            Value::Module(obj) => match &*obj.kind() {
+                Object::Module(module_data) => module_data.globals.contains_key(key),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn import_warning_value(&self, name: &str) -> Value {
+        self.builtins
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| Value::ExceptionType(name.to_string()))
+    }
+
+    fn emit_import_warning(&mut self, category: &str, message: &str) -> Result<(), RuntimeError> {
+        self.builtin_warnings_warn(
+            vec![
+                Value::Str(message.to_string()),
+                self.import_warning_value(category),
+                Value::Int(3),
+            ],
+            HashMap::new(),
+        )?;
+        Ok(())
+    }
+
+    fn resolve_import_name_from_globals(
+        &mut self,
+        requested: &str,
+        globals: &Value,
+        level: usize,
+    ) -> Result<String, RuntimeError> {
+        if level == 0 {
+            return Ok(requested.to_string());
+        }
+        match globals {
+            Value::Dict(_) | Value::Module(_) => {}
+            _ => return Err(RuntimeError::new("globals must be a dict")),
+        }
+
+        let package = match self.import_globals_item(globals, "__package__") {
+            Some(Value::None) | None => None,
+            Some(Value::Str(package)) => Some(package),
+            Some(_) => return Err(RuntimeError::new("package must be a string")),
+        };
+        let spec = self
+            .import_globals_item(globals, "__spec__")
+            .filter(|value| !matches!(value, Value::None));
+
+        let package = if let Some(package) = package {
+            if let Some(spec) = spec.clone() {
+                match self
+                    .builtin_getattr(vec![spec, Value::Str("parent".to_string())], HashMap::new())?
+                {
+                    Value::Str(parent) => {
+                        if package != parent {
+                            self.emit_import_warning(
+                                "DeprecationWarning",
+                                "__package__ != __spec__.parent",
+                            )?;
+                        }
+                    }
+                    _ => return Err(RuntimeError::new("__spec__.parent must be a string")),
+                }
+            }
+            package
+        } else if let Some(spec) = spec {
+            match self
+                .builtin_getattr(vec![spec, Value::Str("parent".to_string())], HashMap::new())?
+            {
+                Value::Str(parent) => parent,
+                _ => return Err(RuntimeError::new("__spec__.parent must be a string")),
+            }
+        } else {
+            self.emit_import_warning(
+                "ImportWarning",
+                "can't resolve package from __spec__ or __package__, falling back on __name__ and __path__",
+            )?;
+            let package = match self.import_globals_item(globals, "__name__") {
+                Some(Value::Str(name)) => name,
+                Some(_) => return Err(RuntimeError::new("__name__ must be a string")),
+                None => return Err(RuntimeError::new("'__name__' not in globals")),
+            };
+            if self.import_globals_contains(globals, "__path__") {
+                package
+            } else {
+                package
+                    .rsplit_once('.')
+                    .map(|(parent, _)| parent.to_string())
+                    .unwrap_or_default()
+            }
+        };
+
+        self.resolve_import_name_from_package(&package, requested, level)
+    }
+
     pub(super) fn builtin_imp_is_builtin(
         &mut self,
         args: Vec<Value>,
@@ -294,7 +411,18 @@ impl Vm {
             return Err(RuntimeError::new("level must be >= 0"));
         }
 
-        let resolved_name = self.resolve_import_name(&name, level as usize)?;
+        let globals_value = if let Some(value) = kw_globals {
+            value
+        } else if !args.is_empty() {
+            args[0].clone()
+        } else {
+            Value::None
+        };
+        let resolved_name = if level > 0 && !matches!(globals_value, Value::None) {
+            self.resolve_import_name_from_globals(&name, &globals_value, level as usize)?
+        } else {
+            self.resolve_import_name(&name, level as usize)?
+        };
         let module = self.import_module_object_with_policy(
             &resolved_name,
             ImportReturnPolicy::DeferredWhenFramesQueued,
@@ -1167,45 +1295,47 @@ impl Vm {
         Ok(spec)
     }
 
-    pub(super) fn builtin_importlib_module_from_spec(
-        &mut self,
-        mut args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
-    ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new(
-                "module_from_spec() expects exactly one spec argument",
-            ));
-        }
-        let spec = args.remove(0);
-        let spec_field = |spec: &Value, field: &str| -> Option<Value> {
-            match spec {
-                Value::Module(obj) => match &*obj.kind() {
-                    Object::Module(module_data) => module_data.globals.get(field).cloned(),
-                    _ => None,
-                },
-                Value::Dict(obj) => match &*obj.kind() {
-                    Object::Dict(entries) => entries.find(&Value::Str(field.to_string())).cloned(),
-                    _ => None,
-                },
-                Value::Instance(obj) => match &*obj.kind() {
-                    Object::Instance(instance_data) => instance_data.attrs.get(field).cloned(),
-                    _ => None,
-                },
+    pub(super) fn module_spec_field(&self, spec: &Value, field: &str) -> Option<Value> {
+        match spec {
+            Value::Module(obj) => match &*obj.kind() {
+                Object::Module(module_data) => module_data.globals.get(field).cloned(),
                 _ => None,
-            }
-        };
-        let name = match spec_field(&spec, "name") {
+            },
+            Value::Dict(obj) => match &*obj.kind() {
+                Object::Dict(entries) => entries.find(&Value::Str(field.to_string())).cloned(),
+                _ => None,
+            },
+            Value::Instance(obj) => match &*obj.kind() {
+                Object::Instance(instance_data) => instance_data.attrs.get(field).cloned(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub(super) fn initialize_module_from_spec(
+        &mut self,
+        module: &ObjRef,
+        spec: &Value,
+    ) -> Result<(), RuntimeError> {
+        let name = match self.module_spec_field(spec, "name") {
             Some(Value::Str(value)) if !value.is_empty() => value,
             _ => return Err(RuntimeError::new("module_from_spec() requires spec.name")),
         };
-        let loader = spec_field(&spec, "loader").unwrap_or(Value::None);
-        let origin = spec_field(&spec, "origin").unwrap_or(Value::None);
-        let cached = spec_field(&spec, "cached").unwrap_or(Value::None);
-        let submodule_search_locations =
-            spec_field(&spec, "submodule_search_locations").unwrap_or(Value::None);
+        let loader = self
+            .module_spec_field(spec, "loader")
+            .unwrap_or(Value::None);
+        let origin = self
+            .module_spec_field(spec, "origin")
+            .unwrap_or(Value::None);
+        let cached = self
+            .module_spec_field(spec, "cached")
+            .unwrap_or(Value::None);
+        let submodule_search_locations = self
+            .module_spec_field(spec, "submodule_search_locations")
+            .unwrap_or(Value::None);
         let package = if matches!(submodule_search_locations, Value::None) {
-            spec_field(&spec, "parent").unwrap_or_else(|| {
+            self.module_spec_field(spec, "parent").unwrap_or_else(|| {
                 Value::Str(
                     name.rsplit_once('.')
                         .map(|(parent, _)| parent.to_string())
@@ -1214,11 +1344,6 @@ impl Vm {
             })
         } else {
             Value::Str(name.clone())
-        };
-
-        let module = match self.heap.alloc_module(ModuleObject::new(name.clone())) {
-            Value::Module(obj) => obj,
-            _ => unreachable!(),
         };
         if let Object::Module(module_data) = &mut *module.kind_mut() {
             module_data
@@ -1235,16 +1360,50 @@ impl Vm {
                 .insert("__spec__".to_string(), spec.clone());
             if !matches!(origin, Value::None) {
                 module_data.globals.insert("__file__".to_string(), origin);
+            } else {
+                module_data.globals.remove("__file__");
             }
             if !matches!(cached, Value::None) {
                 module_data.globals.insert("__cached__".to_string(), cached);
+            } else {
+                module_data.globals.remove("__cached__");
             }
             if !matches!(submodule_search_locations, Value::None) {
                 module_data
                     .globals
                     .insert("__path__".to_string(), submodule_search_locations);
+            } else {
+                module_data.globals.remove("__path__");
             }
         }
+        Ok(())
+    }
+
+    pub(super) fn alloc_module_from_spec(&mut self, spec: &Value) -> Result<ObjRef, RuntimeError> {
+        let name = match self.module_spec_field(spec, "name") {
+            Some(Value::Str(value)) if !value.is_empty() => value,
+            _ => return Err(RuntimeError::new("module_from_spec() requires spec.name")),
+        };
+        let module = match self.heap.alloc_module(ModuleObject::new(name)) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        self.initialize_module_from_spec(&module, spec)?;
+        Ok(module)
+    }
+
+    pub(super) fn builtin_importlib_module_from_spec(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "module_from_spec() expects exactly one spec argument",
+            ));
+        }
+        let spec = args.remove(0);
+        let module = self.alloc_module_from_spec(&spec)?;
         Ok(Value::Module(module))
     }
 
