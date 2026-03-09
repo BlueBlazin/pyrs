@@ -143,6 +143,7 @@ Resolved locally since this snapshot and awaiting the next full benchmark rerun:
 - Rust-built package `ModuleSpec` instances now carry CPython-style `parent` semantics (`spec.parent == spec.name` for packages), which cleared the source-importlib `__package__` restoration failure for `test.test_importlib.import_.test___package__.Setting__package__PEP451`
 - builtin `__import__` now performs CPython-style `fromlist` submodule handling, including propagating `ModuleNotFoundError` when `sys.modules['pkg.submod']` is explicitly blocked with `None`, which cleared `test.test_importlib.import_.test_api.*.test_blocked_fromlist`
 - builtin `__import__` now raises `ValueError` instead of a generic runtime error for negative import levels, which cleared `test.test_importlib.import_.test_api.*.test_negative_level`
+- builtin `__import__` now returns non-module `sys.modules[name]` cache entries directly for direct builtin calls, which cleared `test.test_importlib.import_.test_caching.*.test_using_cache`
 - `from email import policy` no longer leaks a partially initialized `email.policy` module during bootstrap import
 - `test.test_email.test_pickleable` no longer overflows while materializing address headers (`header_store_parse` pyc name layout and `Message.__setitem__` operator dispatch fixed locally)
 

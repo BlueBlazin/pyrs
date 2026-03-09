@@ -515,16 +515,40 @@ impl Vm {
         } else {
             Value::None
         };
+        let has_fromlist = self.fromlist_requested(&fromlist);
         let resolved_name = if level > 0 && !matches!(globals_value, Value::None) {
             self.resolve_import_name_from_globals(&name, &globals_value, level as usize)?
         } else {
             self.resolve_import_name(&name, level as usize)?
         };
+        let return_name = if has_fromlist {
+            resolved_name.as_str()
+        } else {
+            resolved_name
+                .split('.')
+                .next()
+                .unwrap_or(resolved_name.as_str())
+        };
+        if return_name == resolved_name
+            && let Some(cached) = self
+                .sys_dict_obj("modules")
+                .and_then(|modules| dict_get_value(&modules, &Value::Str(return_name.to_string())))
+        {
+            match cached {
+                Value::None => {
+                    return Err(RuntimeError::module_not_found_error(format!(
+                        "No module named '{}'",
+                        return_name
+                    )));
+                }
+                Value::Module(_) => {}
+                other => return Ok(other),
+            }
+        }
         let module = self.import_module_object_with_policy(
             &resolved_name,
             ImportReturnPolicy::DeferredWhenFramesQueued,
         )?;
-        let has_fromlist = self.fromlist_requested(&fromlist);
         if has_fromlist {
             self.handle_import_fromlist(&module, fromlist.clone(), false)?;
         }

@@ -19128,6 +19128,16 @@ fn import_negative_level_raises_value_error() {
 }
 
 #[test]
+fn import_returns_nonmodule_sys_modules_cache_entry() {
+    let source = "import builtins\nimport sys\nname = 'some_module'\npayload = ['some module found!']\nsys.modules[name] = payload\ntry:\n    result = builtins.__import__(name)\n    ok = (result is payload)\nfinally:\n    del sys.modules[name]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn frozen_module_repr_uses_spec_origin() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
