@@ -3562,7 +3562,12 @@ impl Vm {
                         }
                     },
                     value => {
-                        let candidate = bytes_like_from_value(value.clone())?;
+                        let candidate = bytes_like_from_value(value.clone()).map_err(|_| {
+                            RuntimeError::type_error(format!(
+                                "{method_name} first arg must be bytes or a tuple of bytes, not {}",
+                                self.value_type_name_for_error(value)
+                            ))
+                        })?;
                         match_candidate(&candidate)
                     }
                 };
@@ -13176,6 +13181,7 @@ impl Vm {
             BuiltinFunction::OsSetInheritable => self.builtin_os_set_inheritable(args, kwargs),
             BuiltinFunction::OsGetInheritable => self.builtin_os_get_inheritable(args, kwargs),
             BuiltinFunction::OsReadLink => self.builtin_os_readlink(args, kwargs),
+            BuiltinFunction::OsSymlink => self.builtin_os_symlink(args, kwargs),
             BuiltinFunction::OsURandom => self.builtin_os_urandom(args, kwargs),
             BuiltinFunction::OsStat => self.builtin_os_stat(args, kwargs),
             BuiltinFunction::OsLStat => self.builtin_os_lstat(args, kwargs),

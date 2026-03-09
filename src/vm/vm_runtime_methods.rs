@@ -2901,6 +2901,21 @@ impl Vm {
             }
             Value::Instance(instance) => {
                 let instance_value = Value::Instance(instance);
+                if let Some(bytes_value) =
+                    self.call_unary_special_method(&instance_value, "__bytes__")?
+                {
+                    let is_bytes_result = matches!(&bytes_value, Value::Bytes(_))
+                        || matches!(&bytes_value, Value::Instance(result_instance)
+                            if matches!(&*result_instance.kind(), Object::Instance(instance_data)
+                                if self.class_has_builtin_bytes_base(&instance_data.class)));
+                    if !is_bytes_result {
+                        return Err(RuntimeError::type_error(format!(
+                            "__bytes__ returned non-bytes (type {})",
+                            self.value_type_name_for_error(&bytes_value)
+                        )));
+                    }
+                    return value_to_bytes_payload(bytes_value);
+                }
                 match value_to_bytes_payload(instance_value.clone()) {
                     Ok(payload) => Ok(payload),
                     Err(_) => {

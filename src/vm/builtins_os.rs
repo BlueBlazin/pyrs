@@ -452,6 +452,66 @@ impl Vm {
         }
     }
 
+    pub(super) fn builtin_os_symlink(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "symlink() expects src, dst, and optional target_is_directory/dir_fd",
+            ));
+        }
+        let (src, _) = self.path_arg_to_pathbuf_and_type(args.remove(0))?;
+        let (dst, _) = self.path_arg_to_pathbuf_and_type(args.remove(0))?;
+        let target_is_directory = if let Some(value) = kwargs.remove("target_is_directory") {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "symlink() got multiple values for argument 'target_is_directory'",
+                ));
+            }
+            is_truthy(&value)
+        } else if let Some(value) = args.pop() {
+            is_truthy(&value)
+        } else {
+            false
+        };
+        if let Some(dir_fd) = kwargs.remove("dir_fd")
+            && !matches!(dir_fd, Value::None)
+        {
+            return Err(RuntimeError::new("symlink() dir_fd is unsupported"));
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "symlink() got an unexpected keyword argument",
+            ));
+        }
+        #[cfg(unix)]
+        {
+            let _ = target_is_directory;
+            std::os::unix::fs::symlink(src, dst)
+                .map_err(|err| Self::os_error_from_io("symlink failed", err))?;
+            Ok(Value::None)
+        }
+        #[cfg(windows)]
+        {
+            let result = if target_is_directory {
+                std::os::windows::fs::symlink_dir(src, dst)
+            } else {
+                std::os::windows::fs::symlink_file(src, dst)
+            };
+            result.map_err(|err| Self::os_error_from_io("symlink failed", err))?;
+            Ok(Value::None)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (src, dst, target_is_directory);
+            Err(RuntimeError::new(
+                "symlink() is not supported on this platform",
+            ))
+        }
+    }
+
     pub(super) fn builtin_os_cpu_count(
         &mut self,
         args: Vec<Value>,
@@ -2209,22 +2269,17 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("fsencode() expects one argument"));
         }
-        match &args[0] {
+        let path = self.builtin_os_fspath(vec![args[0].clone()], HashMap::new())?;
+        match path {
             Value::Str(value) => Ok(self.heap.alloc_bytes(value.as_bytes().to_vec())),
             Value::Bytes(obj) => match &*obj.kind() {
                 Object::Bytes(bytes) => Ok(self.heap.alloc_bytes(bytes.clone())),
                 _ => Err(RuntimeError::new(
-                    "fsencode() expects str, bytes or bytearray",
-                )),
-            },
-            Value::ByteArray(obj) => match &*obj.kind() {
-                Object::ByteArray(bytes) => Ok(self.heap.alloc_bytes(bytes.clone())),
-                _ => Err(RuntimeError::new(
-                    "fsencode() expects str, bytes or bytearray",
+                    "TypeError: __fspath__() must return str or bytes",
                 )),
             },
             _ => Err(RuntimeError::new(
-                "fsencode() expects str, bytes or bytearray",
+                "TypeError: __fspath__() must return str or bytes",
             )),
         }
     }
@@ -2237,24 +2292,17 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("fsdecode() expects one argument"));
         }
-        match &args[0] {
-            Value::Str(value) => Ok(Value::Str(value.clone())),
+        let path = self.builtin_os_fspath(vec![args[0].clone()], HashMap::new())?;
+        match path {
+            Value::Str(value) => Ok(Value::Str(value)),
             Value::Bytes(obj) => match &*obj.kind() {
                 Object::Bytes(bytes) => Ok(Value::Str(String::from_utf8_lossy(bytes).to_string())),
                 _ => Err(RuntimeError::new(
-                    "fsdecode() expects str, bytes or bytearray",
-                )),
-            },
-            Value::ByteArray(obj) => match &*obj.kind() {
-                Object::ByteArray(bytes) => {
-                    Ok(Value::Str(String::from_utf8_lossy(bytes).to_string()))
-                }
-                _ => Err(RuntimeError::new(
-                    "fsdecode() expects str, bytes or bytearray",
+                    "TypeError: __fspath__() must return str or bytes",
                 )),
             },
             _ => Err(RuntimeError::new(
-                "fsdecode() expects str, bytes or bytearray",
+                "TypeError: __fspath__() must return str or bytes",
             )),
         }
     }

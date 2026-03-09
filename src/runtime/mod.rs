@@ -5369,6 +5369,7 @@ pub enum BuiltinFunction {
     OsSetInheritable,
     OsGetInheritable,
     OsReadLink,
+    OsSymlink,
     OsURandom,
     OsStat,
     OsLStat,
@@ -9128,6 +9129,7 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::OsSetInheritable
             | BuiltinFunction::OsGetInheritable
             | BuiltinFunction::OsReadLink
+            | BuiltinFunction::OsSymlink
             | BuiltinFunction::OsURandom
             | BuiltinFunction::OsStat
             | BuiltinFunction::OsLStat
@@ -12345,12 +12347,18 @@ pub fn format_value(value: &Value) -> String {
 }
 
 fn format_repr_string(value: &str) -> String {
+    let quote = if value.contains('\'') && !value.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
     let mut out = String::new();
-    out.push('\'');
+    out.push(quote);
     for ch in value.chars() {
         match ch {
             '\\' => out.push_str("\\\\"),
-            '\'' => out.push_str("\\'"),
+            '\'' if quote == '\'' => out.push_str("\\'"),
+            '"' if quote == '"' => out.push_str("\\\""),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
@@ -12358,7 +12366,7 @@ fn format_repr_string(value: &str) -> String {
             c => out.push(c),
         }
     }
-    out.push('\'');
+    out.push(quote);
     out
 }
 

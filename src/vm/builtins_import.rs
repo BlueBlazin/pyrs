@@ -207,6 +207,18 @@ impl Vm {
             .and_then(|modules| dict_get_value(&modules, &Value::Str(name.to_string())))
     }
 
+    fn import_return_value_from_sys_modules(&mut self, name: &str) -> Result<Value, RuntimeError> {
+        match self.sys_modules_entry(name) {
+            Some(Value::Module(module)) => Ok(Value::Module(
+                self.canonical_imported_module_for_name(name, module),
+            )),
+            Some(other) => Ok(other),
+            None => Err(RuntimeError::key_error(format!(
+                "'{name}' not in sys.modules as expected"
+            ))),
+        }
+    }
+
     fn handle_import_fromlist(
         &mut self,
         module: &ObjRef,
@@ -526,14 +538,23 @@ impl Vm {
         } else {
             self.resolve_import_name(&name, level as usize)?
         };
-        let return_name = if has_fromlist {
-            resolved_name.as_str()
+        let plain_return_name = if has_fromlist {
+            None
+        } else if level > 0 {
+            let requested_head = name.split('.').next().unwrap_or_default();
+            Some(if !matches!(globals_value, Value::None) {
+                self.resolve_import_name_from_globals(
+                    requested_head,
+                    &globals_value,
+                    level as usize,
+                )?
+            } else {
+                self.resolve_import_name(requested_head, level as usize)?
+            })
         } else {
-            resolved_name
-                .split('.')
-                .next()
-                .unwrap_or(resolved_name.as_str())
+            Some(name.split('.').next().unwrap_or(name.as_str()).to_string())
         };
+        let return_name = plain_return_name.as_deref().unwrap_or(resolved_name.as_str());
         if return_name == resolved_name
             && let Some(cached) = self
                 .sys_dict_obj("modules")
@@ -550,13 +571,25 @@ impl Vm {
                 other => return Ok(other),
             }
         }
-        if !has_fromlist && resolved_name.contains('.') {
-            let parent_name = resolved_name
-                .rsplit_once('.')
-                .map(|(parent, _)| parent)
-                .expect("dotted import must have parent");
+        if !has_fromlist
+            && level > 0
+            && return_name != resolved_name
+            && let Some(cached) = self.sys_modules_entry(&resolved_name)
+        {
+            match cached {
+                Value::None => {
+                    return Err(RuntimeError::module_not_found_error(format!(
+                        "No module named '{}'",
+                        resolved_name
+                    )));
+                }
+                Value::Module(_) => {}
+                _ => return self.import_return_value_from_sys_modules(return_name),
+            }
+        }
+        if !has_fromlist && level == 0 && return_name != resolved_name {
             let _ = self.import_module_object_with_policy(
-                parent_name,
+                return_name,
                 ImportReturnPolicy::DeferredWhenFramesQueued,
             )?;
             if let Some(cached) = self.sys_modules_entry(&resolved_name) {
@@ -570,7 +603,7 @@ impl Vm {
                     Value::Module(module) => {
                         self.modules.insert(resolved_name.clone(), module.clone());
                         return Ok(Value::Module(
-                            self.module_for_plain_import(&resolved_name, module),
+                            self.canonical_imported_module_for_name(return_name, module),
                         ));
                     }
                     _ => {
@@ -591,11 +624,13 @@ impl Vm {
             self.handle_import_fromlist(&module, fromlist.clone(), false)?;
         }
         let result = if has_fromlist {
-            module
+            Value::Module(module)
+        } else if level > 0 && return_name != resolved_name {
+            return self.import_return_value_from_sys_modules(return_name);
         } else {
-            self.module_for_plain_import(&resolved_name, module)
+            Value::Module(self.canonical_imported_module_for_name(return_name, module))
         };
-        Ok(Value::Module(result))
+        Ok(result)
     }
 
     pub(super) fn builtin_import_module(

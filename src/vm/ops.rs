@@ -1608,8 +1608,23 @@ fn compare_bytes_like_membership(left: &Value, haystack: &[u8]) -> Result<bool, 
         }
         return Ok(haystack.iter().any(|value| *value as i64 == needle));
     }
-    let needle = bytes_like_payload(left)
-        .ok_or_else(|| RuntimeError::new("a bytes-like object is required"))?;
+    let needle = bytes_like_payload(left).ok_or_else(|| {
+        let type_name = match left {
+            Value::Str(_) => "str".to_string(),
+            Value::Bytes(_) => "bytes".to_string(),
+            Value::ByteArray(_) => "bytearray".to_string(),
+            Value::Int(_) | Value::BigInt(_) | Value::Bool(_) => "int".to_string(),
+            Value::Float(_) => "float".to_string(),
+            Value::Instance(instance) => {
+                class_name_for_instance(instance).unwrap_or_else(|| "object".to_string())
+            }
+            _ => "object".to_string(),
+        };
+        RuntimeError::new(format!(
+            "TypeError: a bytes-like object is required, not '{}'",
+            type_name
+        ))
+    })?;
     Ok(bytes_contains(haystack, &needle))
 }
 

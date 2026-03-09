@@ -17743,6 +17743,26 @@ ok = (isinstance(as_str, str) and isinstance(as_bytes, bytes) and as_str == 'tar
 }
 
 #[test]
+fn exposes_os_symlink_and_pathlib_symlink_to_on_unix_hosts() {
+    if !cfg!(unix) {
+        eprintln!("skipping os.symlink/pathlib.symlink_to test (unix-only)");
+        return;
+    }
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-os-symlink-pathlib", move || {
+        let source = "import os\nimport pathlib\nimport posix\nimport tempfile\nroot = pathlib.Path(tempfile.mkdtemp(prefix='pyrs_symlink_'))\n(root / 'fileA').write_text('x')\nos.symlink('fileA', root / 'linkA')\n(root / 'linkB').symlink_to('fileA')\nq = (root / 'linkA').resolve()\nr = (root / 'linkB').resolve()\nok = (hasattr(os, 'symlink') and hasattr(posix, 'symlink') and os.readlink(root / 'linkA') == 'fileA' and os.readlink(root / 'linkB') == 'fileA' and q.name == 'fileA' and r.name == 'fileA' and q.read_text() == 'x' and r.read_text() == 'x')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn executes_os_fd_stat_and_wait_status_helpers() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -19217,6 +19237,42 @@ fn builtin_import_empty_name_level_zero_raises_value_error() {
 }
 
 #[test]
+fn builtin_relative_import_without_fromlist_returns_resolved_module() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-relative-import-no-fromlist", move || {
+        let source = "import builtins\nimport pathlib\nimport sys\nimport tempfile\nroot = pathlib.Path(tempfile.mkdtemp(prefix='pyrs_relimport_'))\npkg = root / 'crash'\npkg.mkdir()\n(pkg / '__init__.py').write_text('')\n(pkg / 'mod.py').write_text('value = 1\\n')\nsys.path.insert(0, str(root))\nbuiltins.__import__('crash')\nmod = builtins.__import__('mod', {'__package__': 'crash', '__name__': 'crash'}, {}, [], 1)\nok = (mod.__name__ == 'crash.mod')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn builtin_relative_import_malicious_dotted_name_preserves_cpython_keyerror() {
+    let source = "import builtins\nimport sys\nloooong = ''.ljust(0x23000, 'b')\nname = f'a.{loooong}.c'\nsys.modules[name] = {}\nok = False\ntry:\n    builtins.__import__(f'{loooong}.c', {'__package__': 'a'}, level=1)\nexcept KeyError as exc:\n    text = str(exc)\n    ok = text.startswith('\"\\'a.b') and text.endswith(\"not in sys.modules as expected\\\"\")\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn repr_prefers_double_quotes_for_strings_with_single_quotes_only() {
+    let source = "ok = (repr(\"a'b\") == '\"a\\'b\"' and repr('a\"b') == '\\'a\"b\\'')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn deleted_cwd_pathfinder_find_spec_returns_none_instead_of_getcwd_runtime_error() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
@@ -19297,6 +19353,54 @@ fn pathlib_copy_follow_symlinks_true_materializes_zip_symlink_targets() {
     };
     run_with_large_stack("vm-pathlib-copy-follow-symlinks", move || {
         let source = "import pathlib\nimport tempfile\nfrom test.test_pathlib.support.zip_path import ZipPathGround, ReadableZipPath\nground = ZipPathGround(ReadableZipPath)\nroot = ground.setup()\nground.create_hierarchy(root)\nground.create_symlink(root / 'dirC' / 'linkC', 'fileC')\nground.create_symlink(root / 'dirC' / 'linkD', 'dirD')\ntarget = pathlib.Path(tempfile.mkdtemp(prefix='pyrs_copy_')) / 'copyC'\n(root / 'dirC').copy(target)\nfile_link = target / 'linkC'\ndir_link = target / 'linkD'\nok = (not file_link.is_symlink() and file_link.is_file() and file_link.read_text() == 'this is file C\\n' and not dir_link.is_symlink() and dir_link.is_dir() and (dir_link / 'fileD').read_text() == 'this is file D\\n')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn pathlib_bytes_uses_dunder_bytes_protocol() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-pathlib-bytes-protocol", move || {
+        let source = "import os\nimport pathlib\nP = pathlib.Path\nsep = os.fsencode(P('a').parser.sep)\nok = (bytes(P('a/b')) == b'a' + sep + b'b')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn pathlib_with_name_rejects_bytes_with_type_error() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-pathlib-with-name-bytes", move || {
+        let source = "import pathlib\nok = False\ntry:\n    pathlib.Path('a').with_name(b'b')\nexcept TypeError:\n    ok = True\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn pathlib_with_suffix_rejects_bytes_with_type_error() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-pathlib-with-suffix-bytes", move || {
+        let source = "import pathlib\nok = False\ntry:\n    pathlib.Path('a').with_suffix(b'b')\nexcept TypeError as exc:\n    ok = (str(exc) == \"startswith first arg must be bytes or a tuple of bytes, not str\")\n";
         let module = parser::parse_module(source).expect("parse should succeed");
         let code = compiler::compile_module(&module).expect("compile should succeed");
         let mut vm = Vm::new();
@@ -22137,6 +22241,22 @@ ok = (
     and payload.endswith(b"suffix")
     and payload.endswith(b"body", 7, 11)
 )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytes_startswith_rejects_str_first_arg_with_cpython_type_error() {
+    let source = r#"message = ""
+try:
+    b"payload".startswith(".")
+except TypeError as exc:
+    message = str(exc)
+ok = (message == "startswith first arg must be bytes or a tuple of bytes, not str")
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

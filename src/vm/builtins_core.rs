@@ -13824,9 +13824,20 @@ impl Vm {
             }
             return Ok(false);
         }
+        if let Value::Instance(instance) = &container
+            && let Some(backing_bytes_like) = self.instance_backing_bytes_like(instance)
+        {
+            return compare_in(&needle, &backing_bytes_like);
+        }
         match compare_in(&needle, &container) {
             Ok(found) => Ok(found),
             Err(err) if runtime_error_matches_exception(&err, "TypeError") => {
+                if matches!(
+                    &container,
+                    Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_)
+                ) {
+                    return Err(err);
+                }
                 if let Some(contains_method) =
                     self.lookup_bound_special_method(&container, "__contains__")?
                 {
