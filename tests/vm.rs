@@ -22433,6 +22433,60 @@ ok = top_ok and child_ok
 }
 
 #[test]
+#[cfg(unix)]
+fn os_walk_onerror_bare_raise_preserves_permissionerror_context() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("pyrs_walk_onerror_{unique}"));
+    let child = root.join("child");
+    std::fs::create_dir_all(&child).expect("create child dir");
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o000))
+        .expect("remove permissions");
+
+    let source = format!(
+        r#"import os
+name = ''
+filename = None
+
+def onerror(err):
+    raise
+
+try:
+    list(os.walk({root:?}, topdown=False, onerror=onerror, followlinks=os._walk_symlinks_as_files))
+except BaseException as exc:
+    name = type(exc).__name__
+    filename = getattr(exc, 'filename', None)
+"#,
+        root = root.to_string_lossy().to_string(),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(
+        vm.get_global("name"),
+        Some(Value::Str("PermissionError".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("filename"),
+        Some(Value::Str(root.to_string_lossy().to_string()))
+    );
+
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+        .expect("restore permissions");
+    std::fs::remove_dir(&child).expect("remove child dir");
+    std::fs::remove_dir(&root).expect("remove root dir");
+}
+
+#[test]
 fn str_endswith_supports_tuple_and_start_end() {
     let source = r#"text = "alpha-beta-gamma"
 ok = (

@@ -2203,19 +2203,30 @@ impl Vm {
             followlinks: bool,
             onerror: Option<Value>,
         ) -> Result<(), RuntimeError> {
+            fn call_onerror_callback(
+                vm: &mut Vm,
+                callback: Value,
+                exc: Value,
+            ) -> Result<(), RuntimeError> {
+                match vm.call_internal_with_active_exception(
+                    callback,
+                    vec![exc.clone()],
+                    HashMap::new(),
+                    exc,
+                )? {
+                    InternalCallOutcome::Value(_) => Ok(()),
+                    InternalCallOutcome::CallerExceptionHandled => Err(
+                        vm.runtime_error_from_active_exception("walk() onerror callback raised"),
+                    ),
+                }
+            }
+
             let entries = match fs::read_dir(current) {
                 Ok(entries) => entries,
                 Err(err) => {
                     if let Some(callback) = onerror {
                         let exc = os_walk_error_value(current, &err);
-                        match vm.call_internal(callback, vec![exc], HashMap::new())? {
-                            InternalCallOutcome::Value(_) => {}
-                            InternalCallOutcome::CallerExceptionHandled => {
-                                return Err(vm.runtime_error_from_active_exception(
-                                    "walk() onerror callback raised",
-                                ));
-                            }
-                        }
+                        call_onerror_callback(vm, callback, exc)?;
                     }
                     return Ok(());
                 }
@@ -2228,14 +2239,7 @@ impl Vm {
                     Err(err) => {
                         if let Some(callback) = onerror.clone() {
                             let exc = os_walk_error_value(current, &err);
-                            match vm.call_internal(callback, vec![exc], HashMap::new())? {
-                                InternalCallOutcome::Value(_) => {}
-                                InternalCallOutcome::CallerExceptionHandled => {
-                                    return Err(vm.runtime_error_from_active_exception(
-                                        "walk() onerror callback raised",
-                                    ));
-                                }
-                            }
+                            call_onerror_callback(vm, callback, exc)?;
                         }
                         continue;
                     }

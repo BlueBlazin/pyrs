@@ -5600,6 +5600,34 @@ impl Vm {
         self.call_internal_with_kwarg_order(callable, args, kwargs, None)
     }
 
+    pub(super) fn call_internal_with_active_exception(
+        &mut self,
+        callable: Value,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        active_exception: Value,
+    ) -> Result<InternalCallOutcome, RuntimeError> {
+        let saved_active_exception = self
+            .frames
+            .last()
+            .and_then(|frame| frame.active_exception.clone());
+        if let Some(frame) = self.frames.last_mut() {
+            frame.active_exception = Some(Self::clone_active_exception_for_call(&active_exception));
+        }
+        match self.call_internal_with_kwarg_order(callable, args, kwargs, None) {
+            Ok(InternalCallOutcome::Value(result)) => {
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.active_exception = saved_active_exception;
+                }
+                Ok(InternalCallOutcome::Value(result))
+            }
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                Ok(InternalCallOutcome::CallerExceptionHandled)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     #[inline]
     fn active_exception_fingerprint(
         value: Option<&Value>,
