@@ -40,6 +40,15 @@ The main leverage signal is still blocked execution coverage:
 
 - discoverable cases currently trapped behind blocked modules: `26,439`
 
+Recent closures since this snapshot:
+
+- import/bootstrap substrate fixes have landed for missing `socket.IPPROTO_TCP`
+  and related socket protocol constants
+- `datetime.date.timetuple()` / `datetime.datetime.timetuple()` and
+  `datetime.datetime.utctimetuple()` now exist for stdlib-facing callers
+- builtin `threading` / `_thread` now expose native-id surface, including
+  `threading._HAVE_THREAD_NATIVE_ID`
+
 ## Prioritization Rules
 
 1. Fix root causes that convert blocked modules into runnable modules before

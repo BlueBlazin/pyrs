@@ -4868,6 +4868,7 @@ impl Vm {
                 ("RLock", BuiltinFunction::ThreadRLock),
                 ("allocate_lock", BuiltinFunction::ThreadRLock),
                 ("get_ident", BuiltinFunction::ThreadingGetIdent),
+                ("get_native_id", BuiltinFunction::ThreadingGetIdent),
                 ("_count", BuiltinFunction::ThreadingActiveCount),
                 ("start_new_thread", BuiltinFunction::ThreadStartNewThread),
                 (
@@ -8421,6 +8422,7 @@ impl Vm {
                 ("excepthook", BuiltinFunction::ThreadingExcepthook),
                 ("__excepthook__", BuiltinFunction::ThreadingExcepthook),
                 ("get_ident", BuiltinFunction::ThreadingGetIdent),
+                ("get_native_id", BuiltinFunction::ThreadingGetIdent),
                 ("current_thread", BuiltinFunction::ThreadingCurrentThread),
                 ("main_thread", BuiltinFunction::ThreadingMainThread),
                 ("active_count", BuiltinFunction::ThreadingActiveCount),
@@ -8440,6 +8442,7 @@ impl Vm {
                     Value::ExceptionType("RuntimeError".to_string()),
                 ),
                 ("_dangling", dangling_weakset),
+                ("_HAVE_THREAD_NATIVE_ID", Value::Bool(true)),
             ],
         );
         self.install_builtin_module(

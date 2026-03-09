@@ -14260,6 +14260,16 @@ fn executes_threading_and_signal_foundations() {
 }
 
 #[test]
+fn threading_native_id_surface_matches_ident_baseline() {
+    let source = "import _thread\nimport threading\nmain_ident = threading.get_ident()\nmain_native = threading.get_native_id()\ncurrent = threading.current_thread()\nout = []\ndef worker():\n    out.append(threading.get_native_id())\nt = threading.Thread(target=worker)\npre = t.native_id\nt.start()\nt.join()\nok = (\n    threading._HAVE_THREAD_NATIVE_ID is True\n    and _thread.get_native_id() == _thread.get_ident()\n    and main_native == main_ident\n    and current.native_id == main_native\n    and pre is None\n    and isinstance(t.native_id, int)\n    and out == [t.native_id]\n)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn signal_default_int_handler_matches_sigint_default() {
     let source = "import signal\ncurrent = signal.getsignal(signal.SIGINT)\nraised = False\ntry:\n    signal.default_int_handler()\nexcept KeyboardInterrupt:\n    raised = True\nok = (current is signal.default_int_handler and raised)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -19565,6 +19575,8 @@ ok = (
     and ('/shims/' not in norm)
     and hasattr(threading, 'Thread')
     and hasattr(threading, 'RLock')
+    and threading._HAVE_THREAD_NATIVE_ID is True
+    and threading.get_native_id() == threading.get_ident()
     and isinstance(h, threading._ThreadHandle)
 )
 "#;

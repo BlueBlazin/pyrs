@@ -3865,6 +3865,8 @@ impl Vm {
         Self::instance_attr_set(&instance, "_daemon", daemon)?;
         Self::instance_attr_set(&instance, "_started", Value::Bool(false))?;
         Self::instance_attr_set(&instance, "_alive", Value::Bool(false))?;
+        Self::instance_attr_set(&instance, "ident", Value::None)?;
+        Self::instance_attr_set(&instance, "native_id", Value::None)?;
         Ok(Value::None)
     }
 
@@ -3885,6 +3887,7 @@ impl Vm {
         }
         Self::instance_attr_set(&instance, "_started", Value::Bool(true))?;
         Self::instance_attr_set(&instance, "_alive", Value::Bool(true))?;
+        let mut thread_ident = None;
         let target = Self::instance_attr_get(&instance, "_target").unwrap_or(Value::None);
         if target != Value::None {
             let call_args = match Self::instance_attr_get(&instance, "_args") {
@@ -3943,7 +3946,15 @@ impl Vm {
                 Self::instance_attr_set(&instance, "_alive", Value::Bool(false))?;
                 return Ok(Value::None);
             }
-            let _ = self.call_internal_in_synthetic_thread(target, call_args, call_kwargs);
+            if let Ok((ident, _outcome)) =
+                self.call_internal_in_synthetic_thread(target, call_args, call_kwargs)
+            {
+                thread_ident = Some(ident);
+            }
+        }
+        if let Some(ident) = thread_ident {
+            Self::instance_attr_set(&instance, "ident", Value::Int(ident))?;
+            Self::instance_attr_set(&instance, "native_id", Value::Int(ident))?;
         }
         Self::instance_attr_set(&instance, "_alive", Value::Bool(false))?;
         Ok(Value::None)

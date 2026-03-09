@@ -360,6 +360,9 @@ impl Vm {
                 .insert("ident".to_string(), Value::Int(ident));
             instance_data
                 .attrs
+                .insert("native_id".to_string(), Value::Int(ident));
+            instance_data
+                .attrs
                 .insert("daemon".to_string(), Value::Bool(false));
         }
         Ok(Value::Instance(info))
