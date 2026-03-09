@@ -4726,7 +4726,7 @@ impl Vm {
                 "_path_splitroot_ex() expects one argument",
             ));
         }
-        let (path, _) = self.path_arg_to_string_and_type(args[0].clone())?;
+        let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
         let bytes = path.as_bytes();
         let (drive, root, tail) = if bytes.first().copied() != Some(b'/') {
             ("".to_string(), "".to_string(), path)
@@ -4735,9 +4735,17 @@ impl Vm {
         } else {
             ("".to_string(), path[..2].to_string(), path[2..].to_string())
         };
-        Ok(self
-            .heap
-            .alloc_tuple(vec![Value::Str(drive), Value::Str(root), Value::Str(tail)]))
+        if return_bytes {
+            Ok(self.heap.alloc_tuple(vec![
+                self.heap.alloc_bytes(drive.into_bytes()),
+                self.heap.alloc_bytes(root.into_bytes()),
+                self.heap.alloc_bytes(tail.into_bytes()),
+            ]))
+        } else {
+            Ok(self
+                .heap
+                .alloc_tuple(vec![Value::Str(drive), Value::Str(root), Value::Str(tail)]))
+        }
     }
 
     pub(super) fn builtin_os_path_dirname(

@@ -135,6 +135,7 @@ Resolved locally since this snapshot and awaiting the next full benchmark rerun:
 - `AttributeError: module '_frozen_importlib' has no attribute '_ModuleLock'`
 - builtin `os.path.splitext()` now matches CPython’s leading-dot behavior (`'..' -> ('..', '')`), which cleared `pathlib.types` stem/suffix failures
 - builtin `slice` now exposes `start` / `stop` / `step` plus bound and unbound `indices()`, which cleared `Path.parents` slicing in `test.test_pathlib`
+- builtin `os.path.splitroot()` is now exposed with CPython-compatible POSIX results, which cleared `Path.with_name()` / `Path.with_segments()` fallback failures in `test.test_pathlib`
 - `from email import policy` no longer leaks a partially initialized `email.policy` module during bootstrap import
 - `test.test_email.test_pickleable` no longer overflows while materializing address headers (`header_store_parse` pyc name layout and `Message.__setitem__` operator dispatch fixed locally)
 

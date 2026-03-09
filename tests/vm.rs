@@ -22736,6 +22736,23 @@ ok = (
 }
 
 #[test]
+fn os_path_splitroot_matches_posix_shape() {
+    let source = r#"import os
+ok = (
+    os.path.splitroot("/tmp/data.txt") == ("", "/", "tmp/data.txt")
+    and os.path.splitroot("//server/share") == ("", "//", "server/share")
+    and os.path.splitroot("relative.txt") == ("", "", "relative.txt")
+    and os.path.splitroot(b"/tmp/data.txt") == (b"", b"/", b"tmp/data.txt")
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn slice_exposes_attrs_and_indices_like_cpython() {
     let source = r#"s = slice(0, 10, 2)
 reverse = slice(None, None, -1)

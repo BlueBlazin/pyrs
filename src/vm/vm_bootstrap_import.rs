@@ -2097,6 +2097,7 @@ FrozenImporter.exec_module = staticmethod(_FrozenImporter_exec_module)
                 ("relpath", BuiltinFunction::OsPathRelPath),
                 ("dirname", BuiltinFunction::OsPathDirName),
                 ("basename", BuiltinFunction::OsPathBaseName),
+                ("splitroot", BuiltinFunction::OsPathSplitRootEx),
                 ("split", BuiltinFunction::OsPathSplit),
                 ("isabs", BuiltinFunction::OsPathIsAbs),
                 ("isdir", BuiltinFunction::OsPathIsDir),
