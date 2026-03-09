@@ -12,16 +12,16 @@ use super::{
     HashMap, InstanceObject, Instruction, InternalCallOutcome, IteratorKind, IteratorObject,
     LIST_BACKING_STORAGE_ATTR, MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeCallResult,
     NativeMethodKind, ObjRef, Object, Opcode, Ordering, PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc,
-    ReMode, RePatternValue, RuntimeError, Value, Vm, bigint_to_fixed_bytes,
-    bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup, class_name_for_instance,
-    decode_text_bytes, dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked,
-    encode_text_bytes, ensure_hashable, exception_is_named, find_bytes_subslice, format_repr,
-    format_value, is_truthy, memoryview_bounds, memoryview_decode_tolist,
-    memoryview_format_for_view, memoryview_shape_and_strides_from_parts,
-    normalize_codec_encoding, normalize_codec_errors, parse_memoryview_cast_format,
-    parse_string_formatter, py_rsplit_whitespace, py_split_whitespace, py_splitlines,
-    re_pattern_from_compiled_object, runtime_error_matches_exception, split_formatter_field_name,
-    value_from_bigint, value_to_bigint, value_to_int, with_bytes_like_source,
+    ReMode, RePatternValue, RuntimeError, Value, Vm, bigint_to_fixed_bytes, bytes_like_from_value,
+    call_builtin_with_kwargs, class_attr_lookup, class_name_for_instance, decode_text_bytes,
+    dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked, encode_text_bytes,
+    ensure_hashable, exception_is_named, find_bytes_subslice, format_repr, format_value, is_truthy,
+    memoryview_bounds, memoryview_decode_tolist, memoryview_format_for_view,
+    memoryview_shape_and_strides_from_parts, normalize_codec_encoding, normalize_codec_errors,
+    parse_memoryview_cast_format, parse_string_formatter, py_rsplit_whitespace,
+    py_split_whitespace, py_splitlines, re_pattern_from_compiled_object,
+    runtime_error_matches_exception, split_formatter_field_name, value_from_bigint,
+    value_to_bigint, value_to_int, with_bytes_like_source,
 };
 use crate::ast::{Constant, ExprKind};
 use crate::parser;
@@ -257,9 +257,9 @@ impl Vm {
     ) -> Result<ObjRef, RuntimeError> {
         match &*receiver.kind() {
             Object::Tuple(_) => Ok(receiver.clone()),
-            Object::Instance(_) => self
-                .instance_backing_tuple(receiver)
-                .ok_or_else(|| RuntimeError::type_error(format!("{method_name}() receiver must be tuple"))),
+            Object::Instance(_) => self.instance_backing_tuple(receiver).ok_or_else(|| {
+                RuntimeError::type_error(format!("{method_name}() receiver must be tuple"))
+            }),
             Object::Module(module_data) => {
                 if let Some(Value::Tuple(tuple)) = module_data.globals.get("value") {
                     return Ok(tuple.clone());
@@ -271,11 +271,13 @@ impl Vm {
                 }
                 match args.remove(0) {
                     Value::Tuple(tuple) => Ok(tuple),
-                    Value::Instance(instance) => self.instance_backing_tuple(&instance).ok_or_else(
-                        || RuntimeError::type_error(format!(
-                            "{method_name}() receiver must be tuple"
-                        )),
-                    ),
+                    Value::Instance(instance) => {
+                        self.instance_backing_tuple(&instance).ok_or_else(|| {
+                            RuntimeError::type_error(format!(
+                                "{method_name}() receiver must be tuple"
+                            ))
+                        })
+                    }
                     _ => Err(RuntimeError::type_error(format!(
                         "{method_name}() receiver must be tuple"
                     ))),
@@ -2403,8 +2405,11 @@ impl Vm {
                         "tuple.count() expects one argument",
                     ));
                 }
-                let tuple_obj =
-                    self.extract_tuple_receiver_object_for_method_call(&receiver, &mut args, "tuple.count")?;
+                let tuple_obj = self.extract_tuple_receiver_object_for_method_call(
+                    &receiver,
+                    &mut args,
+                    "tuple.count",
+                )?;
                 if args.len() != 1 {
                     return Err(RuntimeError::type_error(
                         "tuple.count() expects one argument",
@@ -2534,8 +2539,11 @@ impl Vm {
                     }
                     Ok(None)
                 };
-                let tuple_obj =
-                    self.extract_tuple_receiver_object_for_method_call(&receiver, &mut args, "tuple.index")?;
+                let tuple_obj = self.extract_tuple_receiver_object_for_method_call(
+                    &receiver,
+                    &mut args,
+                    "tuple.index",
+                )?;
                 let mut remaining_args = args;
                 let tuple_kind = tuple_obj.kind();
                 let Object::Tuple(values) = &*tuple_kind else {
@@ -2655,7 +2663,11 @@ impl Vm {
                             }
                         }
                     }
-                    _ => return Err(RuntimeError::new("list.__reversed__() receiver must be list")),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "list.__reversed__() receiver must be list",
+                        ));
+                    }
                 };
                 Ok(NativeCallResult::Value(
                     self.list_reverse_iterator(list_receiver)?,
@@ -7781,7 +7793,7 @@ impl Vm {
                 if matches!(fget, Value::None) {
                     return Err(RuntimeError::attribute_error("unreadable attribute"));
                 }
-                match self.call_internal(fget, vec![obj], HashMap::new())? {
+                match self.call_internal_preserving_caller(fget, vec![obj], HashMap::new())? {
                     InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(value)),
                     InternalCallOutcome::CallerExceptionHandled => {
                         Ok(NativeCallResult::PropagatedException)
@@ -7800,7 +7812,11 @@ impl Vm {
                 if matches!(fset, Value::None) {
                     return Err(RuntimeError::attribute_error("can't set attribute"));
                 }
-                match self.call_internal(fset, vec![obj, value], HashMap::new())? {
+                match self.call_internal_preserving_caller(
+                    fset,
+                    vec![obj, value],
+                    HashMap::new(),
+                )? {
                     InternalCallOutcome::Value(_) => Ok(NativeCallResult::Value(Value::None)),
                     InternalCallOutcome::CallerExceptionHandled => {
                         Ok(NativeCallResult::PropagatedException)
@@ -7818,7 +7834,7 @@ impl Vm {
                 if matches!(fdel, Value::None) {
                     return Err(RuntimeError::attribute_error("can't delete attribute"));
                 }
-                match self.call_internal(fdel, vec![obj], HashMap::new())? {
+                match self.call_internal_preserving_caller(fdel, vec![obj], HashMap::new())? {
                     InternalCallOutcome::Value(_) => Ok(NativeCallResult::Value(Value::None)),
                     InternalCallOutcome::CallerExceptionHandled => {
                         Ok(NativeCallResult::PropagatedException)
@@ -7962,12 +7978,13 @@ impl Vm {
                 if let Some(existing) = dict_get_value(&cache, &Value::Str(attr_name.clone())) {
                     return Ok(NativeCallResult::Value(existing));
                 }
-                let value = match self.call_internal(func, vec![obj], HashMap::new())? {
-                    InternalCallOutcome::Value(value) => value,
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        return Ok(NativeCallResult::PropagatedException);
-                    }
-                };
+                let value =
+                    match self.call_internal_preserving_caller(func, vec![obj], HashMap::new())? {
+                        InternalCallOutcome::Value(value) => value,
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Ok(NativeCallResult::PropagatedException);
+                        }
+                    };
                 if cache_is_class_dict {
                     return Err(RuntimeError::type_error(format!(
                         "The '__dict__' attribute on '{}' instance does not support item assignment for caching '{}' property.",

@@ -3,11 +3,15 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use pyrs::bytecode::cpython::{dump_pyc, load_pyc};
+use pyrs::bytecode::CodeObject;
+use pyrs::bytecode::cpython::{dump_pyc, load_pyc, translate_code};
 use pyrs::bytecode::pyc::parse_pyc_header;
-use pyrs::runtime::Value;
+use pyrs::compiler;
+use pyrs::parser;
+use pyrs::runtime::{Heap, Value};
 use pyrs::vm::Vm;
 
 fn python_path() -> Option<PathBuf> {
@@ -55,6 +59,20 @@ fn compile_pyc(source: &str, module_name: &str) -> PathBuf {
         }
     }
     panic!("pyc not found");
+}
+
+fn find_nested_code_by_name(code: &Rc<CodeObject>, target: &str) -> Option<Rc<CodeObject>> {
+    if code.name == target {
+        return Some(code.clone());
+    }
+    for constant in &code.constants {
+        if let Value::Code(nested) = constant
+            && let Some(found) = find_nested_code_by_name(nested, target)
+        {
+            return Some(found);
+        }
+    }
+    None
 }
 
 #[test]
@@ -371,4 +389,49 @@ ok = x == [1, 2] and y == [0, 2, 4]
     let value = vm.execute_pyc_bytes(&bytes).expect("execute pyc");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn translated_pyc_matches_source_compiler_name_layout_for_method_fast_locals() {
+    if python_path().is_none() {
+        eprintln!("python3.14 not found; skipping");
+        return;
+    }
+    let source = r#"
+def validate_header_name(name):
+    return name
+
+class HeaderFactory:
+    def __call__(self, name, value):
+        return (name, value, "factory")
+
+class EmailPolicy:
+    header_factory = HeaderFactory()
+
+    def header_store_parse(self, name, value):
+        validate_header_name(name)
+        if hasattr(value, "name") and value.name.lower() == name.lower():
+            return (name, value)
+        if isinstance(value, str) and len(value.splitlines()) > 1:
+            raise ValueError("Header values may not contain linefeed or carriage return characters")
+        return (name, self.header_factory(name, value))
+"#;
+
+    let module = parser::parse_module(source).expect("parse source");
+    let compiled = Rc::new(
+        compiler::compile_module_with_filename(&module, "<pyc_name_layout_compare>")
+            .expect("compile source"),
+    );
+    let pyc_path = compile_pyc(source, "name_layout_compare_module");
+    let bytes = fs::read(&pyc_path).expect("read pyc");
+    let pyc = load_pyc(&bytes).expect("load pyc");
+    let mut heap = Heap::new();
+    let translated = Rc::new(translate_code(&pyc, &mut heap).expect("translate pyc"));
+
+    let compiled_method =
+        find_nested_code_by_name(&compiled, "header_store_parse").expect("compiled method code");
+    let translated_method = find_nested_code_by_name(&translated, "header_store_parse")
+        .expect("translated method code");
+
+    assert_eq!(translated_method.names, compiled_method.names);
 }

@@ -99,6 +99,7 @@ fn find_top_level_fstring_delimiter(field: &str) -> Option<(usize, char)> {
     let mut paren = 0usize;
     let mut bracket = 0usize;
     let mut brace = 0usize;
+    let mut in_comment = false;
     let mut quote: Option<char> = None;
     let mut triple_quote = false;
     let mut escaped = false;
@@ -106,6 +107,13 @@ fn find_top_level_fstring_delimiter(field: &str) -> Option<(usize, char)> {
     while i < field.len() {
         let ch = field[i..].chars().next()?;
         let len = ch.len_utf8();
+        if in_comment {
+            if ch == '\n' || ch == '\r' {
+                in_comment = false;
+            }
+            i += len;
+            continue;
+        }
         if let Some(q) = quote {
             if triple_quote {
                 let closes = if q == '\'' { "'''" } else { "\"\"\"" };
@@ -133,6 +141,12 @@ fn find_top_level_fstring_delimiter(field: &str) -> Option<(usize, char)> {
                 i += len;
                 continue;
             }
+            i += len;
+            continue;
+        }
+
+        if ch == '#' {
+            in_comment = true;
             i += len;
             continue;
         }
@@ -165,6 +179,259 @@ fn find_top_level_fstring_delimiter(field: &str) -> Option<(usize, char)> {
         i += len;
     }
     None
+}
+
+fn find_fstring_field_end(field: &str, start: usize) -> Option<usize> {
+    let mut i = start;
+    let mut paren = 0usize;
+    let mut bracket = 0usize;
+    let mut brace = 0usize;
+    let mut in_format_spec = false;
+    let mut in_comment = false;
+    let mut quote: Option<char> = None;
+    let mut triple_quote = false;
+    let mut escaped = false;
+
+    while i < field.len() {
+        let ch = field[i..].chars().next()?;
+        let len = ch.len_utf8();
+        if in_comment {
+            if ch == '\n' || ch == '\r' {
+                in_comment = false;
+            }
+            i += len;
+            continue;
+        }
+        if let Some(q) = quote {
+            if triple_quote {
+                let closes = if q == '\'' { "'''" } else { "\"\"\"" };
+                if field[i..].starts_with(closes) {
+                    quote = None;
+                    triple_quote = false;
+                    i += closes.len();
+                    continue;
+                }
+                i += len;
+                continue;
+            }
+            if escaped {
+                escaped = false;
+                i += len;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                i += len;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+                i += len;
+                continue;
+            }
+            i += len;
+            continue;
+        }
+
+        if ch == ':' && paren == 0 && bracket == 0 && brace == 0 && !in_format_spec {
+            in_format_spec = true;
+            i += len;
+            continue;
+        }
+
+        if ch == '#' && (!in_format_spec || brace > 0) {
+            in_comment = true;
+            i += len;
+            continue;
+        }
+
+        if ch == '\'' || ch == '"' {
+            let opens = if ch == '\'' { "'''" } else { "\"\"\"" };
+            quote = Some(ch);
+            triple_quote = field[i..].starts_with(opens);
+            escaped = false;
+            i += if triple_quote { opens.len() } else { len };
+            continue;
+        }
+
+        match ch {
+            '(' => paren += 1,
+            ')' => paren = paren.saturating_sub(1),
+            '[' => bracket += 1,
+            ']' => bracket = bracket.saturating_sub(1),
+            '{' => brace += 1,
+            '}' => {
+                if paren == 0 && bracket == 0 && brace == 0 {
+                    return Some(i);
+                }
+                brace = brace.saturating_sub(1);
+            }
+            _ => {}
+        }
+        i += len;
+    }
+
+    None
+}
+
+fn fstring_field_has_non_comment_code(field: &str) -> bool {
+    let mut i = 0usize;
+    let mut quote: Option<char> = None;
+    let mut triple_quote = false;
+    let mut escaped = false;
+
+    while i < field.len() {
+        let ch = match field[i..].chars().next() {
+            Some(ch) => ch,
+            None => break,
+        };
+        let len = ch.len_utf8();
+        if let Some(q) = quote {
+            if triple_quote {
+                let closes = if q == '\'' { "'''" } else { "\"\"\"" };
+                if field[i..].starts_with(closes) {
+                    return true;
+                }
+                i += len;
+                continue;
+            }
+            if escaped {
+                escaped = false;
+                i += len;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                i += len;
+                continue;
+            }
+            if ch == q {
+                return true;
+            }
+            i += len;
+            continue;
+        }
+
+        if ch.is_whitespace() {
+            i += len;
+            continue;
+        }
+        if ch == '#' {
+            while let Some(next) = field[i..].chars().next() {
+                i += next.len_utf8();
+                if next == '\n' {
+                    break;
+                }
+            }
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            triple_quote = field[i..].starts_with(if ch == '\'' { "'''" } else { "\"\"\"" });
+            escaped = false;
+            i += if triple_quote { 3 } else { len };
+            if !triple_quote {
+                return true;
+            }
+            continue;
+        }
+        return true;
+    }
+
+    false
+}
+
+fn find_top_level_fstring_debug_equal(field: &str) -> Option<usize> {
+    let mut i = 0usize;
+    let mut paren = 0usize;
+    let mut bracket = 0usize;
+    let mut brace = 0usize;
+    let mut in_comment = false;
+    let mut quote: Option<char> = None;
+    let mut triple_quote = false;
+    let mut escaped = false;
+    let mut candidate = None;
+
+    while i < field.len() {
+        let ch = field[i..].chars().next()?;
+        let len = ch.len_utf8();
+        if in_comment {
+            if ch == '\n' || ch == '\r' {
+                in_comment = false;
+            }
+            i += len;
+            continue;
+        }
+        if let Some(q) = quote {
+            if triple_quote {
+                let closes = if q == '\'' { "'''" } else { "\"\"\"" };
+                if field[i..].starts_with(closes) {
+                    quote = None;
+                    triple_quote = false;
+                    i += closes.len();
+                    continue;
+                }
+                i += len;
+                continue;
+            }
+            if escaped {
+                escaped = false;
+                i += len;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                i += len;
+                continue;
+            }
+            if ch == q {
+                quote = None;
+                i += len;
+                continue;
+            }
+            i += len;
+            continue;
+        }
+
+        if ch == '#' {
+            in_comment = true;
+            i += len;
+            continue;
+        }
+
+        if ch == '\'' || ch == '"' {
+            let opens = if ch == '\'' { "'''" } else { "\"\"\"" };
+            quote = Some(ch);
+            triple_quote = field[i..].starts_with(opens);
+            escaped = false;
+            i += if triple_quote { opens.len() } else { len };
+            continue;
+        }
+
+        match ch {
+            '(' => paren += 1,
+            ')' => paren = paren.saturating_sub(1),
+            '[' => bracket += 1,
+            ']' => bracket = bracket.saturating_sub(1),
+            '{' => brace += 1,
+            '}' => brace = brace.saturating_sub(1),
+            '=' if paren == 0 && bracket == 0 && brace == 0 => {
+                let prev = field[..i].chars().next_back();
+                let next = field[i + len..].chars().next();
+                if !matches!(prev, Some('!' | '=' | '<' | '>' | ':')) && next != Some('=') {
+                    candidate = Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += len;
+    }
+
+    let candidate = candidate?;
+    if fstring_field_has_non_comment_code(&field[candidate + 1..]) {
+        return None;
+    }
+    Some(candidate)
 }
 
 impl Parser {
@@ -2465,7 +2732,11 @@ impl Parser {
                 let (targets, next) = self.parse_target_sequence(pos + 1, TokenKind::RBracket)?;
                 Some((AssignTarget::List(targets), next))
             }
-            _ => None,
+            _ => {
+                let (expr, next) = self.parse_expr_at(pos).ok()?;
+                self.expr_to_assign_target(expr)
+                    .map(|target| (target, next))
+            }
         }
     }
 
@@ -2924,21 +3195,14 @@ impl Parser {
                 }
 
                 let expr_start = idx + ch.len_utf8();
-                let mut depth = 1usize;
-                let mut expr_end = None;
-                for (inner_idx, inner_ch) in chars.by_ref() {
-                    if inner_ch == '{' {
-                        depth += 1;
-                    } else if inner_ch == '}' {
-                        depth = depth.saturating_sub(1);
-                        if depth == 0 {
-                            expr_end = Some(inner_idx);
-                            break;
-                        }
+                let end = find_fstring_field_end(content, expr_start)
+                    .ok_or_else(|| self.error_at(pos, "unterminated f-string"))?;
+                while let Some((inner_idx, _)) = chars.peek().copied() {
+                    chars.next();
+                    if inner_idx == end {
+                        break;
                     }
                 }
-
-                let end = expr_end.ok_or_else(|| self.error_at(pos, "unterminated f-string"))?;
                 let expr_text = content[expr_start..end].trim();
                 if expr_text.is_empty() {
                     return Err(self.error_at(pos, "empty f-string expression"));
@@ -3193,7 +3457,8 @@ impl Parser {
     }
 
     fn parse_embedded_expr(&self, source: &str) -> Result<Expr, ParseError> {
-        let mut lexer = Lexer::new(source);
+        let wrapped = format!("({source}\n)");
+        let mut lexer = Lexer::new(&wrapped);
         let tokens = lexer.tokenize().map_err(ParseError::from)?;
         let mut parser = Parser::new(tokens);
         let (expr, pos) = parser.parse_expr_at(0)?;
@@ -3203,6 +3468,14 @@ impl Parser {
 
     fn parse_fstring_field(&self, span: Span, field: &str) -> Result<Expr, ParseError> {
         let trimmed = field.trim();
+        if !fstring_field_has_non_comment_code(trimmed) {
+            return Err(ParseError::new(
+                "expected expression",
+                0,
+                span.line,
+                span.column,
+            ));
+        }
         let direct = self.parse_embedded_expr(trimmed);
         if let Ok(expr) = direct {
             let value = self.wrap_fstring_value(span, expr, None);
@@ -3277,17 +3550,12 @@ impl Parser {
     fn split_fstring_field_parts(&self, field: &str) -> Option<FStringFieldParts> {
         let delimiter = find_top_level_fstring_delimiter(field);
         let expr_end = delimiter.map(|(idx, _)| idx).unwrap_or(field.len());
-        let mut expr = field[..expr_end].trim_end().to_string();
+        let expr_region = &field[..expr_end];
+        let mut expr = expr_region.trim_end().to_string();
         let mut debug = false;
-        if expr.ends_with('=')
-            && !expr.ends_with("==")
-            && !expr.ends_with("!=")
-            && !expr.ends_with("<=")
-            && !expr.ends_with(">=")
-            && !expr.ends_with(":=")
-        {
+        if let Some(eq_idx) = find_top_level_fstring_debug_equal(expr_region) {
             debug = true;
-            expr = expr[..expr.len() - 1].trim_end().to_string();
+            expr = expr_region[..eq_idx].trim_end().to_string();
         }
         if expr.is_empty() {
             return None;

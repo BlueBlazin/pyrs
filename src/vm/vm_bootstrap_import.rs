@@ -1345,6 +1345,7 @@ def _lock_unlock_module(name):
                 ("fspath", BuiltinFunction::OsFspath),
                 ("cpu_count", BuiltinFunction::OsCpuCount),
                 ("uname", BuiltinFunction::OsUname),
+                ("fspath", BuiltinFunction::OsFspath),
                 ("getenv", BuiltinFunction::OsGetEnv),
                 ("putenv", BuiltinFunction::OsPutEnv),
                 ("unsetenv", BuiltinFunction::OsUnsetEnv),
@@ -1550,6 +1551,7 @@ def _lock_unlock_module(name):
                 ("getcwd", BuiltinFunction::OsGetCwd),
                 ("cpu_count", BuiltinFunction::OsCpuCount),
                 ("uname", BuiltinFunction::OsUname),
+                ("fspath", BuiltinFunction::OsFspath),
                 ("getenv", BuiltinFunction::OsGetEnv),
                 ("putenv", BuiltinFunction::OsPutEnv),
                 ("unsetenv", BuiltinFunction::OsUnsetEnv),
@@ -11255,12 +11257,11 @@ def _lock_unlock_module(name):
             return Ok(Some(module));
         }
         if self.find_module_file(&full_name).is_some() {
-            let return_policy = if self.should_defer_running_import_completion() {
-                ImportReturnPolicy::DeferredWhenFramesQueued
-            } else {
-                ImportReturnPolicy::Synchronous
-            };
-            let module = self.import_module_object_with_policy(&full_name, return_policy)?;
+            // `from package import child` exposes the child module immediately,
+            // so returning a deferred placeholder leaks partially initialized
+            // submodules like `email.policy` to user code.
+            let module =
+                self.import_module_object_with_policy(&full_name, ImportReturnPolicy::Synchronous)?;
             let module = self.canonical_imported_module_for_name(&full_name, module);
             self.upsert_module_global(parent, attr_name, Value::Module(module.clone()));
             return Ok(Some(module));

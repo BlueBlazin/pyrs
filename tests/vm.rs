@@ -14062,6 +14062,186 @@ fn re_match_uses_character_offsets_for_unicode_text() {
 }
 
 #[test]
+fn re_accepts_str_subclass_inputs_without_object_repr_fallback() {
+    let source = r#"import re
+class FancyStr(str):
+    pass
+
+value = FancyStr("mordor")
+matches = re.compile("or").findall(value)
+iter_matches = [m.group(0) for m in re.compile("or").finditer(value)]
+parts = re.compile("o").split(value, 1)
+escaped = re.escape(FancyStr("a.b"))
+compiled = re.compile(FancyStr("or"))
+fullmatch = re.fullmatch(FancyStr("mordor"), value)
+ok = (
+    matches == ["or", "or"]
+    and iter_matches == ["or", "or"]
+    and re.search(FancyStr("or"), value).group(0) == "or"
+    and fullmatch is not None
+    and fullmatch.group(0) == "mordor"
+    and parts == ["m", "rdor"]
+    and escaped == "a\\.b"
+    and compiled.pattern == "or"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn email_header_parser_keeps_atom_terminals_free_of_spurious_regex_defects() {
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping email header parser defect regression (CPython Lib path not available)"
+        );
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path.insert(0, {lib_path:?})\nfrom email import _header_value_parser as parser\naddress_list, rest = parser.get_address_list('frodo@mordor.net')\nterminal = address_list[0][0][0][2][0][0][0]\nfirst = address_list[0]\nok = (\n    rest == ''\n    and terminal.value == 'mordor'\n    and terminal.defects == []\n    and tuple(first.all_defects for _ in [0]) == ([],)\n    and tuple(address_list.all_defects for _ in [0]) == ([],)\n)\nprint(ok)\n"
+    );
+    let output = Command::new(pyrs_bin)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn email header parser defect probe");
+    assert!(
+        output.status.success(),
+        "email header parser defect probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(last_line, "True");
+}
+
+#[test]
+fn from_email_import_policy_returns_fully_initialized_submodule() {
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping from-email-import policy probe (CPython Lib path not available)");
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path.insert(0, {lib_path:?})\nfrom email import policy\nok = (\n    type(policy).__name__ == 'module'\n    and hasattr(policy, 'default')\n    and policy.default.__class__.__module__ == 'email.policy'\n)\nprint(ok)\n"
+    );
+    let output = Command::new(pyrs_bin)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn from email import policy probe");
+    assert!(
+        output.status.success(),
+        "from email import policy probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(last_line, "True");
+}
+
+#[test]
+fn os_module_exposes_fspath_from_posix_builtin_surface() {
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping os.fspath probe (CPython Lib path not available)");
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path.insert(0, {lib_path:?})\nimport os\nimport posix\nok = (\n    hasattr(posix, 'fspath')\n    and hasattr(os, 'fspath')\n    and posix.fspath('x') == 'x'\n    and os.fspath('x') == 'x'\n)\nprint(ok)\n"
+    );
+    let output = Command::new(pyrs_bin)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn os.fspath probe");
+    assert!(
+        output.status.success(),
+        "os.fspath probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(last_line, "True");
+}
+
+#[test]
+fn email_policy_header_store_parse_calls_real_header_factory_without_stack_overflow() {
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping email policy header_store_parse probe (CPython Lib path not available)"
+        );
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path.insert(0, {lib_path:?})\nfrom email import policy\nname, header = policy.default.header_store_parse('To', 'bilbo@underhill.org')\nok = (\n    name == 'To'\n    and str(header) == 'bilbo@underhill.org'\n    and type(header).__module__ == 'email.headerregistry'\n)\nprint(ok)\n"
+    );
+    let output = Command::new(pyrs_bin)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn email policy header_store_parse probe");
+    assert!(
+        output.status.success(),
+        "email policy header_store_parse probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(last_line, "True");
+}
+
+#[test]
+fn email_message_setitem_handles_address_headers_without_stack_overflow() {
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping email message __setitem__ probe (CPython Lib path not available)");
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path.insert(0, {lib_path:?})\nimport email.message\nfrom email import policy\nmsg = email.message.Message(policy=policy.default)\nmsg['Date'] = 'Tue, 29 May 2012 09:24:26 +1000'\nmsg['From'] = 'frodo@mordor.net'\nok = (str(msg['From']) == 'frodo@mordor.net')\nprint(ok)\n"
+    );
+    let output = Command::new(pyrs_bin)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn email message __setitem__ probe");
+    assert!(
+        output.status.success(),
+        "email message __setitem__ probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(last_line, "True");
+}
+
+#[test]
 fn re_sub_handles_unicode_prefix_without_byte_boundary_panics() {
     let source = "import re\ns = 'ሴx'\np = re.compile('x')\nout = p.sub('y', s)\nout2 = p.sub(lambda m: 'y', s)\nok = (out == 'ሴy' and out2 == 'ሴy')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -14253,6 +14433,54 @@ fn imports_cpython_asyncio_test_utils_with_socket_protocol_constants() {
             assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
         },
     );
+}
+
+#[test]
+fn asyncio_future_exposes_private_awaited_by_marker_with_cpython_lib_path() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping asyncio Future private-marker probe (CPython Lib path not available)");
+        return;
+    };
+    run_with_large_stack("asyncio-future-private-marker", move || {
+        let source = "import asyncio.futures as futures\nok = hasattr(futures.Future, '_Future__asyncio_awaited_by') and not hasattr(futures.Future, '__asyncio_awaited_by')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn email_test_pickleable_imports_with_cpython_lib_path() {
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping CPython test.test_email.test_pickleable import probe (CPython Lib path not available)"
+        );
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path.insert(0, {lib_path:?})\nimport test.test_email.test_pickleable as test_pickleable\nok = (test_pickleable.TestPickleCopyMessage.__module__ == 'test.test_email.test_pickleable')\nprint(ok)\n"
+    );
+    let output = Command::new(pyrs_bin)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn CPython test.test_email.test_pickleable import probe");
+    assert!(
+        output.status.success(),
+        "CPython test.test_email.test_pickleable import probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(last_line, "True");
 }
 
 #[test]
@@ -18791,6 +19019,16 @@ fn class_scope_comprehensions_resolve_class_and_module_names() {
 }
 
 #[test]
+fn class_private_name_mangling_matches_cpython() {
+    let source = "class C:\n    __value = 2\n    def __method(self):\n        __local = self.__value + 1\n        self.__other = __local\n        return __local, self.__other\nc = C()\nresult = c._C__method()\nvarnames = C._C__method.__code__.co_varnames\nok = ('_C__value' in C.__dict__ and '__value' not in C.__dict__ and '_C__method' in C.__dict__ and '__method' not in C.__dict__ and '_C__local' in varnames and result == (3, 3) and c.__dict__ == {'_C__other': 3})\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_milestone12_shim_symbols() {
     let source = "import sys, functools, inspect, re, io, _thread, math\n\
 ok = (sys.byteorder in ('little', 'big') and hasattr(functools, 'cmp_to_key') and hasattr(inspect, 'Signature') and hasattr(re, 'Scanner') and hasattr(io, '__all__') and hasattr(_thread, 'start_new_thread') and hasattr(math, 'ldexp') and callable(exec) and __debug__ and ExceptionGroup is not None and BaseExceptionGroup is not None)\n";
@@ -19948,7 +20186,9 @@ ok = (
 #[test]
 fn concurrent_futures_test_future_module_can_import_with_cpython_lib_path() {
     let Some(lib_path) = cpython_lib_path() else {
-        eprintln!("skipping test.test_concurrent_futures.test_future import probe (CPython Lib path not available)");
+        eprintln!(
+            "skipping test.test_concurrent_futures.test_future import probe (CPython Lib path not available)"
+        );
         return;
     };
     let handle = std::thread::Builder::new()
@@ -23202,7 +23442,11 @@ make()
 
     let records = list_values(vm.get_global("records")).expect("records should be a list");
     let errors = list_values(vm.get_global("errors")).expect("errors should be a list");
-    assert_eq!(records.len(), 2, "expected two finalized records, got {records:?}");
+    assert_eq!(
+        records.len(),
+        2,
+        "expected two finalized records, got {records:?}"
+    );
     let mut names = records
         .into_iter()
         .map(|value| match value {
@@ -23212,7 +23456,10 @@ make()
         .collect::<Vec<_>>();
     names.sort();
     assert_eq!(names, vec!["first".to_string(), "second".to_string()]);
-    assert!(errors.is_empty(), "unexpected unraisable errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "unexpected unraisable errors: {errors:?}"
+    );
 }
 
 #[test]
@@ -23238,7 +23485,10 @@ ok = (result is sentinel)
     vm.run_shutdown_hooks().expect("shutdown should succeed");
 
     let records = list_values(vm.get_global("records")).expect("records should be a list");
-    assert!(records.is_empty(), "unexpected ghost finalizers: {records:?}");
+    assert!(
+        records.is_empty(),
+        "unexpected ghost finalizers: {records:?}"
+    );
 }
 
 #[test]

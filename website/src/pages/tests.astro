@@ -38,7 +38,7 @@ for (const e of entries) { const s = effectiveStatus(e); sc[s] = (sc[s] || 0) + 
 const totalModules    = entries.length;
 const passedModules   = sc.passed ?? 0;
 const failedModules   = sc.failed ?? 0;
-const erroredModules  = sc.process_error ?? 0;
+const erroredModules  = (sc.process_error ?? 0) + (sc.worker_crash ?? 0);
 const timedOutModules = sc.process_timeout ?? 0;
 const loadErrModules  = sc.load_error ?? 0;
 const skippedModules  = (sc.skipped ?? 0) + (sc.host_skip ?? 0);
@@ -57,7 +57,7 @@ const overallPass     = totalCases > 0 ? passedCases / totalCases * 100 : 0;
 
 // sort entries: passed first → failed → errors → timeouts → load errors → skipped
 const pri: Record<string, number> = {
-	passed: 0, failed: 1, process_error: 2, process_timeout: 3,
+	passed: 0, failed: 1, process_error: 2, worker_crash: 2, process_timeout: 3,
 	load_error: 4, skipped: 5, host_skip: 6,
 };
 const sorted = [...entries].sort((a: any, b: any) => {
@@ -68,6 +68,55 @@ const sorted = [...entries].sort((a: any, b: any) => {
 // top failure modules
 const topMods = (derived?.top_modules_by_nonpass ?? []).slice(0, 8);
 const maxGap  = topMods[0]?.count ?? 1;
+
+// helpers (hoisted — used by computed data below)
+const short = (m: string) => m.replace(/^test\./, "");
+
+// case outcome breakdown
+const failedCases  = caseOut.failed ?? 0;
+const errorCases   = caseOut.error ?? 0;
+const skippedCases = caseOut.skipped ?? 0;
+
+// passing module names
+const passingModules = sorted
+	.filter((e: any) => effectiveStatus(e) === "passed")
+	.map((e: any) => short(e.module));
+
+// feature area categories
+const catDefs: { label: string; patterns: string[] }[] = [
+	{ label: "Async & Concurrency", patterns: ["test_asyncio", "test_asyncgen", "test_coroutines", "test_concurrent_futures", "test_thread", "test_threading", "test_threading_local", "test_threadedtempfile", "test_threadsignals", "test_queue", "test_sched", "test_free_threading", "test_context"] },
+	{ label: "Networking & HTTP", patterns: ["test_socket", "test_ssl", "test_httplib", "test_httpservers", "test_urllib", "test_urllib2", "test_urlparse", "test_urllib_response", "test_ftplib", "test_imaplib", "test_smtplib", "test_poplib", "test_selectors", "test_select", "test_socketserver", "test_wsgiref", "test_xmlrpc", "test_ipaddress", "test_docxmlrpc", "test_timeout"] },
+	{ label: "File System & OS", patterns: ["test_os", "test_pathlib", "test_posix", "test_posixpath", "test_stat", "test_shutil", "test_tempfile", "test_glob", "test_filecmp", "test_fileinput", "test_fileio", "test_file", "test_fileutils", "test_genericpath", "test_mmap", "test_io", "test_bufio", "test_signal", "test_fcntl", "test_linecache", "test_ntpath", "test_largefile"] },
+	{ label: "Data Structures", patterns: ["test_list", "test_dict", "test_set", "test_tuple", "test_deque", "test_heapq", "test_bisect", "test_collections", "test_array", "test_bytes", "test_memoryview", "test_defaultdict", "test_ordered_dict", "test_weakref", "test_weakset", "test_buffer"] },
+	{ label: "Strings & Encoding", patterns: ["test_str", "test_re", "test_string", "test_string_literals", "test_format", "test_textwrap", "test_difflib", "test_fnmatch", "test_codecs", "test_unicodedata", "test_fstring", "test_userstring", "test_shlex", "test_ucn", "test_stringprep"] },
+	{ label: "Math & Numbers", patterns: ["test_int", "test_int_literal", "test_float", "test_complex", "test_decimal", "test_fractions", "test_math", "test_cmath", "test_statistics", "test_random", "test_long", "test_longexp", "test_abstract_numbers"] },
+	{ label: "Data Formats", patterns: ["test_json", "test_pickle", "test_pickletools", "test_marshal", "test_struct", "test_csv", "test_configparser", "test_tomllib", "test_plistlib", "test_shelve", "test_dbm", "test_dbm_dumb", "test_dbm_ndbm", "test_dbm_sqlite3", "test_sqlite3"] },
+	{ label: "XML & HTML", patterns: ["test_xml_etree", "test_xml_etree_c", "test_xml_dom_minicompat", "test_html", "test_htmlparser", "test_minidom", "test_sax", "test_pyexpat", "test_pulldom"] },
+	{ label: "Type System & OOP", patterns: ["test_bool", "test_class", "test_descr", "test_descrtut", "test_metaclass", "test_super", "test_property", "test_abc", "test_enum", "test_dataclasses", "test_typing", "test_types", "test_typechecks", "test_type_aliases", "test_type_annotations", "test_type_params", "test_genericalias", "test_genericclass", "test_isinstance", "test_dynamicclassattribute", "test_subclassinit"] },
+	{ label: "Functional & Iterators", patterns: ["test_functools", "test_itertools", "test_operator", "test_generators", "test_genexps", "test_iter", "test_enumerate", "test_listcomps", "test_dictcomps", "test_setcomps", "test_yield_from", "test_graphlib", "test_colorsys", "test_contextlib", "test_contextlib_async"] },
+	{ label: "Compression & Archives", patterns: ["test_zlib", "test_gzip", "test_bz2", "test_lzma", "test_zipfile", "test_zipfile64", "test_tarfile", "test_zstd", "test_zipapp"] },
+	{ label: "Subprocess & IPC", patterns: ["test_subprocess", "test_multiprocessing_fork", "test_multiprocessing_spawn", "test_multiprocessing_forkserver", "test_multiprocessing_main_handling", "test_popen", "test_pty", "test_fork1"] },
+	{ label: "Date & Time", patterns: ["test_datetime", "test_time", "test_timeit", "test_strftime", "test_strptime", "test_calendar", "test_zoneinfo"] },
+];
+const matchesCat = (mod: string, patterns: string[]) =>
+	patterns.some(p => mod === p || mod.startsWith(p + "."));
+const catStats = catDefs.map(cat => {
+	const mods = entries.filter((e: any) => matchesCat(short(e.module), cat.patterns));
+	const passed = mods.filter((e: any) => effectiveStatus(e) === "passed");
+	const invCases = mods.reduce((s: number, e: any) => s + (e.inventory_case_count ?? 0), 0);
+	const testsRun = mods.reduce((s: number, e: any) => s + (e.tests_run ?? 0), 0);
+	const reach = invCases > 0 ? testsRun / invCases * 100 : 0;
+	return {
+		label: cat.label,
+		total: mods.length,
+		passed: passed.length,
+		reach,
+		invCases,
+		testsRun,
+	};
+}).sort((a, b) => b.reach - a.reach);
+const catByVolume = [...catStats].sort((a, b) => b.invCases - a.invCases);
+const maxCatVol = catByVolume[0]?.invCases ?? 1;
 
 // meta
 const hostOS   = summary?.host?.system === "Darwin" ? "macOS" : (summary?.host?.system ?? "");
@@ -82,7 +131,6 @@ const fD = (iso: string) => {
 	if (!iso) return "";
 	return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 };
-const short = (m: string) => m.replace(/^test\./, "");
 ---
 
 <SiteLayout
@@ -202,9 +250,89 @@ const short = (m: string) => m.replace(/^test\./, "");
 		</div>
 	</section>
 
-	<!-- ── TOP FAILURE AREAS ──────────────────────────────── -->
+	<!-- ── CASE OUTCOMES ─────────────────────────────── -->
+	<section class="outcomes">
+		<h2 class="sh">How executed tests landed</h2>
+		<p class="sd">{fN(execCases)} test cases ran — here's the breakdown.</p>
+
+		<div class="seg-bar">
+			<div class="seg seg-pass" style={`width:${passedCases / execCases * 100}%`} title={`Passed: ${fN(passedCases)}`} />
+			<div class="seg seg-fail" style={`width:${failedCases / execCases * 100}%`} title={`Failed: ${fN(failedCases)}`} />
+			<div class="seg seg-err" style={`width:${errorCases / execCases * 100}%`} title={`Error: ${fN(errorCases)}`} />
+			<div class="seg seg-skip" style={`width:${skippedCases / execCases * 100}%`} title={`Skipped: ${fN(skippedCases)}`} />
+		</div>
+
+		<div class="seg-legend">
+			<span class="seg-li"><span class="seg-dot seg-pass-bg" /><span>Passed <strong>{fN(passedCases)}</strong></span></span>
+			<span class="seg-li"><span class="seg-dot seg-fail-bg" /><span>Failed <strong>{fN(failedCases)}</strong></span></span>
+			<span class="seg-li"><span class="seg-dot seg-err-bg" /><span>Error <strong>{fN(errorCases)}</strong></span></span>
+			<span class="seg-li"><span class="seg-dot seg-skip-bg" /><span>Skipped <strong>{fN(skippedCases)}</strong></span></span>
+		</div>
+	</section>
+
+	<!-- ── STANDARD LIBRARY READINESS ────────────────────── -->
+	<section class="readiness">
+		<h2 class="sh">Standard library readiness</h2>
+		<p class="sd">How major Python feature areas fare — reach shows how many discoverable tests PYRS can attempt.</p>
+
+		<div class="cat-table">
+			<div class="cat-header">
+				<span class="cat-h-label">Category</span>
+				<span class="cat-h-mods">Modules</span>
+				<span class="cat-h-reach">Reach</span>
+				<span class="cat-h-status">Status</span>
+			</div>
+			{catStats.map((c) => {
+				const tag = c.passed === c.total && c.total > 0 ? "Solid"
+					: c.passed > 0 ? "Partial"
+					: c.reach > 20 ? "Early"
+					: "Not yet";
+				const tagClass = tag.toLowerCase().replace(" ", "-");
+				return (
+					<div class="cat-row">
+						<span class="cat-label">{c.label}</span>
+						<span class="cat-mods">{c.passed} of {c.total}</span>
+						<div class="cat-reach">
+							<div class="cat-track">
+								<div class="cat-fill" style={`width:${Math.min(c.reach, 100)}%`}></div>
+							</div>
+							<span class="cat-pct">{fP(c.reach, 0)}</span>
+						</div>
+						<span class={`cat-tag cat-tag-${tagClass}`}>{tag}</span>
+					</div>
+				);
+			})}
+		</div>
+	</section>
+
+	<!-- ── TEST CONCENTRATION ────────────────────────────── -->
+	<section class="depth">
+		<h2 class="sh">Test concentration by area</h2>
+		<p class="sd">Where CPython's {fN(totalCases)} discoverable test cases live — and how far PYRS reaches into each.</p>
+
+		<div class="depth-list">
+			{catByVolume.filter(c => c.invCases > 0).map((c) => (
+				<div class="depth-row">
+					<span class="depth-label">{c.label}</span>
+					<div class="depth-bar">
+						<div class="depth-track" style={`width:${(c.invCases / maxCatVol * 100)}%`}>
+							<div class="depth-reached" style={`width:${Math.min(c.reach, 100)}%`}></div>
+						</div>
+					</div>
+					<span class="depth-ct">{fN(c.invCases)}</span>
+				</div>
+			))}
+		</div>
+
+		<div class="depth-legend">
+			<span class="depth-li"><span class="depth-ld depth-ld-exec" />Executed</span>
+			<span class="depth-li"><span class="depth-ld depth-ld-total" />Discoverable</span>
+		</div>
+	</section>
+
+	<!-- ── LARGEST GAPS ──────────────────────────────────── -->
 	<section class="gaps">
-		<h2 class="sh">Where the work is concentrated</h2>
+		<h2 class="sh">Largest gaps by module</h2>
 		<p class="sd">Modules with the most non-passing test cases.</p>
 
 		<div class="gap-list">
@@ -217,6 +345,18 @@ const short = (m: string) => m.replace(/^test\./, "");
 					</div>
 					<span class="gap-ct">{m.count}</span>
 				</div>
+			))}
+		</div>
+	</section>
+
+	<!-- ── ALL PASSING MODULES ───────────────────────────── -->
+	<section class="clean">
+		<h2 class="sh">All passing modules</h2>
+		<p class="sd">{passingModules.length} modules pass every single test — no failures, no errors.</p>
+
+		<div class="clean-grid">
+			{passingModules.map((m: string) => (
+				<span class="clean-tag">{m}</span>
 			))}
 		</div>
 	</section>
@@ -334,6 +474,7 @@ const short = (m: string) => m.replace(/^test\./, "");
 	.st-skipped,
 	.st-host_skip       { background: #473d37; }
 	.st-unknown         { background: #342c27; }
+	.st-worker_crash    { background: #d94f4f; }
 
 	/* hover info */
 	.hover-info {
@@ -380,12 +521,15 @@ const short = (m: string) => m.replace(/^test\./, "");
 	.mc {
 		background: var(--bg-card);
 		border: 1px solid var(--line);
+		border-top: 2px solid #3a2414;
 		border-radius: 0.6rem;
 		padding: 1.4rem 1.3rem;
 		display: flex;
 		flex-direction: column;
 		gap: 0.15rem;
 	}
+	.mc:first-child { border-top-color: var(--accent); }
+	.mc:last-child  { border-top-color: #5ec97a; }
 	.mv {
 		font-size: 2.2rem;
 		font-weight: 700;
@@ -448,7 +592,15 @@ const short = (m: string) => m.replace(/^test\./, "");
 		height: 100%;
 		border-radius: 0.3rem;
 		min-width: 2px;
+		transform-origin: left;
+		animation: bar-grow 800ms cubic-bezier(0.22, 1, 0.36, 1) both;
 	}
+	@keyframes bar-grow {
+		from { transform: scaleX(0); }
+		to   { transform: scaleX(1); }
+	}
+	.step:nth-child(2) .bar-fill { animation-delay: 150ms; }
+	.step:nth-child(3) .bar-fill { animation-delay: 300ms; }
 	.fill-disc { background: #3a322d; }
 	.fill-exec { background: #b05a2a; }
 	.fill-pass { background: #3d8a4e; }
@@ -465,6 +617,11 @@ const short = (m: string) => m.replace(/^test\./, "");
 		grid-template-columns: 1.4rem minmax(8rem, 13rem) 1fr 2.8rem;
 		align-items: center;
 		gap: 0.6rem;
+		padding: 0.3rem 0;
+		transition: background 120ms ease;
+	}
+	.gap-row:hover {
+		background: #1a120d;
 	}
 	.gap-rank {
 		font-size: 0.78rem;
@@ -499,6 +656,212 @@ const short = (m: string) => m.replace(/^test\./, "");
 		text-align: right;
 	}
 
+	/* ── outcomes ─────────────────────────────── */
+	.seg-bar {
+		display: flex;
+		height: 2rem;
+		border-radius: 0.4rem;
+		overflow: hidden;
+		gap: 2px;
+	}
+	.seg {
+		min-width: 3px;
+		transition: opacity 150ms ease;
+	}
+	.seg-bar:hover .seg { opacity: 0.7; }
+	.seg-bar:hover .seg:hover { opacity: 1; }
+	.seg-pass, .seg-pass-bg { background: #5ec97a; }
+	.seg-fail, .seg-fail-bg { background: #e97d46; }
+	.seg-err,  .seg-err-bg  { background: #d94f4f; }
+	.seg-skip, .seg-skip-bg { background: #7d6452; }
+	.seg-legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem 1.4rem;
+		margin-top: 1rem;
+	}
+	.seg-li {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.85rem;
+		color: var(--text-muted);
+	}
+	.seg-li strong {
+		color: var(--text);
+		font-weight: 600;
+	}
+	.seg-dot {
+		display: inline-block;
+		width: 10px;
+		height: 10px;
+		border-radius: 2px;
+		flex-shrink: 0;
+	}
+
+	/* ── readiness table ─────────────────────── */
+	.cat-table {
+		display: flex;
+		flex-direction: column;
+		gap: 0;
+	}
+	.cat-header {
+		display: grid;
+		grid-template-columns: minmax(9rem, 14rem) 5.5rem 1fr 4.5rem;
+		gap: 0.8rem;
+		padding: 0 0 0.6rem;
+		border-bottom: 1px solid #2b1e15;
+		margin-bottom: 0.4rem;
+	}
+	.cat-h-label, .cat-h-mods, .cat-h-reach, .cat-h-status {
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: rgba(190, 170, 159, 0.5);
+		font-weight: 600;
+	}
+	.cat-h-reach { padding-left: 0; }
+	.cat-row {
+		display: grid;
+		grid-template-columns: minmax(9rem, 14rem) 5.5rem 1fr 4.5rem;
+		gap: 0.8rem;
+		align-items: center;
+		padding: 0.55rem 0;
+		border-bottom: 1px solid #1c140f;
+		transition: background 120ms ease;
+	}
+	.cat-row:hover {
+		background: #1a120d;
+	}
+	.cat-label {
+		font-size: 0.88rem;
+		font-weight: 500;
+		color: var(--text);
+	}
+	.cat-mods {
+		font-size: 0.8rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: var(--text-muted);
+	}
+	.cat-reach {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+	}
+	.cat-track {
+		flex: 1;
+		height: 0.65rem;
+		background: #1a130e;
+		border-radius: 0.2rem;
+		overflow: hidden;
+	}
+	.cat-fill {
+		height: 100%;
+		background: #b05a2a;
+		border-radius: 0.2rem;
+		min-width: 2px;
+	}
+	.cat-pct {
+		font-size: 0.76rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: rgba(190, 170, 159, 0.6);
+		min-width: 3rem;
+		text-align: right;
+	}
+	.cat-tag {
+		font-size: 0.72rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		padding: 0.18rem 0.5rem;
+		border-radius: 0.25rem;
+		text-align: center;
+	}
+	.cat-tag-solid   { color: #5ec97a; background: #0f1d15; border: 1px solid #1e3a2a; }
+	.cat-tag-partial { color: #e97d46; background: #1c1008; border: 1px solid #3a2414; }
+	.cat-tag-early   { color: #d4a03a; background: #1a1508; border: 1px solid #362a12; }
+	.cat-tag-not-yet { color: #7d6452; background: #140f0b; border: 1px solid #2b1e15; }
+
+	/* ── test concentration ──────────────────── */
+	.depth-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+	.depth-row {
+		display: grid;
+		grid-template-columns: minmax(9rem, 14rem) 1fr 3.5rem;
+		align-items: center;
+		gap: 0.8rem;
+	}
+	.depth-label {
+		font-size: 0.85rem;
+		color: var(--text-muted);
+	}
+	.depth-bar {
+		height: 1.2rem;
+		position: relative;
+	}
+	.depth-track {
+		height: 100%;
+		background: #1c140f;
+		border-radius: 0.25rem;
+		overflow: hidden;
+		min-width: 4px;
+	}
+	.depth-reached {
+		height: 100%;
+		background: #b05a2a;
+		border-radius: 0.25rem;
+		min-width: 2px;
+	}
+	.depth-ct {
+		font-size: 0.78rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: rgba(190, 170, 159, 0.6);
+		text-align: right;
+	}
+	.depth-legend {
+		display: flex;
+		gap: 1.4rem;
+		margin-top: 1rem;
+	}
+	.depth-li {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+	.depth-ld {
+		display: inline-block;
+		width: 10px;
+		height: 10px;
+		border-radius: 2px;
+	}
+	.depth-ld-exec  { background: #b05a2a; }
+	.depth-ld-total { background: #1c140f; border: 1px solid #2b1e15; }
+
+	/* ── clean modules ───────────────────────── */
+	.clean-grid {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+	}
+	.clean-tag {
+		font-size: 0.78rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: #5ec97a;
+		background: #0f1d15;
+		border: 1px solid #1e3a2a;
+		padding: 0.22rem 0.55rem;
+		border-radius: 0.3rem;
+		transition: background 120ms ease;
+	}
+	.clean-tag:hover {
+		background: #142a1d;
+	}
+
 	/* ── responsive ───────────────────────────── */
 	@media (max-width: 1024px) {
 		.metrics { grid-template-columns: repeat(2, 1fr); }
@@ -514,6 +877,19 @@ const short = (m: string) => m.replace(/^test\./, "");
 		.gap-row { grid-template-columns: 1.2rem minmax(6rem, 9rem) 1fr 2.4rem; gap: 0.4rem; }
 		.gap-name { font-size: 0.78rem; }
 		.legend { gap: 0.35rem 0.9rem; }
+		.seg-legend { gap: 0.4rem 0.9rem; }
+		.clean-tag { font-size: 0.72rem; padding: 0.18rem 0.45rem; }
+		.cat-header, .cat-row {
+			grid-template-columns: 1fr 4.2rem 3rem 3.8rem;
+			gap: 0.4rem;
+		}
+		.cat-h-reach, .cat-track { display: none; }
+		.cat-label { font-size: 0.82rem; }
+		.cat-mods { font-size: 0.74rem; }
+		.cat-pct { font-size: 0.7rem; min-width: auto; }
+		.cat-tag { font-size: 0.66rem; padding: 0.15rem 0.35rem; }
+		.depth-row { grid-template-columns: minmax(6rem, 9rem) 1fr 2.8rem; gap: 0.4rem; }
+		.depth-label { font-size: 0.78rem; }
 	}
 </style>
 
@@ -539,4 +915,38 @@ const short = (m: string) => m.replace(/^test\./, "");
 			info.classList.remove("active");
 		});
 	}
+
+	/* ── count-up animation for metric values ── */
+	const mvEls = document.querySelectorAll<HTMLElement>(".mv");
+	const countUp = (el: HTMLElement) => {
+		const raw = el.textContent?.trim() ?? "";
+		const isPercent = raw.endsWith("%");
+		const numStr = raw.replace(/[,%]/g, "");
+		const target = parseFloat(numStr);
+		if (isNaN(target)) return;
+		const decimals = isPercent ? (raw.includes(".") ? raw.split(".")[1].replace("%", "").length : 0) : 0;
+		const duration = 700;
+		const start = performance.now();
+		const fmt = (n: number) => {
+			if (isPercent) return n.toFixed(decimals) + "%";
+			return Math.round(n).toLocaleString("en-US");
+		};
+		el.textContent = fmt(0);
+		const tick = (now: number) => {
+			const t = Math.min((now - start) / duration, 1);
+			const ease = 1 - Math.pow(1 - t, 3);
+			el.textContent = fmt(target * ease);
+			if (t < 1) requestAnimationFrame(tick);
+		};
+		requestAnimationFrame(tick);
+	};
+	const metricsObs = new IntersectionObserver((entries) => {
+		entries.forEach(entry => {
+			if (entry.isIntersecting) {
+				countUp(entry.target as HTMLElement);
+				metricsObs.unobserve(entry.target);
+			}
+		});
+	}, { threshold: 0.5 });
+	mvEls.forEach(el => metricsObs.observe(el));
 </script>

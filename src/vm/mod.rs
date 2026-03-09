@@ -1567,10 +1567,11 @@ impl Vm {
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
             prefer_pure_re_when_available: true,
-            // CPython-default behavior: prefer validated source-bound pyc when available.
-            // `PYRS_IMPORT_PREFER_PYC` can still explicitly override this.
+            // Default to source-first correctness for stdlib imports. Source-bound pyc remains
+            // available behind `PYRS_IMPORT_PREFER_PYC=1` and explicit test helpers while the
+            // translated pyc import path continues to close parity gaps.
             prefer_pyc_when_source_available: host
-                .env_flag_enabled_or_default("PYRS_IMPORT_PREFER_PYC", true),
+                .env_flag_enabled_or_default("PYRS_IMPORT_PREFER_PYC", false),
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
             hash_cache: HashMap::new(),
@@ -8201,6 +8202,25 @@ fn re_pattern_from_value(value: &Value) -> Result<RePatternValue, RuntimeError> 
             Object::ByteArray(values) => Ok(RePatternValue::Bytes(values.clone())),
             _ => Err(RuntimeError::type_error("pattern must be string or bytes")),
         },
+        Value::Instance(obj) => match &*obj.kind() {
+            Object::Instance(instance_data) => {
+                match instance_data.attrs.get(STR_BACKING_STORAGE_ATTR) {
+                    Some(Value::Str(text)) => Ok(RePatternValue::Str(text.clone())),
+                    _ => match instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR) {
+                        Some(Value::Bytes(storage)) => match &*storage.kind() {
+                            Object::Bytes(values) => Ok(RePatternValue::Bytes(values.clone())),
+                            _ => Err(RuntimeError::type_error("pattern must be string or bytes")),
+                        },
+                        Some(Value::ByteArray(storage)) => match &*storage.kind() {
+                            Object::ByteArray(values) => Ok(RePatternValue::Bytes(values.clone())),
+                            _ => Err(RuntimeError::type_error("pattern must be string or bytes")),
+                        },
+                        _ => Err(RuntimeError::type_error("pattern must be string or bytes")),
+                    },
+                }
+            }
+            _ => Err(RuntimeError::type_error("pattern must be string or bytes")),
+        },
         _ => Err(RuntimeError::type_error("pattern must be string or bytes")),
     }
 }
@@ -9635,11 +9655,7 @@ fn sre_category_matches(category: i64, ch: char) -> bool {
 
 fn sre_at_matches<T: SreText>(at: i64, text: &T, pos: usize) -> bool {
     let len = text.len();
-    let prev = if pos > 0 {
-        text.char_at(pos - 1)
-    } else {
-        None
-    };
+    let prev = if pos > 0 { text.char_at(pos - 1) } else { None };
     let cur = text.char_at(pos);
     match at {
         SRE_AT_BEGINNING | SRE_AT_BEGINNING_STRING => pos == 0,
@@ -10128,15 +10144,9 @@ fn sre_run_program<T: SreText>(
                 let mut rep_pos = cursor;
                 for _ in 0..hard_max {
                     let repeat_checkpoint = marks.checkpoint();
-                    let Some(next_pos) = sre_run_program(
-                        code,
-                        unit_start,
-                        next_pc,
-                        text,
-                        rep_pos,
-                        marks,
-                        depth + 1,
-                    ) else {
+                    let Some(next_pos) =
+                        sre_run_program(code, unit_start, next_pc, text, rep_pos, marks, depth + 1)
+                    else {
                         marks.restore(repeat_checkpoint);
                         break;
                     };
@@ -10210,7 +10220,9 @@ fn compiled_regex_match_details_with_text<T: SreText>(
             let capture_start = marks.get(group * 2);
             let capture_end = marks.get(group * 2 + 1);
             let capture = match (capture_start, capture_end) {
-                (Some(cap_start), Some(cap_end)) if cap_start <= cap_end && cap_end <= text.len() => {
+                (Some(cap_start), Some(cap_end))
+                    if cap_start <= cap_end && cap_end <= text.len() =>
+                {
                     Some((text.byte_offset(cap_start), text.byte_offset(cap_end)))
                 }
                 _ => None,
@@ -10392,44 +10404,6 @@ fn re_match_details_bytes(
             };
             Ok(found)
         }
-    }
-}
-
-fn re_match_details(
-    pattern: &RePatternValue,
-    text: &Value,
-    mode: ReMode,
-    compiled_program: Option<&ReCompiledRegexProgram>,
-) -> Result<Option<ReMatchDetail>, RuntimeError> {
-    match pattern {
-        RePatternValue::Str(_) => match text {
-            Value::Str(value) => re_match_details_str(pattern, value, mode, compiled_program),
-            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => Err(
-                RuntimeError::new("cannot use a string pattern on a bytes-like object"),
-            ),
-            _ => Err(RuntimeError::new("string must be string")),
-        },
-        RePatternValue::Bytes(_) => match text {
-            Value::Bytes(obj) => match &*obj.kind() {
-                Object::Bytes(values) => re_match_details_bytes(pattern, values, mode),
-                _ => Err(RuntimeError::type_error("string must be bytes-like")),
-            },
-            Value::ByteArray(obj) => match &*obj.kind() {
-                Object::ByteArray(values) => re_match_details_bytes(pattern, values, mode),
-                _ => Err(RuntimeError::type_error("string must be bytes-like")),
-            },
-            Value::MemoryView(obj) => match &*obj.kind() {
-                Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
-                    re_match_details_bytes(pattern, values, mode)
-                })
-                .ok_or_else(|| RuntimeError::type_error("string must be bytes-like"))?,
-                _ => Err(RuntimeError::type_error("string must be bytes-like")),
-            },
-            Value::Str(_) => Err(RuntimeError::new(
-                "cannot use a bytes pattern on a string-like object",
-            )),
-            _ => Err(RuntimeError::type_error("string must be bytes-like")),
-        },
     }
 }
 
@@ -12816,7 +12790,9 @@ where
 }
 
 fn class_attr_lookup(class: &ObjRef, name: &str) -> Option<Value> {
-    class_attr_walk_visit(class, &mut |candidate| class_attr_lookup_direct(candidate, name))
+    class_attr_walk_visit(class, &mut |candidate| {
+        class_attr_lookup_direct(candidate, name)
+    })
 }
 
 fn class_attr_lookup_direct(class: &ObjRef, name: &str) -> Option<Value> {

@@ -556,6 +556,18 @@ fn parses_parenthesized_attribute_assignment_target() {
 }
 
 #[test]
+fn parses_literal_attribute_assignment_target() {
+    let module = parser::parse_module("b'a'.__class__ = x\n").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Assign { targets, .. } => match targets.first() {
+            Some(AssignTarget::Attribute { name, .. }) => assert_eq!(name, "__class__"),
+            other => panic!("unexpected target: {other:?}"),
+        },
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
 fn parses_with_statement() {
     let source = "with mgr as value:\n    pass\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -2028,8 +2040,50 @@ fn parses_fstring_with_nested_format_fields() {
 }
 
 #[test]
+fn parses_fstring_with_brace_string_inside_format_spec() {
+    let source = "x = f'{2:{\"{\"}>10}'\n";
+    parser::parse_module(source).expect("parse should succeed");
+}
+
+#[test]
+fn parses_fstring_with_hash_flag_before_nested_format_field() {
+    let source = "x = f'{10:#{1}0x}'\n";
+    parser::parse_module(source).expect("parse should succeed");
+}
+
+#[test]
+fn parses_fstring_with_escaped_literal_brace() {
+    let source = "x = f'\\x7b1+1}}'\n";
+    parser::parse_module(source).expect("parse should succeed");
+}
+
+#[test]
+fn parses_fstring_debug_expression_with_trailing_comment() {
+    let source = "x = f\"{1+2 = # my comment\n  }\"\n";
+    parser::parse_module(source).expect("parse should succeed");
+}
+
+#[test]
 fn parses_fstring_expression_with_escaped_string_literal() {
     let source = "x = f\"{json.dumps('\\\\n'.join(commands))}\"\n";
+    parser::parse_module(source).expect("parse should succeed");
+}
+
+#[test]
+fn parses_fstring_expression_with_newlines_inside_parentheses() {
+    let source = "x = f\"{(\n    1 +\n    2\n)}\"\n";
+    parser::parse_module(source).expect("parse should succeed");
+}
+
+#[test]
+fn parses_fstring_expression_with_comment_containing_quote() {
+    let source = "x = f'''\n# this is not a comment\n{ # the following operation it's\n3 # this is a number\n* 2}'''\n";
+    parser::parse_module(source).expect("parse should succeed");
+}
+
+#[test]
+fn parses_raw_string_with_backslash_newline_continuation() {
+    let source = "x = r'\"a\\\nde\\\nfg\"'\n";
     parser::parse_module(source).expect("parse should succeed");
 }
 

@@ -70,10 +70,15 @@ impl ScopeInfo {
             None,
             &module.body,
             &HashSet::new(),
+            None,
         )
     }
 
-    fn for_class(body: &[Stmt], enclosing: &ScopeInfo) -> Result<Self, CompileError> {
+    fn for_class(
+        body: &[Stmt],
+        enclosing: &ScopeInfo,
+        private_name: Option<&str>,
+    ) -> Result<Self, CompileError> {
         analyze_scope(
             ScopeType::Class,
             &[],
@@ -83,6 +88,7 @@ impl ScopeInfo {
             None,
             body,
             &enclosing.available_nonlocal,
+            private_name,
         )
     }
 
@@ -94,6 +100,7 @@ impl ScopeInfo {
         kwarg: &Option<Parameter>,
         body: &[Stmt],
         enclosing: &ScopeInfo,
+        private_name: Option<&str>,
     ) -> Result<Self, CompileError> {
         analyze_scope(
             ScopeType::Function,
@@ -104,6 +111,7 @@ impl ScopeInfo {
             kwarg.as_ref(),
             body,
             &enclosing.available_nonlocal,
+            private_name,
         )
     }
 
@@ -165,6 +173,7 @@ fn analyze_scope(
     kwarg: Option<&Parameter>,
     body: &[Stmt],
     enclosing: &HashSet<String>,
+    private_name: Option<&str>,
 ) -> Result<ScopeInfo, CompileError> {
     let mut locals = HashSet::new();
     let mut globals = HashSet::new();
@@ -177,6 +186,7 @@ fn analyze_scope(
         vararg,
         kwarg,
         &mut locals,
+        private_name,
     );
 
     validate_scope_declaration_semantics(
@@ -188,10 +198,17 @@ fn analyze_scope(
         kwarg,
         body,
         enclosing,
+        private_name,
     )?;
 
     for stmt in body {
-        collect_locals_stmt(stmt, &mut locals, &mut globals, &mut nonlocals);
+        collect_locals_stmt(
+            stmt,
+            &mut locals,
+            &mut globals,
+            &mut nonlocals,
+            private_name,
+        );
     }
 
     locals.retain(|name| !globals.contains(name) && !nonlocals.contains(name));
@@ -214,7 +231,13 @@ fn analyze_scope(
     let mut uses = HashSet::new();
     let mut child_free = HashSet::new();
     for stmt in body {
-        collect_uses_stmt(stmt, &mut uses, &mut child_free, &available_nonlocal)?;
+        collect_uses_stmt(
+            stmt,
+            &mut uses,
+            &mut child_free,
+            &available_nonlocal,
+            private_name,
+        )?;
     }
 
     let mut direct_free: HashSet<String> =
@@ -282,6 +305,7 @@ fn analyze_scope_expr(
     kwarg: Option<&Parameter>,
     body: &Expr,
     enclosing: &HashSet<String>,
+    private_name: Option<&str>,
 ) -> Result<ScopeInfo, CompileError> {
     let stmt = Stmt {
         node: StmtKind::Expr(body.clone()),
@@ -296,7 +320,26 @@ fn analyze_scope_expr(
         kwarg,
         std::slice::from_ref(&stmt),
         enclosing,
+        private_name,
     )
+}
+
+fn mangle_private_identifier(private_name: Option<&str>, ident: &str) -> String {
+    let Some(private_name) = private_name else {
+        return ident.to_string();
+    };
+    if !ident.starts_with("__")
+        || ident.ends_with("__")
+        || ident.contains('.')
+        || ident.chars().count() < 3
+    {
+        return ident.to_string();
+    }
+    let stripped = private_name.trim_start_matches('_');
+    if stripped.is_empty() {
+        return ident.to_string();
+    }
+    format!("_{stripped}{ident}")
 }
 
 fn collect_param_locals(
@@ -306,21 +349,22 @@ fn collect_param_locals(
     vararg: Option<&Parameter>,
     kwarg: Option<&Parameter>,
     locals: &mut HashSet<String>,
+    private_name: Option<&str>,
 ) {
     for param in posonly_params {
-        locals.insert(param.name.clone());
+        locals.insert(mangle_private_identifier(private_name, &param.name));
     }
     for param in params {
-        locals.insert(param.name.clone());
+        locals.insert(mangle_private_identifier(private_name, &param.name));
     }
     for param in kwonly_params {
-        locals.insert(param.name.clone());
+        locals.insert(mangle_private_identifier(private_name, &param.name));
     }
     if let Some(param) = vararg {
-        locals.insert(param.name.clone());
+        locals.insert(mangle_private_identifier(private_name, &param.name));
     }
     if let Some(param) = kwarg {
-        locals.insert(param.name.clone());
+        locals.insert(mangle_private_identifier(private_name, &param.name));
     }
 }
 
@@ -334,6 +378,7 @@ fn validate_scope_declaration_semantics(
     kwarg: Option<&Parameter>,
     body: &[Stmt],
     enclosing: &HashSet<String>,
+    private_name: Option<&str>,
 ) -> Result<(), CompileError> {
     let mut param_names = HashSet::new();
     collect_param_locals(
@@ -343,6 +388,7 @@ fn validate_scope_declaration_semantics(
         vararg,
         kwarg,
         &mut param_names,
+        private_name,
     );
 
     let mut any_globals: HashMap<String, Span> = HashMap::new();
@@ -1416,35 +1462,36 @@ fn collect_locals_stmt(
     locals: &mut HashSet<String>,
     globals: &mut HashSet<String>,
     nonlocals: &mut HashSet<String>,
+    private_name: Option<&str>,
 ) {
     match &stmt.node {
         StmtKind::Assign { targets, .. } => {
             for target in targets {
-                collect_locals_target(target, locals);
+                collect_locals_target(target, locals, private_name);
             }
         }
         StmtKind::AugAssign { target, .. } | StmtKind::AnnAssign { target, .. } => {
-            collect_locals_target(target, locals);
+            collect_locals_target(target, locals, private_name);
         }
         StmtKind::Delete { targets } => {
             for target in targets {
-                collect_locals_target(target, locals);
+                collect_locals_target(target, locals, private_name);
             }
         }
         StmtKind::If { body, orelse, .. } => {
             for stmt in body {
-                collect_locals_stmt(stmt, locals, globals, nonlocals);
+                collect_locals_stmt(stmt, locals, globals, nonlocals, private_name);
             }
             for stmt in orelse {
-                collect_locals_stmt(stmt, locals, globals, nonlocals);
+                collect_locals_stmt(stmt, locals, globals, nonlocals, private_name);
             }
         }
         StmtKind::While { body, orelse, .. } => {
             for stmt in body {
-                collect_locals_stmt(stmt, locals, globals, nonlocals);
+                collect_locals_stmt(stmt, locals, globals, nonlocals, private_name);
             }
             for stmt in orelse {
-                collect_locals_stmt(stmt, locals, globals, nonlocals);
+                collect_locals_stmt(stmt, locals, globals, nonlocals, private_name);
             }
         }
         StmtKind::For {
@@ -1453,24 +1500,24 @@ fn collect_locals_stmt(
             orelse,
             ..
         } => {
-            collect_locals_target(target, locals);
+            collect_locals_target(target, locals, private_name);
             for stmt in body {
-                collect_locals_stmt(stmt, locals, globals, nonlocals);
+                collect_locals_stmt(stmt, locals, globals, nonlocals, private_name);
             }
             for stmt in orelse {
-                collect_locals_stmt(stmt, locals, globals, nonlocals);
+                collect_locals_stmt(stmt, locals, globals, nonlocals, private_name);
             }
         }
         StmtKind::With { target, body, .. } => {
             if let Some(target) = target {
-                collect_locals_target(target, locals);
+                collect_locals_target(target, locals, private_name);
             }
             for stmt in body {
-                collect_locals_stmt(stmt, locals, globals, nonlocals);
+                collect_locals_stmt(stmt, locals, globals, nonlocals, private_name);
             }
         }
         StmtKind::FunctionDef { name, .. } | StmtKind::ClassDef { name, .. } => {
-            locals.insert(name.clone());
+            locals.insert(mangle_private_identifier(private_name, name));
         }
         StmtKind::Import { names } => {
             for alias in names {
@@ -1482,13 +1529,13 @@ fn collect_locals_stmt(
                         .unwrap_or(&alias.name)
                         .to_string()
                 });
-                locals.insert(binding);
+                locals.insert(mangle_private_identifier(private_name, &binding));
             }
         }
         StmtKind::ImportFrom { names, .. } => {
             for alias in names {
                 let binding = alias.asname.clone().unwrap_or_else(|| alias.name.clone());
-                locals.insert(binding);
+                locals.insert(mangle_private_identifier(private_name, &binding));
             }
         }
         StmtKind::Try {
@@ -1498,65 +1545,69 @@ fn collect_locals_stmt(
             finalbody,
         } => {
             for stmt in body {
-                collect_locals_stmt(stmt, locals, globals, nonlocals);
+                collect_locals_stmt(stmt, locals, globals, nonlocals, private_name);
             }
             for stmt in orelse {
-                collect_locals_stmt(stmt, locals, globals, nonlocals);
+                collect_locals_stmt(stmt, locals, globals, nonlocals, private_name);
             }
             for stmt in finalbody {
-                collect_locals_stmt(stmt, locals, globals, nonlocals);
+                collect_locals_stmt(stmt, locals, globals, nonlocals, private_name);
             }
             for handler in handlers {
                 if let Some(name) = &handler.name {
-                    locals.insert(name.clone());
+                    locals.insert(mangle_private_identifier(private_name, name));
                 }
                 for stmt in &handler.body {
-                    collect_locals_stmt(stmt, locals, globals, nonlocals);
+                    collect_locals_stmt(stmt, locals, globals, nonlocals, private_name);
                 }
             }
         }
         StmtKind::Match { cases, .. } => {
             for case in cases {
-                collect_pattern_locals(&case.pattern, locals);
+                collect_pattern_locals(&case.pattern, locals, private_name);
                 for stmt in &case.body {
-                    collect_locals_stmt(stmt, locals, globals, nonlocals);
+                    collect_locals_stmt(stmt, locals, globals, nonlocals, private_name);
                 }
             }
         }
         StmtKind::Decorated { stmt, .. } => {
-            collect_locals_stmt(stmt, locals, globals, nonlocals);
+            collect_locals_stmt(stmt, locals, globals, nonlocals, private_name);
         }
         StmtKind::Global { names } => {
             for name in names {
-                globals.insert(name.clone());
+                globals.insert(mangle_private_identifier(private_name, name));
             }
         }
         StmtKind::Nonlocal { names } => {
             for name in names {
-                nonlocals.insert(name.clone());
+                nonlocals.insert(mangle_private_identifier(private_name, name));
             }
         }
         _ => {}
     }
-    collect_locals_namedexpr_stmt(stmt, locals);
+    collect_locals_namedexpr_stmt(stmt, locals, private_name);
 }
 
-fn collect_pattern_locals(pattern: &Pattern, locals: &mut HashSet<String>) {
+fn collect_pattern_locals(
+    pattern: &Pattern,
+    locals: &mut HashSet<String>,
+    private_name: Option<&str>,
+) {
     match pattern {
         Pattern::Capture(name) => {
-            locals.insert(name.clone());
+            locals.insert(mangle_private_identifier(private_name, name));
         }
         Pattern::Sequence(items) | Pattern::Or(items) => {
             for item in items {
-                collect_pattern_locals(item, locals);
+                collect_pattern_locals(item, locals, private_name);
             }
         }
         Pattern::Mapping { entries, rest } => {
             for (_, value) in entries {
-                collect_pattern_locals(value, locals);
+                collect_pattern_locals(value, locals, private_name);
             }
             if let Some(name) = rest {
-                locals.insert(name.clone());
+                locals.insert(mangle_private_identifier(private_name, name));
             }
         }
         Pattern::Class {
@@ -1565,52 +1616,60 @@ fn collect_pattern_locals(pattern: &Pattern, locals: &mut HashSet<String>) {
             ..
         } => {
             for pattern in positional {
-                collect_pattern_locals(pattern, locals);
+                collect_pattern_locals(pattern, locals, private_name);
             }
             for (_, pattern) in keywords {
-                collect_pattern_locals(pattern, locals);
+                collect_pattern_locals(pattern, locals, private_name);
             }
         }
         Pattern::As { pattern, name } => {
-            collect_pattern_locals(pattern, locals);
-            locals.insert(name.clone());
+            collect_pattern_locals(pattern, locals, private_name);
+            locals.insert(mangle_private_identifier(private_name, name));
         }
         Pattern::Star(Some(name)) => {
-            locals.insert(name.clone());
+            locals.insert(mangle_private_identifier(private_name, name));
         }
         Pattern::Wildcard | Pattern::Constant(_) | Pattern::Value(_) | Pattern::Star(None) => {}
     }
 }
 
-fn collect_locals_target(target: &AssignTarget, locals: &mut HashSet<String>) {
+fn collect_locals_target(
+    target: &AssignTarget,
+    locals: &mut HashSet<String>,
+    private_name: Option<&str>,
+) {
     match target {
         AssignTarget::Name(name) => {
-            locals.insert(name.clone());
+            locals.insert(mangle_private_identifier(private_name, name));
         }
         AssignTarget::Starred(item) => {
-            collect_locals_target(item, locals);
+            collect_locals_target(item, locals, private_name);
         }
         AssignTarget::Tuple(items) | AssignTarget::List(items) => {
             for item in items {
-                collect_locals_target(item, locals);
+                collect_locals_target(item, locals, private_name);
             }
         }
         AssignTarget::Subscript { .. } | AssignTarget::Attribute { .. } => {}
     }
 }
 
-fn collect_locals_namedexpr_stmt(stmt: &Stmt, locals: &mut HashSet<String>) {
+fn collect_locals_namedexpr_stmt(
+    stmt: &Stmt,
+    locals: &mut HashSet<String>,
+    private_name: Option<&str>,
+) {
     match &stmt.node {
-        StmtKind::Expr(expr) => collect_locals_namedexpr_expr(expr, locals),
+        StmtKind::Expr(expr) => collect_locals_namedexpr_expr(expr, locals, private_name),
         StmtKind::Assign { targets, value } => {
             for target in targets {
-                collect_locals_namedexpr_target(target, locals);
+                collect_locals_namedexpr_target(target, locals, private_name);
             }
-            collect_locals_namedexpr_expr(value, locals);
+            collect_locals_namedexpr_expr(value, locals, private_name);
         }
         StmtKind::AugAssign { target, value, .. } => {
-            collect_locals_namedexpr_target(target, locals);
-            collect_locals_namedexpr_expr(value, locals);
+            collect_locals_namedexpr_target(target, locals, private_name);
+            collect_locals_namedexpr_expr(value, locals, private_name);
         }
         StmtKind::AnnAssign {
             target,
@@ -1618,49 +1677,51 @@ fn collect_locals_namedexpr_stmt(stmt: &Stmt, locals: &mut HashSet<String>) {
             value,
             ..
         } => {
-            collect_locals_namedexpr_target(target, locals);
-            collect_locals_namedexpr_expr(annotation, locals);
+            collect_locals_namedexpr_target(target, locals, private_name);
+            collect_locals_namedexpr_expr(annotation, locals, private_name);
             if let Some(value) = value {
-                collect_locals_namedexpr_expr(value, locals);
+                collect_locals_namedexpr_expr(value, locals, private_name);
             }
         }
         StmtKind::Delete { targets } => {
             for target in targets {
-                collect_locals_namedexpr_target(target, locals);
+                collect_locals_namedexpr_target(target, locals, private_name);
             }
         }
         StmtKind::If { test, .. }
         | StmtKind::While { test, .. }
-        | StmtKind::Assert { test, .. } => collect_locals_namedexpr_expr(test, locals),
+        | StmtKind::Assert { test, .. } => {
+            collect_locals_namedexpr_expr(test, locals, private_name)
+        }
         StmtKind::For { target, iter, .. } => {
-            collect_locals_namedexpr_target(target, locals);
-            collect_locals_namedexpr_expr(iter, locals);
+            collect_locals_namedexpr_target(target, locals, private_name);
+            collect_locals_namedexpr_expr(iter, locals, private_name);
         }
         StmtKind::With {
             context, target, ..
         } => {
-            collect_locals_namedexpr_expr(context, locals);
+            collect_locals_namedexpr_expr(context, locals, private_name);
             if let Some(target) = target {
-                collect_locals_namedexpr_target(target, locals);
+                collect_locals_namedexpr_target(target, locals, private_name);
             }
         }
         StmtKind::Return { value } => {
             if let Some(value) = value {
-                collect_locals_namedexpr_expr(value, locals);
+                collect_locals_namedexpr_expr(value, locals, private_name);
             }
         }
         StmtKind::Raise { value, cause } => {
             if let Some(value) = value {
-                collect_locals_namedexpr_expr(value, locals);
+                collect_locals_namedexpr_expr(value, locals, private_name);
             }
             if let Some(cause) = cause {
-                collect_locals_namedexpr_expr(cause, locals);
+                collect_locals_namedexpr_expr(cause, locals, private_name);
             }
         }
         StmtKind::Try { handlers, .. } => {
             for handler in handlers {
                 if let Some(type_expr) = &handler.type_expr {
-                    collect_locals_namedexpr_expr(type_expr, locals);
+                    collect_locals_namedexpr_expr(type_expr, locals, private_name);
                 }
             }
         }
@@ -1680,9 +1741,10 @@ fn collect_locals_namedexpr_stmt(stmt: &Stmt, locals: &mut HashSet<String>) {
                 vararg.as_ref(),
                 kwarg.as_ref(),
                 locals,
+                private_name,
             );
             if let Some(returns) = returns {
-                collect_locals_namedexpr_expr(returns, locals);
+                collect_locals_namedexpr_expr(returns, locals, private_name);
             }
         }
         StmtKind::ClassDef {
@@ -1698,28 +1760,28 @@ fn collect_locals_namedexpr_stmt(stmt: &Stmt, locals: &mut HashSet<String>) {
                     }
                     CallArg::Keyword { value, .. } => value,
                 };
-                collect_locals_namedexpr_expr(expr, locals);
+                collect_locals_namedexpr_expr(expr, locals, private_name);
             }
             if let Some(metaclass) = metaclass {
-                collect_locals_namedexpr_expr(metaclass, locals);
+                collect_locals_namedexpr_expr(metaclass, locals, private_name);
             }
             for (_, value) in keywords {
-                collect_locals_namedexpr_expr(value, locals);
+                collect_locals_namedexpr_expr(value, locals, private_name);
             }
         }
         StmtKind::TypeAlias { value, .. } => {
-            collect_locals_namedexpr_expr(value, locals);
+            collect_locals_namedexpr_expr(value, locals, private_name);
         }
         StmtKind::Decorated { decorators, .. } => {
             for decorator in decorators {
-                collect_locals_namedexpr_expr(decorator, locals);
+                collect_locals_namedexpr_expr(decorator, locals, private_name);
             }
         }
         StmtKind::Match { subject, cases } => {
-            collect_locals_namedexpr_expr(subject, locals);
+            collect_locals_namedexpr_expr(subject, locals, private_name);
             for case in cases {
                 if let Some(guard) = &case.guard {
-                    collect_locals_namedexpr_expr(guard, locals);
+                    collect_locals_namedexpr_expr(guard, locals, private_name);
                 }
             }
         }
@@ -1740,6 +1802,7 @@ fn collect_locals_namedexpr_params(
     vararg: Option<&Parameter>,
     kwarg: Option<&Parameter>,
     locals: &mut HashSet<String>,
+    private_name: Option<&str>,
 ) {
     for param in posonly_params
         .iter()
@@ -1747,93 +1810,107 @@ fn collect_locals_namedexpr_params(
         .chain(kwonly_params.iter())
     {
         if let Some(default) = &param.default {
-            collect_locals_namedexpr_expr(default, locals);
+            collect_locals_namedexpr_expr(default, locals, private_name);
         }
         if let Some(annotation) = &param.annotation {
-            collect_locals_namedexpr_expr(annotation, locals);
+            collect_locals_namedexpr_expr(annotation, locals, private_name);
         }
     }
     if let Some(param) = vararg
         && let Some(annotation) = &param.annotation
     {
-        collect_locals_namedexpr_expr(annotation, locals);
+        collect_locals_namedexpr_expr(annotation, locals, private_name);
     }
     if let Some(param) = kwarg
         && let Some(annotation) = &param.annotation
     {
-        collect_locals_namedexpr_expr(annotation, locals);
+        collect_locals_namedexpr_expr(annotation, locals, private_name);
     }
 }
 
-fn collect_locals_namedexpr_target(target: &AssignTarget, locals: &mut HashSet<String>) {
+fn collect_locals_namedexpr_target(
+    target: &AssignTarget,
+    locals: &mut HashSet<String>,
+    private_name: Option<&str>,
+) {
     match target {
         AssignTarget::Name(_) => {}
-        AssignTarget::Starred(item) => collect_locals_namedexpr_target(item, locals),
+        AssignTarget::Starred(item) => collect_locals_namedexpr_target(item, locals, private_name),
         AssignTarget::Tuple(items) | AssignTarget::List(items) => {
             for item in items {
-                collect_locals_namedexpr_target(item, locals);
+                collect_locals_namedexpr_target(item, locals, private_name);
             }
         }
         AssignTarget::Subscript { value, index } => {
-            collect_locals_namedexpr_expr(value, locals);
-            collect_locals_namedexpr_expr(index, locals);
+            collect_locals_namedexpr_expr(value, locals, private_name);
+            collect_locals_namedexpr_expr(index, locals, private_name);
         }
         AssignTarget::Attribute { value, .. } => {
-            collect_locals_namedexpr_expr(value, locals);
+            collect_locals_namedexpr_expr(value, locals, private_name);
         }
     }
 }
 
-fn collect_locals_namedexpr_expr(expr: &Expr, locals: &mut HashSet<String>) {
+fn collect_locals_namedexpr_expr(
+    expr: &Expr,
+    locals: &mut HashSet<String>,
+    private_name: Option<&str>,
+) {
     match &expr.node {
         ExprKind::Name(_) | ExprKind::Constant(_) => {}
         ExprKind::NamedExpr { target, value } => {
-            locals.insert(target.clone());
-            collect_locals_namedexpr_expr(value, locals);
+            locals.insert(mangle_private_identifier(private_name, target));
+            collect_locals_namedexpr_expr(value, locals, private_name);
         }
         ExprKind::Binary { left, right, .. } | ExprKind::BoolOp { left, right, .. } => {
-            collect_locals_namedexpr_expr(left, locals);
-            collect_locals_namedexpr_expr(right, locals);
+            collect_locals_namedexpr_expr(left, locals, private_name);
+            collect_locals_namedexpr_expr(right, locals, private_name);
         }
         ExprKind::Unary { operand, .. } | ExprKind::Await { value: operand } => {
-            collect_locals_namedexpr_expr(operand, locals);
+            collect_locals_namedexpr_expr(operand, locals, private_name);
         }
         ExprKind::Call { func, args } => {
-            collect_locals_namedexpr_expr(func, locals);
+            collect_locals_namedexpr_expr(func, locals, private_name);
             for arg in args {
                 match arg {
                     CallArg::Positional(expr)
                     | CallArg::Keyword { value: expr, .. }
                     | CallArg::Star(expr)
-                    | CallArg::DoubleStar(expr) => collect_locals_namedexpr_expr(expr, locals),
+                    | CallArg::DoubleStar(expr) => {
+                        collect_locals_namedexpr_expr(expr, locals, private_name)
+                    }
                 }
             }
         }
         ExprKind::List(values) | ExprKind::Tuple(values) => {
             for value in values {
-                collect_locals_namedexpr_expr(value, locals);
+                collect_locals_namedexpr_expr(value, locals, private_name);
             }
         }
         ExprKind::Dict(entries) => {
             for entry in entries {
                 match entry {
                     DictEntry::Pair(key, value) => {
-                        collect_locals_namedexpr_expr(key, locals);
-                        collect_locals_namedexpr_expr(value, locals);
+                        collect_locals_namedexpr_expr(key, locals, private_name);
+                        collect_locals_namedexpr_expr(value, locals, private_name);
                     }
-                    DictEntry::Unpack(value) => collect_locals_namedexpr_expr(value, locals),
+                    DictEntry::Unpack(value) => {
+                        collect_locals_namedexpr_expr(value, locals, private_name)
+                    }
                 }
             }
         }
         ExprKind::Subscript { value, index } => {
-            collect_locals_namedexpr_expr(value, locals);
-            collect_locals_namedexpr_expr(index, locals);
+            collect_locals_namedexpr_expr(value, locals, private_name);
+            collect_locals_namedexpr_expr(index, locals, private_name);
         }
-        ExprKind::Attribute { value, .. } => collect_locals_namedexpr_expr(value, locals),
+        ExprKind::Attribute { value, .. } => {
+            collect_locals_namedexpr_expr(value, locals, private_name)
+        }
         ExprKind::IfExpr { test, body, orelse } => {
-            collect_locals_namedexpr_expr(test, locals);
-            collect_locals_namedexpr_expr(body, locals);
-            collect_locals_namedexpr_expr(orelse, locals);
+            collect_locals_namedexpr_expr(test, locals, private_name);
+            collect_locals_namedexpr_expr(body, locals, private_name);
+            collect_locals_namedexpr_expr(orelse, locals, private_name);
         }
         ExprKind::Lambda {
             posonly_params,
@@ -1849,16 +1926,17 @@ fn collect_locals_namedexpr_expr(expr: &Expr, locals: &mut HashSet<String>) {
             vararg.as_ref(),
             kwarg.as_ref(),
             locals,
+            private_name,
         ),
         ExprKind::ListComp { elt, clauses }
         | ExprKind::SetComp { elt, clauses }
         | ExprKind::GeneratorExp { elt, clauses } => {
-            collect_locals_namedexpr_expr(elt, locals);
+            collect_locals_namedexpr_expr(elt, locals, private_name);
             for clause in clauses {
-                collect_locals_namedexpr_target(&clause.target, locals);
-                collect_locals_namedexpr_expr(&clause.iter, locals);
+                collect_locals_namedexpr_target(&clause.target, locals, private_name);
+                collect_locals_namedexpr_expr(&clause.iter, locals, private_name);
                 for cond in &clause.ifs {
-                    collect_locals_namedexpr_expr(cond, locals);
+                    collect_locals_namedexpr_expr(cond, locals, private_name);
                 }
             }
         }
@@ -1867,43 +1945,43 @@ fn collect_locals_namedexpr_expr(expr: &Expr, locals: &mut HashSet<String>) {
             value,
             clauses,
         } => {
-            collect_locals_namedexpr_expr(key, locals);
-            collect_locals_namedexpr_expr(value, locals);
+            collect_locals_namedexpr_expr(key, locals, private_name);
+            collect_locals_namedexpr_expr(value, locals, private_name);
             for clause in clauses {
-                collect_locals_namedexpr_target(&clause.target, locals);
-                collect_locals_namedexpr_expr(&clause.iter, locals);
+                collect_locals_namedexpr_target(&clause.target, locals, private_name);
+                collect_locals_namedexpr_expr(&clause.iter, locals, private_name);
                 for cond in &clause.ifs {
-                    collect_locals_namedexpr_expr(cond, locals);
+                    collect_locals_namedexpr_expr(cond, locals, private_name);
                 }
             }
         }
         ExprKind::Yield { value } => {
             if let Some(value) = value {
-                collect_locals_namedexpr_expr(value, locals);
+                collect_locals_namedexpr_expr(value, locals, private_name);
             }
         }
-        ExprKind::YieldFrom { value } => collect_locals_namedexpr_expr(value, locals),
+        ExprKind::YieldFrom { value } => collect_locals_namedexpr_expr(value, locals, private_name),
         ExprKind::TemplateLiteral { interpolations, .. } => {
             for interpolation in interpolations {
-                collect_locals_namedexpr_expr(&interpolation.value, locals);
+                collect_locals_namedexpr_expr(&interpolation.value, locals, private_name);
             }
         }
         ExprKind::Slice { lower, upper, step } => {
             if let Some(lower) = lower {
-                collect_locals_namedexpr_expr(lower, locals);
+                collect_locals_namedexpr_expr(lower, locals, private_name);
             }
             if let Some(upper) = upper {
-                collect_locals_namedexpr_expr(upper, locals);
+                collect_locals_namedexpr_expr(upper, locals, private_name);
             }
             if let Some(step) = step {
-                collect_locals_namedexpr_expr(step, locals);
+                collect_locals_namedexpr_expr(step, locals, private_name);
             }
         }
     }
 }
 
-fn type_param_name(param: &TypeParam) -> String {
-    param.name.clone()
+fn type_param_name(param: &TypeParam, private_name: Option<&str>) -> String {
+    mangle_private_identifier(private_name, &param.name)
 }
 
 fn collect_uses_stmt(
@@ -1911,14 +1989,15 @@ fn collect_uses_stmt(
     uses: &mut HashSet<String>,
     child_free: &mut HashSet<String>,
     enclosing: &HashSet<String>,
+    private_name: Option<&str>,
 ) -> Result<(), CompileError> {
     match &stmt.node {
-        StmtKind::Expr(expr) => collect_uses_expr(expr, uses, child_free, enclosing)?,
+        StmtKind::Expr(expr) => collect_uses_expr(expr, uses, child_free, enclosing, private_name)?,
         StmtKind::Assign { targets, value } => {
             for target in targets {
-                collect_target_uses(target, uses, child_free, enclosing)?;
+                collect_target_uses(target, uses, child_free, enclosing, private_name)?;
             }
-            collect_uses_expr(value, uses, child_free, enclosing)?;
+            collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
         }
         StmtKind::AnnAssign {
             target,
@@ -1926,37 +2005,37 @@ fn collect_uses_stmt(
             value,
             ..
         } => {
-            collect_target_uses(target, uses, child_free, enclosing)?;
-            collect_uses_expr(annotation, uses, child_free, enclosing)?;
+            collect_target_uses(target, uses, child_free, enclosing, private_name)?;
+            collect_uses_expr(annotation, uses, child_free, enclosing, private_name)?;
             if let Some(expr) = value {
-                collect_uses_expr(expr, uses, child_free, enclosing)?;
+                collect_uses_expr(expr, uses, child_free, enclosing, private_name)?;
             }
         }
         StmtKind::AugAssign { target, value, .. } => {
-            collect_target_uses(target, uses, child_free, enclosing)?;
-            collect_uses_expr(value, uses, child_free, enclosing)?;
+            collect_target_uses(target, uses, child_free, enclosing, private_name)?;
+            collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
         }
         StmtKind::Delete { targets } => {
             for target in targets {
-                collect_target_uses(target, uses, child_free, enclosing)?;
+                collect_target_uses(target, uses, child_free, enclosing, private_name)?;
             }
         }
         StmtKind::If { test, body, orelse } => {
-            collect_uses_expr(test, uses, child_free, enclosing)?;
+            collect_uses_expr(test, uses, child_free, enclosing, private_name)?;
             for stmt in body {
-                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                collect_uses_stmt(stmt, uses, child_free, enclosing, private_name)?;
             }
             for stmt in orelse {
-                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                collect_uses_stmt(stmt, uses, child_free, enclosing, private_name)?;
             }
         }
         StmtKind::While { test, body, orelse } => {
-            collect_uses_expr(test, uses, child_free, enclosing)?;
+            collect_uses_expr(test, uses, child_free, enclosing, private_name)?;
             for stmt in body {
-                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                collect_uses_stmt(stmt, uses, child_free, enclosing, private_name)?;
             }
             for stmt in orelse {
-                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                collect_uses_stmt(stmt, uses, child_free, enclosing, private_name)?;
             }
         }
         StmtKind::For {
@@ -1966,13 +2045,13 @@ fn collect_uses_stmt(
             orelse,
             ..
         } => {
-            collect_target_uses(target, uses, child_free, enclosing)?;
-            collect_uses_expr(iter, uses, child_free, enclosing)?;
+            collect_target_uses(target, uses, child_free, enclosing, private_name)?;
+            collect_uses_expr(iter, uses, child_free, enclosing, private_name)?;
             for stmt in body {
-                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                collect_uses_stmt(stmt, uses, child_free, enclosing, private_name)?;
             }
             for stmt in orelse {
-                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                collect_uses_stmt(stmt, uses, child_free, enclosing, private_name)?;
             }
         }
         StmtKind::With {
@@ -1981,12 +2060,12 @@ fn collect_uses_stmt(
             body,
             ..
         } => {
-            collect_uses_expr(context, uses, child_free, enclosing)?;
+            collect_uses_expr(context, uses, child_free, enclosing, private_name)?;
             if let Some(target) = target {
-                collect_target_uses(target, uses, child_free, enclosing)?;
+                collect_target_uses(target, uses, child_free, enclosing, private_name)?;
             }
             for stmt in body {
-                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                collect_uses_stmt(stmt, uses, child_free, enclosing, private_name)?;
             }
         }
         StmtKind::Try {
@@ -1996,40 +2075,40 @@ fn collect_uses_stmt(
             finalbody,
         } => {
             for stmt in body {
-                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                collect_uses_stmt(stmt, uses, child_free, enclosing, private_name)?;
             }
             for handler in handlers {
                 if let Some(expr) = &handler.type_expr {
-                    collect_uses_expr(expr, uses, child_free, enclosing)?;
+                    collect_uses_expr(expr, uses, child_free, enclosing, private_name)?;
                 }
                 for stmt in &handler.body {
-                    collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                    collect_uses_stmt(stmt, uses, child_free, enclosing, private_name)?;
                 }
             }
             for stmt in orelse {
-                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                collect_uses_stmt(stmt, uses, child_free, enclosing, private_name)?;
             }
             for stmt in finalbody {
-                collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                collect_uses_stmt(stmt, uses, child_free, enclosing, private_name)?;
             }
         }
         StmtKind::Return { value } => {
             if let Some(expr) = value {
-                collect_uses_expr(expr, uses, child_free, enclosing)?;
+                collect_uses_expr(expr, uses, child_free, enclosing, private_name)?;
             }
         }
         StmtKind::Raise { value, cause } => {
             if let Some(expr) = value {
-                collect_uses_expr(expr, uses, child_free, enclosing)?;
+                collect_uses_expr(expr, uses, child_free, enclosing, private_name)?;
             }
             if let Some(expr) = cause {
-                collect_uses_expr(expr, uses, child_free, enclosing)?;
+                collect_uses_expr(expr, uses, child_free, enclosing, private_name)?;
             }
         }
         StmtKind::Assert { test, message } => {
-            collect_uses_expr(test, uses, child_free, enclosing)?;
+            collect_uses_expr(test, uses, child_free, enclosing, private_name)?;
             if let Some(expr) = message {
-                collect_uses_expr(expr, uses, child_free, enclosing)?;
+                collect_uses_expr(expr, uses, child_free, enclosing, private_name)?;
             }
         }
         StmtKind::FunctionDef {
@@ -2048,19 +2127,19 @@ fn collect_uses_stmt(
                 .chain(kwonly_params.iter())
             {
                 if let Some(default) = &param.default {
-                    collect_uses_expr(default, uses, child_free, enclosing)?;
+                    collect_uses_expr(default, uses, child_free, enclosing, private_name)?;
                 }
                 if let Some(annotation) = &param.annotation {
-                    collect_uses_expr(annotation, uses, child_free, enclosing)?;
+                    collect_uses_expr(annotation, uses, child_free, enclosing, private_name)?;
                 }
             }
             for param in vararg.iter().chain(kwarg.iter()) {
                 if let Some(annotation) = &param.annotation {
-                    collect_uses_expr(annotation, uses, child_free, enclosing)?;
+                    collect_uses_expr(annotation, uses, child_free, enclosing, private_name)?;
                 }
             }
             if let Some(annotation) = returns {
-                collect_uses_expr(annotation, uses, child_free, enclosing)?;
+                collect_uses_expr(annotation, uses, child_free, enclosing, private_name)?;
             }
             let scope = analyze_scope(
                 ScopeType::Function,
@@ -2071,10 +2150,12 @@ fn collect_uses_stmt(
                 kwarg.as_ref(),
                 body,
                 enclosing,
+                private_name,
             )?;
             child_free.extend(scope.freevars);
         }
         StmtKind::ClassDef {
+            name,
             bases,
             metaclass,
             keywords,
@@ -2088,16 +2169,25 @@ fn collect_uses_stmt(
                     }
                     CallArg::Keyword { value, .. } => value,
                 };
-                collect_uses_expr(expr, uses, child_free, enclosing)?;
+                collect_uses_expr(expr, uses, child_free, enclosing, private_name)?;
             }
             if let Some(meta) = metaclass {
-                collect_uses_expr(meta, uses, child_free, enclosing)?;
+                collect_uses_expr(meta, uses, child_free, enclosing, private_name)?;
             }
             for (_name, value) in keywords {
-                collect_uses_expr(value, uses, child_free, enclosing)?;
+                collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
             }
-            let scope =
-                analyze_scope(ScopeType::Class, &[], &[], &[], None, None, body, enclosing)?;
+            let scope = analyze_scope(
+                ScopeType::Class,
+                &[],
+                &[],
+                &[],
+                None,
+                None,
+                body,
+                enclosing,
+                Some(name),
+            )?;
             child_free.extend(scope.freevars);
         }
         StmtKind::TypeAlias {
@@ -2106,7 +2196,7 @@ fn collect_uses_stmt(
             let helper_params: Vec<Parameter> = type_params
                 .iter()
                 .map(|param| Parameter {
-                    name: type_param_name(param),
+                    name: type_param_name(param, private_name),
                     default: None,
                     annotation: None,
                 })
@@ -2126,23 +2216,24 @@ fn collect_uses_stmt(
                 None,
                 &helper_body,
                 enclosing,
+                private_name,
             )?;
             child_free.extend(scope.freevars);
         }
         StmtKind::Decorated { decorators, stmt } => {
             for decorator in decorators {
-                collect_uses_expr(decorator, uses, child_free, enclosing)?;
+                collect_uses_expr(decorator, uses, child_free, enclosing, private_name)?;
             }
-            collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+            collect_uses_stmt(stmt, uses, child_free, enclosing, private_name)?;
         }
         StmtKind::Match { subject, cases } => {
-            collect_uses_expr(subject, uses, child_free, enclosing)?;
+            collect_uses_expr(subject, uses, child_free, enclosing, private_name)?;
             for case in cases {
                 if let Some(guard) = &case.guard {
-                    collect_uses_expr(guard, uses, child_free, enclosing)?;
+                    collect_uses_expr(guard, uses, child_free, enclosing, private_name)?;
                 }
                 for stmt in &case.body {
-                    collect_uses_stmt(stmt, uses, child_free, enclosing)?;
+                    collect_uses_stmt(stmt, uses, child_free, enclosing, private_name)?;
                 }
             }
         }
@@ -2162,21 +2253,22 @@ fn collect_target_uses(
     uses: &mut HashSet<String>,
     child_free: &mut HashSet<String>,
     enclosing: &HashSet<String>,
+    private_name: Option<&str>,
 ) -> Result<(), CompileError> {
     match target {
         AssignTarget::Starred(item) => {
-            collect_target_uses(item, uses, child_free, enclosing)?;
+            collect_target_uses(item, uses, child_free, enclosing, private_name)?;
         }
         AssignTarget::Subscript { value, index } => {
-            collect_uses_expr(value, uses, child_free, enclosing)?;
-            collect_uses_expr(index, uses, child_free, enclosing)?;
+            collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
+            collect_uses_expr(index, uses, child_free, enclosing, private_name)?;
         }
         AssignTarget::Attribute { value, .. } => {
-            collect_uses_expr(value, uses, child_free, enclosing)?;
+            collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
         }
         AssignTarget::Tuple(items) | AssignTarget::List(items) => {
             for item in items {
-                collect_target_uses(item, uses, child_free, enclosing)?;
+                collect_target_uses(item, uses, child_free, enclosing, private_name)?;
             }
         }
         AssignTarget::Name(_) => {}
@@ -2189,74 +2281,75 @@ fn collect_uses_expr(
     uses: &mut HashSet<String>,
     child_free: &mut HashSet<String>,
     enclosing: &HashSet<String>,
+    private_name: Option<&str>,
 ) -> Result<(), CompileError> {
     match &expr.node {
         ExprKind::Name(name) => {
-            uses.insert(name.clone());
+            uses.insert(mangle_private_identifier(private_name, name));
         }
         ExprKind::Constant(_) => {}
         ExprKind::Binary { left, right, .. } => {
-            collect_uses_expr(left, uses, child_free, enclosing)?;
-            collect_uses_expr(right, uses, child_free, enclosing)?;
+            collect_uses_expr(left, uses, child_free, enclosing, private_name)?;
+            collect_uses_expr(right, uses, child_free, enclosing, private_name)?;
         }
         ExprKind::Unary { operand, .. } => {
-            collect_uses_expr(operand, uses, child_free, enclosing)?;
+            collect_uses_expr(operand, uses, child_free, enclosing, private_name)?;
         }
         ExprKind::Call { func, args } => {
             if let ExprKind::Name(name) = &func.node
                 && name == "super"
                 && args.is_empty()
             {
-                uses.insert("__class__".to_string());
+                uses.insert(mangle_private_identifier(private_name, "__class__"));
             }
-            collect_uses_expr(func, uses, child_free, enclosing)?;
+            collect_uses_expr(func, uses, child_free, enclosing, private_name)?;
             for arg in args {
                 match arg {
                     CallArg::Positional(expr) | CallArg::Star(expr) | CallArg::DoubleStar(expr) => {
-                        collect_uses_expr(expr, uses, child_free, enclosing)?;
+                        collect_uses_expr(expr, uses, child_free, enclosing, private_name)?;
                     }
                     CallArg::Keyword { value, .. } => {
-                        collect_uses_expr(value, uses, child_free, enclosing)?;
+                        collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
                     }
                 }
             }
         }
         ExprKind::List(values) | ExprKind::Tuple(values) => {
             for value in values {
-                collect_uses_expr(value, uses, child_free, enclosing)?;
+                collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
             }
         }
         ExprKind::Dict(entries) => {
             for entry in entries {
                 match entry {
                     DictEntry::Pair(key, value) => {
-                        collect_uses_expr(key, uses, child_free, enclosing)?;
-                        collect_uses_expr(value, uses, child_free, enclosing)?;
+                        collect_uses_expr(key, uses, child_free, enclosing, private_name)?;
+                        collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
                     }
                     DictEntry::Unpack(value) => {
-                        collect_uses_expr(value, uses, child_free, enclosing)?;
+                        collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
                     }
                 }
             }
         }
         ExprKind::Subscript { value, index } => {
-            collect_uses_expr(value, uses, child_free, enclosing)?;
-            collect_uses_expr(index, uses, child_free, enclosing)?;
+            collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
+            collect_uses_expr(index, uses, child_free, enclosing, private_name)?;
         }
         ExprKind::Attribute { value, .. } => {
-            collect_uses_expr(value, uses, child_free, enclosing)?;
+            collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
         }
         ExprKind::BoolOp { left, right, .. } => {
-            collect_uses_expr(left, uses, child_free, enclosing)?;
-            collect_uses_expr(right, uses, child_free, enclosing)?;
+            collect_uses_expr(left, uses, child_free, enclosing, private_name)?;
+            collect_uses_expr(right, uses, child_free, enclosing, private_name)?;
         }
         ExprKind::IfExpr { test, body, orelse } => {
-            collect_uses_expr(test, uses, child_free, enclosing)?;
-            collect_uses_expr(body, uses, child_free, enclosing)?;
-            collect_uses_expr(orelse, uses, child_free, enclosing)?;
+            collect_uses_expr(test, uses, child_free, enclosing, private_name)?;
+            collect_uses_expr(body, uses, child_free, enclosing, private_name)?;
+            collect_uses_expr(orelse, uses, child_free, enclosing, private_name)?;
         }
         ExprKind::NamedExpr { value, .. } => {
-            collect_uses_expr(value, uses, child_free, enclosing)?;
+            collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
         }
         ExprKind::Lambda {
             posonly_params,
@@ -2272,7 +2365,7 @@ fn collect_uses_expr(
                 .chain(kwonly_params.iter())
             {
                 if let Some(default) = &param.default {
-                    collect_uses_expr(default, uses, child_free, enclosing)?;
+                    collect_uses_expr(default, uses, child_free, enclosing, private_name)?;
                 }
             }
             let scope = analyze_scope_expr(
@@ -2284,19 +2377,20 @@ fn collect_uses_expr(
                 kwarg.as_ref(),
                 body,
                 enclosing,
+                private_name,
             )?;
             child_free.extend(scope.freevars);
         }
         ExprKind::Yield { value } => {
             if let Some(expr) = value.as_ref() {
-                collect_uses_expr(expr, uses, child_free, enclosing)?;
+                collect_uses_expr(expr, uses, child_free, enclosing, private_name)?;
             }
         }
         ExprKind::YieldFrom { value } => {
-            collect_uses_expr(value, uses, child_free, enclosing)?;
+            collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
         }
         ExprKind::Await { value } => {
-            collect_uses_expr(value, uses, child_free, enclosing)?;
+            collect_uses_expr(value, uses, child_free, enclosing, private_name)?;
         }
         ExprKind::ListComp { elt, clauses } => {
             let body = build_list_comp_body(elt, clauses);
@@ -2309,6 +2403,7 @@ fn collect_uses_expr(
                 None,
                 &body,
                 enclosing,
+                private_name,
             )?;
             child_free.extend(scope.freevars);
         }
@@ -2323,6 +2418,7 @@ fn collect_uses_expr(
                 None,
                 &body,
                 enclosing,
+                private_name,
             )?;
             child_free.extend(scope.freevars);
         }
@@ -2337,6 +2433,7 @@ fn collect_uses_expr(
                 None,
                 &body,
                 enclosing,
+                private_name,
             )?;
             child_free.extend(scope.freevars);
         }
@@ -2355,23 +2452,30 @@ fn collect_uses_expr(
                 None,
                 &body,
                 enclosing,
+                private_name,
             )?;
             child_free.extend(scope.freevars);
         }
         ExprKind::TemplateLiteral { interpolations, .. } => {
             for interpolation in interpolations {
-                collect_uses_expr(&interpolation.value, uses, child_free, enclosing)?;
+                collect_uses_expr(
+                    &interpolation.value,
+                    uses,
+                    child_free,
+                    enclosing,
+                    private_name,
+                )?;
             }
         }
         ExprKind::Slice { lower, upper, step } => {
             if let Some(expr) = lower.as_ref() {
-                collect_uses_expr(expr, uses, child_free, enclosing)?;
+                collect_uses_expr(expr, uses, child_free, enclosing, private_name)?;
             }
             if let Some(expr) = upper.as_ref() {
-                collect_uses_expr(expr, uses, child_free, enclosing)?;
+                collect_uses_expr(expr, uses, child_free, enclosing, private_name)?;
             }
             if let Some(expr) = step.as_ref() {
-                collect_uses_expr(expr, uses, child_free, enclosing)?;
+                collect_uses_expr(expr, uses, child_free, enclosing, private_name)?;
             }
         }
     }
@@ -2893,7 +2997,7 @@ pub fn compile_module_with_filename(
     filename: &str,
 ) -> Result<CodeObject, CompileError> {
     let scope = ScopeInfo::for_module(module)?;
-    let mut compiler = Compiler::new("<module>", filename, scope);
+    let mut compiler = Compiler::new("<module>", filename, scope, None);
     compiler.compile_module(module)?;
     Ok(compiler.finish())
 }
@@ -2910,7 +3014,7 @@ pub fn compile_expression_with_filename(
         }],
     };
     let scope = ScopeInfo::for_module(&scope_module)?;
-    let mut compiler = Compiler::new("<module>", filename, scope);
+    let mut compiler = Compiler::new("<module>", filename, scope, None);
     compiler.compile_expr(expr)?;
     Ok(compiler.finish_expression())
 }
@@ -2922,6 +3026,7 @@ struct Compiler {
     loop_stack: Vec<LoopContext>,
     finally_return_stack: Vec<FinallyReturnContext>,
     scope: ScopeInfo,
+    private_name: Option<String>,
     current_span: Span,
     cell_index: HashMap<String, u32>,
     future_annotations: bool,
@@ -2944,7 +3049,7 @@ struct FinallyReturnContext {
 }
 
 impl Compiler {
-    fn new(name: &str, filename: &str, scope: ScopeInfo) -> Self {
+    fn new(name: &str, filename: &str, scope: ScopeInfo, private_name: Option<String>) -> Self {
         let mut code = CodeObject::new(name, filename);
         code.cellvars = scope.cellvars.clone();
         code.freevars = scope.freevars.clone();
@@ -2958,6 +3063,7 @@ impl Compiler {
             loop_stack: Vec::new(),
             finally_return_stack: Vec::new(),
             scope,
+            private_name,
             current_span: Span::unknown(),
             cell_index,
             future_annotations: false,
@@ -3568,7 +3674,7 @@ impl Compiler {
             }
             ExprKind::Attribute { value, name } => {
                 compiler.compile_expr(value)?;
-                let idx = compiler.code.add_name(name.clone());
+                let idx = compiler.code.add_name(compiler.mangled_name(name));
                 compiler.emit(Opcode::LoadAttr, Some(idx << 1));
                 Ok(())
             }
@@ -3607,7 +3713,7 @@ impl Compiler {
             self.scope.scope_type,
             ScopeType::Function | ScopeType::Lambda
         ) {
-            self.scope.locals.insert(name.to_string());
+            self.scope.locals.insert(self.mangled_name(name));
         }
     }
 
@@ -3679,12 +3785,17 @@ impl Compiler {
         Ok(())
     }
 
+    fn mangled_name(&self, name: &str) -> String {
+        mangle_private_identifier(self.private_name.as_deref(), name)
+    }
+
     fn emit_load_name(&mut self, name: &str) -> Result<(), CompileError> {
-        let idx = self.code.add_name(name.to_string());
-        match self.name_kind(name) {
+        let mangled = self.mangled_name(name);
+        let idx = self.code.add_name(mangled.clone());
+        match self.name_kind(&mangled) {
             NameKind::Local => self.emit(Opcode::LoadFast, Some(idx)),
             NameKind::Cell | NameKind::Free => {
-                let deref = self.deref_index(name)?;
+                let deref = self.deref_index(&mangled)?;
                 self.emit(Opcode::LoadDeref, Some(deref));
             }
             NameKind::Global => {
@@ -3697,21 +3808,22 @@ impl Compiler {
     }
 
     fn emit_store_name(&mut self, name: &str) {
-        let idx = self.code.add_name(name.to_string());
+        let idx = self.code.add_name(self.mangled_name(name));
         self.emit(Opcode::StoreFast, Some(idx));
     }
 
     fn emit_delete_name(&mut self, name: &str) {
-        let idx = self.code.add_name(name.to_string());
+        let idx = self.code.add_name(self.mangled_name(name));
         self.emit(Opcode::DeleteName, Some(idx));
     }
 
     fn emit_store_name_scoped(&mut self, name: &str) -> Result<(), CompileError> {
-        let idx = self.code.add_name(name.to_string());
-        match self.name_kind(name) {
+        let mangled = self.mangled_name(name);
+        let idx = self.code.add_name(mangled.clone());
+        match self.name_kind(&mangled) {
             NameKind::Global => self.emit(Opcode::StoreGlobal, Some(idx)),
             NameKind::Cell | NameKind::Free => {
-                let deref = self.deref_index(name)?;
+                let deref = self.deref_index(&mangled)?;
                 self.emit(Opcode::StoreDeref, Some(deref));
             }
             NameKind::Local => self.emit(Opcode::StoreFast, Some(idx)),
@@ -3779,7 +3891,7 @@ impl Compiler {
 
     fn annotation_expr_to_string(&self, expr: &Expr) -> String {
         match &expr.node {
-            ExprKind::Name(name) => name.clone(),
+            ExprKind::Name(name) => self.mangled_name(name),
             ExprKind::Constant(Constant::None) => "None".to_string(),
             ExprKind::Constant(Constant::Bool(value)) => value.to_string(),
             ExprKind::Constant(Constant::Int(value)) => value.to_string(),
@@ -3787,7 +3899,11 @@ impl Compiler {
             ExprKind::Constant(Constant::Float(value)) => value.value().to_string(),
             ExprKind::Constant(Constant::Str(value)) => annotation_string_literal_repr(value),
             ExprKind::Attribute { value, name } => {
-                format!("{}.{}", self.annotation_expr_to_string(value), name)
+                format!(
+                    "{}.{}",
+                    self.annotation_expr_to_string(value),
+                    self.mangled_name(name)
+                )
             }
             ExprKind::Subscript { value, index } => format!(
                 "{}[{}]",
@@ -4036,22 +4152,31 @@ impl Compiler {
             kwarg,
             body,
             &self.scope,
+            self.private_name.as_deref(),
         )?;
-        let mut compiler = Compiler::new(name, &self.code.filename, scope);
+        let mut compiler =
+            Compiler::new(name, &self.code.filename, scope, self.private_name.clone());
         compiler.future_annotations = self.future_annotations;
         compiler.future_annotations_import = self.future_annotations_import;
         compiler.code.first_line = definition_span.line.max(1);
         compiler.code.posonly_params = posonly_params
             .iter()
-            .map(|param| param.name.clone())
+            .map(|param| compiler.mangled_name(&param.name))
             .collect();
-        compiler.code.params = params.iter().map(|param| param.name.clone()).collect();
+        compiler.code.params = params
+            .iter()
+            .map(|param| compiler.mangled_name(&param.name))
+            .collect();
         compiler.code.kwonly_params = kwonly_params
             .iter()
-            .map(|param| param.name.clone())
+            .map(|param| compiler.mangled_name(&param.name))
             .collect();
-        compiler.code.vararg = vararg.as_ref().map(|param| param.name.clone());
-        compiler.code.kwarg = kwarg.as_ref().map(|param| param.name.clone());
+        compiler.code.vararg = vararg
+            .as_ref()
+            .map(|param| compiler.mangled_name(&param.name));
+        compiler.code.kwarg = kwarg
+            .as_ref()
+            .map(|param| compiler.mangled_name(&param.name));
         let has_yield = body_has_yield(body);
         compiler.code.is_generator = has_yield || is_async;
         compiler.code.is_coroutine = is_async && !has_yield;
@@ -4471,8 +4596,13 @@ impl Compiler {
     }
 
     fn compile_class(&mut self, name: &str, body: &[Stmt]) -> Result<CodeObject, CompileError> {
-        let scope = ScopeInfo::for_class(body, &self.scope)?;
-        let mut compiler = Compiler::new(&format!("<class {name}>"), &self.code.filename, scope);
+        let scope = ScopeInfo::for_class(body, &self.scope, Some(name))?;
+        let mut compiler = Compiler::new(
+            &format!("<class {name}>"),
+            &self.code.filename,
+            scope,
+            Some(name.to_string()),
+        );
         compiler.future_annotations = self.future_annotations;
         compiler.future_annotations_import = self.future_annotations_import;
         compiler.code.first_line = self.current_span.line.max(1);
@@ -5319,14 +5449,14 @@ impl Compiler {
     fn compile_delete_target(&mut self, target: &AssignTarget) -> Result<(), CompileError> {
         match target {
             AssignTarget::Name(name) => {
-                let idx = self.code.add_name(name.clone());
+                let idx = self.code.add_name(self.mangled_name(name));
                 self.emit(Opcode::DeleteName, Some(idx));
                 Ok(())
             }
             AssignTarget::Starred(_) => Err(CompileError::new("cannot delete starred target")),
             AssignTarget::Attribute { value, name } => {
                 self.compile_expr(value)?;
-                let idx = self.code.add_name(name.clone());
+                let idx = self.code.add_name(self.mangled_name(name));
                 self.emit(Opcode::DeleteAttr, Some(idx));
                 Ok(())
             }
@@ -5356,7 +5486,7 @@ impl Compiler {
             AssignTarget::Name(name) if simple => {
                 self.ensure_local_name("__annotations__");
                 self.emit_load_name("__annotations__")?;
-                self.emit_const(Value::Str(name.clone()));
+                self.emit_const(Value::Str(self.mangled_name(name)));
                 self.emit_annotation_expr(annotation)?;
                 self.emit(Opcode::DictSet, None);
                 self.emit_store_name_scoped("__annotations__")?;
@@ -5418,7 +5548,7 @@ impl Compiler {
                 self.emit_store_name(&temp);
                 self.compile_expr(value)?;
                 self.emit_load_name(&temp)?;
-                let idx = self.code.add_name(name.clone());
+                let idx = self.code.add_name(self.mangled_name(name));
                 self.emit(Opcode::StoreAttr, Some(idx));
                 self.emit_delete_name(&temp);
                 Ok(())
@@ -5515,7 +5645,7 @@ impl Compiler {
                 self.compile_expr(object)?;
                 self.emit_store_name(&temp);
                 self.emit_load_name(&temp)?;
-                let idx = self.code.add_name(name.clone());
+                let idx = self.code.add_name(self.mangled_name(name));
                 self.emit(Opcode::LoadAttr, Some(idx << 1));
                 self.compile_expr(value)?;
                 let opcode = match op {
@@ -5537,7 +5667,7 @@ impl Compiler {
                 self.emit_store_name(&value_temp);
                 self.emit_load_name(&temp)?;
                 self.emit_load_name(&value_temp)?;
-                let idx = self.code.add_name(name.clone());
+                let idx = self.code.add_name(self.mangled_name(name));
                 self.emit(Opcode::StoreAttr, Some(idx));
                 Ok(())
             }
@@ -6334,7 +6464,7 @@ impl Compiler {
     fn fresh_temp(&mut self, prefix: &str) -> String {
         let name = format!("__pyrs_{prefix}_{}", self.temp_counter);
         self.temp_counter += 1;
-        self.scope.locals.insert(name.clone());
+        self.scope.locals.insert(self.mangled_name(&name));
         name
     }
 

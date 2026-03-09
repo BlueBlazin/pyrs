@@ -142,8 +142,8 @@ struct Translator<'a> {
     opmap: &'static HashMap<u8, String>,
     names: Vec<String>,
     name_index: HashMap<String, u32>,
-    locals_map: Vec<u32>,
-    names_map: Vec<u32>,
+    locals_map: Vec<Option<u32>>,
+    names_map: Vec<Option<u32>>,
     deref_map: Vec<Option<u32>>,
     cellvars: Vec<String>,
     freevars: Vec<String>,
@@ -160,8 +160,8 @@ impl<'a> Translator<'a> {
             opmap,
             names: Vec::new(),
             name_index: HashMap::new(),
-            locals_map: Vec::new(),
-            names_map: Vec::new(),
+            locals_map: vec![None; code.localsplusnames.len()],
+            names_map: vec![None; code.names.len()],
             deref_map: Vec::new(),
             cellvars: Vec::new(),
             freevars: Vec::new(),
@@ -174,12 +174,11 @@ impl<'a> Translator<'a> {
     /// This includes name/locals mapping, constant conversion, opcode lowering,
     /// location table decoding, and exception-table parsing.
     fn translate(&mut self) -> Result<CodeObject, CpythonError> {
-        self.build_name_maps()?;
+        self.build_deref_maps()?;
         self.constants = self.convert_constants(&self.code.consts)?;
 
         let mut result = CodeObject::new(self.code.name.clone(), self.code.filename.clone());
         result.first_line = self.code.firstlineno.max(1) as usize;
-        result.names = self.names.clone();
         result.cellvars = self.cellvars.clone();
         result.freevars = self.freevars.clone();
         result.is_generator = (self.code.flags & 0x20) != 0;
@@ -191,6 +190,7 @@ impl<'a> Translator<'a> {
 
         let instructions = self.translate_instructions()?;
         result.instructions = instructions;
+        result.names = self.names.clone();
         result.locations = decode_cpython_linetable_locations(
             &self.code.linetable,
             self.code.firstlineno,
@@ -211,10 +211,8 @@ impl<'a> Translator<'a> {
         Ok(result)
     }
 
-    fn build_name_maps(&mut self) -> Result<(), CpythonError> {
+    fn build_deref_maps(&mut self) -> Result<(), CpythonError> {
         for (idx, name) in self.code.localsplusnames.iter().enumerate() {
-            let mapped = self.intern_name(name);
-            self.locals_map.push(mapped);
             let kind = self.code.localspluskinds.get(idx).copied().unwrap_or(0);
             let mut deref_index = None;
             if kind & 0x40 != 0 {
@@ -227,10 +225,6 @@ impl<'a> Translator<'a> {
                 deref_index = Some(idx);
             }
             self.deref_map.push(deref_index);
-        }
-        for name in &self.code.names {
-            let idx = self.intern_name(name);
-            self.names_map.push(idx);
         }
         Ok(())
     }
@@ -694,20 +688,36 @@ impl<'a> Translator<'a> {
         (self.constants.len() - 1) as u32
     }
 
-    fn map_name(&self, index: u32) -> Result<u32, CpythonError> {
+    fn map_name(&mut self, index: u32) -> Result<u32, CpythonError> {
         let idx = index as usize;
-        self.names_map
-            .get(idx)
-            .cloned()
-            .ok_or_else(|| CpythonError::new("name index out of range"))
+        let Some(cached) = self.names_map.get(idx).copied() else {
+            return Err(CpythonError::new("name index out of range"));
+        };
+        if let Some(mapped) = cached {
+            return Ok(mapped);
+        }
+        let Some(name) = self.code.names.get(idx) else {
+            return Err(CpythonError::new("name index out of range"));
+        };
+        let interned = self.intern_name(name);
+        self.names_map[idx] = Some(interned);
+        Ok(interned)
     }
 
-    fn map_local(&self, index: u32) -> Result<u32, CpythonError> {
+    fn map_local(&mut self, index: u32) -> Result<u32, CpythonError> {
         let idx = index as usize;
-        self.locals_map
-            .get(idx)
-            .cloned()
-            .ok_or_else(|| CpythonError::new("local index out of range"))
+        let Some(cached) = self.locals_map.get(idx).copied() else {
+            return Err(CpythonError::new("local index out of range"));
+        };
+        if let Some(mapped) = cached {
+            return Ok(mapped);
+        }
+        let Some(name) = self.code.localsplusnames.get(idx) else {
+            return Err(CpythonError::new("local index out of range"));
+        };
+        let interned = self.intern_name(name);
+        self.locals_map[idx] = Some(interned);
+        Ok(interned)
     }
 
     fn map_deref(&self, index: u32) -> Result<u32, CpythonError> {

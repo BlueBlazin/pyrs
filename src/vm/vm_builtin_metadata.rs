@@ -4430,6 +4430,35 @@ impl Vm {
         if let Some(kwarg) = &code.kwarg {
             varnames.push(kwarg.clone());
         }
+        let mut slot_names: Vec<Option<String>> = vec![None; code.fast_local_count];
+        for instr in &code.instructions {
+            match instr.opcode {
+                Opcode::LoadFast | Opcode::StoreFast | Opcode::LoadFastAndClear => {
+                    if let Some(slot) = instr.arg.and_then(|arg| code.names.get(arg as usize)) {
+                        slot_names[instr.arg.expect("checked above") as usize]
+                            .get_or_insert_with(|| slot.clone());
+                    }
+                }
+                Opcode::LoadFast2 | Opcode::StoreFastLoadFast | Opcode::StoreFastStoreFast => {
+                    if let Some(arg) = instr.arg {
+                        let first = (arg >> 16) as usize;
+                        let second = (arg & 0xFFFF) as usize;
+                        if let Some(name) = code.names.get(first) {
+                            slot_names[first].get_or_insert_with(|| name.clone());
+                        }
+                        if let Some(name) = code.names.get(second) {
+                            slot_names[second].get_or_insert_with(|| name.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for name in slot_names.into_iter().flatten() {
+            if !varnames.contains(&name) {
+                varnames.push(name);
+            }
+        }
 
         let mut flags = 0x0001 | 0x0002;
         if code.vararg.is_some() {
@@ -6685,6 +6714,16 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<InternalCallOutcome, RuntimeError> {
+        self.call_internal_with_kwarg_order_preserving_caller(callable, args, kwargs, None)
+    }
+
+    pub(super) fn call_internal_with_kwarg_order_preserving_caller(
+        &mut self,
+        callable: Value,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
+    ) -> Result<InternalCallOutcome, RuntimeError> {
         let caller_depth = self.frames.len();
         let (caller_ip, caller_stack, caller_blocks, caller_active_exception) = self
             .frames
@@ -6702,7 +6741,7 @@ impl Vm {
             })
             .unwrap_or((0, Vec::new(), None, None));
 
-        let outcome = self.call_internal(callable, args, kwargs);
+        let outcome = self.call_internal_with_kwarg_order(callable, args, kwargs, kwargs_order);
         match outcome {
             Ok(InternalCallOutcome::Value(value)) => {
                 self.restore_internal_call_caller_state(
@@ -8502,6 +8541,26 @@ impl Vm {
             (None, None)
         };
         if let Some(attr) = class_attr.clone() {
+            if let Value::Instance(descriptor_instance) = &attr
+                && let Some((fget, _fset, _fdel, _doc, _explicit_name)) =
+                    self.property_descriptor_parts(descriptor_instance)
+            {
+                if matches!(fget, Value::None) {
+                    return Err(RuntimeError::attribute_error("unreadable attribute"));
+                }
+                return Ok(
+                    match self.call_internal_preserving_caller(
+                        fget,
+                        vec![Value::Instance(instance.clone())],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            AttrAccessOutcome::ExceptionHandled
+                        }
+                    },
+                );
+            }
             let (getter, setter, deleter) = self.descriptor_hooks(&attr)?;
             if setter.is_some() || deleter.is_some() {
                 if let Some(getter) = getter {
@@ -9088,6 +9147,26 @@ impl Vm {
                         self.bind_cpython_descriptor_for_super(&attr, &receiver_value, &owner_value)
                 {
                     return Ok(AttrAccessOutcome::Value(bound_result?));
+                }
+                if let Value::Instance(descriptor_instance) = &attr
+                    && let Some((fget, _fset, _fdel, _doc, _explicit_name)) =
+                        self.property_descriptor_parts(descriptor_instance)
+                {
+                    if matches!(fget, Value::None) {
+                        return Err(RuntimeError::attribute_error("unreadable attribute"));
+                    }
+                    return Ok(
+                        match self.call_internal_preserving_caller(
+                            fget,
+                            vec![receiver_value.clone()],
+                            HashMap::new(),
+                        )? {
+                            InternalCallOutcome::Value(value) => AttrAccessOutcome::Value(value),
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                AttrAccessOutcome::ExceptionHandled
+                            }
+                        },
+                    );
                 }
                 let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
                 if env_var_present_cached("PYRS_TRACE_SUPER_DTYPE") && attr_name == "dtype" {

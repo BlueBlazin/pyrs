@@ -2,7 +2,7 @@ use super::super::{
     HashMap, InstanceObject, ObjRef, Object, ReMatchDetail, ReMode, RePatternValue, RuntimeError,
     Value, Vm, bytes_like_from_value, dict_get_value, format_value,
     re_compiled_regex_program_from_argument, re_compiled_regex_program_from_object,
-    re_match_details, re_match_details_bytes, re_match_details_str, re_pattern_from_argument,
+    re_match_details_bytes, re_match_details_str, re_pattern_from_argument,
     re_pattern_from_compiled_object, value_to_int,
 };
 
@@ -21,6 +21,11 @@ const RE_PATTERN_CLASS_NAME: &str = "Pattern";
 const RE_MATCH_CLASS_NAME: &str = "Match";
 const RE_FLAG_UNICODE: i64 = 32;
 const RE_FLAG_VERBOSE: i64 = 64;
+
+enum ReNormalizedTarget {
+    Text { text: String, source: Value },
+    Bytes { bytes: Vec<u8>, source: Value },
+}
 
 fn clamp_index(len: usize, raw: i64) -> usize {
     if raw < 0 {
@@ -179,6 +184,82 @@ impl Vm {
                 self.heap.alloc_dict(entries)
             }
             _ => self.heap.alloc_dict(Vec::new()),
+        }
+    }
+
+    fn normalize_re_pattern_argument(&mut self, value: Value) -> Result<Value, RuntimeError> {
+        match value {
+            Value::Str(pattern) => Ok(Value::Str(pattern)),
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(values) => Ok(self.heap.alloc_bytes(values.clone())),
+                _ => Err(RuntimeError::new(
+                    "re.compile() expects string or bytes pattern",
+                )),
+            },
+            Value::ByteArray(obj) => match &*obj.kind() {
+                Object::ByteArray(values) => Ok(self.heap.alloc_bytes(values.clone())),
+                _ => Err(RuntimeError::new(
+                    "re.compile() expects string or bytes pattern",
+                )),
+            },
+            Value::Instance(instance) => {
+                if let Some(pattern) = self.instance_backing_str(&instance) {
+                    return Ok(Value::Str(pattern));
+                }
+                if let Ok(bytes) = bytes_like_from_value(Value::Instance(instance)) {
+                    return Ok(self.heap.alloc_bytes(bytes));
+                }
+                Err(RuntimeError::new(
+                    "re.compile() expects string or bytes pattern",
+                ))
+            }
+            _ => Err(RuntimeError::new(
+                "re.compile() expects string or bytes pattern",
+            )),
+        }
+    }
+
+    fn normalize_re_target(&mut self, value: Value) -> ReNormalizedTarget {
+        match value {
+            Value::Str(text) => ReNormalizedTarget::Text {
+                source: Value::Str(text.clone()),
+                text,
+            },
+            target @ (Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_)) => {
+                let bytes = bytes_like_from_value(target.clone())
+                    .expect("exact bytes-like regex target should coerce to bytes");
+                ReNormalizedTarget::Bytes {
+                    bytes,
+                    source: target,
+                }
+            }
+            Value::Instance(instance) => {
+                if let Some(text) = self.instance_backing_str(&instance) {
+                    return ReNormalizedTarget::Text {
+                        source: Value::Str(text.clone()),
+                        text,
+                    };
+                }
+                if let Ok(bytes) = bytes_like_from_value(Value::Instance(instance.clone())) {
+                    return ReNormalizedTarget::Bytes {
+                        source: self.heap.alloc_bytes(bytes.clone()),
+                        bytes,
+                    };
+                }
+                let other = Value::Instance(instance);
+                let text = format_value(&other);
+                ReNormalizedTarget::Text {
+                    source: Value::Str(text.clone()),
+                    text,
+                }
+            }
+            other => {
+                let text = format_value(&other);
+                ReNormalizedTarget::Text {
+                    source: Value::Str(text.clone()),
+                    text,
+                }
+            }
         }
     }
 
@@ -772,28 +853,7 @@ impl Vm {
                     "re.compile() expects string or bytes pattern",
                 ));
             }
-            Value::Str(pattern) => Value::Str(pattern),
-            Value::Bytes(obj) => match &*obj.kind() {
-                Object::Bytes(values) => self.heap.alloc_bytes(values.clone()),
-                _ => {
-                    return Err(RuntimeError::new(
-                        "re.compile() expects string or bytes pattern",
-                    ));
-                }
-            },
-            Value::ByteArray(obj) => match &*obj.kind() {
-                Object::ByteArray(values) => self.heap.alloc_bytes(values.clone()),
-                _ => {
-                    return Err(RuntimeError::new(
-                        "re.compile() expects string or bytes pattern",
-                    ));
-                }
-            },
-            _ => {
-                return Err(RuntimeError::new(
-                    "re.compile() expects string or bytes pattern",
-                ));
-            }
+            other => self.normalize_re_pattern_argument(other)?,
         };
         let compiled_pattern_value = match &pattern_value {
             Value::Str(pattern) if (flags & RE_FLAG_VERBOSE) != 0 => {
@@ -1021,6 +1081,32 @@ impl Vm {
                 }
                 Ok(Value::Str(escaped))
             }
+            Value::Instance(instance) => {
+                if let Some(text) = self.instance_backing_str(instance) {
+                    let mut escaped = String::new();
+                    for ch in text.chars() {
+                        if ch.is_ascii_alphanumeric() || ch == '_' {
+                            escaped.push(ch);
+                        } else {
+                            escaped.push('\\');
+                            escaped.push(ch);
+                        }
+                    }
+                    Ok(Value::Str(escaped))
+                } else {
+                    let text = bytes_like_from_value(args[0].clone())?;
+                    let mut escaped = Vec::with_capacity(text.len() * 2);
+                    for byte in text {
+                        if byte.is_ascii_alphanumeric() || byte == b'_' {
+                            escaped.push(byte);
+                        } else {
+                            escaped.push(b'\\');
+                            escaped.push(byte);
+                        }
+                    }
+                    Ok(self.heap.alloc_bytes(escaped))
+                }
+            }
             Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
                 let text = bytes_like_from_value(args[0].clone())?;
                 let mut escaped = Vec::with_capacity(text.len() * 2);
@@ -1051,14 +1137,10 @@ impl Vm {
         let receiver = self.receiver_from_value(&args.remove(0))?;
         let pattern = re_pattern_from_compiled_object(&receiver)?;
         let compiled_program = re_compiled_regex_program_from_object(&receiver);
-        let target = args.remove(0);
-        let target = match target {
-            Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => target,
-            other => Value::Str(format_value(&other)),
-        };
+        let target = self.normalize_re_target(args.remove(0));
 
         match target {
-            Value::Str(text) => {
+            ReNormalizedTarget::Text { text, .. } => {
                 if !matches!(pattern, RePatternValue::Str(_)) {
                     return Err(RuntimeError::new(
                         "cannot use a bytes pattern on a string-like object",
@@ -1155,13 +1237,12 @@ impl Vm {
                 }
                 Ok(self.heap.alloc_list(matches))
             }
-            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
+            ReNormalizedTarget::Bytes { bytes, .. } => {
                 if !matches!(pattern, RePatternValue::Bytes(_)) {
                     return Err(RuntimeError::new(
                         "cannot use a string pattern on a bytes-like object",
                     ));
                 }
-                let bytes = bytes_like_from_value(target)?;
                 let raw_pos = if let Some(value) = args.first() {
                     value_to_int(value.clone())?
                 } else {
@@ -1231,9 +1312,6 @@ impl Vm {
                 }
                 Ok(self.heap.alloc_list(matches))
             }
-            _ => Err(RuntimeError::new(
-                "Pattern.findall() expects string or bytes-like object",
-            )),
         }
     }
 
@@ -1251,15 +1329,11 @@ impl Vm {
         let receiver = self.receiver_from_value(&pattern_arg)?;
         let pattern = re_pattern_from_compiled_object(&receiver)?;
         let compiled_program = re_compiled_regex_program_from_object(&receiver);
-        let target = args.remove(0);
-        let target = match target {
-            Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => target,
-            other => Value::Str(format_value(&other)),
-        };
+        let target = self.normalize_re_target(args.remove(0));
         let groupindex = self.re_match_groupindex_from_pattern_arg(&pattern_arg);
 
         let match_values = match target {
-            Value::Str(text) => {
+            ReNormalizedTarget::Text { text, source } => {
                 if !matches!(pattern, RePatternValue::Str(_)) {
                     return Err(RuntimeError::new(
                         "cannot use a bytes pattern on a string-like object",
@@ -1278,7 +1352,6 @@ impl Vm {
                 let (start, stop, start_char, stop_char) =
                     normalize_string_window(&text, raw_pos, raw_end)?;
 
-                let source = Value::Str(text.clone());
                 let mut out = Vec::new();
                 let mut cursor = start;
                 while cursor <= stop {
@@ -1324,13 +1397,12 @@ impl Vm {
                 }
                 out
             }
-            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
+            ReNormalizedTarget::Bytes { bytes, source } => {
                 if !matches!(pattern, RePatternValue::Bytes(_)) {
                     return Err(RuntimeError::new(
                         "cannot use a string pattern on a bytes-like object",
                     ));
                 }
-                let bytes = bytes_like_from_value(target)?;
                 let raw_pos = if let Some(value) = args.first() {
                     value_to_int(value.clone())?
                 } else {
@@ -1347,7 +1419,6 @@ impl Vm {
                     stop = start;
                 }
 
-                let source = self.heap.alloc_bytes(bytes.clone());
                 let mut out = Vec::new();
                 let mut cursor = start;
                 while cursor <= stop {
@@ -1385,11 +1456,6 @@ impl Vm {
                 }
                 out
             }
-            _ => {
-                return Err(RuntimeError::new(
-                    "Pattern.finditer() expects string or bytes-like object",
-                ));
-            }
         };
 
         self.builtin_iter(vec![self.heap.alloc_list(match_values)], HashMap::new())
@@ -1408,11 +1474,7 @@ impl Vm {
         let receiver = self.receiver_from_value(&args.remove(0))?;
         let pattern = re_pattern_from_compiled_object(&receiver)?;
         let compiled_program = re_compiled_regex_program_from_object(&receiver);
-        let target = args.remove(0);
-        let target = match target {
-            Value::Str(_) | Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => target,
-            other => Value::Str(format_value(&other)),
-        };
+        let target = self.normalize_re_target(args.remove(0));
         let mut maxsplit = if !args.is_empty() {
             Some(value_to_int(args.remove(0))?)
         } else {
@@ -1434,7 +1496,7 @@ impl Vm {
         let maxsplit = maxsplit.unwrap_or(0).max(0) as usize;
 
         match target {
-            Value::Str(text) => {
+            ReNormalizedTarget::Text { text, .. } => {
                 if !matches!(pattern, RePatternValue::Str(_)) {
                     return Err(RuntimeError::new(
                         "cannot use a bytes pattern on a string-like object",
@@ -1493,13 +1555,12 @@ impl Vm {
                 out.push(Value::Str(text[segment_start..].to_string()));
                 Ok(self.heap.alloc_list(out))
             }
-            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
+            ReNormalizedTarget::Bytes { bytes, .. } => {
                 if !matches!(pattern, RePatternValue::Bytes(_)) {
                     return Err(RuntimeError::new(
                         "cannot use a string pattern on a bytes-like object",
                     ));
                 }
-                let bytes = bytes_like_from_value(target)?;
                 let stop = bytes.len();
                 let mut segment_start = 0usize;
                 let mut search_pos = 0usize;
@@ -1550,9 +1611,6 @@ impl Vm {
                 out.push(self.heap.alloc_bytes(bytes[segment_start..].to_vec()));
                 Ok(self.heap.alloc_list(out))
             }
-            _ => Err(RuntimeError::new(
-                "Pattern.split() expects string or bytes-like object",
-            )),
         }
     }
 
@@ -1575,18 +1633,15 @@ impl Vm {
         let pattern = re_pattern_from_argument(&compiled_pattern)?;
         let compiled_program = re_compiled_regex_program_from_argument(&compiled_pattern);
         let groupindex = self.re_match_groupindex_from_pattern_arg(&compiled_pattern);
-        let target = args[1].clone();
+        let target = self.normalize_re_target(args[1].clone());
         let raw_pos = if let Some(value) = args.get(2) {
             value_to_int(value.clone())?
         } else {
             0
         };
         let default_end = match &target {
-            Value::Str(text) => text.chars().count() as i64,
-            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
-                bytes_like_from_value(target.clone())?.len() as i64
-            }
-            _ => 0,
+            ReNormalizedTarget::Text { text, .. } => text.chars().count() as i64,
+            ReNormalizedTarget::Bytes { bytes, .. } => bytes.len() as i64,
         };
         let raw_end = if let Some(value) = args.get(3) {
             value_to_int(value.clone())?
@@ -1594,8 +1649,8 @@ impl Vm {
             default_end
         };
 
-        let (found, pos, endpos) = match target.clone() {
-            Value::Str(text) => {
+        let (found, pos, endpos, source) = match target {
+            ReNormalizedTarget::Text { text, source } => {
                 let (start, stop, start_char, stop_char) =
                     normalize_string_window(&text, raw_pos, raw_end)?;
                 let found = re_match_details_str(
@@ -1613,10 +1668,9 @@ impl Vm {
                     }
                     detail
                 });
-                (found, start_char, stop_char)
+                (found, start_char, stop_char, source)
             }
-            Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
-                let bytes = bytes_like_from_value(target.clone())?;
+            ReNormalizedTarget::Bytes { bytes, source } => {
                 let start = clamp_index(bytes.len(), raw_pos);
                 let mut stop = clamp_index(bytes.len(), raw_end);
                 if stop < start {
@@ -1633,18 +1687,13 @@ impl Vm {
                         detail
                     },
                 );
-                (found, start as i64, stop as i64)
+                (found, start as i64, stop as i64, source)
             }
-            other => (
-                re_match_details(&pattern, &other, mode, compiled_program.as_ref())?,
-                raw_pos.max(0),
-                raw_end.max(0),
-            ),
         };
 
         match found {
             Some(detail) => {
-                self.alloc_re_match_value(compiled_pattern, target, detail, groupindex, pos, endpos)
+                self.alloc_re_match_value(compiled_pattern, source, detail, groupindex, pos, endpos)
             }
             None => Ok(Value::None),
         }

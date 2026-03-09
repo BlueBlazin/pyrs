@@ -786,7 +786,93 @@ impl<'a> Lexer<'a> {
 
         let mut content = String::new();
         let mut expr_depth = 0usize;
+        let mut in_format_spec = false;
+        let mut expr_in_comment = false;
+        let mut expr_quote: Option<char> = None;
+        let mut expr_triple_quote = false;
+        let mut expr_escaped = false;
         while let Some(ch) = self.peek_char() {
+            if expr_depth > 0 {
+                if expr_in_comment {
+                    self.advance();
+                    content.push(ch);
+                    if ch == '\n' || ch == '\r' {
+                        expr_in_comment = false;
+                    }
+                    continue;
+                }
+                if let Some(quote_ch) = expr_quote {
+                    if expr_triple_quote {
+                        if ch == quote_ch
+                            && self.peek_char_at(1) == Some(quote_ch)
+                            && self.peek_char_at(2) == Some(quote_ch)
+                        {
+                            self.advance();
+                            self.advance();
+                            self.advance();
+                            content.push(quote_ch);
+                            content.push(quote_ch);
+                            content.push(quote_ch);
+                            expr_quote = None;
+                            expr_triple_quote = false;
+                            expr_escaped = false;
+                            continue;
+                        }
+                        self.advance();
+                        content.push(ch);
+                        continue;
+                    }
+                    if expr_escaped {
+                        expr_escaped = false;
+                        self.advance();
+                        content.push(ch);
+                        continue;
+                    }
+                    if ch == '\\' {
+                        expr_escaped = true;
+                        self.advance();
+                        content.push(ch);
+                        continue;
+                    }
+                    if ch == quote_ch {
+                        expr_quote = None;
+                        self.advance();
+                        content.push(ch);
+                        continue;
+                    }
+                    self.advance();
+                    content.push(ch);
+                    continue;
+                }
+                if ch == ':' && expr_depth == 1 && !in_format_spec {
+                    in_format_spec = true;
+                    self.advance();
+                    content.push(ch);
+                    continue;
+                }
+                if ch == '#' && (!in_format_spec || expr_depth > 1) {
+                    expr_in_comment = true;
+                    self.advance();
+                    content.push(ch);
+                    continue;
+                }
+                if ch == '\'' || ch == '"' {
+                    expr_quote = Some(ch);
+                    expr_triple_quote =
+                        self.peek_char_at(1) == Some(ch) && self.peek_char_at(2) == Some(ch);
+                    expr_escaped = false;
+                    self.advance();
+                    content.push(ch);
+                    if expr_triple_quote {
+                        self.advance();
+                        self.advance();
+                        content.push(ch);
+                        content.push(ch);
+                    }
+                    continue;
+                }
+            }
+
             if expr_depth == 0 {
                 if is_triple {
                     if ch == quote
@@ -809,7 +895,7 @@ impl<'a> Lexer<'a> {
                 }
             }
 
-            if ch == '\n' && !is_triple {
+            if ch == '\n' && !is_triple && expr_depth == 0 {
                 return Err(LexError::new(
                     "unterminated string literal",
                     start_offset,
@@ -827,6 +913,9 @@ impl<'a> Lexer<'a> {
                     continue;
                 }
                 expr_depth += 1;
+                if expr_depth == 1 {
+                    in_format_spec = false;
+                }
                 self.advance();
                 content.push(ch);
                 continue;
@@ -841,6 +930,9 @@ impl<'a> Lexer<'a> {
                     continue;
                 }
                 expr_depth = expr_depth.saturating_sub(1);
+                if expr_depth == 0 {
+                    in_format_spec = false;
+                }
                 self.advance();
                 content.push(ch);
                 continue;
@@ -849,6 +941,17 @@ impl<'a> Lexer<'a> {
             if ch == '\\' && raw {
                 self.advance();
                 content.push('\\');
+                if self.peek_char() == Some('\n') {
+                    self.advance();
+                    content.push('\n');
+                } else if self.peek_char() == Some('\r') {
+                    self.advance();
+                    content.push('\r');
+                    if self.peek_char() == Some('\n') {
+                        self.advance();
+                        content.push('\n');
+                    }
+                }
                 continue;
             }
 
@@ -870,7 +973,12 @@ impl<'a> Lexer<'a> {
                 }
                 let escaped = self.consume_escaped_char(start_offset, start_line, start_column)?;
                 if let Some(escaped) = escaped {
-                    content.push(escaped);
+                    if matches!(escaped, '{' | '}') {
+                        content.push(escaped);
+                        content.push(escaped);
+                    } else {
+                        content.push(escaped);
+                    }
                 }
                 continue;
             }
@@ -934,6 +1042,17 @@ impl<'a> Lexer<'a> {
             if ch == '\\' && raw {
                 self.advance();
                 content.push('\\');
+                if self.peek_char() == Some('\n') {
+                    self.advance();
+                    content.push('\n');
+                } else if self.peek_char() == Some('\r') {
+                    self.advance();
+                    content.push('\r');
+                    if self.peek_char() == Some('\n') {
+                        self.advance();
+                        content.push('\n');
+                    }
+                }
                 continue;
             }
 

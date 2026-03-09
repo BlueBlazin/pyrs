@@ -133,6 +133,8 @@ Resolved locally since this snapshot and awaiting the next full benchmark rerun:
 - `RuntimeError: parse error in module 'test.test_pathlib.test_pathlib' ... expected Colon`
 - `TypeError: object.__init_subclass__() takes no keyword arguments`
 - `AttributeError: module '_frozen_importlib' has no attribute '_ModuleLock'`
+- `from email import policy` no longer leaks a partially initialized `email.policy` module during bootstrap import
+- `test.test_email.test_pickleable` no longer overflows while materializing address headers (`header_store_parse` pyc name layout and `Message.__setitem__` operator dispatch fixed locally)
 
 High-value modules after this checkpoint:
 
