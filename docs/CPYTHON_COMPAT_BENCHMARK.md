@@ -24,6 +24,8 @@ This benchmark is intended to answer:
   - `scripts/dispatch_cpython_compat_benchmark.py`
 - In-interpreter worker:
   - `scripts/cpython_compat_benchmark_worker.py`
+- Focused preset runner:
+  - `scripts/run_cpython_compat_focus.py`
 
 ## Example Run
 
@@ -68,6 +70,19 @@ For a curated batch file:
 
 Entry files are newline-delimited module names. Blank lines and `#` comments are
 ignored.
+
+For focused benchmark slices instead of the full 46-minute run:
+
+```bash
+python3 scripts/run_cpython_compat_focus.py --list-suites
+python3 scripts/run_cpython_compat_focus.py --suite high-leverage
+python3 scripts/run_cpython_compat_focus.py --suite os-fs-socket --jobs 4
+```
+
+The focused runner wraps `scripts/run_cpython_compat_benchmark.py`, writes
+`selected_entries.txt` plus `focus_request.json`, and refuses to reuse an
+existing output directory with a different focused request unless `--force` is
+passed.
 
 For a full sharded run:
 
