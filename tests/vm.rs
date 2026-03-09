@@ -19138,6 +19138,36 @@ fn import_returns_nonmodule_sys_modules_cache_entry() {
 }
 
 #[test]
+fn meta_path_find_spec_receives_parent_path_for_submodule_imports() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-import-meta-path-parent-path", move || {
+        let source = "import builtins\nimport sys\nimport importlib.machinery as machinery\nlog = []\npath = [42]\nclass Finder:\n    def find_spec(self, fullname, path_arg=None, target=None):\n        log.append((fullname, path_arg, target))\n        if fullname == 'pkg':\n            spec = machinery.ModuleSpec(fullname, self, is_package=True)\n            spec.submodule_search_locations = path\n            return spec\n        if fullname == 'pkg.module':\n            return machinery.ModuleSpec(fullname, self)\n        return None\n    def create_module(self, spec):\n        return None\n    def exec_module(self, module):\n        if module.__name__ == 'pkg':\n            module.__path__ = path\nfinder = Finder()\nold_meta = sys.meta_path\nsys.meta_path = [finder]\ntry:\n    builtins.__import__('pkg.module')\nfinally:\n    sys.meta_path = old_meta\nok = (len(log) == 2 and log[0][0] == 'pkg' and log[0][1] is None and log[1][0] == 'pkg.module' and log[1][1] is path)\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn import_uses_child_sys_modules_entry_created_during_parent_import() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = "import builtins\nimport sys\nimport importlib.machinery as machinery\npayload = 'total bunk'\nclass Finder:\n    def find_spec(self, fullname, path=None, target=None):\n        if fullname == 'mod':\n            return machinery.ModuleSpec(fullname, self)\n        return None\n    def create_module(self, spec):\n        return None\n    def exec_module(self, module):\n        if module.__name__ == 'mod':\n            sys.modules['mod.b'] = payload\nfinder = Finder()\nold_meta = sys.meta_path\nsys.meta_path = [finder]\ntry:\n    imported = builtins.__import__('mod.b')\nfinally:\n    sys.meta_path = old_meta\nok = (imported.__name__ == 'mod' and sys.modules['mod.b'] == payload)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn frozen_module_repr_uses_spec_origin() {
     let Some(lib_path) = cpython_lib_path() else {
         return;

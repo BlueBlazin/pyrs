@@ -12398,6 +12398,20 @@ ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set
         caller_depth: usize,
     ) -> Result<Option<ObjRef>, RuntimeError> {
         let trace_meta_path = self.host.env_var_os("PYRS_TRACE_META_PATH").is_some();
+        let parent_path = if let Some((parent_name, _)) = name.rsplit_once('.') {
+            let parent_module = self
+                .import_module_object_with_policy(parent_name, ImportReturnPolicy::Synchronous)?;
+            match &*parent_module.kind() {
+                Object::Module(module_data) => module_data
+                    .globals
+                    .get("__path__")
+                    .cloned()
+                    .unwrap_or(Value::None),
+                _ => Value::None,
+            }
+        } else {
+            Value::None
+        };
         let Some(meta_path_obj) = self.sys_list_obj("meta_path") else {
             return Ok(None);
         };
@@ -12435,7 +12449,7 @@ ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set
             };
             let spec = match self.call_internal(
                 find_spec,
-                vec![name_value.clone(), Value::None, Value::None],
+                vec![name_value.clone(), parent_path.clone(), Value::None],
                 HashMap::new(),
             ) {
                 Ok(super::InternalCallOutcome::Value(value)) => value,

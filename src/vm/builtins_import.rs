@@ -202,6 +202,11 @@ impl Vm {
             .is_some_and(|value| matches!(value, Value::Str(name) if name == expected))
     }
 
+    fn sys_modules_entry(&mut self, name: &str) -> Option<Value> {
+        self.sys_dict_obj("modules")
+            .and_then(|modules| dict_get_value(&modules, &Value::Str(name.to_string())))
+    }
+
     fn handle_import_fromlist(
         &mut self,
         module: &ObjRef,
@@ -543,6 +548,39 @@ impl Vm {
                 }
                 Value::Module(_) => {}
                 other => return Ok(other),
+            }
+        }
+        if !has_fromlist && resolved_name.contains('.') {
+            let parent_name = resolved_name
+                .rsplit_once('.')
+                .map(|(parent, _)| parent)
+                .expect("dotted import must have parent");
+            let _ = self.import_module_object_with_policy(
+                parent_name,
+                ImportReturnPolicy::DeferredWhenFramesQueued,
+            )?;
+            if let Some(cached) = self.sys_modules_entry(&resolved_name) {
+                match cached {
+                    Value::None => {
+                        return Err(RuntimeError::module_not_found_error(format!(
+                            "No module named '{}'",
+                            resolved_name
+                        )));
+                    }
+                    Value::Module(module) => {
+                        self.modules.insert(resolved_name.clone(), module.clone());
+                        return Ok(Value::Module(
+                            self.module_for_plain_import(&resolved_name, module),
+                        ));
+                    }
+                    _ => {
+                        let top_level = self.import_module_object_with_policy(
+                            return_name,
+                            ImportReturnPolicy::DeferredWhenFramesQueued,
+                        )?;
+                        return Ok(Value::Module(top_level));
+                    }
+                }
             }
         }
         let module = self.import_module_object_with_policy(
@@ -1471,34 +1509,46 @@ impl Vm {
             Value::Str(name.clone())
         };
         if let Object::Module(module_data) = &mut *module.kind_mut() {
-            module_data
-                .globals
-                .insert("__name__".to_string(), Value::Str(name));
-            module_data
-                .globals
-                .insert("__loader__".to_string(), loader.clone());
-            module_data
-                .globals
-                .insert("__package__".to_string(), package);
+            let missing_name = !module_data.globals.contains_key("__name__")
+                || matches!(module_data.globals.get("__name__"), Some(Value::None));
+            let missing_loader = !module_data.globals.contains_key("__loader__")
+                || matches!(module_data.globals.get("__loader__"), Some(Value::None));
+            let missing_package = !module_data.globals.contains_key("__package__")
+                || matches!(module_data.globals.get("__package__"), Some(Value::None));
+            let missing_file = !module_data.globals.contains_key("__file__")
+                || matches!(module_data.globals.get("__file__"), Some(Value::None));
+            let missing_cached = !module_data.globals.contains_key("__cached__")
+                || matches!(module_data.globals.get("__cached__"), Some(Value::None));
+            let missing_path = !module_data.globals.contains_key("__path__")
+                || matches!(module_data.globals.get("__path__"), Some(Value::None));
+            if missing_name {
+                module_data
+                    .globals
+                    .insert("__name__".to_string(), Value::Str(name));
+            }
+            if missing_loader {
+                module_data
+                    .globals
+                    .insert("__loader__".to_string(), loader.clone());
+            }
+            if missing_package {
+                module_data
+                    .globals
+                    .insert("__package__".to_string(), package);
+            }
             module_data
                 .globals
                 .insert("__spec__".to_string(), spec.clone());
-            if !matches!(origin, Value::None) {
+            if !matches!(origin, Value::None) && missing_file {
                 module_data.globals.insert("__file__".to_string(), origin);
-            } else {
-                module_data.globals.remove("__file__");
             }
-            if !matches!(cached, Value::None) {
+            if !matches!(cached, Value::None) && missing_cached {
                 module_data.globals.insert("__cached__".to_string(), cached);
-            } else {
-                module_data.globals.remove("__cached__");
             }
-            if !matches!(submodule_search_locations, Value::None) {
+            if !matches!(submodule_search_locations, Value::None) && missing_path {
                 module_data
                     .globals
                     .insert("__path__".to_string(), submodule_search_locations);
-            } else {
-                module_data.globals.remove("__path__");
             }
         }
         Ok(())

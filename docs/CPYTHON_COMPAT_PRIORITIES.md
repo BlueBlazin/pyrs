@@ -144,6 +144,8 @@ Resolved locally since this snapshot and awaiting the next full benchmark rerun:
 - builtin `__import__` now performs CPython-style `fromlist` submodule handling, including propagating `ModuleNotFoundError` when `sys.modules['pkg.submod']` is explicitly blocked with `None`, which cleared `test.test_importlib.import_.test_api.*.test_blocked_fromlist`
 - builtin `__import__` now raises `ValueError` instead of a generic runtime error for negative import levels, which cleared `test.test_importlib.import_.test_api.*.test_negative_level`
 - builtin `__import__` now returns non-module `sys.modules[name]` cache entries directly for direct builtin calls, which cleared `test.test_importlib.import_.test_caching.*.test_using_cache`
+- module initialization from `ModuleSpec` now preserves existing import-set attrs like `__path__` / `__package__` when they are already populated, while still refreshing `__spec__`, which cleared the source-importlib meta-path parent-path identity failure in `test.test_importlib.import_.test_meta_path.*.test_with_path`
+- builtin `__import__` now re-checks `sys.modules[fullname]` after importing a parent for plain dotted imports, matching CPython’s side-effect handling when a non-package parent injects the child entry, which cleared `test.test_importlib.import_.test_packages.*.test_module_not_package_but_side_effects`
 - `from email import policy` no longer leaks a partially initialized `email.policy` module during bootstrap import
 - `test.test_email.test_pickleable` no longer overflows while materializing address headers (`header_store_parse` pyc name layout and `Message.__setitem__` operator dispatch fixed locally)
 
