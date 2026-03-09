@@ -6,6 +6,7 @@ mod repl;
 use std::collections::HashSet;
 use std::env;
 use std::path::{Path, PathBuf};
+use std::thread;
 
 use crate::compiler;
 use crate::parser;
@@ -17,12 +18,36 @@ use crate::{CPYTHON_COMPAT_VERSION, CPYTHON_STDLIB_VERSION, VERSION};
 const HELP: &str = "pyrs (CPython 3.14 compatible)\n\nUsage:\n  pyrs                    Start interactive REPL (or read from stdin when piped)\n  pyrs <file.py>          Run a Python file\n  pyrs <file.pyc>         Run a CPython .pyc file\n  pyrs -m <module> [arg]  Run a library module as a script\n  pyrs -c <code> [arg]    Run command string\n  pyrs -S <file.py>       Run without importing site on startup\n  pyrs --ast <file.py>    Print parsed AST\n  pyrs --bytecode <file.py>  Print bytecode disassembly\n  pyrs --version          Print version\n  pyrs --help             Show help\n";
 const CPYTHON_STDLIB_RELEASE_PAGE_URL: &str =
     "https://www.python.org/downloads/release/python-3143/";
+const CLI_EXECUTION_STACK_SIZE: usize = 32 * 1024 * 1024;
+const CLI_STACK_SAFE_RECURSION_LIMIT: i64 = 1000;
 
 pub fn run() -> i32 {
-    run_with_args_vec(env::args().skip(1).collect())
+    run_with_args_vec_on_large_stack(env::args().skip(1).collect())
 }
 
 pub fn run_with_args_vec(arguments: Vec<String>) -> i32 {
+    run_with_args_vec_inner(arguments)
+}
+
+pub fn run_with_args_vec_on_large_stack(arguments: Vec<String>) -> i32 {
+    let join = thread::Builder::new()
+        .name("pyrs-cli".to_string())
+        .stack_size(CLI_EXECUTION_STACK_SIZE)
+        .spawn(move || run_with_args_vec_inner(arguments))
+        .expect("failed to spawn pyrs cli thread");
+    match join.join() {
+        Ok(status) => status,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
+pub(super) fn new_cli_vm() -> Vm {
+    let mut vm = Vm::new();
+    vm.set_stack_safe_recursion_limit(CLI_STACK_SAFE_RECURSION_LIMIT);
+    vm
+}
+
+fn run_with_args_vec_inner(arguments: Vec<String>) -> i32 {
     let mut args = arguments.into_iter().peekable();
     let mut import_site = true;
     let mut traceback_caret_enabled = true;
@@ -281,7 +306,7 @@ fn run_file(
         std::fs::canonicalize(&absolute).unwrap_or(absolute)
     };
     let script_execution_path = script_execution_path.to_string_lossy().to_string();
-    let mut vm = Vm::new();
+    let mut vm = new_cli_vm();
     configure_vm_for_execution(
         &mut vm,
         &script_execution_path,
@@ -357,7 +382,7 @@ fn run_command(
     warnoptions: Vec<String>,
     startup_tracemalloc_limit: Option<usize>,
 ) -> Result<i32, String> {
-    let mut vm = Vm::new();
+    let mut vm = new_cli_vm();
     configure_vm_for_command(&mut vm, import_site, traceback_caret_enabled, &warnoptions)?;
     if let Some(limit) = startup_tracemalloc_limit {
         vm.start_tracemalloc(limit);
@@ -403,7 +428,7 @@ fn run_module(
     warnoptions: Vec<String>,
     startup_tracemalloc_limit: Option<usize>,
 ) -> Result<i32, String> {
-    let mut vm = Vm::new();
+    let mut vm = new_cli_vm();
     configure_vm_for_command(&mut vm, import_site, traceback_caret_enabled, &warnoptions)?;
     if let Some(limit) = startup_tracemalloc_limit {
         vm.start_tracemalloc(limit);

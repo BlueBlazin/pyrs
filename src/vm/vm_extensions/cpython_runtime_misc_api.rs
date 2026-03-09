@@ -669,7 +669,7 @@ pub unsafe extern "C" fn Py_Main(argc: c_int, argv: *mut *mut Cwchar) -> c_int {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let cli_args = all_args.into_iter().skip(1).collect();
-        return cli::run_with_args_vec(cli_args);
+        return cli::run_with_args_vec_on_large_stack(cli_args);
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -717,7 +717,7 @@ pub unsafe extern "C" fn Py_BytesMain(argc: c_int, argv: *mut *mut c_char) -> c_
     #[cfg(not(target_arch = "wasm32"))]
     {
         let cli_args = all_args.into_iter().skip(1).collect();
-        return cli::run_with_args_vec(cli_args);
+        return cli::run_with_args_vec_on_large_stack(cli_args);
     }
     #[cfg(target_arch = "wasm32")]
     {

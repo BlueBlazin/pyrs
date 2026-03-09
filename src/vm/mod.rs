@@ -1269,6 +1269,7 @@ pub struct Vm {
     hash_cache: HashMap<u64, u64>,
     is_finalizing: bool,
     recursion_limit: i64,
+    stack_safe_recursion_limit: i64,
     switch_interval: f64,
     sys_trace_hook: Value,
     asyncgen_firstiter_hook: Value,
@@ -1580,6 +1581,7 @@ impl Vm {
             hash_cache: HashMap::new(),
             is_finalizing: false,
             recursion_limit: 1000,
+            stack_safe_recursion_limit: VM_STACK_SAFE_RECURSION_LIMIT,
             switch_interval: 0.005,
             sys_trace_hook: Value::None,
             asyncgen_firstiter_hook: Value::None,
@@ -2240,7 +2242,7 @@ impl Vm {
     fn effective_recursion_limit(&self) -> i64 {
         self.recursion_limit
             .max(1)
-            .min(VM_STACK_SAFE_RECURSION_LIMIT)
+            .min(self.stack_safe_recursion_limit.max(1))
     }
 
     #[inline]
@@ -3917,6 +3919,10 @@ impl Vm {
 
     pub fn set_traceback_caret_enabled(&mut self, enabled: bool) {
         self.traceback_caret_enabled = enabled;
+    }
+
+    pub fn set_stack_safe_recursion_limit(&mut self, limit: i64) {
+        self.stack_safe_recursion_limit = limit.max(1);
     }
 
     pub fn register_source_in_linecache(

@@ -15077,6 +15077,45 @@ else:
 }
 
 #[test]
+fn cli_pathlib_glob_dotdot_deep_chain_matches_cpython() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let source = r#"import pathlib
+import tempfile
+
+with tempfile.TemporaryDirectory(prefix="pyrs_glob_dotdot_") as root:
+    path = pathlib.Path(root)
+    pattern = "/".join([".."] * 50)
+    result = list(path.glob(pattern))
+    print(result == [path.joinpath(*([".."] * 50))])
+"#;
+    let output = Command::new(pyrs_bin)
+        .env("PYRS_CPYTHON_LIB", &lib_path)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn pyrs cli pathlib glob dotdot probe");
+    assert!(
+        output.status.success(),
+        "cli pathlib glob dotdot probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(
+        last_line, "True",
+        "expected cli pathlib glob dotdot probe to print True, got:\n{}",
+        stdout
+    );
+}
+
+#[test]
 fn executes_property_descriptor_getter() {
     let source = "class C:\n    @property\n    def value(self):\n        return 42\nc = C()\nout = c.value\nclass_attr = C.value\n";
     let module = parser::parse_module(source).expect("parse should succeed");
