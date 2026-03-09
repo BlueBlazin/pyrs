@@ -19288,6 +19288,29 @@ ok = Child.flag
 }
 
 #[test]
+fn with_statement_accepts_parenthesized_context_expr_with_trailers() {
+    let source = r#"class Manager:
+    def __enter__(self):
+        return 7
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+class Holder:
+    def wrap(self):
+        return Manager()
+
+holder = Holder()
+with (holder).wrap() as value:
+    ok = (value == 7)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn user_classes_expose_qualname_for_unittest_loader_paths() {
     let source = "class KeyOrderingTest:\n    pass\nok = (KeyOrderingTest.__qualname__ == 'KeyOrderingTest')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

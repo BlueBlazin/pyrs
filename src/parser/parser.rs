@@ -1781,6 +1781,87 @@ impl Parser {
         self.parse_with_stmt_internal(pos, pos, false)
     }
 
+    fn should_parse_grouped_with_items(&self, pos: usize) -> bool {
+        if !matches!(self.token_at(pos).kind, TokenKind::LParen) {
+            return false;
+        }
+
+        let mut depth = 0usize;
+        let mut cursor = pos;
+        loop {
+            match self.token_at(cursor).kind {
+                TokenKind::LParen => depth += 1,
+                TokenKind::RParen => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return matches!(self.token_at(cursor + 1).kind, TokenKind::Colon);
+                    }
+                }
+                TokenKind::EndMarker => return false,
+                _ => {}
+            }
+            cursor += 1;
+        }
+    }
+
+    fn parse_with_items(
+        &mut self,
+        mut pos: usize,
+        parenthesized: bool,
+    ) -> Result<(Vec<(Expr, Option<AssignTarget>)>, usize), ParseError> {
+        let mut items: Vec<(Expr, Option<AssignTarget>)> = Vec::new();
+        loop {
+            let (context, next) = self.parse_expr_at(pos)?;
+            pos = next;
+
+            let mut target = None;
+            if self.match_keyword(pos, Keyword::As) {
+                pos += 1;
+                let (target_expr, next) = self
+                    .parse_assignment_target(pos)
+                    .ok_or_else(|| self.error_at(pos, "expected with target"))?;
+                target = Some(target_expr);
+                pos = next;
+            }
+            items.push((context, target));
+
+            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
+                pos += 1;
+                if parenthesized && matches!(self.token_at(pos).kind, TokenKind::RParen) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        Ok((items, pos))
+    }
+
+    fn build_with_stmt(
+        &self,
+        start: usize,
+        is_async: bool,
+        body: Vec<Stmt>,
+        items: Vec<(Expr, Option<AssignTarget>)>,
+    ) -> Result<Stmt, ParseError> {
+        let mut nested = body;
+        for (context, target) in items.into_iter().rev() {
+            nested = vec![self.make_stmt(
+                start,
+                StmtKind::With {
+                    is_async,
+                    context,
+                    target,
+                    body: nested,
+                },
+            )];
+        }
+        nested
+            .into_iter()
+            .next()
+            .ok_or_else(|| self.error_at(start, "empty with statement"))
+    }
+
     fn parse_for_stmt_internal(
         &mut self,
         start: usize,
@@ -1834,61 +1915,19 @@ impl Parser {
         is_async: bool,
     ) -> ParseResult<Stmt> {
         let mut pos = with_pos + 1;
-        let mut parenthesized = false;
-        if matches!(self.token_at(pos).kind, TokenKind::LParen) {
-            parenthesized = true;
+        let parenthesized = self.should_parse_grouped_with_items(pos);
+        if parenthesized {
             pos += 1;
         }
 
-        let mut items: Vec<(Expr, Option<AssignTarget>)> = Vec::new();
-        loop {
-            let (context, next) = self.parse_expr_at(pos)?;
-            pos = next;
-
-            let mut target = None;
-            if self.match_keyword(pos, Keyword::As) {
-                pos += 1;
-                let (target_expr, next) = self
-                    .parse_assignment_target(pos)
-                    .ok_or_else(|| self.error_at(pos, "expected with target"))?;
-                target = Some(target_expr);
-                pos = next;
-            }
-            items.push((context, target));
-
-            if matches!(self.token_at(pos).kind, TokenKind::Comma) {
-                pos += 1;
-                if parenthesized && matches!(self.token_at(pos).kind, TokenKind::RParen) {
-                    break;
-                }
-                continue;
-            }
-            break;
-        }
-
+        let (items, mut pos) = self.parse_with_items(pos, parenthesized)?;
         if parenthesized {
             pos = self.expect_kind(pos, TokenKind::RParen)?;
         }
         pos = self.expect_kind(pos, TokenKind::Colon)?;
         let (body, next) = self.parse_suite(pos)?;
         pos = next;
-
-        let mut nested = body;
-        for (context, target) in items.into_iter().rev() {
-            nested = vec![self.make_stmt(
-                start,
-                StmtKind::With {
-                    is_async,
-                    context,
-                    target,
-                    body: nested,
-                },
-            )];
-        }
-        let stmt = nested
-            .into_iter()
-            .next()
-            .ok_or_else(|| self.error_at(start, "empty with statement"))?;
+        let stmt = self.build_with_stmt(start, is_async, body, items)?;
         Ok((stmt, pos))
     }
 
