@@ -705,13 +705,17 @@ fn owned_iterator_children(kind: IteratorKind) -> Vec<OwnedReleaseItem> {
             out.push(OwnedReleaseItem::Value(selectors));
         }
         IteratorKind::DropWhile {
-            predicate, iterator, ..
+            predicate,
+            iterator,
+            ..
         }
         | IteratorKind::Filter {
-            predicate, iterator,
+            predicate,
+            iterator,
         }
         | IteratorKind::FilterFalse {
-            predicate, iterator,
+            predicate,
+            iterator,
         }
         | IteratorKind::StarMap {
             callable: predicate,
@@ -723,7 +727,9 @@ fn owned_iterator_children(kind: IteratorKind) -> Vec<OwnedReleaseItem> {
         IteratorKind::Islice { iterator, .. }
         | IteratorKind::Batched { iterator, .. }
         | IteratorKind::GroupBy { shared: iterator }
-        | IteratorKind::Tee { shared: iterator, .. } => {
+        | IteratorKind::Tee {
+            shared: iterator, ..
+        } => {
             out.push(OwnedReleaseItem::Value(iterator));
         }
         IteratorKind::Pairwise {
@@ -733,7 +739,9 @@ fn owned_iterator_children(kind: IteratorKind) -> Vec<OwnedReleaseItem> {
             out.extend(previous.into_iter().map(OwnedReleaseItem::Value));
         }
         IteratorKind::TakeWhile {
-            predicate, iterator, ..
+            predicate,
+            iterator,
+            ..
         } => {
             out.push(OwnedReleaseItem::Value(predicate));
             out.push(OwnedReleaseItem::Value(iterator));
@@ -793,7 +801,9 @@ fn owned_object_children(object: Object) -> Vec<OwnedReleaseItem> {
             }
         }
         Object::Iterator(iterator) => out.extend(owned_iterator_children(iterator.kind)),
-        Object::Generator(generator) => out.push(OwnedReleaseItem::Value(Value::Code(generator.code))),
+        Object::Generator(generator) => {
+            out.push(OwnedReleaseItem::Value(Value::Code(generator.code)))
+        }
         Object::Module(module) => {
             out.extend(module.globals.into_values().map(OwnedReleaseItem::Value));
         }
@@ -2427,6 +2437,9 @@ pub fn builtin_type_name_info(builtin: BuiltinFunction) -> Option<RuntimeTypeNam
         BuiltinFunction::FrozenSet => Some(RuntimeTypeNameInfo::builtins("frozenset")),
         BuiltinFunction::Bytes => Some(RuntimeTypeNameInfo::builtins("bytes")),
         BuiltinFunction::ByteArray => Some(RuntimeTypeNameInfo::builtins("bytearray")),
+        BuiltinFunction::ArrayArray => {
+            Some(RuntimeTypeNameInfo::module("array", "array", "array.array"))
+        }
         BuiltinFunction::MemoryView => Some(RuntimeTypeNameInfo::builtins("memoryview")),
         BuiltinFunction::Slice => Some(RuntimeTypeNameInfo::builtins("slice")),
         BuiltinFunction::Range => Some(RuntimeTypeNameInfo::builtins("range")),
@@ -2565,6 +2578,7 @@ pub fn builtin_type_from_name_info(module: &str, name: &str) -> Option<BuiltinFu
         ("builtins", "frozenset") => Some(BuiltinFunction::FrozenSet),
         ("builtins", "bytes") => Some(BuiltinFunction::Bytes),
         ("builtins", "bytearray") => Some(BuiltinFunction::ByteArray),
+        ("array", "array") => Some(BuiltinFunction::ArrayArray),
         ("builtins", "memoryview") => Some(BuiltinFunction::MemoryView),
         ("builtins", "slice") => Some(BuiltinFunction::Slice),
         ("builtins", "range") => Some(BuiltinFunction::Range),

@@ -11171,64 +11171,74 @@ impl Vm {
         const UTF32_BE: i64 = 21;
 
         match mformat_code {
-            UNSIGNED_INT8 => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 1, true, false,
+            UNSIGNED_INT8 => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 1, true, false)?)),
+            SIGNED_INT8 => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 1, true, true)?)),
+            UNSIGNED_INT16_LE => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 2, true, false)?)),
+            UNSIGNED_INT16_BE => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 2, false, false)?)),
+            SIGNED_INT16_LE => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 2, true, true)?)),
+            SIGNED_INT16_BE => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 2, false, true)?)),
+            UNSIGNED_INT32_LE => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 4, true, false)?)),
+            UNSIGNED_INT32_BE => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 4, false, false)?)),
+            SIGNED_INT32_LE => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 4, true, true)?)),
+            SIGNED_INT32_BE => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 4, false, true)?)),
+            UNSIGNED_INT64_LE => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 8, true, false)?)),
+            UNSIGNED_INT64_BE => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 8, false, false)?)),
+            SIGNED_INT64_LE => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 8, true, true)?)),
+            SIGNED_INT64_BE => Ok(self
+                .heap
+                .alloc_list(decode_integer_values(raw_items, 8, false, true)?)),
+            IEEE_754_FLOAT_LE => Ok(self.heap.alloc_list(decode_float_values(raw_items, true)?)),
+            IEEE_754_FLOAT_BE => Ok(self.heap.alloc_list(decode_float_values(raw_items, false)?)),
+            IEEE_754_DOUBLE_LE => Ok(self.heap.alloc_list(decode_double_values(raw_items, true)?)),
+            IEEE_754_DOUBLE_BE => Ok(self
+                .heap
+                .alloc_list(decode_double_values(raw_items, false)?)),
+            UTF16_LE => Ok(Value::Str(decode_text_bytes(
+                raw_items,
+                "utf-16-le",
+                "strict",
             )?)),
-            SIGNED_INT8 => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 1, true, true,
+            UTF16_BE => Ok(Value::Str(decode_text_bytes(
+                raw_items,
+                "utf-16-be",
+                "strict",
             )?)),
-            UNSIGNED_INT16_LE => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 2, true, false,
+            UTF32_LE => Ok(Value::Str(decode_text_bytes(
+                raw_items,
+                "utf-32-le",
+                "strict",
             )?)),
-            UNSIGNED_INT16_BE => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 2, false, false,
+            UTF32_BE => Ok(Value::Str(decode_text_bytes(
+                raw_items,
+                "utf-32-be",
+                "strict",
             )?)),
-            SIGNED_INT16_LE => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 2, true, true,
-            )?)),
-            SIGNED_INT16_BE => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 2, false, true,
-            )?)),
-            UNSIGNED_INT32_LE => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 4, true, false,
-            )?)),
-            UNSIGNED_INT32_BE => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 4, false, false,
-            )?)),
-            SIGNED_INT32_LE => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 4, true, true,
-            )?)),
-            SIGNED_INT32_BE => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 4, false, true,
-            )?)),
-            UNSIGNED_INT64_LE => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 8, true, false,
-            )?)),
-            UNSIGNED_INT64_BE => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 8, false, false,
-            )?)),
-            SIGNED_INT64_LE => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 8, true, true,
-            )?)),
-            SIGNED_INT64_BE => Ok(self.heap.alloc_list(decode_integer_values(
-                raw_items, 8, false, true,
-            )?)),
-            IEEE_754_FLOAT_LE => {
-                Ok(self.heap.alloc_list(decode_float_values(raw_items, true)?))
-            }
-            IEEE_754_FLOAT_BE => {
-                Ok(self.heap.alloc_list(decode_float_values(raw_items, false)?))
-            }
-            IEEE_754_DOUBLE_LE => {
-                Ok(self.heap.alloc_list(decode_double_values(raw_items, true)?))
-            }
-            IEEE_754_DOUBLE_BE => {
-                Ok(self.heap.alloc_list(decode_double_values(raw_items, false)?))
-            }
-            UTF16_LE => Ok(Value::Str(decode_text_bytes(raw_items, "utf-16-le", "strict")?)),
-            UTF16_BE => Ok(Value::Str(decode_text_bytes(raw_items, "utf-16-be", "strict")?)),
-            UTF32_LE => Ok(Value::Str(decode_text_bytes(raw_items, "utf-32-le", "strict")?)),
-            UTF32_BE => Ok(Value::Str(decode_text_bytes(raw_items, "utf-32-be", "strict")?)),
             _ => Err(invalid_machine_format_error()),
         }
     }
@@ -11289,9 +11299,9 @@ impl Vm {
             HashMap::new(),
         )? {
             InternalCallOutcome::Value(value) => Ok(value),
-            InternalCallOutcome::CallerExceptionHandled => Err(
-                self.runtime_error_from_active_exception("_array_reconstructor() failed"),
-            ),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("_array_reconstructor() failed"))
+            }
         }
     }
 
@@ -15694,6 +15704,7 @@ impl Vm {
                                 | BuiltinFunction::FrozenSet
                                 | BuiltinFunction::Bytes
                                 | BuiltinFunction::ByteArray
+                                | BuiltinFunction::ArrayArray
                                 | BuiltinFunction::MemoryView
                         ) =>
                     {
@@ -15774,7 +15785,8 @@ impl Vm {
                                 || self.class_has_builtin_frozenset_base(class)
                                 || self.class_has_builtin_str_base(class)
                                 || self.class_has_builtin_bytes_base(class)
-                                || self.class_has_builtin_bytearray_base(class))
+                                || self.class_has_builtin_bytearray_base(class)
+                                || self.class_has_builtin_array_base(class))
                         {
                             return Ok(true);
                         }
@@ -15794,7 +15806,8 @@ impl Vm {
                                     || self.class_has_builtin_defaultdict_base(class)
                                     || self.class_has_builtin_ordereddict_base(class)
                                     || self.class_has_builtin_set_base(class)
-                                    || self.class_has_builtin_bytearray_base(class);
+                                    || self.class_has_builtin_bytearray_base(class)
+                                    || self.class_has_builtin_array_base(class);
                             if inherits_builtin_unhashable_base {
                                 return Ok(false);
                             }
@@ -15810,7 +15823,8 @@ impl Vm {
                                 || self.class_has_builtin_tuple_base(class)
                                 || self.class_has_builtin_str_base(class)
                                 || self.class_has_builtin_bytes_base(class)
-                                || self.class_has_builtin_bytearray_base(class))
+                                || self.class_has_builtin_bytearray_base(class)
+                                || self.class_has_builtin_array_base(class))
                         {
                             return Ok(true);
                         }
@@ -15846,7 +15860,8 @@ impl Vm {
                                 || self.class_has_builtin_frozenset_base(class)
                                 || self.class_has_builtin_str_base(class)
                                 || self.class_has_builtin_bytes_base(class)
-                                || self.class_has_builtin_bytearray_base(class))
+                                || self.class_has_builtin_bytearray_base(class)
+                                || self.class_has_builtin_array_base(class))
                         {
                             return Ok(true);
                         }
@@ -15887,7 +15902,8 @@ impl Vm {
                             return Ok(true);
                         }
                         if expected_data.name == "MutableSequence"
-                            && self.class_has_builtin_list_base(class)
+                            && (self.class_has_builtin_list_base(class)
+                                || self.class_has_builtin_array_base(class))
                         {
                             return Ok(true);
                         }
@@ -16037,6 +16053,7 @@ impl Vm {
                                     | BuiltinFunction::Dict
                                     | BuiltinFunction::Set
                                     | BuiltinFunction::ByteArray
+                                    | BuiltinFunction::ArrayArray
                                     | BuiltinFunction::CollectionsOrderedDict
                                     | BuiltinFunction::CollectionsDefaultDict
                             )
@@ -16064,6 +16081,7 @@ impl Vm {
                                     | BuiltinFunction::Str
                                     | BuiltinFunction::Bytes
                                     | BuiltinFunction::ByteArray
+                                    | BuiltinFunction::ArrayArray
                             )
                         ),
                         "Container" => matches!(
@@ -16077,6 +16095,7 @@ impl Vm {
                                     | BuiltinFunction::Str
                                     | BuiltinFunction::Bytes
                                     | BuiltinFunction::ByteArray
+                                    | BuiltinFunction::ArrayArray
                             )
                         ),
                         "Collection" => matches!(
@@ -16090,6 +16109,7 @@ impl Vm {
                                     | BuiltinFunction::Str
                                     | BuiltinFunction::Bytes
                                     | BuiltinFunction::ByteArray
+                                    | BuiltinFunction::ArrayArray
                             )
                         ),
                         "Sized" => matches!(
@@ -16103,6 +16123,7 @@ impl Vm {
                                     | BuiltinFunction::Str
                                     | BuiltinFunction::Bytes
                                     | BuiltinFunction::ByteArray
+                                    | BuiltinFunction::ArrayArray
                                     | BuiltinFunction::MemoryView
                             )
                         ),
@@ -16114,6 +16135,7 @@ impl Vm {
                                     | BuiltinFunction::Str
                                     | BuiltinFunction::Bytes
                                     | BuiltinFunction::ByteArray
+                                    | BuiltinFunction::ArrayArray
                                     | BuiltinFunction::MemoryView
                             )
                         ),
@@ -16132,7 +16154,12 @@ impl Vm {
                             matches!(candidate, Value::Builtin(BuiltinFunction::Dict))
                         }
                         "MutableSequence" => {
-                            matches!(candidate, Value::Builtin(BuiltinFunction::List))
+                            matches!(
+                                candidate,
+                                Value::Builtin(
+                                    BuiltinFunction::List | BuiltinFunction::ArrayArray
+                                )
+                            )
                         }
                         "ByteString" => matches!(
                             candidate,
@@ -16235,6 +16262,7 @@ impl Vm {
                     BuiltinFunction::FrozenSet => self.class_has_builtin_frozenset_base(class),
                     BuiltinFunction::Bytes => self.class_has_builtin_bytes_base(class),
                     BuiltinFunction::ByteArray => self.class_has_builtin_bytearray_base(class),
+                    BuiltinFunction::ArrayArray => self.class_has_builtin_array_base(class),
                     BuiltinFunction::TypingTypeVar
                     | BuiltinFunction::TypingParamSpec
                     | BuiltinFunction::TypingTypeVarTuple => {

@@ -1192,18 +1192,22 @@ fn from_import_submodule_executes_on_small_stack_without_recursive_vm_reentry() 
     let Some(lib) = cpython_lib_path() else {
         return;
     };
-    run_with_stack("small-stack-from-import-submodule", 2 * 1024 * 1024, move || {
-        let source = "\
+    run_with_stack(
+        "small-stack-from-import-submodule",
+        2 * 1024 * 1024,
+        move || {
+            let source = "\
 from compression._common import _streams\n\
 import io\n\
 ok = (_streams.__name__ == 'compression._common._streams' and io.__name__ == 'io')\n";
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.add_module_path(&lib);
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        },
+    );
 }
 
 #[test]
@@ -1211,27 +1215,31 @@ fn collections_abc_import_executes_on_small_stack_without_recursive_vm_reentry()
     let Some(lib) = cpython_lib_path() else {
         return;
     };
-    run_with_stack("small-stack-import-collections-abc", 2 * 1024 * 1024, move || {
-        let source = concat!(
-            "from collections.abc import Mapping\n",
-            "class C(Mapping):\n",
-            "    def __iter__(self):\n",
-            "        return iter(())\n",
-            "    def __len__(self):\n",
-            "        return 0\n",
-            "    def __getitem__(self, key):\n",
-            "        raise KeyError\n",
-            "c = C()\n",
-            "setattr(c, 'x', 1)\n",
-            "ok = (c.x == 1 and C.__mro__[-1] is object)\n",
-        );
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.add_module_path(&lib);
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+    run_with_stack(
+        "small-stack-import-collections-abc",
+        2 * 1024 * 1024,
+        move || {
+            let source = concat!(
+                "from collections.abc import Mapping\n",
+                "class C(Mapping):\n",
+                "    def __iter__(self):\n",
+                "        return iter(())\n",
+                "    def __len__(self):\n",
+                "        return 0\n",
+                "    def __getitem__(self, key):\n",
+                "        raise KeyError\n",
+                "c = C()\n",
+                "setattr(c, 'x', 1)\n",
+                "ok = (c.x == 1 and C.__mro__[-1] is object)\n",
+            );
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        },
+    );
 }
 
 #[test]
@@ -9319,7 +9327,9 @@ ok = (dt.strftime('%Y-%m-%d %H:%M:%S %z') == '1970-01-01 00:00:00 +0000' and shi
 #[test]
 fn email_utils_format_datetime_uses_datetime_timetuple() {
     let Some(lib_path) = cpython_lib_path() else {
-        eprintln!("skipping email.utils datetime formatting probe (CPython Lib path not available)");
+        eprintln!(
+            "skipping email.utils datetime formatting probe (CPython Lib path not available)"
+        );
         return;
     };
     run_with_large_stack("email-utils-format-datetime", move || {
@@ -9556,8 +9566,14 @@ fn bytes_like_values_expose_sequence_dunders_and_reversed() {
     assert_eq!(by_key.get("bytes_has_getitem"), Some(&Value::Bool(true)));
     assert_eq!(by_key.get("bytes_has_contains"), Some(&Value::Bool(true)));
     assert_eq!(by_key.get("bytearray_has_len"), Some(&Value::Bool(true)));
-    assert_eq!(by_key.get("bytearray_has_getitem"), Some(&Value::Bool(true)));
-    assert_eq!(by_key.get("bytearray_has_contains"), Some(&Value::Bool(true)));
+    assert_eq!(
+        by_key.get("bytearray_has_getitem"),
+        Some(&Value::Bool(true))
+    );
+    assert_eq!(
+        by_key.get("bytearray_has_contains"),
+        Some(&Value::Bool(true))
+    );
     assert_eq!(
         by_key
             .get("bytes_reversed")
@@ -15139,6 +15155,29 @@ ok = (
 }
 
 #[test]
+fn array_type_object_supports_subclass_bases() {
+    let source = r#"import array
+class ArraySubclass(array.array):
+    pass
+base = ArraySubclass.__bases__[0]
+ok = (
+    array.array.__module__ == "array"
+    and array.array.__name__ == "array"
+    and type(array.array).__name__ == "type"
+    and base.__module__ == "array"
+    and base.__name__ == "array"
+    and issubclass(ArraySubclass, array.array)
+    and issubclass(array.array, array.array)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn weakref_finalize_exposes_detach_tuple_contract() {
     let source = r#"import weakref
 class Box:
@@ -19660,6 +19699,39 @@ ok = (
     handle
         .join()
         .expect("pure-threading import probe thread should complete");
+}
+
+#[test]
+fn array_test_module_can_import_with_cpython_lib_path() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping CPython test.test_array import probe (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("array-test-import".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import array
+import test.test_array as test_array
+base = test_array.ArraySubclass.__bases__[0]
+ok = (
+    test_array.ArraySubclass.__module__ == "test.test_array"
+    and base.__module__ == "array"
+    and base.__name__ == "array"
+    and issubclass(test_array.ArraySubclass, array.array)
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn CPython test.test_array import probe");
+    handle
+        .join()
+        .expect("CPython test.test_array import probe thread should complete");
 }
 
 #[test]

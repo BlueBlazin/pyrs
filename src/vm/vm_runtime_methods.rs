@@ -4248,6 +4248,9 @@ impl Vm {
             Value::Builtin(BuiltinFunction::ByteArray) => {
                 Ok(self.synthetic_builtin_class("bytearray"))
             }
+            Value::Builtin(BuiltinFunction::ArrayArray) => {
+                Ok(self.synthetic_runtime_type_class("array", "array"))
+            }
             Value::Builtin(BuiltinFunction::MemoryView) => {
                 Ok(self.synthetic_builtin_class("memoryview"))
             }

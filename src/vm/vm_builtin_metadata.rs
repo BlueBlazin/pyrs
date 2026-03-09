@@ -12,14 +12,12 @@ use super::{
     STR_BACKING_STORAGE_ATTR, TUPLE_BACKING_STORAGE_ATTR, Value, Vm, apply_bindings,
     bind_arguments, bytes_like_source_is_readonly, class_attr_lookup, class_attr_lookup_direct,
     class_attr_walk, class_attr_walk_visit, class_inherits_dynamic_instance_dict,
-    class_name_for_instance,
-    collect_slot_names, dict_get_value, dict_remove_value, dict_set_value,
+    class_name_for_instance, collect_slot_names, dict_get_value, dict_remove_value, dict_set_value,
     env_var_present_cached, format_repr, memoryview_bounds, runtime_error_matches_exception,
     value_from_bigint, value_from_object_ref, with_bytes_like_source,
 };
 use crate::runtime::{
-    BoundMethodDispatchKind, DictViewKind, builtin_type_name_info,
-    canonical_static_class_name_info,
+    BoundMethodDispatchKind, DictViewKind, builtin_type_name_info, canonical_static_class_name_info,
 };
 
 thread_local! {
@@ -229,8 +227,13 @@ impl Vm {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
         };
-        let attr_value =
-            |name: &str| instance_data.attrs.get(name).cloned().map(AttrAccessOutcome::Value);
+        let attr_value = |name: &str| {
+            instance_data
+                .attrs
+                .get(name)
+                .cloned()
+                .map(AttrAccessOutcome::Value)
+        };
         match kind {
             "Pattern" => match attr_name {
                 "pattern" | "flags" | "groupindex" | "groups" => attr_value(attr_name),
@@ -266,9 +269,12 @@ impl Vm {
                     BuiltinFunction::RePatternSplit,
                     instance.clone(),
                 ))),
-                "__repr__" | "__str__" => Some(AttrAccessOutcome::Value(
-                    self.alloc_native_bound_method(NativeMethodKind::RePatternRepr, instance.clone()),
-                )),
+                "__repr__" | "__str__" => {
+                    Some(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                        NativeMethodKind::RePatternRepr,
+                        instance.clone(),
+                    )))
+                }
                 _ if attr_name.starts_with("__pyrs_") => attr_value(attr_name),
                 _ => None,
             },
@@ -276,25 +282,32 @@ impl Vm {
                 "re" | "string" | "pos" | "endpos" | "lastindex" | "lastgroup" | "regs" => {
                     attr_value(attr_name)
                 }
-                "group" | "__getitem__" => Some(AttrAccessOutcome::Value(
-                    self.alloc_native_bound_method(NativeMethodKind::ReMatchGroup, instance.clone()),
-                )),
-                "groups" => Some(AttrAccessOutcome::Value(
-                    self.alloc_native_bound_method(NativeMethodKind::ReMatchGroups, instance.clone()),
-                )),
+                "group" | "__getitem__" => {
+                    Some(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                        NativeMethodKind::ReMatchGroup,
+                        instance.clone(),
+                    )))
+                }
+                "groups" => Some(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                    NativeMethodKind::ReMatchGroups,
+                    instance.clone(),
+                ))),
                 "groupdict" => Some(AttrAccessOutcome::Value(self.alloc_native_bound_method(
                     NativeMethodKind::ReMatchGroupDict,
                     instance.clone(),
                 ))),
-                "start" => Some(AttrAccessOutcome::Value(
-                    self.alloc_native_bound_method(NativeMethodKind::ReMatchStart, instance.clone()),
-                )),
-                "end" => Some(AttrAccessOutcome::Value(
-                    self.alloc_native_bound_method(NativeMethodKind::ReMatchEnd, instance.clone()),
-                )),
-                "span" => Some(AttrAccessOutcome::Value(
-                    self.alloc_native_bound_method(NativeMethodKind::ReMatchSpan, instance.clone()),
-                )),
+                "start" => Some(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                    NativeMethodKind::ReMatchStart,
+                    instance.clone(),
+                ))),
+                "end" => Some(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                    NativeMethodKind::ReMatchEnd,
+                    instance.clone(),
+                ))),
+                "span" => Some(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                    NativeMethodKind::ReMatchSpan,
+                    instance.clone(),
+                ))),
                 "__repr__" | "__str__" => Some(AttrAccessOutcome::Value(
                     self.alloc_native_bound_method(NativeMethodKind::ReMatchRepr, instance.clone()),
                 )),
@@ -324,8 +337,7 @@ impl Vm {
             ),
             Some("Match") => matches!(
                 attr_name,
-                "re"
-                    | "string"
+                "re" | "string"
                     | "pos"
                     | "endpos"
                     | "lastindex"
@@ -2476,7 +2488,8 @@ impl Vm {
         {
             return Some(Value::Builtin(BuiltinFunction::Format));
         }
-        if let Some(display_method) = self.load_attr_class_builtin_display_method(class, attr_name) {
+        if let Some(display_method) = self.load_attr_class_builtin_display_method(class, attr_name)
+        {
             return Some(display_method);
         }
         if (self.class_has_builtin_int_base(class)
@@ -5016,9 +5029,7 @@ impl Vm {
             );
             let preserve_helper_module = matches!(
                 module_data.name.as_str(),
-                "__float_unbound_method__"
-                    | "__str_unbound_method__"
-                    | "__tuple_unbound_method__"
+                "__float_unbound_method__" | "__str_unbound_method__" | "__tuple_unbound_method__"
             );
             if !is_slot_wrapper && !preserve_helper_module {
                 let receiver_ref = self.bound_receiver_ref(receiver)?;
@@ -5032,9 +5043,7 @@ impl Vm {
                 "__float_unbound_method__" => "__float_method__".to_string(),
                 _ => module_data.name.clone(),
             };
-            let bound_receiver = match self
-                .heap
-                .alloc_module(ModuleObject::new(bound_module_name))
+            let bound_receiver = match self.heap.alloc_module(ModuleObject::new(bound_module_name))
             {
                 Value::Module(obj) => obj,
                 _ => unreachable!(),
@@ -5634,9 +5643,9 @@ impl Vm {
         let receiver = Value::Instance(instance.clone());
         if Self::cpython_proxy_raw_ptr_from_value(&receiver).is_some() {
             let value = self.call_cpython_proxy_object(&receiver, args, kwargs)?;
-            return Ok(InternalCallDispatch::Return(
-                InternalCallOutcome::Value(value),
-            ));
+            return Ok(InternalCallDispatch::Return(InternalCallOutcome::Value(
+                value,
+            )));
         }
         match self.load_attr_instance(&instance, "__call__") {
             Ok(AttrAccessOutcome::Value(call_target)) => {
@@ -5677,10 +5686,14 @@ impl Vm {
     ) -> Result<InternalCallDispatch, RuntimeError> {
         let (class_name, metaclass_name) = match &*class.kind() {
             Object::Class(class_data) => {
-                let metaclass_name = class_data.metaclass.as_ref().map(|meta| match &*meta.kind() {
-                    Object::Class(meta_data) => meta_data.name.clone(),
-                    _ => "<non-class-meta>".to_string(),
-                });
+                let metaclass_name =
+                    class_data
+                        .metaclass
+                        .as_ref()
+                        .map(|meta| match &*meta.kind() {
+                            Object::Class(meta_data) => meta_data.name.clone(),
+                            _ => "<non-class-meta>".to_string(),
+                        });
                 (class_data.name.clone(), metaclass_name)
             }
             _ => ("<non-class>".to_string(), None),
@@ -5704,9 +5717,9 @@ impl Vm {
                     self.value_type_name_for_error(&value)
                 );
             }
-            return Ok(InternalCallDispatch::Return(
-                InternalCallOutcome::Value(value),
-            ));
+            return Ok(InternalCallDispatch::Return(InternalCallOutcome::Value(
+                value,
+            )));
         }
         if self.suppress_metaclass_dispatch_depth == 0
             && let Some(call_target) = self.resolve_metaclass_call_target(&class)?
@@ -5731,15 +5744,15 @@ impl Vm {
         }
         if self.class_is_exact_types_generic_alias(&class) {
             let value = self.instantiate_generic_alias_class(class.clone(), args, kwargs)?;
-            return Ok(InternalCallDispatch::Return(
-                InternalCallOutcome::Value(value),
-            ));
+            return Ok(InternalCallDispatch::Return(InternalCallOutcome::Value(
+                value,
+            )));
         }
         if self.class_has_builtin_type_base(&class) {
             let value = self.instantiate_type_derived_class(class, args, kwargs)?;
-            return Ok(InternalCallDispatch::Return(
-                InternalCallOutcome::Value(value),
-            ));
+            return Ok(InternalCallDispatch::Return(InternalCallOutcome::Value(
+                value,
+            )));
         }
 
         let class_value = Value::Class(class.clone());
@@ -5782,9 +5795,9 @@ impl Vm {
                                     format_repr(&value)
                                 );
                             }
-                            return Ok(InternalCallDispatch::Return(
-                                InternalCallOutcome::Value(value),
-                            ));
+                            return Ok(InternalCallDispatch::Return(InternalCallOutcome::Value(
+                                value,
+                            )));
                         }
                         let Value::Instance(created_instance) = value else {
                             if trace_class_call {
@@ -5794,9 +5807,9 @@ impl Vm {
                                     self.value_type_name_for_error(&value)
                                 );
                             }
-                            return Ok(InternalCallDispatch::Return(
-                                InternalCallOutcome::Value(value),
-                            ));
+                            return Ok(InternalCallDispatch::Return(InternalCallOutcome::Value(
+                                value,
+                            )));
                         };
                         instance = created_instance;
                     }
@@ -5810,24 +5823,29 @@ impl Vm {
         }
         let is_typing_paramspec_attr_class = match &*class.kind() {
             Object::Class(class_data) => {
-                matches!(class_data.name.as_str(), "ParamSpecArgs" | "ParamSpecKwargs")
-                    && matches!(
-                        class_data.attrs.get("__module__"),
-                        Some(Value::Str(module_name)) if module_name == "typing" || module_name == "_typing"
-                    )
+                matches!(
+                    class_data.name.as_str(),
+                    "ParamSpecArgs" | "ParamSpecKwargs"
+                ) && matches!(
+                    class_data.attrs.get("__module__"),
+                    Some(Value::Str(module_name)) if module_name == "typing" || module_name == "_typing"
+                )
             }
             _ => false,
         };
-        if is_typing_paramspec_attr_class && !used_custom_new && kwargs.is_empty() && args.len() == 1
+        if is_typing_paramspec_attr_class
+            && !used_custom_new
+            && kwargs.is_empty()
+            && args.len() == 1
         {
             if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                 instance_data
                     .attrs
                     .insert("__origin__".to_string(), args[0].clone());
             }
-            return Ok(InternalCallDispatch::Return(
-                InternalCallOutcome::Value(Value::Instance(instance)),
-            ));
+            return Ok(InternalCallDispatch::Return(InternalCallOutcome::Value(
+                Value::Instance(instance),
+            )));
         }
         let mut init = class_attr_lookup(&class, "__init__");
         if matches!(init, Some(Value::Builtin(BuiltinFunction::ObjectInit)))
@@ -5866,9 +5884,9 @@ impl Vm {
                             class_name
                         );
                     }
-                    return Ok(InternalCallDispatch::Return(
-                        InternalCallOutcome::Value(Value::Instance(instance)),
-                    ));
+                    return Ok(InternalCallDispatch::Return(InternalCallOutcome::Value(
+                        Value::Instance(instance),
+                    )));
                 }
                 if let Some(fields) = self.class_namedtuple_fields(&class) {
                     self.bind_namedtuple_instance_fields(
@@ -5883,9 +5901,9 @@ impl Vm {
                             class_name
                         );
                     }
-                    return Ok(InternalCallDispatch::Return(
-                        InternalCallOutcome::Value(Value::Instance(instance)),
-                    ));
+                    return Ok(InternalCallDispatch::Return(InternalCallOutcome::Value(
+                        Value::Instance(instance),
+                    )));
                 }
             }
             if let Value::Function(init_func) = init_callable {
@@ -5989,9 +6007,9 @@ impl Vm {
                 InternalCallOutcome::Value(_) => {
                     Err(RuntimeError::new("__init__() should return None"))
                 }
-                InternalCallOutcome::CallerExceptionHandled => Ok(
-                    InternalCallDispatch::Return(InternalCallOutcome::CallerExceptionHandled),
-                ),
+                InternalCallOutcome::CallerExceptionHandled => Ok(InternalCallDispatch::Return(
+                    InternalCallOutcome::CallerExceptionHandled,
+                )),
             }
         } else if used_custom_new {
             if trace_class_call {
@@ -6075,7 +6093,8 @@ impl Vm {
                     return Err(RuntimeError::new("bytes instance construction failed"));
                 }
             } else if self.class_has_builtin_bytearray_base(&class) {
-                let bytearray_value = self.call_builtin(BuiltinFunction::ByteArray, args, kwargs)?;
+                let bytearray_value =
+                    self.call_builtin(BuiltinFunction::ByteArray, args, kwargs)?;
                 let Value::ByteArray(_) = bytearray_value else {
                     return Err(RuntimeError::new(
                         "bytearray constructor returned non-bytearray",
@@ -6151,24 +6170,23 @@ impl Vm {
                     return Err(RuntimeError::new("set instance construction failed"));
                 }
             } else if self.class_has_builtin_frozenset_base(&class) {
-                let frozenset_value = self.call_builtin(BuiltinFunction::FrozenSet, args, kwargs)?;
+                let frozenset_value =
+                    self.call_builtin(BuiltinFunction::FrozenSet, args, kwargs)?;
                 let Value::FrozenSet(_) = frozenset_value else {
                     return Err(RuntimeError::new(
                         "frozenset constructor returned non-frozenset",
                     ));
                 };
                 if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                    instance_data.attrs.insert(
-                        FROZENSET_BACKING_STORAGE_ATTR.to_string(),
-                        frozenset_value,
-                    );
+                    instance_data
+                        .attrs
+                        .insert(FROZENSET_BACKING_STORAGE_ATTR.to_string(), frozenset_value);
                 } else {
-                    return Err(RuntimeError::new(
-                        "frozenset instance construction failed",
-                    ));
+                    return Err(RuntimeError::new("frozenset instance construction failed"));
                 }
             } else if self.class_has_builtin_property_base(&class) {
-                let descriptor_value = self.call_builtin(BuiltinFunction::Property, args, kwargs)?;
+                let descriptor_value =
+                    self.call_builtin(BuiltinFunction::Property, args, kwargs)?;
                 let Value::Instance(descriptor_instance) = descriptor_value else {
                     return Err(RuntimeError::new(
                         "property constructor returned non-property",
@@ -6176,9 +6194,7 @@ impl Vm {
                 };
                 let descriptor_attrs = match &*descriptor_instance.kind() {
                     Object::Instance(descriptor_data) => descriptor_data.attrs.clone(),
-                    _ => return Err(RuntimeError::new(
-                        "property descriptor construction failed",
-                    )),
+                    _ => return Err(RuntimeError::new("property descriptor construction failed")),
                 };
                 if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                     instance_data.attrs.extend(descriptor_attrs);
@@ -6200,12 +6216,7 @@ impl Vm {
                             )
                         })
                         .unwrap_or_else(|| {
-                            (
-                                "<no-frame>".to_string(),
-                                "<no-function>".to_string(),
-                                0,
-                                0,
-                            )
+                            ("<no-frame>".to_string(), "<no-function>".to_string(), 0, 0)
                         });
                     eprintln!(
                         "[class-ctor-noargs] class={} args_len={} kwargs_len={} at {}:{}:{} in {}",
@@ -6513,7 +6524,13 @@ impl Vm {
         if env_var_present_cached("PYRS_TRACE_CALL_DEPTH")
             && call_depth >= hard_limit.saturating_sub(16)
         {
-            self.trace_internal_call_depth(call_depth, hard_limit, &callable, args.len(), kwargs.len());
+            self.trace_internal_call_depth(
+                call_depth,
+                hard_limit,
+                &callable,
+                args.len(),
+                kwargs.len(),
+            );
         }
         if call_depth > hard_limit {
             return Err(self.recursion_limit_error());
@@ -6540,7 +6557,12 @@ impl Vm {
         let needs_run = loop {
             match callable {
                 Value::Function(func) => {
-                    break self.dispatch_internal_function_call(func, args, kwargs, kwargs_order)?;
+                    break self.dispatch_internal_function_call(
+                        func,
+                        args,
+                        kwargs,
+                        kwargs_order,
+                    )?;
                 }
                 Value::BoundMethod(method) => match self.dispatch_internal_bound_method_call(
                     method,
@@ -6565,9 +6587,12 @@ impl Vm {
                     InternalCallDispatch::Return(outcome) => return Ok(outcome),
                 },
                 Value::Builtin(builtin) => {
-                    return match self
-                        .call_builtin_with_kwarg_order(builtin, args, kwargs, kwargs_order)
-                    {
+                    return match self.call_builtin_with_kwarg_order(
+                        builtin,
+                        args,
+                        kwargs,
+                        kwargs_order,
+                    ) {
                         Ok(result) => {
                             if self.caller_exception_handled(caller_depth, caller_ip) {
                                 Ok(InternalCallOutcome::CallerExceptionHandled)
@@ -7496,6 +7521,21 @@ impl Vm {
             })
     }
 
+    pub(super) fn class_has_builtin_array_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => {
+                    class_data.name == "array"
+                        && matches!(
+                            class_data.attrs.get("__module__"),
+                            Some(Value::Str(module_name)) if module_name == "array"
+                        )
+                }
+                _ => false,
+            })
+    }
+
     pub(super) fn class_has_builtin_int_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
@@ -8104,16 +8144,12 @@ impl Vm {
                     _ => None,
                 };
                 match descriptor_module_name.as_deref() {
-                    Some("__classmethod__") => {
-                        Some(LoadAttrSiteCacheKind::InstanceClassMethod {
-                            descriptor: descriptor.clone(),
-                        })
-                    }
-                    Some("__staticmethod__") => {
-                        Some(LoadAttrSiteCacheKind::InstanceStaticMethod {
-                            descriptor: descriptor.clone(),
-                        })
-                    }
+                    Some("__classmethod__") => Some(LoadAttrSiteCacheKind::InstanceClassMethod {
+                        descriptor: descriptor.clone(),
+                    }),
+                    Some("__staticmethod__") => Some(LoadAttrSiteCacheKind::InstanceStaticMethod {
+                        descriptor: descriptor.clone(),
+                    }),
                     _ => None,
                 }
             }
@@ -8989,12 +9025,8 @@ impl Vm {
                 .or_else(|| self.load_cpython_proxy_attr(&class, attr_name));
             if let Some(attr) = class_attr {
                 if matches!(receiver_value, Value::Instance(_))
-                    && self.should_defer_builtin_slot_placeholder_attr(
-                        class,
-                        class,
-                        attr_name,
-                        &attr,
-                    )
+                    && self
+                        .should_defer_builtin_slot_placeholder_attr(class, class, attr_name, &attr)
                 {
                     continue;
                 }
