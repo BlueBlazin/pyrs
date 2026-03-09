@@ -5386,6 +5386,39 @@ ok = (
 }
 
 #[test]
+fn pathlib_parents_item_assignment_raises_type_error() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pathlib parents assignment test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("pathlib-parents-assignment".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import pathlib
+p = pathlib.Path('a/b/c')
+par = p.parents
+caught = False
+try:
+    par[0] = p
+except Exception as exc:
+    caught = (type(exc).__name__ == 'TypeError')
+ok = caught
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn pathlib parents assignment thread");
+    handle
+        .join()
+        .expect("pathlib parents assignment thread should complete");
+}
+
+#[test]
 fn types_import_prefers_cpython_pure_module_when_lib_path_is_added() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pure-types import preference test (CPython Lib path not available)");

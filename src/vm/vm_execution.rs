@@ -4557,7 +4557,12 @@ impl Vm {
                                         format_repr(&value),
                                     );
                                 }
-                                return Err(RuntimeError::new("store subscript unsupported type"));
+                                return Err(RuntimeError::type_error(format!(
+                                    "'{}' object does not support item assignment",
+                                    self.value_type_name_for_error(&Value::Instance(
+                                        instance.clone()
+                                    ))
+                                )));
                             }
                         }
                     },
@@ -4972,7 +4977,10 @@ impl Vm {
                                         format_repr(&value),
                                     );
                                 }
-                                return Err(RuntimeError::new("store subscript unsupported type"));
+                                return Err(RuntimeError::type_error(format!(
+                                    "'{}' object does not support item assignment",
+                                    self.value_type_name_for_error(&target_value)
+                                )));
                             }
                         }
                     },
