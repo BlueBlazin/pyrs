@@ -13016,6 +13016,17 @@ impl Vm {
             BuiltinFunction::Exec => self.builtin_exec(args, kwargs),
             BuiltinFunction::Eval => self.builtin_eval(args, kwargs),
             BuiltinFunction::ImportModule => self.builtin_import_module(args, kwargs),
+            BuiltinFunction::ImpIsBuiltin => self.builtin_imp_is_builtin(args, kwargs),
+            BuiltinFunction::ImpIsFrozen => self.builtin_imp_is_frozen(args, kwargs),
+            BuiltinFunction::ImpIsFrozenPackage => self.builtin_imp_is_frozen_package(args, kwargs),
+            BuiltinFunction::ImpFindFrozen => self.builtin_imp_find_frozen(args, kwargs),
+            BuiltinFunction::ImpGetFrozenObject => self.builtin_imp_get_frozen_object(args, kwargs),
+            BuiltinFunction::ImpOverrideFrozenModulesForTests => {
+                self.builtin_imp_override_frozen_modules_for_tests(args, kwargs)
+            }
+            BuiltinFunction::ImpFrozenModuleNames => {
+                self.builtin_imp_frozen_module_names(args, kwargs)
+            }
             BuiltinFunction::PkgutilGetData => self.builtin_pkgutil_get_data(args, kwargs),
             BuiltinFunction::PkgutilIterModules => self.builtin_pkgutil_iter_modules(args, kwargs),
             BuiltinFunction::PkgutilWalkPackages => {
@@ -13182,10 +13193,14 @@ impl Vm {
             BuiltinFunction::OsScandirEnter => self.builtin_os_scandir_enter(args, kwargs),
             BuiltinFunction::OsScandirExit => self.builtin_os_scandir_exit(args, kwargs),
             BuiltinFunction::OsScandirClose => self.builtin_os_scandir_close(args, kwargs),
+            BuiltinFunction::OsDirEntryStat => self.builtin_os_direntry_stat(args, kwargs),
             BuiltinFunction::OsDirEntryIsDir => self.builtin_os_direntry_is_dir(args, kwargs),
             BuiltinFunction::OsDirEntryIsFile => self.builtin_os_direntry_is_file(args, kwargs),
             BuiltinFunction::OsDirEntryIsSymlink => {
                 self.builtin_os_direntry_is_symlink(args, kwargs)
+            }
+            BuiltinFunction::OsDirEntryIsJunction => {
+                self.builtin_os_direntry_is_junction(args, kwargs)
             }
             BuiltinFunction::OsWalk => self.builtin_os_walk(args, kwargs),
             BuiltinFunction::OsWIfStopped => self.builtin_os_wifstopped(args, kwargs),

@@ -1,13 +1,57 @@
 use super::{
     BUILTIN_MODULE_LOADER, HashMap, ImportReturnPolicy, ModuleObject, NAMESPACE_LOADER,
-    OPCODE_METADATA, ObjRef, Object, OpcodeMetadata, PathBuf, RuntimeError, SOURCE_FILE_LOADER,
+    OPCODE_METADATA, ObjRef, Object, OpcodeMetadata, PathBuf, Rc, RuntimeError, SOURCE_FILE_LOADER,
     SOURCELESS_FILE_LOADER, Value, Vm, bytes_like_from_value, cache_path_from_source_path,
-    cache_path_from_source_path_with_optimization, class_attr_lookup, fs, is_truthy,
-    opcode_flags_contains, source_path_from_cache_path, split_relative_import_name, value_to_int,
-    value_to_path,
+    cache_path_from_source_path_with_optimization, class_attr_lookup, compiler, fs, is_truthy,
+    opcode_flags_contains, parser, source_path_from_cache_path, split_relative_import_name,
+    value_to_int, value_to_path,
+};
+use crate::runtime::{
+    BOOTSTRAP_FROZEN_MODULES, bootstrap_frozen_module_info, is_bootstrap_builtin_module,
 };
 
 impl Vm {
+    fn effective_frozen_module_info(
+        &self,
+        name: &str,
+    ) -> Option<&'static crate::runtime::FrozenModuleBootstrapInfo> {
+        if self.frozen_modules_override_for_tests < 0 {
+            None
+        } else {
+            bootstrap_frozen_module_info(name)
+        }
+    }
+
+    fn frozen_module_source_path(&self, name: &str) -> Option<PathBuf> {
+        self.effective_frozen_module_info(name)?;
+        let stdlib_root = self.detect_cpython_stdlib_root()?;
+        let source_path = match name {
+            "_frozen_importlib" => stdlib_root.join("importlib").join("_bootstrap.py"),
+            "_frozen_importlib_external" => {
+                stdlib_root.join("importlib").join("_bootstrap_external.py")
+            }
+            "__hello__" | "__hello_alias__" | "__phello_alias__" | "__phello_alias__.spam" => {
+                stdlib_root.join("__hello__.py")
+            }
+            "__phello__" | "__phello__.__init__" => {
+                stdlib_root.join("__phello__").join("__init__.py")
+            }
+            "__phello__.ham" | "__phello__.ham.__init__" => stdlib_root
+                .join("__phello__")
+                .join("ham")
+                .join("__init__.py"),
+            "__phello__.ham.eggs" => stdlib_root.join("__phello__").join("ham").join("eggs.py"),
+            "__phello__.spam" => stdlib_root.join("__phello__").join("spam.py"),
+            "__hello_only__" => stdlib_root
+                .parent()
+                .map(|root| root.join("Tools").join("freeze").join("flag.py"))?,
+            _ => stdlib_root
+                .join(name.replace('.', "/"))
+                .with_extension("py"),
+        };
+        source_path.is_file().then_some(source_path)
+    }
+
     pub(super) fn should_defer_running_import_completion(&self) -> bool {
         self.active_run_depth > 0 && !super::vm_extensions::cpython_active_context_is_set()
     }
@@ -29,6 +73,148 @@ impl Vm {
             Value::ExceptionType(name) => name.clone(),
             other => self.value_type_name_for_error(other),
         }
+    }
+
+    pub(super) fn builtin_imp_is_builtin(
+        &mut self,
+        args: Vec<Value>,
+        _kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::new("is_builtin() expects one argument"));
+        }
+        let name = match &args[0] {
+            Value::Str(name) => name.as_str(),
+            _ => return Err(RuntimeError::new("is_builtin() name must be string")),
+        };
+        Ok(Value::Bool(is_bootstrap_builtin_module(name)))
+    }
+
+    pub(super) fn builtin_imp_is_frozen(
+        &mut self,
+        args: Vec<Value>,
+        _kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::new("frozen-query expects one argument"));
+        }
+        let name = match &args[0] {
+            Value::Str(name) => name.as_str(),
+            _ => return Err(RuntimeError::new("frozen-query name must be string")),
+        };
+        Ok(Value::Bool(
+            self.effective_frozen_module_info(name).is_some(),
+        ))
+    }
+
+    pub(super) fn builtin_imp_is_frozen_package(
+        &mut self,
+        args: Vec<Value>,
+        _kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::new("frozen-query expects one argument"));
+        }
+        let name = match &args[0] {
+            Value::Str(name) => name.as_str(),
+            _ => return Err(RuntimeError::new("frozen-query name must be string")),
+        };
+        Ok(Value::Bool(
+            self.effective_frozen_module_info(name)
+                .is_some_and(|info| info.is_package),
+        ))
+    }
+
+    pub(super) fn builtin_imp_find_frozen(
+        &mut self,
+        args: Vec<Value>,
+        _kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::new("find_frozen() expects one argument"));
+        }
+        let name = match &args[0] {
+            Value::Str(name) => name.as_str(),
+            _ => return Err(RuntimeError::new("find_frozen() name must be string")),
+        };
+        let Some(info) = self.effective_frozen_module_info(name) else {
+            return Ok(Value::None);
+        };
+        Ok(self.heap.alloc_tuple(vec![
+            Value::None,
+            Value::Bool(info.is_package),
+            info.original_name
+                .map(|name| Value::Str(name.to_string()))
+                .unwrap_or(Value::None),
+        ]))
+    }
+
+    pub(super) fn builtin_imp_get_frozen_object(
+        &mut self,
+        args: Vec<Value>,
+        _kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "get_frozen_object() expects name and optional token",
+            ));
+        }
+        let name = match &args[0] {
+            Value::Str(name) => name.as_str(),
+            _ => return Err(RuntimeError::new("get_frozen_object() name must be string")),
+        };
+        let source_path = self
+            .frozen_module_source_path(name)
+            .ok_or_else(|| RuntimeError::new("module not found"))?;
+        let source_text =
+            fs::read_to_string(&source_path).map_err(|_| RuntimeError::new("module not found"))?;
+        let module_ast = parser::parse_module(&source_text).map_err(|err| {
+            RuntimeError::new(format!(
+                "failed to parse frozen module '{}': {}",
+                name, err.message
+            ))
+        })?;
+        let code =
+            compiler::compile_module_with_filename(&module_ast, &source_path.to_string_lossy())
+                .map_err(|err| {
+                    RuntimeError::new(format!(
+                        "failed to compile frozen module '{}': {:?}",
+                        name, err
+                    ))
+                })?;
+        Ok(Value::Code(Rc::new(code)))
+    }
+
+    pub(super) fn builtin_imp_frozen_module_names(
+        &mut self,
+        args: Vec<Value>,
+        _kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !args.is_empty() {
+            return Err(RuntimeError::new(
+                "_frozen_module_names() expects no arguments",
+            ));
+        }
+        Ok(self.heap.alloc_tuple(
+            BOOTSTRAP_FROZEN_MODULES
+                .iter()
+                .map(|info| Value::Str(info.name.to_string()))
+                .collect(),
+        ))
+    }
+
+    pub(super) fn builtin_imp_override_frozen_modules_for_tests(
+        &mut self,
+        args: Vec<Value>,
+        _kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(RuntimeError::new("override helper expects one argument"));
+        }
+        let override_value = value_to_int(args[0].clone())?;
+        let previous = self.frozen_modules_override_for_tests;
+        self.frozen_modules_override_for_tests = override_value;
+        Ok(Value::Int(previous))
     }
 
     pub(super) fn builtin_import(

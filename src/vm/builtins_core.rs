@@ -16,8 +16,8 @@ use super::{
     Value, Vm, Write, add_values, bigint_from_bytes, bytes_like_from_value,
     call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, compare_ge, compare_gt,
     compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
-    dict_remove_value, dict_set_value, dict_set_value_checked, div_values, encode_text_bytes,
-    floor_div_values, format_float_hex, format_repr, format_value, frame_cell_value, invert_value,
+    dict_set_value_checked, div_values, encode_text_bytes, floor_div_values, format_float_hex,
+    format_repr, format_value, frame_cell_value, invert_value,
     is_import_error_family, is_missing_attribute_error, is_os_error_family,
     is_runtime_type_name_marker, is_truthy, matmul_values, mod_values, mul_values, neg_value,
     normalize_codec_encoding, normalize_codec_errors, or_values, ordering_from_cmp_value,
@@ -2473,17 +2473,22 @@ impl Vm {
     }
 
     pub(super) fn sync_exec_namespace_to_dict(
-        &self,
+        &mut self,
         dict: &ObjRef,
         module: &ObjRef,
     ) -> Result<(), RuntimeError> {
         let new_values = self.exec_namespace_map_from_module(module)?;
-        let Object::Dict(entries) = &mut *dict.kind_mut() else {
-            return Err(RuntimeError::new("exec() internal dict expected"));
-        };
-        entries.retain(|(key, _)| !matches!(key, Value::Str(_)));
-        for (name, value) in new_values {
-            entries.push((Value::Str(name), value));
+        {
+            let Object::Dict(entries) = &mut *dict.kind_mut() else {
+                return Err(RuntimeError::new("exec() internal dict expected"));
+            };
+            entries.retain(|(key, _)| !matches!(key, Value::Str(_)));
+            for (name, value) in new_values {
+                entries.push((Value::Str(name), value));
+            }
+        }
+        if let Some(owner_module) = self.module_for_namespace_dict(dict) {
+            self.sync_module_locals_dict_to_module(&owner_module, dict);
         }
         Ok(())
     }
@@ -18438,18 +18443,7 @@ functions outside a stub module should always be followed by an implementation t
 
         match target {
             Value::Module(module) => {
-                let module_id = module.id();
-                let active_frame_index = self
-                    .frames
-                    .iter()
-                    .rposition(|frame| frame.is_module && frame.module.id() == module_id);
-                if let Object::Module(module_data) = &mut *module.kind_mut() {
-                    module_data.globals.insert(name.clone(), value.clone());
-                }
-                if let Some(frame_index) = active_frame_index {
-                    let dict = self.ensure_frame_module_locals_dict(frame_index);
-                    dict_set_value(&dict, Value::Str(name), value);
-                }
+                self.upsert_module_global(&module, &name, value);
             }
             Value::Instance(instance) => match self.store_attr_instance(&instance, &name, value)? {
                 AttrMutationOutcome::Done => {}
@@ -18558,23 +18552,18 @@ functions outside a stub module should always be followed by an implementation t
 
         match target {
             Value::Module(module) => {
-                let module_id = module.id();
-                let active_frame_index = self
-                    .frames
-                    .iter()
-                    .rposition(|frame| frame.is_module && frame.module.id() == module_id);
-                if let Object::Module(module_data) = &mut *module.kind_mut()
-                    && module_data.globals.remove(&name).is_none()
-                {
+                let removed = if let Object::Module(module_data) = &*module.kind() {
+                    module_data.globals.contains_key(&name)
+                } else {
+                    false
+                };
+                if !removed {
                     return Err(RuntimeError::new(format!(
                         "AttributeError: module attribute '{}' does not exist",
                         name
                     )));
                 }
-                if let Some(frame_index) = active_frame_index {
-                    let dict = self.ensure_frame_module_locals_dict(frame_index);
-                    let _ = dict_remove_value(&dict, &Value::Str(name.clone()));
-                }
+                self.remove_module_global(&module, &name);
             }
             Value::Class(class) => {
                 let (flags, class_name) = match &*class.kind() {

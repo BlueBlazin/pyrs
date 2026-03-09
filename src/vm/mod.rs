@@ -74,10 +74,11 @@ use crate::extensions::{
 use crate::host::{HostCapability, NativeHost, VmHost};
 use crate::parser;
 use crate::runtime::{
-    BigInt, BoundMethod, BuiltinFunction, ClassObject, DictViewKind, ExceptionObject,
-    FunctionObject, GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject,
-    MemoryViewObject, ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object,
-    RuntimeError, SuperObject, Value, format_repr, format_value, runtime_get_int_max_str_digits,
+    BOOTSTRAP_BUILTIN_MODULE_NAMES, BigInt, BoundMethod, BuiltinFunction, ClassObject,
+    DictViewKind, ExceptionObject, FunctionObject, GeneratorObject, Heap, InstanceObject,
+    IteratorKind, IteratorObject, MemoryViewObject, ModuleObject, NativeMethodKind,
+    NativeMethodObject, Obj, ObjRef, Object, RuntimeError, SuperObject, Value, format_repr,
+    format_value, runtime_get_int_max_str_digits,
 };
 use crate::unicode::{internal_char_from_codepoint, surrogate_codepoint_from_internal_char};
 
@@ -1184,6 +1185,7 @@ pub struct Vm {
     trace_flags: VmTraceFlags,
     trace_text_filters: VmTraceTextFilters,
     import_perf_counters: ImportPerfCounters,
+    frozen_modules_override_for_tests: i64,
     heap: Heap,
     random: Mt19937,
     generator_states: HashMap<u64, Box<Frame>>,
@@ -1488,6 +1490,7 @@ impl Vm {
             trace_flags,
             trace_text_filters,
             import_perf_counters: ImportPerfCounters::default(),
+            frozen_modules_override_for_tests: 0,
             heap,
             random: Mt19937::new(fresh_random_seed_u64()),
             generator_states: HashMap::new(),
@@ -1637,9 +1640,12 @@ impl Vm {
         vm.install_builtins();
         vm.install_frozen_importlib_lock_helpers()
             .expect("install _frozen_importlib lock helpers");
+        vm.install_frozen_importlib_importer_helpers()
+            .expect("install _frozen_importlib importer helpers");
         vm.normalize_bootstrap_module_classes();
         vm.install_builtins_module();
         vm.refresh_warnings_fallback_defaults();
+        vm.install_loaded_frozen_module_loader_states();
         vm.refresh_import_resolver_state();
         vm.gc_last_allocation_count = vm.heap.total_allocations();
         vm
@@ -4245,10 +4251,11 @@ impl Vm {
     }
 
     fn detect_cpython_stdlib_root(&self) -> Option<PathBuf> {
+        let canonicalize_existing = |path: PathBuf| fs::canonicalize(&path).unwrap_or(path);
         if let Some(path) = self.host.env_var("PYRS_CPYTHON_LIB") {
             let path = PathBuf::from(path);
             if self.host.path_is_dir(&path) {
-                return Some(path);
+                return Some(canonicalize_existing(path));
             }
         }
 
@@ -4262,7 +4269,7 @@ impl Vm {
                 bin_dir.join("../stdlib").join(&stdlib_suffix),
             ] {
                 if self.host.path_is_dir(&candidate) {
-                    return Some(candidate);
+                    return Some(canonicalize_existing(candidate));
                 }
             }
         }
@@ -4272,7 +4279,7 @@ impl Vm {
                 .join("pyrs")
                 .join(&stdlib_suffix);
             if self.host.path_is_dir(&candidate) {
-                return Some(candidate);
+                return Some(canonicalize_existing(candidate));
             }
         }
 
@@ -4283,19 +4290,19 @@ impl Vm {
                 .join("pyrs")
                 .join(&stdlib_suffix);
             if self.host.path_is_dir(&candidate) {
-                return Some(candidate);
+                return Some(canonicalize_existing(candidate));
             }
         }
 
         let local = PathBuf::from(format!(".local/Python-{CPYTHON_STDLIB_VERSION}/Lib"));
         if self.host.path_is_dir(&local) {
-            return Some(local);
+            return Some(canonicalize_existing(local));
         }
 
         if let Some(home) = self.host.env_var("PYTHONHOME") {
             let candidate = PathBuf::from(home).join("lib").join("python3.14");
             if self.host.path_is_dir(&candidate) {
-                return Some(candidate);
+                return Some(canonicalize_existing(candidate));
             }
         }
 
@@ -4306,7 +4313,7 @@ impl Vm {
             PathBuf::from("/usr/lib/python3.14"),
         ] {
             if self.host.path_is_dir(&candidate) {
-                return Some(candidate);
+                return Some(canonicalize_existing(candidate));
             }
         }
         None
@@ -4314,9 +4321,7 @@ impl Vm {
 
     fn build_bootstrap_stdlib_module_names(&self, stdlib_root: Option<&Path>) -> Vec<String> {
         let mut names: HashSet<String> = HashSet::new();
-        for base in [
-            "sys", "builtins", "_imp", "_io", "marshal", "posix", "errno",
-        ] {
+        for base in BOOTSTRAP_BUILTIN_MODULE_NAMES {
             names.insert(base.to_string());
         }
         names.extend(self.modules.keys().cloned());
@@ -5270,15 +5275,12 @@ impl Vm {
                 .insert("modules".to_string(), self.heap.alloc_dict(Vec::new()));
             module_data.globals.insert(
                 "builtin_module_names".to_string(),
-                self.heap.alloc_tuple(vec![
-                    Value::Str("sys".to_string()),
-                    Value::Str("builtins".to_string()),
-                    Value::Str("_imp".to_string()),
-                    Value::Str("_io".to_string()),
-                    Value::Str("marshal".to_string()),
-                    Value::Str("posix".to_string()),
-                    Value::Str("errno".to_string()),
-                ]),
+                self.heap.alloc_tuple(
+                    BOOTSTRAP_BUILTIN_MODULE_NAMES
+                        .iter()
+                        .map(|name| Value::Str((*name).to_string()))
+                        .collect(),
+                ),
             );
         }
         self.register_module("sys", sys_module);
@@ -5611,6 +5613,33 @@ impl Vm {
                     class
                 }),
             ],
+        );
+        let register_bootstrap_alias = |vm: &mut Self, source_name: &str, alias_name: &str| {
+            let Some(module) = vm.modules.get(source_name).cloned() else {
+                return;
+            };
+            if let Object::Module(module_data) = &mut *module.kind_mut() {
+                module_data
+                    .globals
+                    .insert("__name__".to_string(), Value::Str(alias_name.to_string()));
+                module_data.globals.insert(
+                    "__package__".to_string(),
+                    Value::Str("importlib".to_string()),
+                );
+            }
+            vm.register_module(alias_name, module.clone());
+            vm.link_module_chain(alias_name, module);
+        };
+        register_bootstrap_alias(
+            self,
+            "_frozen_importlib_external",
+            "importlib._bootstrap_external",
+        );
+        register_bootstrap_alias(self, "_frozen_importlib", "importlib._bootstrap");
+        self.install_frozen_module_loader_state("_frozen_importlib", Some("importlib._bootstrap"));
+        self.install_frozen_module_loader_state(
+            "_frozen_importlib_external",
+            Some("importlib._bootstrap_external"),
         );
         self.install_builtin_module(
             "_testinternalcapi",

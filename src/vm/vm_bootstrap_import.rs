@@ -21,7 +21,7 @@ use super::{
 use crate::extensions::{
     PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
 };
-use crate::runtime::types_export_name_info;
+use crate::runtime::{bootstrap_frozen_module_info, types_export_name_info};
 
 #[cfg(unix)]
 fn socket_bootstrap_constant(name: &str) -> i64 {
@@ -98,6 +98,36 @@ enum BuiltinImportPolicy {
 }
 
 impl Vm {
+    fn build_frozen_module_loader_state_value(
+        &mut self,
+        module_name: &str,
+        original_name: Option<&str>,
+        filename: Option<String>,
+    ) -> Value {
+        let state = match self.heap.alloc_module(ModuleObject::new(format!(
+            "__frozen_loader_state__.{module_name}"
+        ))) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(state_data) = &mut *state.kind_mut() {
+            state_data.globals.insert(
+                "origname".to_string(),
+                original_name
+                    .map(|name| Value::Str(name.to_string()))
+                    .unwrap_or(Value::None),
+            );
+            state_data.globals.insert(
+                "filename".to_string(),
+                filename
+                    .as_ref()
+                    .map(|name| Value::Str(name.clone()))
+                    .unwrap_or(Value::None),
+            );
+        }
+        Value::Module(state)
+    }
+
     fn alloc_tuple_backed_builtin_class(&mut self, name: &str) -> Value {
         let mut bases = Vec::new();
         if let Some(Value::Class(tuple_class)) = self.builtins.get("tuple") {
@@ -882,6 +912,182 @@ def _lock_unlock_module(name):
         )
     }
 
+    pub(super) fn install_frozen_importlib_importer_helpers(&mut self) -> Result<(), RuntimeError> {
+        let Some(module) = self.modules.get("_frozen_importlib").cloned() else {
+            return Ok(());
+        };
+        let has_finder_methods = if let Object::Module(module_data) = &*module.kind() {
+            let builtin_has = matches!(
+                module_data.globals.get("BuiltinImporter"),
+                Some(Value::Class(class))
+                    if matches!(
+                        &*class.kind(),
+                        Object::Class(class_data)
+                            if class_data.attrs.contains_key("find_spec")
+                                && class_data.attrs.contains_key("get_code")
+                    )
+            );
+            let frozen_has = matches!(
+                module_data.globals.get("FrozenImporter"),
+                Some(Value::Class(class))
+                    if matches!(
+                        &*class.kind(),
+                        Object::Class(class_data)
+                            if class_data.attrs.contains_key("find_spec")
+                                && class_data.attrs.contains_key("get_code")
+                    )
+            );
+            builtin_has && frozen_has
+        } else {
+            false
+        };
+        if has_finder_methods {
+            return Ok(());
+        }
+        let Some(imp_module) = self.modules.get("_imp").cloned() else {
+            return Ok(());
+        };
+        let sys_module = self.modules.get("sys").cloned();
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data
+                .globals
+                .entry("_imp".to_string())
+                .or_insert(Value::Module(imp_module));
+            if let Some(sys_module) = sys_module {
+                module_data
+                    .globals
+                    .entry("sys".to_string())
+                    .or_insert(Value::Module(sys_module));
+            }
+        }
+        let source = r#"
+def _BuiltinImporter_find_spec(cls, fullname, path=None, target=None):
+    if _imp.is_builtin(fullname):
+        return spec_from_loader(fullname, cls, origin=cls._ORIGIN)
+    return None
+
+BuiltinImporter.find_spec = classmethod(_BuiltinImporter_find_spec)
+
+def _BuiltinImporter_get_code(cls, fullname):
+    if not _imp.is_builtin(fullname):
+        raise ImportError(f"{fullname!r} is not a built-in module", name=fullname)
+    return None
+
+BuiltinImporter.get_code = classmethod(_BuiltinImporter_get_code)
+
+def _BuiltinImporter_get_source(cls, fullname):
+    if not _imp.is_builtin(fullname):
+        raise ImportError(f"{fullname!r} is not a built-in module", name=fullname)
+    return None
+
+BuiltinImporter.get_source = classmethod(_BuiltinImporter_get_source)
+
+def _BuiltinImporter_is_package(cls, fullname):
+    if not _imp.is_builtin(fullname):
+        raise ImportError(f"{fullname!r} is not a built-in module", name=fullname)
+    return False
+
+BuiltinImporter.is_package = classmethod(_BuiltinImporter_is_package)
+
+def _FrozenImporter_find_spec(cls, fullname, path=None, target=None):
+    if _imp.is_frozen(fullname):
+        return spec_from_loader(
+            fullname,
+            cls,
+            origin=cls._ORIGIN,
+            is_package=_imp.is_frozen_package(fullname),
+        )
+    return None
+
+FrozenImporter.find_spec = classmethod(_FrozenImporter_find_spec)
+
+def _FrozenImporter_get_code(cls, fullname):
+    if not _imp.is_frozen(fullname):
+        raise ImportError(f"{fullname!r} is not a frozen module", name=fullname)
+    return _imp.get_frozen_object(fullname)
+
+FrozenImporter.get_code = classmethod(_FrozenImporter_get_code)
+
+def _FrozenImporter_get_source(cls, fullname):
+    if not _imp.is_frozen(fullname):
+        raise ImportError(f"{fullname!r} is not a frozen module", name=fullname)
+    return None
+
+FrozenImporter.get_source = classmethod(_FrozenImporter_get_source)
+
+def _FrozenImporter_is_package(cls, fullname):
+    if not _imp.is_frozen(fullname):
+        raise ImportError(f"{fullname!r} is not a frozen module", name=fullname)
+    return _imp.is_frozen_package(fullname)
+
+FrozenImporter.is_package = classmethod(_FrozenImporter_is_package)
+
+def _FrozenImporter_exec_module(module):
+    spec = module.__spec__
+    code = _imp.get_frozen_object(spec.name)
+    exec(code, module.__dict__)
+
+FrozenImporter.exec_module = staticmethod(_FrozenImporter_exec_module)
+"#;
+        self.execute_source_module_from_text(
+            &module,
+            "_frozen_importlib",
+            "<bootstrap _frozen_importlib importers>",
+            source.to_string(),
+        )
+    }
+
+    pub(super) fn install_frozen_module_loader_state(
+        &mut self,
+        module_name: &str,
+        original_name: Option<&str>,
+    ) {
+        let Some(module) = self.modules.get(module_name).cloned() else {
+            return;
+        };
+        let filename = original_name.and_then(|origname| {
+            if module_name == "_frozen_importlib" {
+                return None;
+            }
+            let root = self.detect_cpython_stdlib_root()?;
+            if origname.starts_with('<') {
+                return None;
+            }
+            let relative = origname.replace('.', "/");
+            Some(format!("{}/{relative}.py", root.to_string_lossy()))
+        });
+        let state = self.build_frozen_module_loader_state_value(
+            module_name,
+            original_name,
+            filename.clone(),
+        );
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            if let Some(spec) = module_data.globals.get("__spec__").cloned() {
+                self.set_module_spec_field(&spec, "loader_state", state);
+            }
+            match filename {
+                Some(path) => {
+                    module_data
+                        .globals
+                        .insert("__file__".to_string(), Value::Str(path));
+                }
+                None => {
+                    module_data.globals.remove("__file__");
+                }
+            }
+        }
+    }
+
+    pub(super) fn install_loaded_frozen_module_loader_states(&mut self) {
+        let frozen_module_names = self.modules.keys().cloned().collect::<Vec<_>>();
+        for module_name in frozen_module_names {
+            let Some(info) = bootstrap_frozen_module_info(&module_name) else {
+                continue;
+            };
+            self.install_frozen_module_loader_state(&module_name, info.original_name);
+        }
+    }
+
     pub(super) fn set_module_class_bases(
         &mut self,
         module_name: &str,
@@ -1290,6 +1496,10 @@ def _lock_unlock_module(name):
             && let Object::Class(class_data) = &mut *class_obj.kind_mut()
         {
             class_data.attrs.insert(
+                "stat".to_string(),
+                Value::Builtin(BuiltinFunction::OsDirEntryStat),
+            );
+            class_data.attrs.insert(
                 "is_dir".to_string(),
                 Value::Builtin(BuiltinFunction::OsDirEntryIsDir),
             );
@@ -1300,6 +1510,10 @@ def _lock_unlock_module(name):
             class_data.attrs.insert(
                 "is_symlink".to_string(),
                 Value::Builtin(BuiltinFunction::OsDirEntryIsSymlink),
+            );
+            class_data.attrs.insert(
+                "is_junction".to_string(),
+                Value::Builtin(BuiltinFunction::OsDirEntryIsJunction),
             );
             class_data
                 .attrs
@@ -11309,9 +11523,14 @@ def _lock_unlock_module(name):
         let origin_value = origin
             .map(|path| Value::Str(path.to_string_lossy().to_string()))
             .unwrap_or(Value::None);
-        let cached_value = cached
-            .map(|path| Value::Str(path.to_string_lossy().to_string()))
-            .unwrap_or(Value::None);
+        let frozen_info = bootstrap_frozen_module_info(name);
+        let cached_value = if frozen_info.is_some() {
+            Value::None
+        } else {
+            cached
+                .map(|path| Value::Str(path.to_string_lossy().to_string()))
+                .unwrap_or(Value::None)
+        };
         let submodule_locations = if is_package {
             let mut entries = Vec::new();
             for dir in package_dirs.iter() {
@@ -11330,6 +11549,34 @@ def _lock_unlock_module(name):
             package_dirs.as_slice(),
             is_namespace,
         );
+        let frozen_filename = if name == "_frozen_importlib" {
+            None
+        } else {
+            origin.map(|path| path.to_string_lossy().to_string())
+        };
+        if let Some(frozen_info) = frozen_info {
+            let loader_state = self.build_frozen_module_loader_state_value(
+                name,
+                frozen_info.original_name,
+                frozen_filename.clone(),
+            );
+            self.set_module_spec_field(&spec_value, "loader_state", loader_state);
+            if let Some(frozen_loader) =
+                self.modules
+                    .get("_frozen_importlib")
+                    .and_then(|module| match &*module.kind() {
+                        Object::Module(module_data) => {
+                            module_data.globals.get("FrozenImporter").cloned()
+                        }
+                        _ => None,
+                    })
+            {
+                self.set_module_spec_field(&spec_value, "loader", frozen_loader);
+            }
+            self.set_module_spec_field(&spec_value, "origin", Value::Str("frozen".to_string()));
+            self.set_module_spec_field(&spec_value, "has_location", Value::Bool(false));
+            self.set_module_spec_field(&spec_value, "cached", Value::None);
+        }
         let loader_value = match &spec_value {
             Value::Module(spec_obj) => match &*spec_obj.kind() {
                 Object::Module(module_data) => module_data
@@ -11378,6 +11625,10 @@ def _lock_unlock_module(name):
                 module_data
                     .globals
                     .insert("__file__".to_string(), origin_value);
+            } else if let Some(filename) = frozen_filename {
+                module_data
+                    .globals
+                    .insert("__file__".to_string(), Value::Str(filename));
             }
             match cached_value {
                 Value::None => {
@@ -11605,6 +11856,9 @@ def _lock_unlock_module(name):
             instance_data
                 .attrs
                 .insert("loader".to_string(), loader_value);
+            instance_data
+                .attrs
+                .insert("loader_state".to_string(), Value::None);
             instance_data
                 .attrs
                 .insert("parent".to_string(), Value::Str(parent));

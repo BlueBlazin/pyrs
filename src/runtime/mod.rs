@@ -24,6 +24,170 @@ use dict_backend::DictBackend;
 pub const DEFAULT_INT_MAX_STR_DIGITS: i64 = 4300;
 pub const MIN_INT_MAX_STR_DIGITS: i64 = 640;
 
+pub const BOOTSTRAP_BUILTIN_MODULE_NAMES: &[&str] = &[
+    "sys", "builtins", "_imp", "_io", "marshal", "posix", "errno",
+];
+
+#[derive(Clone, Copy)]
+pub struct FrozenModuleBootstrapInfo {
+    pub name: &'static str,
+    pub is_package: bool,
+    pub original_name: Option<&'static str>,
+}
+
+pub const BOOTSTRAP_FROZEN_MODULES: &[FrozenModuleBootstrapInfo] = &[
+    FrozenModuleBootstrapInfo {
+        name: "_frozen_importlib",
+        is_package: false,
+        original_name: Some("importlib._bootstrap"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "_frozen_importlib_external",
+        is_package: false,
+        original_name: Some("importlib._bootstrap_external"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "zipimport",
+        is_package: false,
+        original_name: Some("zipimport"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "abc",
+        is_package: false,
+        original_name: Some("abc"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "codecs",
+        is_package: false,
+        original_name: Some("codecs"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "io",
+        is_package: false,
+        original_name: Some("io"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "_collections_abc",
+        is_package: false,
+        original_name: Some("_collections_abc"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "_sitebuiltins",
+        is_package: false,
+        original_name: Some("_sitebuiltins"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "genericpath",
+        is_package: false,
+        original_name: Some("genericpath"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "ntpath",
+        is_package: false,
+        original_name: Some("ntpath"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "posixpath",
+        is_package: false,
+        original_name: Some("posixpath"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "os",
+        is_package: false,
+        original_name: Some("os"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "site",
+        is_package: false,
+        original_name: Some("site"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "stat",
+        is_package: false,
+        original_name: Some("stat"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "importlib.util",
+        is_package: false,
+        original_name: Some("importlib.util"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "importlib.machinery",
+        is_package: false,
+        original_name: Some("importlib.machinery"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "runpy",
+        is_package: false,
+        original_name: Some("runpy"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "__hello__",
+        is_package: false,
+        original_name: Some("__hello__"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "__hello_alias__",
+        is_package: false,
+        original_name: Some("__hello__"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "__phello_alias__",
+        is_package: true,
+        original_name: Some("__hello__"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "__phello_alias__.spam",
+        is_package: false,
+        original_name: Some("__hello__"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "__phello__",
+        is_package: true,
+        original_name: Some("__phello__"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "__phello__.__init__",
+        is_package: false,
+        original_name: Some("<__phello__"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "__phello__.ham",
+        is_package: true,
+        original_name: Some("__phello__.ham"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "__phello__.ham.__init__",
+        is_package: false,
+        original_name: Some("<__phello__.ham"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "__phello__.ham.eggs",
+        is_package: false,
+        original_name: Some("__phello__.ham.eggs"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "__phello__.spam",
+        is_package: false,
+        original_name: Some("__phello__.spam"),
+    },
+    FrozenModuleBootstrapInfo {
+        name: "__hello_only__",
+        is_package: false,
+        original_name: None,
+    },
+];
+
+pub fn is_bootstrap_builtin_module(name: &str) -> bool {
+    BOOTSTRAP_BUILTIN_MODULE_NAMES.contains(&name)
+}
+
+pub fn bootstrap_frozen_module_info(name: &str) -> Option<&'static FrozenModuleBootstrapInfo> {
+    BOOTSTRAP_FROZEN_MODULES
+        .iter()
+        .find(|info| info.name == name)
+}
+
 static INT_MAX_STR_DIGITS_LIMIT: AtomicI64 = AtomicI64::new(DEFAULT_INT_MAX_STR_DIGITS);
 
 pub fn runtime_get_int_max_str_digits() -> i64 {
@@ -38,6 +202,7 @@ pub struct ModuleObject {
     pub name: String,
     pub globals: HashMap<String, Value>,
     pub globals_version: u64,
+    pub dict: Option<ObjRef>,
 }
 
 impl ModuleObject {
@@ -46,6 +211,7 @@ impl ModuleObject {
             name: name.into(),
             globals: HashMap::new(),
             globals_version: 1,
+            dict: None,
         }
     }
 
@@ -59,10 +225,12 @@ impl ModuleObject {
 
 impl fmt::Debug for ModuleObject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let dict = self.dict.as_ref().map(ObjRef::id);
         f.debug_struct("ModuleObject")
             .field("name", &self.name)
             .field("globals_len", &self.globals.len())
             .field("globals_version", &self.globals_version)
+            .field("dict_id", &dict)
             .finish()
     }
 }
@@ -806,6 +974,9 @@ fn owned_object_children(object: Object) -> Vec<OwnedReleaseItem> {
         }
         Object::Module(module) => {
             out.extend(module.globals.into_values().map(OwnedReleaseItem::Value));
+            if let Some(dict) = module.dict {
+                out.push(OwnedReleaseItem::ObjRef(dict));
+            }
         }
         Object::Class(class) => {
             for base in class.bases {
@@ -3928,6 +4099,9 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             for value in module.globals.values() {
                 trace_value(value, stack, marked);
             }
+            if let Some(dict) = &module.dict {
+                stack.push(dict.clone());
+            }
         }
         Object::Class(class) => {
             for base in &class.bases {
@@ -4321,6 +4495,7 @@ fn clear_object_refs(obj: &ObjRef) {
         }
         Object::Module(module) => {
             module.globals.clear();
+            module.dict = None;
             None
         }
         Object::Class(class) => {
@@ -5206,9 +5381,11 @@ pub enum BuiltinFunction {
     OsScandirEnter,
     OsScandirExit,
     OsScandirClose,
+    OsDirEntryStat,
     OsDirEntryIsDir,
     OsDirEntryIsFile,
     OsDirEntryIsSymlink,
+    OsDirEntryIsJunction,
     OsWalk,
     OsWIfStopped,
     OsWStopSig,
@@ -7727,29 +7904,48 @@ impl BuiltinFunction {
                     Value::Str(name) => name.as_str(),
                     _ => return Err(RuntimeError::new("is_builtin() name must be string")),
                 };
-                Ok(Value::Bool(matches!(
-                    name,
-                    "sys"
-                        | "builtins"
-                        | "_imp"
-                        | "_tokenize"
-                        | "_struct"
-                        | "_ast"
-                        | "_typing"
-                        | "_contextvars"
-                )))
+                Ok(Value::Bool(is_bootstrap_builtin_module(name)))
             }
-            BuiltinFunction::ImpIsFrozen | BuiltinFunction::ImpIsFrozenPackage => {
+            BuiltinFunction::ImpIsFrozen => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("frozen-query expects one argument"));
                 }
-                Ok(Value::Bool(false))
+                let name = match &args[0] {
+                    Value::Str(name) => name.as_str(),
+                    _ => return Err(RuntimeError::new("frozen-query name must be string")),
+                };
+                Ok(Value::Bool(bootstrap_frozen_module_info(name).is_some()))
+            }
+            BuiltinFunction::ImpIsFrozenPackage => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("frozen-query expects one argument"));
+                }
+                let name = match &args[0] {
+                    Value::Str(name) => name.as_str(),
+                    _ => return Err(RuntimeError::new("frozen-query name must be string")),
+                };
+                Ok(Value::Bool(
+                    bootstrap_frozen_module_info(name).is_some_and(|info| info.is_package),
+                ))
             }
             BuiltinFunction::ImpFindFrozen => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("find_frozen() expects one argument"));
                 }
-                Ok(Value::None)
+                let name = match &args[0] {
+                    Value::Str(name) => name.as_str(),
+                    _ => return Err(RuntimeError::new("find_frozen() name must be string")),
+                };
+                let Some(info) = bootstrap_frozen_module_info(name) else {
+                    return Ok(Value::None);
+                };
+                Ok(heap.alloc_tuple(vec![
+                    Value::None,
+                    Value::Bool(info.is_package),
+                    info.original_name
+                        .map(|name| Value::Str(name.to_string()))
+                        .unwrap_or(Value::None),
+                ]))
             }
             BuiltinFunction::ImpGetFrozenObject => {
                 if args.is_empty() || args.len() > 2 {
@@ -7835,7 +8031,12 @@ impl BuiltinFunction {
                         "_frozen_module_names() expects no arguments",
                     ));
                 }
-                Ok(heap.alloc_tuple(Vec::new()))
+                Ok(heap.alloc_tuple(
+                    BOOTSTRAP_FROZEN_MODULES
+                        .iter()
+                        .map(|info| Value::Str(info.name.to_string()))
+                        .collect(),
+                ))
             }
             BuiltinFunction::TypingIdFunc => {
                 if args.is_empty() {
@@ -8534,8 +8735,7 @@ functions outside a stub module should always be followed by an implementation t
             BuiltinFunction::ArrayReconstructor => Err(RuntimeError::new(
                 "_array_reconstructor() builtin not available in runtime-only call path",
             )),
-            BuiltinFunction::InterpretersGetCurrent
-            | BuiltinFunction::InterpretersGetMain => {
+            BuiltinFunction::InterpretersGetCurrent | BuiltinFunction::InterpretersGetMain => {
                 if !args.is_empty() {
                     return Err(RuntimeError::type_error(
                         "_interpreters helper takes no arguments",
@@ -8549,10 +8749,7 @@ functions outside a stub module should always be followed by an implementation t
                         "list_all() takes at most one argument",
                     ));
                 }
-                Ok(heap.alloc_list(vec![heap.alloc_tuple(vec![
-                    Value::Int(0),
-                    Value::Int(1),
-                ])]))
+                Ok(heap.alloc_list(vec![heap.alloc_tuple(vec![Value::Int(0), Value::Int(1)])]))
             }
             BuiltinFunction::InterpretersWhence => {
                 if args.len() != 1 {
@@ -8612,12 +8809,10 @@ functions outside a stub module should always be followed by an implementation t
                 let _ = value_to_int(args[0].clone())?;
                 Ok(Value::None)
             }
-            BuiltinFunction::InterpretersUnsupportedOperation => Err(
-                RuntimeError::with_exception(
-                    "NotImplementedError",
-                    Some("subinterpreters are not implemented yet".to_string()),
-                ),
-            ),
+            BuiltinFunction::InterpretersUnsupportedOperation => Err(RuntimeError::with_exception(
+                "NotImplementedError",
+                Some("subinterpreters are not implemented yet".to_string()),
+            )),
             BuiltinFunction::InterpQueuesRegisterHeapTypes => {
                 if args.len() != 3 {
                     return Err(RuntimeError::type_error(
@@ -8626,12 +8821,10 @@ functions outside a stub module should always be followed by an implementation t
                 }
                 Ok(Value::None)
             }
-            BuiltinFunction::InterpQueuesUnsupportedOperation => Err(
-                RuntimeError::with_exception(
-                    "NotImplementedError",
-                    Some("cross-interpreter queues are not implemented yet".to_string()),
-                ),
-            ),
+            BuiltinFunction::InterpQueuesUnsupportedOperation => Err(RuntimeError::with_exception(
+                "NotImplementedError",
+                Some("cross-interpreter queues are not implemented yet".to_string()),
+            )),
             BuiltinFunction::GcCollect => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new(
@@ -8941,9 +9134,11 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::OsScandirEnter
             | BuiltinFunction::OsScandirExit
             | BuiltinFunction::OsScandirClose
+            | BuiltinFunction::OsDirEntryStat
             | BuiltinFunction::OsDirEntryIsDir
             | BuiltinFunction::OsDirEntryIsFile
             | BuiltinFunction::OsDirEntryIsSymlink
+            | BuiltinFunction::OsDirEntryIsJunction
             | BuiltinFunction::OsWalk
             | BuiltinFunction::OsWIfStopped
             | BuiltinFunction::OsWStopSig

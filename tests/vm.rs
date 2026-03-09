@@ -346,7 +346,7 @@ fn execute_with_timeout_ms_aborts_busy_loop() {
 #[test]
 fn type_repr_matches_cpython_for_builtin_type_objects() {
     let source = "ok = (repr(type(7)) == \"<class 'int'>\" and repr(int) == \"<class 'int'>\" and repr(type) == \"<class 'type'>\")\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
+    let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
@@ -356,7 +356,7 @@ fn type_repr_matches_cpython_for_builtin_type_objects() {
 #[test]
 fn type_str_matches_cpython_for_builtin_type_objects() {
     let source = "ok = (str(type(7)) == \"<class 'int'>\" and str(int) == \"<class 'int'>\" and str(type) == \"<class 'type'>\")\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
+    let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
@@ -434,7 +434,7 @@ ok = (
     and repr(itertools.batched([1], 1)).startswith("<itertools.batched object at 0x")
 )
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
+    let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
@@ -15966,6 +15966,16 @@ fn instance_dict_mutation_reflects_in_attribute_lookup() {
 }
 
 #[test]
+fn module_dict_mutation_reflects_in_attribute_lookup() {
+    let source = "import types\nm = types.ModuleType('tmp')\nd = m.__dict__\nd['x'] = 7\nm.y = 9\nok = (m.x == 7 and d['y'] == 9 and m.__dict__ is d)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn object_new_via_super_accepts_explicit_target_class() {
     let source = "class A:\n    pass\nclass B(A):\n    pass\nobj = super(A, B).__new__(B)\nok = isinstance(obj, B)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -17704,10 +17714,13 @@ written_ok = (written == 3 and start == 0 and end == 2 and written_bytes == b'xy
 st = os.stat(path)\n\
 lst = os.lstat(path)\n\
 pst = posix.stat(path)\n\
-items = os.scandir(root)\n\
+items = list(os.scandir(root))\n\
+entry = next(item for item in items if item.name == 'sample.txt')\n\
+entry_stat = entry.stat()\n\
+junction_ok = hasattr(entry, 'is_junction') and entry.is_junction() is False\n\
 name_ok = any(item.name == 'sample.txt' for item in items)\n\
 wait_ok = os.WIFEXITED(5 << 8) and os.WEXITSTATUS(5 << 8) == 5 and not os.WIFSIGNALED(5 << 8)\n\
-ok = (not is_tty) and written_ok and st.st_size == 5 and lst.st_size == 5 and pst.st_size == 5 and name_ok and wait_ok\n",
+ok = (not is_tty) and written_ok and st.st_size == 5 and lst.st_size == 5 and pst.st_size == 5 and entry_stat.st_size == 5 and junction_ok and name_ok and wait_ok\n",
         path = file.to_string_lossy().replace('\\', "\\\\"),
         root = temp_dir.to_string_lossy().replace('\\', "\\\\"),
         out = temp_dir
@@ -18909,6 +18922,51 @@ fn executes_frozen_importlib_external_helpers() {
 fn executes_frozen_importlib_spec_from_loader_helper() {
     let source = "import _frozen_importlib as frozen\nspec = frozen.spec_from_loader('pkg.mod', None, origin='x.py', is_package=False)\nfrozen._verbose_message('x')\nok = (spec.name == 'pkg.mod' and spec.parent == 'pkg' and spec.origin == 'x.py' and spec.submodule_search_locations is None)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn importlib_bootstrap_alias_exposes_imp_and_builtin_finder() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path.insert(0, {lib_path:?})\nimport _imp\nimport importlib._bootstrap as bootstrap\nimport importlib.machinery as machinery\nimport _frozen_importlib as frozen\nspec = machinery.BuiltinImporter.find_spec('errno')\nfrozen_info = _imp.find_frozen('_frozen_importlib')\nfrozen_names = _imp._frozen_module_names()\nloader_state = bootstrap.__spec__.loader_state\nbefore = machinery.FrozenImporter.find_spec('__hello__')\n_imp._override_frozen_modules_for_tests(-1)\ndisabled = machinery.FrozenImporter.find_spec('__hello__')\n_imp._override_frozen_modules_for_tests(0)\nafter = machinery.FrozenImporter.find_spec('__hello__')\nok = (bootstrap is frozen and hasattr(bootstrap, '_imp') and _imp.is_builtin('errno') and spec is not None and spec.origin == 'built-in' and bootstrap.__spec__.name == '_frozen_importlib' and loader_state.origname == 'importlib._bootstrap' and loader_state.filename is None and frozen_info == (None, False, 'importlib._bootstrap') and '_frozen_importlib' in frozen_names and before is not None and disabled is None and after is not None)\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn frozen_importer_get_code_executes_hello_modules() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path.insert(0, {lib_path:?})\nimport importlib.machinery as machinery\nhello = machinery.FrozenImporter.get_code('__hello__')\nspam = machinery.FrozenImporter.get_code('__phello__.spam')\nhello_ns = {{}}\nspam_ns = {{}}\nexec(hello, hello_ns)\nexec(spam, spam_ns)\nok = (hello_ns['initialized'] and spam_ns['initialized'] and callable(hello_ns['main']) and callable(spam_ns['main']))\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn frozen_importer_exec_module_populates_live_module_namespace() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path.insert(0, {lib_path:?})\nimport importlib.util as util\nimport importlib.machinery as machinery\nspec = machinery.FrozenImporter.find_spec('__phello__.spam')\nmodule = util.module_from_spec(spec)\nmachinery.FrozenImporter.exec_module(module)\nfn = module.main\nok = (module.__dict__ is module.__dict__ and module.initialized and callable(fn) and module.__dict__['main'] is fn)\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");

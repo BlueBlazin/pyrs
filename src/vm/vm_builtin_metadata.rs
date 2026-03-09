@@ -9315,18 +9315,34 @@ impl Vm {
                 let attr_key = Value::Str(attr_name.to_string());
                 let getattr_key = Value::Str("__getattr__".to_string());
                 let path_key = Value::Str("__path__".to_string());
+                let namespace_dict = module_data.dict.clone();
                 let attr = active_frame_module_dict
                     .as_ref()
                     .and_then(|dict| dict_get_value(dict, &attr_key))
+                    .or_else(|| {
+                        namespace_dict
+                            .as_ref()
+                            .and_then(|dict| dict_get_value(dict, &attr_key))
+                    })
                     .or_else(|| module_data.globals.get(attr_name).cloned());
                 let module_getattr = active_frame_module_dict
                     .as_ref()
                     .and_then(|dict| dict_get_value(dict, &getattr_key))
+                    .or_else(|| {
+                        namespace_dict
+                            .as_ref()
+                            .and_then(|dict| dict_get_value(dict, &getattr_key))
+                    })
                     .or_else(|| module_data.globals.get("__getattr__").cloned());
                 let module_name = module_data.name.clone();
                 let module_is_package = active_frame_module_dict
                     .as_ref()
                     .and_then(|dict| dict_get_value(dict, &path_key))
+                    .or_else(|| {
+                        namespace_dict
+                            .as_ref()
+                            .and_then(|dict| dict_get_value(dict, &path_key))
+                    })
                     .is_some()
                     || module_data.globals.contains_key("__path__");
                 (module_name, attr, module_getattr, module_is_package)
@@ -9450,13 +9466,29 @@ impl Vm {
             if let Some(dict) = active_frame_module_dict {
                 return Ok(Value::Dict(dict));
             }
-            if let Object::Module(module_data) = &*module.kind() {
-                let globals_snapshot = module_data
-                    .globals
-                    .iter()
-                    .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
-                    .collect::<Vec<_>>();
-                return Ok(self.heap.alloc_dict(globals_snapshot));
+            let (existing_dict, globals_snapshot) = match &*module.kind() {
+                Object::Module(module_data) => (
+                    module_data.dict.clone(),
+                    module_data
+                        .globals
+                        .iter()
+                        .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
+                        .collect::<Vec<_>>(),
+                ),
+                _ => (None, Vec::new()),
+            };
+            if let Some(dict) = existing_dict {
+                return Ok(Value::Dict(dict));
+            }
+            if matches!(&*module.kind(), Object::Module(_)) {
+                let dict = match self.heap.alloc_dict(globals_snapshot) {
+                    Value::Dict(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *module.kind_mut() {
+                    module_data.dict = Some(dict.clone());
+                }
+                return Ok(Value::Dict(dict));
             }
             return Ok(self.heap.alloc_dict(Vec::new()));
         }

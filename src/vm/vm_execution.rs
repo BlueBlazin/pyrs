@@ -11688,6 +11688,12 @@ impl Vm {
             return existing;
         }
         let module = self.frames[frame_index].module.clone();
+        if let Object::Module(module_data) = &*module.kind()
+            && let Some(existing) = module_data.dict.clone()
+        {
+            self.frames[frame_index].module_locals_dict = Some(existing.clone());
+            return existing;
+        }
         let entries = match &*module.kind() {
             Object::Module(module_data) => module_data
                 .globals
@@ -11700,6 +11706,9 @@ impl Vm {
             Value::Dict(obj) => obj,
             _ => unreachable!(),
         };
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data.dict = Some(dict.clone());
+        }
         self.frames[frame_index].module_locals_dict = Some(dict.clone());
         dict
     }
@@ -11737,8 +11746,15 @@ impl Vm {
                 }
             }
         }
+        let mut version = None;
         if let Object::Module(module_data) = &mut *module.kind_mut() {
             module_data.globals = map;
+            module_data.dict = Some(dict.clone());
+            module_data.touch_globals_version();
+            version = Some(module_data.globals_version);
+        }
+        if let Some(version) = version {
+            self.propagate_module_globals_version(module.id(), version);
         }
     }
 
@@ -11926,14 +11942,19 @@ impl Vm {
     pub(super) fn upsert_module_global(&mut self, module: &ObjRef, name: &str, value: Value) {
         let slot_value = value.clone();
         let mut version = None;
+        let mut namespace_dict = None;
         if let Object::Module(module_data) = &mut *module.kind_mut() {
             if let Some(existing) = module_data.globals.get_mut(name) {
                 *existing = value;
             } else {
                 module_data.globals.insert(name.to_string(), value);
             }
+            namespace_dict = module_data.dict.clone();
             module_data.touch_globals_version();
             version = Some(module_data.globals_version);
+        }
+        if let Some(dict) = namespace_dict {
+            dict_set_value(&dict, Value::Str(name.to_string()), slot_value.clone());
         }
         self.sync_module_frame_fast_local(module.id(), name, Some(slot_value));
         if let Some(version) = version {
@@ -11962,30 +11983,50 @@ impl Vm {
         }
     }
 
-    fn module_for_locals_dict(&self, dict: &ObjRef) -> Option<ObjRef> {
-        self.frames.iter().rev().find_map(|frame| {
-            if frame.is_module
-                && let Some(module_dict) = frame.module_locals_dict.as_ref()
-                && module_dict.id() == dict.id()
-            {
-                Some(frame.module.clone())
-            } else {
-                None
-            }
-        })
+    pub(super) fn module_for_namespace_dict(&self, dict: &ObjRef) -> Option<ObjRef> {
+        self.frames
+            .iter()
+            .rev()
+            .find_map(|frame| {
+                if frame.is_module
+                    && let Some(module_dict) = frame.module_locals_dict.as_ref()
+                    && module_dict.id() == dict.id()
+                {
+                    Some(frame.module.clone())
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                self.modules.values().find_map(|module| {
+                    if let Object::Module(module_data) = &*module.kind()
+                        && let Some(module_dict) = module_data.dict.as_ref()
+                        && module_dict.id() == dict.id()
+                    {
+                        Some(module.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
     }
 
-    fn remove_module_global(&mut self, module: &ObjRef, name: &str) {
+    pub(super) fn remove_module_global(&mut self, module: &ObjRef, name: &str) {
         let mut removed = false;
         let mut version = None;
+        let mut namespace_dict = None;
         if let Object::Module(module_data) = &mut *module.kind_mut() {
             removed = module_data.globals.remove(name).is_some();
             if removed {
+                namespace_dict = module_data.dict.clone();
                 module_data.touch_globals_version();
                 version = Some(module_data.globals_version);
             }
         }
         if removed {
+            if let Some(dict) = namespace_dict {
+                let _ = dict_remove_value(&dict, &Value::Str(name.to_string()));
+            }
             self.sync_module_frame_fast_local(module.id(), name, None);
             if let Some(version) = version {
                 self.propagate_module_globals_version(module.id(), version);
@@ -11999,7 +12040,7 @@ impl Vm {
         key: &Value,
         value: Option<Value>,
     ) {
-        let Some(module) = self.module_for_locals_dict(dict) else {
+        let Some(module) = self.module_for_namespace_dict(dict) else {
             return;
         };
         let Some(name) = self.module_namespace_key_name(key) else {

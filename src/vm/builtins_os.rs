@@ -1783,6 +1783,41 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_os_direntry_stat(
+        &mut self,
+        args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new("stat() expects at most one argument"));
+        }
+        let follow_symlinks = if args.len() == 2 {
+            is_truthy(&args[1])
+        } else if let Some(value) = kwargs.remove("follow_symlinks") {
+            is_truthy(&value)
+        } else {
+            true
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "stat() got an unexpected keyword argument",
+            ));
+        }
+        let Value::Instance(instance) = &args[0] else {
+            return Err(RuntimeError::new("stat() expects DirEntry"));
+        };
+        let path = match Self::instance_attr_get(instance, "path") {
+            Some(Value::Str(path)) => path,
+            _ => return Err(RuntimeError::new("stat() expects DirEntry")),
+        };
+        let metadata = if follow_symlinks {
+            fs::metadata(path).map_err(|err| Self::os_error_from_io("stat failed", err))?
+        } else {
+            fs::symlink_metadata(path).map_err(|err| Self::os_error_from_io("lstat failed", err))?
+        };
+        self.build_stat_result(metadata, !follow_symlinks)
+    }
+
     pub(super) fn builtin_os_direntry_is_dir(
         &mut self,
         args: Vec<Value>,
@@ -1880,6 +1915,20 @@ impl Vm {
             .map(|meta| meta.file_type().is_symlink())
             .unwrap_or(false);
         Ok(Value::Bool(is_symlink))
+    }
+
+    pub(super) fn builtin_os_direntry_is_junction(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("is_junction() expects no arguments"));
+        }
+        let Value::Instance(_instance) = &args[0] else {
+            return Err(RuntimeError::new("is_junction() expects DirEntry"));
+        };
+        Ok(Value::Bool(false))
     }
 
     pub(super) fn builtin_os_walk(
