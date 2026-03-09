@@ -4432,14 +4432,13 @@ impl Vm {
             _ => unreachable!(),
         };
 
+        #[cfg(not(unix))]
         let file_type = metadata.file_type();
         #[cfg(unix)]
-        let mut st_mode = if file_type.is_dir() {
-            0o040000
-        } else if file_type.is_symlink() {
-            0o120000
-        } else {
-            0o100000
+        let st_mode = {
+            use std::os::unix::fs::MetadataExt;
+
+            i64::from(metadata.mode())
         };
         #[cfg(not(unix))]
         let st_mode = if file_type.is_dir() {
@@ -4449,11 +4448,6 @@ impl Vm {
         } else {
             0o100000
         };
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            st_mode |= i64::from(metadata.permissions().mode() & 0o7777);
-        }
 
         let st_size = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
         #[cfg(unix)]
@@ -4699,25 +4693,27 @@ impl Vm {
         &mut self,
         value: Value,
     ) -> Result<(String, bool), RuntimeError> {
-        let validate_path =
-            |path: String, is_bytes: bool| -> Result<(String, bool), RuntimeError> {
-                if path.contains('\0') {
-                    return Err(RuntimeError::new(
-                        "ValueError: embedded null character in path",
-                    ));
-                }
-                Ok((path, is_bytes))
-            };
+        let (path, is_bytes) = self.fspath_arg_to_string_and_type_unvalidated(value)?;
+        if path.contains('\0') {
+            return Err(RuntimeError::new(
+                "ValueError: embedded null character in path",
+            ));
+        }
+        Ok((path, is_bytes))
+    }
+
+    fn fspath_arg_to_string_and_type_unvalidated(
+        &mut self,
+        value: Value,
+    ) -> Result<(String, bool), RuntimeError> {
         let normalized = match value {
             Value::Str(_) | Value::Bytes(_) => value,
             other => self.builtin_os_fspath(vec![other], HashMap::new())?,
         };
         match normalized {
-            Value::Str(path) => validate_path(path, false),
+            Value::Str(path) => Ok((path, false)),
             Value::Bytes(obj) => match &*obj.kind() {
-                Object::Bytes(bytes) => {
-                    validate_path(String::from_utf8_lossy(bytes).into_owned(), true)
-                }
+                Object::Bytes(bytes) => Ok((String::from_utf8_lossy(bytes).into_owned(), true)),
                 _ => Err(RuntimeError::type_error("path must be string or bytes")),
             },
             _ => Err(RuntimeError::type_error("path must be string or bytes")),
@@ -4901,7 +4897,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("_path_normpath() expects one argument"));
         }
-        let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
+        let (path, return_bytes) = self.fspath_arg_to_string_and_type_unvalidated(args[0].clone())?;
         if path.is_empty() {
             return if return_bytes {
                 Ok(self.heap.alloc_bytes(b".".to_vec()))
@@ -4960,7 +4956,8 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("normcase() expects one argument"));
         }
-        let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
+        let (path, return_bytes) =
+            self.fspath_arg_to_string_and_type_unvalidated(args[0].clone())?;
         let out = if cfg!(windows) {
             path.replace('/', "\\").to_ascii_lowercase()
         } else {
@@ -5014,7 +5011,8 @@ impl Vm {
                 "_path_splitroot_ex() expects one argument",
             ));
         }
-        let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
+        let (path, return_bytes) =
+            self.fspath_arg_to_string_and_type_unvalidated(args[0].clone())?;
         let bytes = path.as_bytes();
         let (drive, root, tail) = if bytes.first().copied() != Some(b'/') {
             ("".to_string(), "".to_string(), path)

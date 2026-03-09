@@ -19666,6 +19666,40 @@ fn pathlib_with_suffix_rejects_bytes_with_type_error() {
 }
 
 #[test]
+#[cfg(unix)]
+fn pathlib_devnull_reports_char_device() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-pathlib-devnull-char-device", move || {
+        let source = "import os\nimport pathlib\npath = pathlib.Path(os.devnull)\nok = path.is_char_device() and not path.is_block_device()\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+#[cfg(unix)]
+fn pathlib_is_junction_false_for_embedded_nul_path() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-pathlib-isjunction-nul", move || {
+        let source = "import pathlib\nok = (pathlib.Path('fileA\\x00').is_junction() is False)\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn zipimporter_non_zip_directory_raises_zipimporterror_with_path_attr() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
