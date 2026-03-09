@@ -22890,6 +22890,36 @@ ok = ok and kw_error and arg_error
 }
 
 #[test]
+fn inherited_metaclass_new_consumes_keywords_before_init_subclass() {
+    let source = r#"class Base:
+    def __init_subclass__(cls, *args, **kwargs):
+        cls.seen = dict(kwargs)
+        super().__init_subclass__(*args, **kwargs)
+
+class Mid(Base):
+    pass
+
+class BaseMeta(type):
+    def __new__(mcls, name, bases, namespace, *, flag):
+        namespace['meta_flag'] = flag
+        return super().__new__(mcls, name, bases, namespace)
+
+class Meta(BaseMeta, type(Mid)):
+    pass
+
+class Child(Mid, metaclass=Meta, flag=7):
+    pass
+
+ok = (Child.seen == {} and Child.meta_flag == 7 and isinstance(Child, Meta))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn sys_audit_validates_event_name_and_accepts_varargs() {
     let source = r#"import sys
 ok = (sys.audit("event.name", 1, 2, 3) is None)

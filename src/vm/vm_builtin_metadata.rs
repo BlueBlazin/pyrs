@@ -7652,7 +7652,7 @@ impl Vm {
             )));
         }
         let resolve_metaclass_ctor = |name: &str, vm: &mut Vm| -> Option<Value> {
-            let raw = class_attr_lookup_direct(&metaclass, name)?;
+            let raw = class_attr_lookup(&metaclass, name)?;
             if let Some(bound) = vm.bind_classmethod_attr(&metaclass, &raw) {
                 return Some(bound);
             }
