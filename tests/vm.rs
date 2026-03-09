@@ -18032,6 +18032,46 @@ fn os_scandir_permission_denied_uses_permissionerror() {
 }
 
 #[test]
+#[cfg(unix)]
+fn os_listdir_permission_denied_uses_permissionerror() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_os_listdir_perm_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::set_permissions(&temp_dir, std::fs::Permissions::from_mode(0o000))
+        .expect("remove permissions");
+
+    let source = format!(
+        "import os\nname = ''\nfilename = None\ntry:\n    list(os.listdir({path:?}))\nexcept Exception as exc:\n    name = type(exc).__name__\n    filename = getattr(exc, 'filename', None)\n",
+        path = temp_dir.to_string_lossy().to_string(),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(
+        vm.get_global("name"),
+        Some(Value::Str("PermissionError".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("filename"),
+        Some(Value::Str(temp_dir.to_string_lossy().to_string()))
+    );
+
+    std::fs::set_permissions(&temp_dir, std::fs::Permissions::from_mode(0o700))
+        .expect("restore permissions");
+    std::fs::remove_dir(&temp_dir).expect("remove temp dir");
+}
+
+#[test]
 fn executes_os_open_exclusive_raises_file_exists_error() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

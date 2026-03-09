@@ -161,6 +161,21 @@ impl Vm {
         RuntimeError::from_exception(exception)
     }
 
+    pub(super) fn os_error_from_io_path(
+        context: &str,
+        path: &Path,
+        err: std::io::Error,
+    ) -> RuntimeError {
+        let mut runtime_error = Self::os_error_from_io(context, err);
+        if let Some(exception) = runtime_error.exception.as_mut() {
+            exception.attrs.borrow_mut().insert(
+                "filename".to_string(),
+                Value::Str(path.to_string_lossy().to_string()),
+            );
+        }
+        runtime_error
+    }
+
     pub(super) fn bootstrap_resource_constants(&self) -> Vec<(&'static str, Value)> {
         #[cfg(unix)]
         {
@@ -2308,10 +2323,12 @@ impl Vm {
             self.path_arg_to_string(args[0].clone())?
         };
         let mut names = Vec::new();
-        let entries = fs::read_dir(&path)
-            .map_err(|err| RuntimeError::new(format!("listdir failed: {err}")))?;
+        let path_buf = PathBuf::from(&path);
+        let entries = fs::read_dir(&path_buf)
+            .map_err(|err| Self::os_error_from_io_path("listdir failed", &path_buf, err))?;
         for entry in entries {
-            let entry = entry.map_err(|err| RuntimeError::new(format!("listdir failed: {err}")))?;
+            let entry = entry
+                .map_err(|err| Self::os_error_from_io_path("listdir failed", &path_buf, err))?;
             let name = entry.file_name().to_string_lossy().to_string();
             names.push(Value::Str(name));
         }
