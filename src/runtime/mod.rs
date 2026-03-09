@@ -5831,6 +5831,8 @@ pub enum BuiltinFunction {
     DateTimeReplace,
     DateTimeRepr,
     DateTimeStr,
+    DateTimeTimeTuple,
+    DateTimeUtcTimeTuple,
     DateInit,
     DateRepr,
     DateStr,
@@ -9159,6 +9161,8 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::DateTimeReplace
             | BuiltinFunction::DateTimeRepr
             | BuiltinFunction::DateTimeStr
+            | BuiltinFunction::DateTimeTimeTuple
+            | BuiltinFunction::DateTimeUtcTimeTuple
             | BuiltinFunction::DateInit
             | BuiltinFunction::DateRepr
             | BuiltinFunction::DateStr

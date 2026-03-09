@@ -14137,6 +14137,10 @@ impl Vm {
             BuiltinFunction::DateTimeReplace => self.builtin_datetime_replace(args, kwargs),
             BuiltinFunction::DateTimeRepr => self.builtin_datetime_repr(args, kwargs),
             BuiltinFunction::DateTimeStr => self.builtin_datetime_str(args, kwargs),
+            BuiltinFunction::DateTimeTimeTuple => self.builtin_datetime_timetuple(args, kwargs),
+            BuiltinFunction::DateTimeUtcTimeTuple => {
+                self.builtin_datetime_utctimetuple(args, kwargs)
+            }
             BuiltinFunction::DateInit => self.builtin_date_init(args, kwargs),
             BuiltinFunction::DateRepr => self.builtin_date_repr(args, kwargs),
             BuiltinFunction::DateStr => self.builtin_date_str(args, kwargs),

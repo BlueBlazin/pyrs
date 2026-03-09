@@ -7879,6 +7879,14 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::DateTimeStr),
             );
             class_data.attrs.insert(
+                "timetuple".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeTimeTuple),
+            );
+            class_data.attrs.insert(
+                "utctimetuple".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeUtcTimeTuple),
+            );
+            class_data.attrs.insert(
                 "now".to_string(),
                 Value::Builtin(BuiltinFunction::DateTimeNow),
             );
@@ -7942,6 +7950,10 @@ impl Vm {
             class_data.attrs.insert(
                 "__str__".to_string(),
                 Value::Builtin(BuiltinFunction::DateStr),
+            );
+            class_data.attrs.insert(
+                "timetuple".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeTimeTuple),
             );
             class_data.attrs.insert(
                 "today".to_string(),

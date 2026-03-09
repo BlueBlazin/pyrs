@@ -1,9 +1,9 @@
 use super::{
     BigInt, Duration, HashMap, InstanceObject, Instant, InternalCallOutcome, MONOTONIC_START,
-    Object, RuntimeError, TUPLE_BACKING_STORAGE_ATTR, Value, Vm, erfc_approx, format_strftime,
-    random_range_count, seed_from_value, split_unix_timestamp, time_parts_from_value,
-    unix_seconds_now, unix_time_now_duration, value_from_bigint, value_to_bigint, value_to_f64,
-    value_to_int,
+    Object, RuntimeError, TUPLE_BACKING_STORAGE_ATTR, TimeParts, Value, Vm, erfc_approx,
+    format_strftime, random_range_count, seed_from_value, split_unix_timestamp,
+    time_parts_from_value, unix_seconds_now, unix_time_now_duration, value_from_bigint,
+    value_to_bigint, value_to_f64, value_to_int,
 };
 
 #[cfg(any(
@@ -42,6 +42,75 @@ fn native_lgamma(x: f64) -> f64 {
 }
 
 impl Vm {
+    pub(super) fn time_struct_time_from_parts(
+        &mut self,
+        parts: TimeParts,
+    ) -> Result<Value, RuntimeError> {
+        let tuple_payload = self.heap.alloc_tuple(vec![
+            Value::Int(parts.year as i64),
+            Value::Int(parts.month as i64),
+            Value::Int(parts.day as i64),
+            Value::Int(parts.hour as i64),
+            Value::Int(parts.minute as i64),
+            Value::Int(parts.second as i64),
+            Value::Int(parts.weekday as i64),
+            Value::Int(parts.yearday as i64),
+            Value::Int(parts.isdst as i64),
+        ]);
+        let struct_time_class = self
+            .modules
+            .get("time")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("struct_time").cloned(),
+                _ => None,
+            })
+            .and_then(|value| match value {
+                Value::Class(class_obj) => Some(class_obj),
+                _ => None,
+            })
+            .ok_or_else(|| RuntimeError::new("time.struct_time missing"))?;
+        let instance = match self
+            .heap
+            .alloc_instance(InstanceObject::new(struct_time_class))
+        {
+            Value::Instance(instance) => instance,
+            _ => unreachable!(),
+        };
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data
+                .attrs
+                .insert("tm_year".to_string(), Value::Int(parts.year as i64));
+            instance_data
+                .attrs
+                .insert("tm_mon".to_string(), Value::Int(parts.month as i64));
+            instance_data
+                .attrs
+                .insert("tm_mday".to_string(), Value::Int(parts.day as i64));
+            instance_data
+                .attrs
+                .insert("tm_hour".to_string(), Value::Int(parts.hour as i64));
+            instance_data
+                .attrs
+                .insert("tm_min".to_string(), Value::Int(parts.minute as i64));
+            instance_data
+                .attrs
+                .insert("tm_sec".to_string(), Value::Int(parts.second as i64));
+            instance_data
+                .attrs
+                .insert("tm_wday".to_string(), Value::Int(parts.weekday as i64));
+            instance_data
+                .attrs
+                .insert("tm_yday".to_string(), Value::Int(parts.yearday as i64));
+            instance_data
+                .attrs
+                .insert("tm_isdst".to_string(), Value::Int(parts.isdst as i64));
+            instance_data
+                .attrs
+                .insert(TUPLE_BACKING_STORAGE_ATTR.to_string(), tuple_payload);
+        }
+        Ok(Value::Instance(instance))
+    }
+
     pub(super) fn builtin_random_seed(
         &mut self,
         mut args: Vec<Value>,
@@ -1235,70 +1304,7 @@ impl Vm {
         } else {
             value_to_f64(args.remove(0))?.trunc() as i64
         };
-        let parts = split_unix_timestamp(secs);
-        let tuple_payload = self.heap.alloc_tuple(vec![
-            Value::Int(parts.year as i64),
-            Value::Int(parts.month as i64),
-            Value::Int(parts.day as i64),
-            Value::Int(parts.hour as i64),
-            Value::Int(parts.minute as i64),
-            Value::Int(parts.second as i64),
-            Value::Int(parts.weekday as i64),
-            Value::Int(parts.yearday as i64),
-            Value::Int(parts.isdst as i64),
-        ]);
-        let struct_time_class = self
-            .modules
-            .get("time")
-            .and_then(|module| match &*module.kind() {
-                Object::Module(module_data) => module_data.globals.get("struct_time").cloned(),
-                _ => None,
-            })
-            .and_then(|value| match value {
-                Value::Class(class_obj) => Some(class_obj),
-                _ => None,
-            })
-            .ok_or_else(|| RuntimeError::new("time.struct_time missing"))?;
-        let instance = match self
-            .heap
-            .alloc_instance(InstanceObject::new(struct_time_class))
-        {
-            Value::Instance(instance) => instance,
-            _ => unreachable!(),
-        };
-        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-            instance_data
-                .attrs
-                .insert("tm_year".to_string(), Value::Int(parts.year as i64));
-            instance_data
-                .attrs
-                .insert("tm_mon".to_string(), Value::Int(parts.month as i64));
-            instance_data
-                .attrs
-                .insert("tm_mday".to_string(), Value::Int(parts.day as i64));
-            instance_data
-                .attrs
-                .insert("tm_hour".to_string(), Value::Int(parts.hour as i64));
-            instance_data
-                .attrs
-                .insert("tm_min".to_string(), Value::Int(parts.minute as i64));
-            instance_data
-                .attrs
-                .insert("tm_sec".to_string(), Value::Int(parts.second as i64));
-            instance_data
-                .attrs
-                .insert("tm_wday".to_string(), Value::Int(parts.weekday as i64));
-            instance_data
-                .attrs
-                .insert("tm_yday".to_string(), Value::Int(parts.yearday as i64));
-            instance_data
-                .attrs
-                .insert("tm_isdst".to_string(), Value::Int(parts.isdst as i64));
-            instance_data
-                .attrs
-                .insert(TUPLE_BACKING_STORAGE_ATTR.to_string(), tuple_payload);
-        }
-        Ok(Value::Instance(instance))
+        self.time_struct_time_from_parts(split_unix_timestamp(secs))
     }
 
     pub(super) fn builtin_time_strftime(

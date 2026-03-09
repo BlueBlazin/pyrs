@@ -1004,6 +1004,8 @@ impl Vm {
             BuiltinFunction::ThreadingRegisterAtexit => "threading._register_atexit".to_string(),
             BuiltinFunction::DateTimeRepr => "datetime.datetime.__repr__".to_string(),
             BuiltinFunction::DateTimeStr => "datetime.datetime.__str__".to_string(),
+            BuiltinFunction::DateTimeTimeTuple => "datetime.timetuple".to_string(),
+            BuiltinFunction::DateTimeUtcTimeTuple => "datetime.datetime.utctimetuple".to_string(),
             BuiltinFunction::DateRepr => "datetime.date.__repr__".to_string(),
             BuiltinFunction::DateStr => "datetime.date.__str__".to_string(),
             BuiltinFunction::DateFromIsoFormat => "datetime.date.fromisoformat".to_string(),

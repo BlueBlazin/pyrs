@@ -631,9 +631,9 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("microsecond".to_string(), Value::Int(microsecond));
-            if let Some(tzinfo) = tzinfo {
-                instance_data.attrs.insert("tzinfo".to_string(), tzinfo);
-            }
+            instance_data
+                .attrs
+                .insert("tzinfo".to_string(), tzinfo.unwrap_or(Value::None));
         }
         Ok(Value::Instance(instance))
     }
@@ -965,6 +965,45 @@ impl Vm {
                 .insert("day".to_string(), Value::Int(day as i64));
         }
         Ok(Value::Instance(instance))
+    }
+
+    fn datetime_struct_time_parts_from_instance(
+        instance: &ObjRef,
+        method_name: &str,
+        isdst: i32,
+    ) -> Result<TimeParts, RuntimeError> {
+        let read_required = |name: &str| -> Result<i64, RuntimeError> {
+            Self::instance_attr_get(instance, name)
+                .ok_or_else(|| RuntimeError::new(format!("{method_name}() missing {name}")))
+                .and_then(value_to_int)
+        };
+        let read_optional = |name: &str| -> Result<i64, RuntimeError> {
+            Self::instance_attr_get(instance, name)
+                .map(value_to_int)
+                .transpose()
+                .map(|value| value.unwrap_or(0))
+        };
+
+        let year = read_required("year")?;
+        let month = read_required("month")? as u32;
+        let day = read_required("day")? as u32;
+        let hour = read_optional("hour")? as u32;
+        let minute = read_optional("minute")? as u32;
+        let second = read_optional("second")? as u32;
+        let days = days_from_civil(year, month, day);
+
+        Ok(TimeParts {
+            year: year as i32,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            weekday: (days + 3).rem_euclid(7) as u32,
+            yearday: day_of_year(year as i32, month, day),
+            isdst,
+            utc_offset_seconds: None,
+        })
     }
 
     fn time_instance_from_parts(
@@ -1334,9 +1373,9 @@ impl Vm {
             "microsecond".to_string(),
             Value::Int(microsecond.unwrap_or(0)),
         );
-        if let Some(tzinfo) = tzinfo {
-            instance_data.attrs.insert("tzinfo".to_string(), tzinfo);
-        }
+        instance_data
+            .attrs
+            .insert("tzinfo".to_string(), tzinfo.unwrap_or(Value::None));
         Ok(Value::None)
     }
 
@@ -1511,7 +1550,8 @@ impl Vm {
         let minute = read_part("minute").unwrap_or(0);
         let second = read_part("second").unwrap_or(0);
         let microsecond = read_part("microsecond").unwrap_or(0);
-        let tzinfo = Self::instance_attr_get(&instance, "tzinfo");
+        let tzinfo = Self::instance_attr_get(&instance, "tzinfo")
+            .filter(|value| !matches!(value, Value::None));
         let fold = Self::instance_attr_get(&instance, "fold")
             .map(value_to_int)
             .transpose()?
@@ -1783,6 +1823,51 @@ impl Vm {
         };
         let days = days_from_civil(year, month as u32, day as u32);
         Ok(Value::Int(days + UNIX_EPOCH_ORDINAL))
+    }
+
+    pub(super) fn builtin_datetime_timetuple(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("timetuple() takes no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "datetime.timetuple")?;
+        let parts = Self::datetime_struct_time_parts_from_instance(&instance, "timetuple", -1)?;
+        self.time_struct_time_from_parts(parts)
+    }
+
+    pub(super) fn builtin_datetime_utctimetuple(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("utctimetuple() takes no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "datetime.utctimetuple")?;
+        let local = Self::datetime_struct_time_parts_from_instance(&instance, "utctimetuple", 0)?;
+        let offset_seconds = Self::instance_attr_get(&instance, "tzinfo")
+            .as_ref()
+            .map(|value| self.datetime_timezone_offset_seconds(value))
+            .transpose()?
+            .unwrap_or(0);
+        let local_seconds = days_from_civil(local.year as i64, local.month, local.day)
+            .checked_mul(DATETIME_SECONDS_PER_DAY)
+            .and_then(|days| {
+                days.checked_add(local.hour as i64 * 3600 + local.minute as i64 * 60 + local.second as i64)
+            })
+            .ok_or_else(|| RuntimeError::overflow_error("date value out of range"))?;
+        let utc_seconds = local_seconds
+            .checked_sub(offset_seconds)
+            .ok_or_else(|| RuntimeError::overflow_error("date value out of range"))?;
+        let mut parts = split_unix_timestamp(utc_seconds);
+        if !(DATETIME_MIN_YEAR as i32..=DATETIME_MAX_YEAR as i32).contains(&parts.year) {
+            return Err(RuntimeError::overflow_error("date value out of range"));
+        }
+        parts.isdst = 0;
+        self.time_struct_time_from_parts(parts)
     }
 
     fn parse_fromisocalendar_args(
@@ -2242,6 +2327,7 @@ impl Vm {
         let utc_offset_seconds = instance_data
             .attrs
             .get("tzinfo")
+            .filter(|value| !matches!(value, Value::None))
             .map(|value| self.datetime_timezone_offset_seconds(value))
             .transpose()?
             .map(|value| value.clamp(i32::MIN as i64, i32::MAX as i64) as i32);

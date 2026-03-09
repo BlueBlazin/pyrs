@@ -9256,6 +9256,29 @@ ok = (d.strftime('%Y-%m-%d') == '2024-02-29' and d.strftime('%w') == '4' and dt.
 }
 
 #[test]
+fn datetime_date_and_datetime_support_timetuple_helpers() {
+    let source = "import datetime\n\
+d = datetime.date(1956, 3, 1)\n\
+dt = datetime.datetime(2004, 12, 31, 6, 22, 33, tzinfo=datetime.timezone.utc)\n\
+date_tt = d.timetuple()\n\
+dt_tt = dt.timetuple()\n\
+utc_tt = dt.utctimetuple()\n\
+ok = (\n\
+    date_tt == (1956, 3, 1, 0, 0, 0, 3, 61, -1)\n\
+    and date_tt.tm_wday == 3\n\
+    and date_tt.tm_yday == 61\n\
+    and dt_tt == (2004, 12, 31, 6, 22, 33, 4, 366, -1)\n\
+    and utc_tt == (2004, 12, 31, 6, 22, 33, 4, 366, 0)\n\
+    and utc_tt.tm_isdst == 0\n\
+)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn datetime_fromtimestamp_and_astimezone_support_fixed_offset_tz() {
     let source = "import datetime\n\
 dt = datetime.datetime.fromtimestamp(0, datetime.timezone.utc)\n\
@@ -9267,6 +9290,23 @@ ok = (dt.strftime('%Y-%m-%d %H:%M:%S %z') == '1970-01-01 00:00:00 +0000' and shi
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn email_utils_format_datetime_uses_datetime_timetuple() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping email.utils datetime formatting probe (CPython Lib path not available)");
+        return;
+    };
+    run_with_large_stack("email-utils-format-datetime", move || {
+        let source = "import datetime\nfrom email.utils import format_datetime\naware = datetime.datetime(2012, 5, 29, 9, 24, 26, tzinfo=datetime.timezone(datetime.timedelta(hours=10)))\nnaive = datetime.datetime(2024, 2, 29, 9, 8, 7)\nok = (format_datetime(aware) == 'Tue, 29 May 2012 09:24:26 +1000' and format_datetime(naive) == 'Thu, 29 Feb 2024 09:08:07 -0000')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path.clone());
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
