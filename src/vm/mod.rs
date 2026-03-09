@@ -7036,6 +7036,7 @@ fn parse_modules_to_block_literal(code: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(not(unix))]
 fn seconds_to_system_time(value: f64) -> Result<SystemTime, RuntimeError> {
     if !value.is_finite() || value.is_sign_negative() {
         return Err(RuntimeError::new(

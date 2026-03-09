@@ -8921,10 +8921,14 @@ impl Vm {
                 ));
             }
             if let Value::Builtin(builtin) = attr.clone() {
-                let owner_is_user_class = class_attr_owner
-                    .as_ref()
-                    .is_some_and(|owner| matches!(&*owner.kind(), Object::Class(class_data)
-                        if matches!(class_data.attrs.get("__pyrs_user_class__"), Some(Value::Bool(true)))));
+                let owner_is_user_class = matches!(
+                    &*(class_attr_owner.as_ref().unwrap_or(&class_ref)).kind(),
+                    Object::Class(class_data)
+                        if matches!(
+                            class_data.attrs.get("__pyrs_user_class__"),
+                            Some(Value::Bool(true))
+                        )
+                );
                 if owner_is_user_class {
                     return Ok(AttrAccessOutcome::Value(Value::Builtin(builtin)));
                 }

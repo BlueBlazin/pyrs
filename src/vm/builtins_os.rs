@@ -6,12 +6,14 @@ use super::{
     decode_escape_bytes, decode_text_bytes, dict_get_value, dict_set_value, encode_text_bytes,
     format_value, fs, is_pyrs_executable, is_truthy, mul_values, normalize_codec_encoding,
     normalize_codec_errors, parse_decimal_bigint_literal, parse_modules_to_block_literal,
-    parse_string_formatter, pow_values, seconds_to_system_time, split_formatter_field_name,
-    unknown_codec_error_handler, value_from_bigint, value_to_bigint, value_to_f64, value_to_int,
-    value_to_process_text, value_to_sequence_items,
+    parse_string_formatter, pow_values, split_formatter_field_name, unknown_codec_error_handler,
+    value_from_bigint, value_to_bigint, value_to_f64, value_to_int, value_to_process_text,
+    value_to_sequence_items,
 };
 #[cfg(unix)]
 use super::{collect_env_entries, collect_process_argv, is_missing_attribute_error};
+#[cfg(not(unix))]
+use super::seconds_to_system_time;
 use crate::unicode::canonical_codepoint_for_internal_char;
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
@@ -1664,6 +1666,73 @@ impl Vm {
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        fn utime_pair_values(spec: Value, name: &str) -> Result<(Value, Value), RuntimeError> {
+            match spec {
+                Value::Tuple(obj) => match &*obj.kind() {
+                    Object::Tuple(values) if values.len() == 2 => {
+                        Ok((values[0].clone(), values[1].clone()))
+                    }
+                    _ => Err(RuntimeError::new(format!("utime() {name} must be a 2-tuple"))),
+                },
+                Value::List(obj) => match &*obj.kind() {
+                    Object::List(values) if values.len() == 2 => {
+                        Ok((values[0].clone(), values[1].clone()))
+                    }
+                    _ => Err(RuntimeError::new(format!("utime() {name} must be a 2-sequence"))),
+                },
+                _ => Err(RuntimeError::new(format!("utime() {name} must be a 2-sequence"))),
+            }
+        }
+
+        #[cfg(unix)]
+        fn nanos_to_timespec(total_nanos: i64) -> libc::timespec {
+            let secs = total_nanos.div_euclid(1_000_000_000);
+            let nanos = total_nanos.rem_euclid(1_000_000_000);
+            libc::timespec {
+                tv_sec: secs as libc::time_t,
+                tv_nsec: nanos as libc::c_long,
+            }
+        }
+
+        #[cfg(unix)]
+        fn seconds_to_timespec(value: f64) -> Result<libc::timespec, RuntimeError> {
+            if !value.is_finite() {
+                return Err(RuntimeError::new("timestamp must be a finite number"));
+            }
+            let secs = value.floor();
+            let mut secs_i64 = secs as i64;
+            let mut nanos = ((value - secs) * 1_000_000_000.0).round();
+            if nanos >= 1_000_000_000.0 {
+                secs_i64 = secs_i64.saturating_add(1);
+                nanos -= 1_000_000_000.0;
+            }
+            Ok(libc::timespec {
+                tv_sec: secs_i64 as libc::time_t,
+                tv_nsec: nanos as libc::c_long,
+            })
+        }
+
+        #[cfg(unix)]
+        fn current_timespec() -> Result<libc::timespec, RuntimeError> {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| RuntimeError::new("system time before epoch"))?;
+            Ok(libc::timespec {
+                tv_sec: now.as_secs() as libc::time_t,
+                tv_nsec: now.subsec_nanos() as libc::c_long,
+            })
+        }
+
+        #[cfg(not(unix))]
+        fn nanos_to_system_time(total_nanos: i64) -> Result<SystemTime, RuntimeError> {
+            if total_nanos < 0 {
+                return Err(RuntimeError::new(
+                    "timestamp must be a non-negative finite number",
+                ));
+            }
+            Ok(UNIX_EPOCH + std::time::Duration::from_nanos(total_nanos as u64))
+        }
+
         if args.is_empty() || args.len() > 2 {
             return Err(RuntimeError::new(
                 "utime() expects path and optional times tuple",
@@ -1677,48 +1746,100 @@ impl Vm {
             }
             times = Some(value);
         }
+        let ns = kwargs.remove("ns");
+        if times.is_some() && ns.is_some() {
+            return Err(RuntimeError::value_error(
+                "utime: you may specify either 'times' or 'ns' but not both",
+            ));
+        }
+        let dir_fd = kwargs.remove("dir_fd");
+        let follow_symlinks = kwargs
+            .remove("follow_symlinks")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(true);
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "utime() got an unexpected keyword argument",
             ));
         }
 
-        let file = fs::OpenOptions::new()
-            .write(true)
-            .open(path)
-            .map_err(|err| RuntimeError::new(format!("utime failed: {err}")))?;
-        let (atime, mtime) = if let Some(spec) = times {
-            match spec {
-                Value::Tuple(obj) => match &*obj.kind() {
-                    Object::Tuple(values) if values.len() == 2 => (
-                        value_to_f64(values[0].clone())?,
-                        value_to_f64(values[1].clone())?,
-                    ),
-                    _ => return Err(RuntimeError::new("utime() times must be a 2-tuple")),
-                },
-                Value::List(obj) => match &*obj.kind() {
-                    Object::List(values) if values.len() == 2 => (
-                        value_to_f64(values[0].clone())?,
-                        value_to_f64(values[1].clone())?,
-                    ),
-                    _ => return Err(RuntimeError::new("utime() times must be a 2-sequence")),
-                },
-                _ => return Err(RuntimeError::new("utime() times must be a 2-sequence")),
-            }
-        } else {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| RuntimeError::new("system time before epoch"))?
-                .as_secs_f64();
-            (now, now)
-        };
+        #[cfg(unix)]
+        {
+            use std::ffi::CString;
 
-        let atime = seconds_to_system_time(atime)?;
-        let mtime = seconds_to_system_time(mtime)?;
-        let times = fs::FileTimes::new().set_accessed(atime).set_modified(mtime);
-        file.set_times(times)
-            .map_err(|err| RuntimeError::new(format!("utime failed: {err}")))?;
-        Ok(Value::None)
+            let dir_fd = match dir_fd {
+                None | Some(Value::None) => libc::AT_FDCWD,
+                Some(value) => i32::try_from(value_to_int(value)?)
+                    .map_err(|_| RuntimeError::new("utime() dir_fd out of range"))?,
+            };
+            let specs = if let Some(spec) = ns {
+                let (atime, mtime) = utime_pair_values(spec, "ns")?;
+                [
+                    nanos_to_timespec(value_to_int(atime)?),
+                    nanos_to_timespec(value_to_int(mtime)?),
+                ]
+            } else if let Some(spec) = times {
+                let (atime, mtime) = utime_pair_values(spec, "times")?;
+                [
+                    seconds_to_timespec(value_to_f64(atime)?)?,
+                    seconds_to_timespec(value_to_f64(mtime)?)?,
+                ]
+            } else {
+                let now = current_timespec()?;
+                [now, now]
+            };
+            let c_path = CString::new(path.as_bytes())
+                .map_err(|_| RuntimeError::value_error("embedded null character"))?;
+            let flags = if follow_symlinks {
+                0
+            } else {
+                libc::AT_SYMLINK_NOFOLLOW
+            };
+            let status = unsafe { libc::utimensat(dir_fd, c_path.as_ptr(), specs.as_ptr(), flags) };
+            if status != 0 {
+                return Err(Self::os_error_from_io(
+                    "utime failed",
+                    std::io::Error::last_os_error(),
+                ));
+            }
+            return Ok(Value::None);
+        }
+
+        #[cfg(not(unix))]
+        {
+            if let Some(dir_fd) = dir_fd
+                && !matches!(dir_fd, Value::None)
+            {
+                return Err(RuntimeError::new("utime() dir_fd is unsupported"));
+            }
+            if !follow_symlinks {
+                return Err(RuntimeError::new("utime() follow_symlinks is unsupported"));
+            }
+            let file = fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .map_err(|err| Self::os_error_from_io("utime failed", err))?;
+            let (atime, mtime) = if let Some(spec) = ns {
+                let (atime, mtime) = utime_pair_values(spec, "ns")?;
+                (
+                    nanos_to_system_time(value_to_int(atime)?)?,
+                    nanos_to_system_time(value_to_int(mtime)?)?,
+                )
+            } else if let Some(spec) = times {
+                let (atime, mtime) = utime_pair_values(spec, "times")?;
+                (
+                    seconds_to_system_time(value_to_f64(atime)?)?,
+                    seconds_to_system_time(value_to_f64(mtime)?)?,
+                )
+            } else {
+                let now = SystemTime::now();
+                (now, now)
+            };
+            let times = fs::FileTimes::new().set_accessed(atime).set_modified(mtime);
+            file.set_times(times)
+                .map_err(|err| Self::os_error_from_io("utime failed", err))?;
+            Ok(Value::None)
+        }
     }
 
     pub(super) fn builtin_os_scandir(

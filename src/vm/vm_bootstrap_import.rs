@@ -1890,6 +1890,11 @@ PathFinder.find_spec = classmethod(_PathFinder_find_spec)
                 .attrs
                 .insert("__module__".to_string(), Value::Str("posix".to_string()));
         }
+        let os_supports_follow_symlinks = if cfg!(unix) {
+            self.heap.alloc_set(vec![Value::Builtin(BuiltinFunction::OsUTime)])
+        } else {
+            self.heap.alloc_set(Vec::new())
+        };
         self.install_builtin_module(
             "os",
             &[
@@ -2027,7 +2032,7 @@ PathFinder.find_spec = classmethod(_PathFinder_find_spec)
                 ("terminal_size", os_terminal_size_class.clone()),
                 ("supports_dir_fd", self.heap.alloc_set(Vec::new())),
                 ("supports_fd", self.heap.alloc_set(Vec::new())),
-                ("supports_follow_symlinks", self.heap.alloc_set(Vec::new())),
+                ("supports_follow_symlinks", os_supports_follow_symlinks),
                 ("WNOHANG", Value::Int(1)),
                 ("WIFSTOPPED", Value::Builtin(BuiltinFunction::OsWIfStopped)),
                 ("WSTOPSIG", Value::Builtin(BuiltinFunction::OsWStopSig)),
@@ -4402,47 +4407,40 @@ PathFinder.find_spec = classmethod(_PathFinder_find_spec)
                 ),
             ],
         );
-        self.install_builtin_module(
-            "operator",
-            &[
-                ("add", BuiltinFunction::OperatorAdd),
-                ("sub", BuiltinFunction::OperatorSub),
-                ("mul", BuiltinFunction::OperatorMul),
-                ("mod", BuiltinFunction::OperatorMod),
-                ("pow", BuiltinFunction::Pow),
-                ("and_", BuiltinFunction::OperatorAnd),
-                ("or_", BuiltinFunction::OperatorOr),
-                ("xor", BuiltinFunction::OperatorXor),
-                ("lshift", BuiltinFunction::OperatorLShift),
-                ("rshift", BuiltinFunction::OperatorRShift),
-                ("matmul", BuiltinFunction::OperatorMatMul),
-                ("neg", BuiltinFunction::OperatorNeg),
-                ("pos", BuiltinFunction::OperatorPos),
-                ("inv", BuiltinFunction::OperatorInvert),
-                ("invert", BuiltinFunction::OperatorInvert),
-                ("truediv", BuiltinFunction::OperatorTrueDiv),
-                ("floordiv", BuiltinFunction::OperatorFloorDiv),
-                ("index", BuiltinFunction::OperatorIndex),
-                ("eq", BuiltinFunction::OperatorEq),
-                ("ne", BuiltinFunction::OperatorNe),
-                ("lt", BuiltinFunction::OperatorLt),
-                ("le", BuiltinFunction::OperatorLe),
-                ("gt", BuiltinFunction::OperatorGt),
-                ("ge", BuiltinFunction::OperatorGe),
-                ("contains", BuiltinFunction::OperatorContains),
-                ("getitem", BuiltinFunction::OperatorGetItem),
-                ("itemgetter", BuiltinFunction::OperatorItemGetter),
-                ("attrgetter", BuiltinFunction::OperatorAttrGetter),
-                ("methodcaller", BuiltinFunction::OperatorMethodCaller),
-                ("_compare_digest", BuiltinFunction::OperatorCompareDigest),
-            ],
-            Vec::new(),
-        );
-        self.install_builtin_module(
-            "_operator",
-            &[("_compare_digest", BuiltinFunction::OperatorCompareDigest)],
-            Vec::new(),
-        );
+        let operator_exports = &[
+            ("add", BuiltinFunction::OperatorAdd),
+            ("sub", BuiltinFunction::OperatorSub),
+            ("mul", BuiltinFunction::OperatorMul),
+            ("mod", BuiltinFunction::OperatorMod),
+            ("pow", BuiltinFunction::Pow),
+            ("and_", BuiltinFunction::OperatorAnd),
+            ("or_", BuiltinFunction::OperatorOr),
+            ("xor", BuiltinFunction::OperatorXor),
+            ("lshift", BuiltinFunction::OperatorLShift),
+            ("rshift", BuiltinFunction::OperatorRShift),
+            ("matmul", BuiltinFunction::OperatorMatMul),
+            ("neg", BuiltinFunction::OperatorNeg),
+            ("pos", BuiltinFunction::OperatorPos),
+            ("inv", BuiltinFunction::OperatorInvert),
+            ("invert", BuiltinFunction::OperatorInvert),
+            ("truediv", BuiltinFunction::OperatorTrueDiv),
+            ("floordiv", BuiltinFunction::OperatorFloorDiv),
+            ("index", BuiltinFunction::OperatorIndex),
+            ("eq", BuiltinFunction::OperatorEq),
+            ("ne", BuiltinFunction::OperatorNe),
+            ("lt", BuiltinFunction::OperatorLt),
+            ("le", BuiltinFunction::OperatorLe),
+            ("gt", BuiltinFunction::OperatorGt),
+            ("ge", BuiltinFunction::OperatorGe),
+            ("contains", BuiltinFunction::OperatorContains),
+            ("getitem", BuiltinFunction::OperatorGetItem),
+            ("itemgetter", BuiltinFunction::OperatorItemGetter),
+            ("attrgetter", BuiltinFunction::OperatorAttrGetter),
+            ("methodcaller", BuiltinFunction::OperatorMethodCaller),
+            ("_compare_digest", BuiltinFunction::OperatorCompareDigest),
+        ];
+        self.install_builtin_module("operator", operator_exports, Vec::new());
+        self.install_builtin_module("_operator", operator_exports, Vec::new());
         let mmap_type = self
             .heap
             .alloc_class(ClassObject::new("mmap".to_string(), Vec::new()));

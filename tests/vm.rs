@@ -17917,6 +17917,49 @@ fn os_ftruncate_bad_fd_sets_oserror_errno_and_args() {
 }
 
 #[test]
+fn os_utime_accepts_ns_keyword_and_rejects_times_plus_ns() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_os_utime_ns_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let file = temp_dir.join("sample.txt");
+    std::fs::write(&file, b"x").expect("write sample file");
+
+    let source = format!(
+        r#"import os
+path = '{path}'
+os.utime(path, ns=(3_000_000_000, 4_000_000_000), follow_symlinks=True)
+st = os.stat(path)
+supports_ok = True
+if hasattr(os, 'supports_follow_symlinks'):
+    supports_ok = (os.utime in os.supports_follow_symlinks)
+text = ''
+try:
+    os.utime(path, (1, 2), ns=(3, 4))
+except ValueError as exc:
+    text = str(exc)
+ok = (
+    st.st_atime_ns == 3_000_000_000 and
+    st.st_mtime_ns == 4_000_000_000 and
+    supports_ok and
+    text == "utime: you may specify either 'times' or 'ns' but not both"
+)
+"#,
+        path = file.to_string_lossy().replace('\\', "\\\\"),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(file);
+    let _ = std::fs::remove_dir(temp_dir);
+}
+
+#[test]
 #[cfg(unix)]
 fn os_scandir_permission_denied_uses_permissionerror() {
     use std::os::unix::fs::PermissionsExt;
@@ -19356,6 +19399,43 @@ fn builtin_relative_import_empty_package_raises_importerror() {
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn plain_builtin_functions_stored_on_user_classes_do_not_bind_self() {
+    let source = "import operator\nclass C:\n    f = operator.add\nobj = C()\nok = (obj.f is operator.add and C.f is operator.add and obj.f(1, 2) == 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn cpython_operator_module_overrides_add_with_operator_builtin() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let source = "import operator\nclass C:\n    f = operator.add\nobj = C()\nprint(obj.f is operator.add and obj.f(1, 2) == 3)\n";
+    let output = Command::new(pyrs_bin)
+        .env("PYRS_CPYTHON_LIB", &lib_path)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn pyrs operator probe");
+    assert!(
+        output.status.success(),
+        "operator probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(last_line, "True", "expected probe to print True, got:\n{stdout}");
 }
 
 #[test]
