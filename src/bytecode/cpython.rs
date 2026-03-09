@@ -330,8 +330,8 @@ impl<'a> Translator<'a> {
                 "MAKE_CELL" => Instruction::new(Opcode::MakeCell, Some(self.map_local(arg)?)),
                 "POP_TOP" if prev_was_return_generator => Instruction::new(Opcode::Nop, None),
                 "POP_TOP" => Instruction::new(Opcode::PopTop, None),
-                "POP_ITER" => Instruction::new(Opcode::Nop, None),
-                "INSTRUMENTED_POP_ITER" => Instruction::new(Opcode::Nop, None),
+                "POP_ITER" => Instruction::new(Opcode::PopTop, None),
+                "INSTRUMENTED_POP_ITER" => Instruction::new(Opcode::PopTop, None),
                 "RETURN_VALUE" => Instruction::new(Opcode::ReturnValue, None),
                 "INSTRUMENTED_RETURN_VALUE" => Instruction::new(Opcode::ReturnValue, None),
                 "RETURN_CONST" => Instruction::new(Opcode::ReturnConst, Some(arg)),
@@ -1167,7 +1167,8 @@ fn relative_backward_no_interrupt_target(idx: usize, arg: u32) -> Result<u32, Cp
 fn for_iter_target(idx: usize, arg: u32) -> Result<u32, CpythonError> {
     let delta = arg as usize;
     let target = idx
-        .checked_add(2)
+        // CPython FOR_ITER jumps over the paired END_FOR and POP_ITER cleanup ops.
+        .checked_add(4)
         .and_then(|value| value.checked_add(delta))
         .ok_or_else(|| CpythonError::new("FOR_ITER target overflow"))?;
     u32::try_from(target).map_err(|_| CpythonError::new("FOR_ITER target overflow"))

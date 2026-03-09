@@ -1057,6 +1057,86 @@ print('ok' if ok else repr(out))
 }
 
 #[test]
+fn pyc_any_genexpr_unittest_runner_regression() {
+    let Some(python) = python314_path() else {
+        return;
+    };
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+
+    let temp_dir = unique_temp_dir("pyrs_pyc_any_genexpr_unittest");
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let module_path = temp_dir.join("repro_any_genexpr.py");
+    let pyc_path = temp_dir.join("repro_any_genexpr.pyc");
+
+    std::fs::write(
+        &module_path,
+        r#"import sqlite3
+import unittest
+
+class T(unittest.TestCase):
+    def runTest(self):
+        con = sqlite3.connect(":memory:")
+        traced_statements = []
+
+        def trace(statement):
+            traced_statements.append(statement)
+
+        con.set_trace_callback(trace)
+        con.execute("create table foo(a, b)")
+        self.assertTrue(traced_statements)
+        self.assertTrue(any("create table foo" in stmt for stmt in traced_statements))
+
+suite = unittest.TestSuite([T("runTest")])
+result = unittest.TextTestRunner(verbosity=0).run(suite)
+print("ok" if result.wasSuccessful() else "fail")
+"#,
+    )
+    .expect("write repro source");
+
+    let compile_cmd = format!(
+        "import py_compile\npy_compile.compile({src:?}, cfile={dst:?}, doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)\n",
+        src = module_path.to_string_lossy(),
+        dst = pyc_path.to_string_lossy(),
+    );
+    let compile_output = Command::new(python)
+        .arg("-S")
+        .arg("-c")
+        .arg(compile_cmd)
+        .output()
+        .expect("compile pyc repro");
+    assert!(
+        compile_output.status.success(),
+        "pyc compile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&compile_output.stdout),
+        String::from_utf8_lossy(&compile_output.stderr)
+    );
+
+    let run_output = Command::new(pyrs_bin)
+        .env("PYRS_CPYTHON_LIB", &lib_path)
+        .arg("-S")
+        .arg(&pyc_path)
+        .output()
+        .expect("run pyc any(genexpr) unittest repro");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    assert!(
+        run_output.status.success(),
+        "pyc any(genexpr) unittest repro failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(last_line, "ok");
+}
+
+#[test]
 fn concurrent_futures_threadpool_smoke_no_semaphore_overrelease() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
