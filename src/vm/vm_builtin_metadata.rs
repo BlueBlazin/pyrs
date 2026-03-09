@@ -1170,6 +1170,13 @@ impl Vm {
         builtin: BuiltinFunction,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if builtin == BuiltinFunction::Slice && attr_name == "indices" {
+            return Ok(self.alloc_builtin_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::Slice),
+                None,
+                BuiltinFunction::SliceIndices,
+            ));
+        }
         if let Some(overrides) = self.builtin_attr_overrides.get(&builtin)
             && let Some(value) = overrides.get(attr_name)
         {
@@ -3411,6 +3418,28 @@ impl Vm {
             },
             _ => Err(RuntimeError::attribute_error(format!(
                 "memoryview has no attribute '{}'",
+                attr_name
+            ))),
+        }
+    }
+
+    pub(super) fn load_attr_slice(
+        &self,
+        slice: &crate::runtime::SliceValue,
+        attr_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        let attr_value = |value: Option<i64>| value.map(Value::Int).unwrap_or(Value::None);
+        match attr_name {
+            "start" => Ok(attr_value(slice.lower)),
+            "stop" => Ok(attr_value(slice.upper)),
+            "step" => Ok(attr_value(slice.step)),
+            "indices" => Ok(self.alloc_builtin_slot_wrapper_method(
+                Value::Builtin(BuiltinFunction::Slice),
+                Some(Value::Slice(Box::new(slice.clone()))),
+                BuiltinFunction::SliceIndices,
+            )),
+            _ => Err(RuntimeError::attribute_error(format!(
+                "slice has no attribute '{}'",
                 attr_name
             ))),
         }

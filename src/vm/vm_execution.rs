@@ -2429,6 +2429,7 @@ impl Vm {
                             self.load_attr_iterator(iterator, &attr_name)?
                         }
                         Value::MemoryView(view) => self.load_attr_memoryview(view, &attr_name)?,
+                        Value::Slice(slice) => self.load_attr_slice(&slice, &attr_name)?,
                         Value::Set(set) => self.load_attr_set_method(set, &attr_name)?,
                         Value::FrozenSet(set) => self.load_attr_set_method(set, &attr_name)?,
                         Value::Dict(dict) => self.load_attr_dict_method(dict, &attr_name)?,
@@ -2632,13 +2633,6 @@ impl Vm {
                         },
                         Value::ExceptionType(name) => {
                             self.load_attr_exception_type(&name, &attr_name)?
-                        }
-                        other => {
-                            return Err(RuntimeError::attribute_error(format!(
-                                "{} has no attribute '{}'",
-                                self.value_type_name_for_error(&other),
-                                attr_name
-                            )));
                         }
                     }
                 };

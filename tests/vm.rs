@@ -22720,6 +22720,47 @@ ok = (
 }
 
 #[test]
+fn os_path_splitext_ignores_leading_dots() {
+    let source = r#"import os
+ok = (
+    os.path.splitext("..") == ("..", "")
+    and os.path.splitext(".bashrc") == (".bashrc", "")
+    and os.path.splitext("archive.tar.gz") == ("archive.tar", ".gz")
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn slice_exposes_attrs_and_indices_like_cpython() {
+    let source = r#"s = slice(0, 10, 2)
+reverse = slice(None, None, -1)
+try:
+    slice(1).indices(-1)
+except ValueError as exc:
+    negative_length = str(exc) == "length should not be negative"
+else:
+    negative_length = False
+ok = (
+    (s.start, s.stop, s.step) == (0, 10, 2)
+    and s.indices(5) == (0, 5, 2)
+    and slice.indices(s, 5) == (0, 5, 2)
+    and reverse.indices(5) == (4, -1, -1)
+    and negative_length
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn underscore_accelerator_aliases_import_and_expose_expected_symbols() {
     let source = r#"import _codecs, _collections, _datetime, _functools, _signal, _sysconfig
 ok = (

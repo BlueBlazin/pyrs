@@ -5002,6 +5002,7 @@ pub enum BuiltinFunction {
     Range,
     ResourceGetRLimit,
     Slice,
+    SliceIndices,
     Bool,
     Int,
     IntBitLength,
@@ -6625,6 +6626,9 @@ impl BuiltinFunction {
                 };
 
                 Ok(Value::Slice(Box::new(SliceValue::new(lower, upper, step))))
+            }
+            BuiltinFunction::SliceIndices => {
+                Err(RuntimeError::type_error("slice.indices() requires VM dispatch"))
             }
             BuiltinFunction::Bool => {
                 if args.len() != 1 {
@@ -12519,6 +12523,7 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::Range => "range".to_string(),
         BuiltinFunction::ResourceGetRLimit => "getrlimit".to_string(),
         BuiltinFunction::Slice => "slice".to_string(),
+        BuiltinFunction::SliceIndices => "slice.indices".to_string(),
         BuiltinFunction::Bool => "bool".to_string(),
         BuiltinFunction::Int => "int".to_string(),
         BuiltinFunction::Float => "float".to_string(),

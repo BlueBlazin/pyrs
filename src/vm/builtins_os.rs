@@ -4904,12 +4904,26 @@ impl Vm {
         }
         let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
         let slash = path.rfind('/').map(|idx| idx + 1).unwrap_or(0);
-        let dot = path[slash..]
-            .rfind('.')
-            .map(|idx| slash + idx)
-            .filter(|idx| *idx > slash);
+        let dot = path[slash..].rfind('.').map(|idx| slash + idx);
         let (root, ext) = if let Some(idx) = dot {
-            (path[..idx].to_string(), path[idx..].to_string())
+            let bytes = path.as_bytes();
+            let mut filename_idx = slash;
+            let mut split_idx = None;
+            while filename_idx < idx {
+                if bytes[filename_idx] != b'.' {
+                    split_idx = Some(idx);
+                    break;
+                }
+                filename_idx += 1;
+            }
+            if let Some(split_idx) = split_idx {
+                (
+                    path[..split_idx].to_string(),
+                    path[split_idx..].to_string(),
+                )
+            } else {
+                (path, String::new())
+            }
         } else {
             (path, String::new())
         };

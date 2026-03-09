@@ -5279,6 +5279,146 @@ impl Vm {
         }
     }
 
+    fn coerce_index_bigint_for_slice_indices(
+        &mut self,
+        value: Value,
+    ) -> Result<BigInt, RuntimeError> {
+        match value {
+            Value::Int(_) | Value::Bool(_) | Value::BigInt(_) => value_to_bigint(value),
+            other => {
+                if let Some(index_method) = self.lookup_bound_special_method(&other, "__index__")? {
+                    let index_value =
+                        match self.call_internal(index_method, Vec::new(), HashMap::new())? {
+                            InternalCallOutcome::Value(value) => value,
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                return Err(self.runtime_error_from_active_exception(
+                                    "__index__() call failed",
+                                ));
+                            }
+                        };
+                    if matches!(
+                        index_value,
+                        Value::Int(_) | Value::Bool(_) | Value::BigInt(_)
+                    ) {
+                        return value_to_bigint(index_value);
+                    }
+                    return Err(RuntimeError::type_error(format!(
+                        "__index__ returned non-int (type {})",
+                        self.runtime_format_type_name(&index_value)
+                    )));
+                }
+                if let Some(proxy_index) = self.cpython_proxy_long(&other)
+                    && let Ok(index_value) = proxy_index
+                    && matches!(
+                        index_value,
+                        Value::Int(_) | Value::Bool(_) | Value::BigInt(_)
+                    )
+                {
+                    return value_to_bigint(index_value);
+                }
+                Err(RuntimeError::type_error(format!(
+                    "'{}' object cannot be interpreted as an integer",
+                    self.value_type_name_for_error(&other)
+                )))
+            }
+        }
+    }
+
+    fn normalized_slice_indices(
+        &self,
+        length: &BigInt,
+        lower: Option<i64>,
+        upper: Option<i64>,
+        step: Option<i64>,
+    ) -> Result<(BigInt, BigInt, BigInt), RuntimeError> {
+        if length.is_negative() {
+            return Err(RuntimeError::value_error("length should not be negative"));
+        }
+        let zero = BigInt::zero();
+        let one = BigInt::one();
+        let minus_one = BigInt::from_i64(-1);
+        let step_value = BigInt::from_i64(step.unwrap_or(1));
+        if step_value.is_zero() {
+            return Err(RuntimeError::value_error("slice step cannot be zero"));
+        }
+        let step_positive = matches!(step_value.cmp_total(&zero), Ordering::Greater);
+
+        let mut start = lower.map(BigInt::from_i64).unwrap_or_else(|| {
+            if step_positive {
+                zero.clone()
+            } else {
+                length.sub(&one)
+            }
+        });
+        if start.is_negative() {
+            start = start.add(length);
+            if start.is_negative() {
+                start = if step_positive {
+                    zero.clone()
+                } else {
+                    minus_one.clone()
+                };
+            }
+        } else if !matches!(start.cmp_total(length), Ordering::Less) {
+            start = if step_positive {
+                length.clone()
+            } else {
+                length.sub(&one)
+            };
+        }
+
+        let mut stop = upper.map(BigInt::from_i64).unwrap_or_else(|| {
+            if step_positive {
+                length.clone()
+            } else {
+                minus_one.clone()
+            }
+        });
+        if upper.is_some() && stop.is_negative() {
+            stop = stop.add(length);
+            if stop.is_negative() {
+                stop = if step_positive {
+                    zero
+                } else {
+                    minus_one
+                };
+            }
+        } else if !matches!(stop.cmp_total(length), Ordering::Less) {
+            stop = if step_positive {
+                length.clone()
+            } else {
+                length.sub(&one)
+            };
+        }
+
+        Ok((start, stop, step_value))
+    }
+
+    pub(super) fn builtin_slice_indices(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "indices() takes exactly one argument",
+            ));
+        }
+        let Value::Slice(slice) = &args[0] else {
+            return Err(RuntimeError::type_error(
+                "indices() requires a slice receiver",
+            ));
+        };
+        let length = self.coerce_index_bigint_for_slice_indices(args[1].clone())?;
+        let (start, stop, step) =
+            self.normalized_slice_indices(&length, slice.lower, slice.upper, slice.step)?;
+        Ok(self.heap.alloc_tuple(vec![
+            value_from_bigint(start),
+            value_from_bigint(stop),
+            value_from_bigint(step),
+        ]))
+    }
+
     pub(super) fn builtin_range(
         &mut self,
         mut args: Vec<Value>,
@@ -18218,6 +18358,7 @@ functions outside a stub module should always be followed by an implementation t
             }
             Value::Iterator(iterator) => self.load_attr_iterator(iterator, &name),
             Value::MemoryView(view) => self.load_attr_memoryview(view, &name),
+            Value::Slice(slice) => self.load_attr_slice(&slice, &name),
             Value::Set(set) => self.load_attr_set_method(set, &name),
             Value::FrozenSet(set) => self.load_attr_set_method(set, &name),
             Value::Dict(dict) => self.load_attr_dict_method(dict, &name),
@@ -18395,9 +18536,6 @@ functions outside a stub module should always be followed by an implementation t
                     RuntimeError::attribute_error(format!("exception has no attribute '{}'", name))
                 }),
             },
-            _ => Err(RuntimeError::attribute_error(
-                "attribute access unsupported type",
-            )),
         };
 
         match looked_up {

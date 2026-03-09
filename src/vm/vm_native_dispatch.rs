@@ -306,6 +306,7 @@ impl Vm {
         match builtin {
             BuiltinFunction::Repr => "__repr__",
             BuiltinFunction::Str => "__str__",
+            BuiltinFunction::SliceIndices => "indices",
             BuiltinFunction::OperatorAdd => "__add__",
             BuiltinFunction::OperatorLt => "__lt__",
             _ => "method",
@@ -14689,6 +14690,7 @@ impl Vm {
             BuiltinFunction::AbcGetDump => self.builtin_abc_get_dump(args, kwargs),
             BuiltinFunction::AbcResetRegistry => self.builtin_abc_reset_registry(args, kwargs),
             BuiltinFunction::AbcResetCaches => self.builtin_abc_reset_caches(args, kwargs),
+            BuiltinFunction::SliceIndices => self.builtin_slice_indices(args, kwargs),
             BuiltinFunction::Range => self.builtin_range(args, kwargs),
             _ => {
                 if kwargs.is_empty() {
