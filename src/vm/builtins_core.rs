@@ -17,14 +17,12 @@ use super::{
     call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, compare_ge, compare_gt,
     compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
     dict_set_value_checked, div_values, floor_div_values, format_float_hex, format_repr,
-    format_value, frame_cell_value, invert_value,
-    is_import_error_family, is_missing_attribute_error, is_os_error_family,
+    format_value, frame_cell_value, invert_value, is_missing_attribute_error, is_os_error_family,
     is_runtime_type_name_marker, is_truthy, matmul_values, mod_values, mul_values, neg_value,
     or_values, ordering_from_cmp_value, parse_hex_float_literal, parser, pos_value,
-    round_float_with_ndigits,
-    runtime_error_matches_exception, sub_values, value_from_bigint, value_from_object_ref,
-    value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
-    with_bytes_like_source, xor_values,
+    round_float_with_ndigits, runtime_error_matches_exception, sub_values, value_from_bigint,
+    value_from_object_ref, value_to_bigint, value_to_f64, value_to_int, weakref_target_id,
+    weakref_target_object, with_bytes_like_source, xor_values,
 };
 use crate::ast::{
     AssignTarget, AugOp as AstAugOp, BinaryOp as AstBinaryOp, BoolOp as AstBoolOp, CallArg,
@@ -34,6 +32,7 @@ use crate::ast::{
     Pattern as AstPattern, Stmt, StmtKind, TypeParam as AstTypeParam,
     TypeParamKind as AstTypeParamKind, UnaryOp as AstUnaryOp,
 };
+use crate::bytecode::cpython::{marshal_dump_object, marshal_load_object};
 use crate::runtime::{
     MIN_INT_MAX_STR_DIGITS, builtin_type_from_name_info, builtin_type_name_info,
     callable_family_for_value, callable_family_types_export_name, iterator_type_info,
@@ -3122,6 +3121,91 @@ impl Vm {
         }
     }
 
+    fn marshal_allow_code_flag(
+        &self,
+        kwargs: &mut HashMap<String, Value>,
+    ) -> Result<bool, RuntimeError> {
+        Ok(match kwargs.remove("allow_code") {
+            Some(value) => is_truthy(&value),
+            None => true,
+        })
+    }
+
+    fn marshal_load_runtime_error(message: String) -> RuntimeError {
+        if message.contains("unexpected end of data") {
+            return RuntimeError::with_exception(
+                "EOFError",
+                Some("marshal data too short".to_string()),
+            );
+        }
+        if message.contains("code objects not allowed") {
+            return RuntimeError::value_error("unmarshalling code objects is disallowed");
+        }
+        RuntimeError::value_error(message)
+    }
+
+    fn marshal_dump_runtime_error(message: String) -> RuntimeError {
+        if message.contains("code objects not allowed") {
+            return RuntimeError::value_error("marshalling code objects is disallowed");
+        }
+        RuntimeError::value_error(message)
+    }
+
+    pub(super) fn builtin_marshal_loads(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let allow_code = self.marshal_allow_code_flag(&mut kwargs)?;
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "loads() got an unexpected keyword argument",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error("loads() expects one argument"));
+        }
+        let payload = bytes_like_from_value(args.remove(0))?;
+        let decoded = marshal_load_object(&payload, allow_code)
+            .map_err(|err| Self::marshal_load_runtime_error(err.message))?;
+        self.marshal_object_to_value(&decoded)
+            .map_err(Self::marshal_load_runtime_error)
+    }
+
+    pub(super) fn builtin_marshal_dumps(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let allow_code = self.marshal_allow_code_flag(&mut kwargs)?;
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "dumps() got an unexpected keyword argument",
+            ));
+        }
+        if args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::type_error(
+                "dumps() expects a value and optional version",
+            ));
+        }
+        let value = args.remove(0);
+        if let Some(version) = args.pop() {
+            let _ = value_to_int(version)?;
+        }
+        if !allow_code && matches!(value, Value::Code(_)) {
+            return Err(RuntimeError::value_error(
+                "marshalling code objects is disallowed",
+            ));
+        }
+        let encoded = self
+            .value_to_marshal_object(&value)
+            .map_err(Self::marshal_dump_runtime_error)
+            .and_then(|object| {
+                marshal_dump_object(&object).map_err(|err| Self::marshal_dump_runtime_error(err.message))
+            })?;
+        Ok(self.heap.alloc_bytes(encoded))
+    }
+
     pub(super) fn builtin_len(
         &mut self,
         args: Vec<Value>,
@@ -5377,11 +5461,7 @@ impl Vm {
         if upper.is_some() && stop.is_negative() {
             stop = stop.add(length);
             if stop.is_negative() {
-                stop = if step_positive {
-                    zero
-                } else {
-                    minus_one
-                };
+                stop = if step_positive { zero } else { minus_one };
             }
         } else if !matches!(stop.cmp_total(length), Ordering::Less) {
             stop = if step_positive {
@@ -10598,7 +10678,8 @@ impl Vm {
                         ));
                     }
                 };
-                let import_error_family = is_import_error_family(exception_name.as_str());
+                let import_error_family =
+                    self.exception_inherits(exception_name.as_str(), "ImportError");
                 let mut import_error_name = Value::None;
                 let mut import_error_path = Value::None;
                 if import_error_family {
@@ -10732,7 +10813,8 @@ impl Vm {
                 ))
             }
             Value::Exception(mut exception) => {
-                let import_error_family = is_import_error_family(exception.name.as_str());
+                let import_error_family =
+                    self.exception_inherits(exception.name.as_str(), "ImportError");
                 let mut import_error_name = Value::None;
                 let mut import_error_path = Value::None;
                 if import_error_family {
@@ -11585,14 +11667,11 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || !args.is_empty() {
-            return Err(RuntimeError::type_error(
-                "get_current() takes no arguments",
-            ));
+            return Err(RuntimeError::type_error("get_current() takes no arguments"));
         }
-        Ok(self.heap.alloc_tuple(vec![
-            Value::Int(0),
-            Self::interpreter_whence_runtime(),
-        ]))
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::Int(0), Self::interpreter_whence_runtime()]))
     }
 
     pub(super) fn builtin_interpreters_get_main(
@@ -11614,10 +11693,10 @@ impl Vm {
             ));
         }
         let _ = kwargs.get("require_ready");
-        Ok(self.heap.alloc_list(vec![self.heap.alloc_tuple(vec![
-            Value::Int(0),
-            Self::interpreter_whence_runtime(),
-        ])]))
+        Ok(self.heap.alloc_list(vec![
+            self.heap
+                .alloc_tuple(vec![Value::Int(0), Self::interpreter_whence_runtime()]),
+        ]))
     }
 
     pub(super) fn builtin_interpreters_whence(
@@ -11626,7 +11705,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::type_error("whence() takes exactly one argument"));
+            return Err(RuntimeError::type_error(
+                "whence() takes exactly one argument",
+            ));
         }
         let id = value_to_int(args.remove(0))?;
         if id == 0 {

@@ -5400,6 +5400,7 @@ pub enum BuiltinFunction {
     OsFsEncode,
     OsFsDecode,
     OsRemove,
+    OsReplace,
     OsPopen,
     OsWaitStatusToExitCode,
     OsPathExists,
@@ -6627,9 +6628,9 @@ impl BuiltinFunction {
 
                 Ok(Value::Slice(Box::new(SliceValue::new(lower, upper, step))))
             }
-            BuiltinFunction::SliceIndices => {
-                Err(RuntimeError::type_error("slice.indices() requires VM dispatch"))
-            }
+            BuiltinFunction::SliceIndices => Err(RuntimeError::type_error(
+                "slice.indices() requires VM dispatch",
+            )),
             BuiltinFunction::Bool => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("bool() expects one argument"));
@@ -9158,6 +9159,7 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::OsFsEncode
             | BuiltinFunction::OsFsDecode
             | BuiltinFunction::OsRemove
+            | BuiltinFunction::OsReplace
             | BuiltinFunction::OsPopen
             | BuiltinFunction::OsWaitStatusToExitCode
             | BuiltinFunction::OsPathExists
@@ -9776,8 +9778,9 @@ functions outside a stub module should always be followed by an implementation t
             BuiltinFunction::FindSpec => Err(RuntimeError::new(
                 "importlib.find_spec() is only available in the VM",
             )),
-            BuiltinFunction::MarshalLoads => Ok(Value::None),
-            BuiltinFunction::MarshalDumps => Ok(heap.alloc_bytes(Vec::new())),
+            BuiltinFunction::MarshalLoads | BuiltinFunction::MarshalDumps => {
+                Err(RuntimeError::new("builtin requires VM context"))
+            }
             BuiltinFunction::Id => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("id() expects one argument"));
@@ -11076,12 +11079,12 @@ fn format_module_repr(module: &ModuleObject) -> String {
         };
         if let Some(Value::Str(origin)) = instance_data.attrs.get("origin") {
             if origin == "built-in" || origin == "frozen" {
-                return format!(
-                    "<module {} ({origin})>",
-                    format_repr_string(&spec_name)
-                );
+                return format!("<module {} ({origin})>", format_repr_string(&spec_name));
             }
-            if matches!(instance_data.attrs.get("has_location"), Some(Value::Bool(true))) {
+            if matches!(
+                instance_data.attrs.get("has_location"),
+                Some(Value::Bool(true))
+            ) {
                 return format!(
                     "<module {} from {}>",
                     format_repr_string(&spec_name),

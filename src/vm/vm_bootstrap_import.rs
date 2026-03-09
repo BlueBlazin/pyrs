@@ -462,6 +462,73 @@ impl Vm {
         false
     }
 
+    fn is_filefinder_path_hook(&mut self, hook: &Value) -> bool {
+        let hook_name = match self.builtin_getattr(
+            vec![hook.clone(), Value::Str("__name__".to_string())],
+            HashMap::new(),
+        ) {
+            Ok(Value::Str(name)) => name,
+            _ => {
+                self.clear_active_exception();
+                return false;
+            }
+        };
+        if hook_name != "path_hook_for_FileFinder" {
+            return false;
+        }
+        let hook_module = self
+            .builtin_getattr(
+                vec![hook.clone(), Value::Str("__module__".to_string())],
+                HashMap::new(),
+            )
+            .ok()
+            .and_then(|value| match value {
+                Value::Str(module_name) => Some(module_name),
+                _ => None,
+            });
+        if matches!(
+            hook_module.as_deref(),
+            Some("_frozen_importlib_external" | "importlib._bootstrap_external")
+        ) {
+            return true;
+        }
+        let code = match self.builtin_getattr(
+            vec![hook.clone(), Value::Str("__code__".to_string())],
+            HashMap::new(),
+        ) {
+            Ok(code) => code,
+            Err(_) => {
+                self.clear_active_exception();
+                return false;
+            }
+        };
+        match self.builtin_getattr(
+            vec![code, Value::Str("co_filename".to_string())],
+            HashMap::new(),
+        ) {
+            Ok(Value::Str(filename)) => filename.ends_with("importlib/_bootstrap_external.py"),
+            _ => {
+                self.clear_active_exception();
+                false
+            }
+        }
+    }
+
+    fn path_hook_error_is_import_error(&self, err: &RuntimeError) -> bool {
+        let Some(mut current) = err.exception_name().map(str::to_string) else {
+            return false;
+        };
+        loop {
+            if current == "ImportError" {
+                return true;
+            }
+            let Some(parent) = self.exception_parent_name(&current) else {
+                return false;
+            };
+            current = parent;
+        }
+    }
+
     fn list_signature(values: &[Value]) -> u64 {
         let mut hasher = DefaultHasher::new();
         values.len().hash(&mut hasher);
@@ -1147,6 +1214,170 @@ ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set
         )
     }
 
+    pub(super) fn install_frozen_importlib_import_helpers(&mut self) -> Result<(), RuntimeError> {
+        let Some(module) = self.modules.get("_frozen_importlib").cloned() else {
+            return Ok(());
+        };
+        let has_gcd_import = if let Object::Module(module_data) = &*module.kind() {
+            module_data.globals.contains_key("_gcd_import")
+        } else {
+            false
+        };
+        if has_gcd_import {
+            return Ok(());
+        }
+        let source = r#"
+def _resolve_name(name, package, level):
+    bits = package.rsplit('.', level - 1)
+    if len(bits) < level:
+        raise ImportError('attempted relative import beyond top-level package')
+    base = bits[0]
+    return f'{base}.{name}' if name else base
+
+def _sanity_check(name, package, level):
+    if not isinstance(name, str):
+        raise TypeError(f'module name must be str, not {type(name)}')
+    if level < 0:
+        raise ValueError('level must be >= 0')
+    if level > 0:
+        if not isinstance(package, str):
+            raise TypeError('__package__ not set to a string')
+        elif not package:
+            raise ImportError('attempted relative import with no known parent package')
+    if not name and level == 0:
+        raise ValueError('Empty module name')
+
+def _gcd_import(name, package=None, level=0):
+    _sanity_check(name, package, level)
+    if level > 0:
+        name = _resolve_name(name, package, level)
+    return __import__(name, {}, {}, ['_gcd_import'], 0)
+"#;
+        self.execute_source_module_from_text(
+            &module,
+            "_frozen_importlib",
+            "<bootstrap _frozen_importlib import helpers>",
+            source.to_string(),
+        )
+    }
+
+    pub(super) fn install_frozen_importlib_external_helpers(&mut self) -> Result<(), RuntimeError> {
+        let Some(module) = self.modules.get("_frozen_importlib_external").cloned() else {
+            return Ok(());
+        };
+        let has_helpers = if let Object::Module(module_data) = &*module.kind() {
+            let has_supported_file_loaders = module_data
+                .globals
+                .contains_key("_get_supported_file_loaders");
+            let has_file_finder_path_hook = matches!(
+                module_data.globals.get("FileFinder"),
+                Some(Value::Class(class))
+                    if matches!(
+                        &*class.kind(),
+                        Object::Class(class_data) if class_data.attrs.contains_key("path_hook")
+                    )
+            );
+            let has_pathfinder_find_spec = matches!(
+                module_data.globals.get("PathFinder"),
+                Some(Value::Class(class))
+                    if matches!(
+                        &*class.kind(),
+                        Object::Class(class_data) if class_data.attrs.contains_key("find_spec")
+                    )
+            );
+            has_supported_file_loaders && has_file_finder_path_hook && has_pathfinder_find_spec
+        } else {
+            false
+        };
+        if has_helpers {
+            return Ok(());
+        }
+        let source = r#"
+import _imp
+import os as _os
+import sys
+
+def _get_supported_file_loaders():
+    extension_loaders = []
+    if hasattr(_imp, 'create_dynamic'):
+        if sys.platform in {"ios", "tvos", "watchos"}:
+            extension_loaders = [(AppleFrameworkLoader, [
+                suffix.replace(".so", ".fwork")
+                for suffix in _imp.extension_suffixes()
+            ])]
+        extension_loaders.append((ExtensionFileLoader, _imp.extension_suffixes()))
+    source = SourceFileLoader, SOURCE_SUFFIXES
+    bytecode = SourcelessFileLoader, BYTECODE_SUFFIXES
+    return extension_loaders + [source, bytecode]
+
+def _FileFinder_path_hook(cls, *loader_details):
+    return _pyrs_path_hook
+
+FileFinder.path_hook = classmethod(_FileFinder_path_hook)
+
+def _PathFinder_invalidate_caches():
+    for name, finder in list(sys.path_importer_cache.items()):
+        if finder is None or not _os.path.isabs(name):
+            del sys.path_importer_cache[name]
+        elif hasattr(finder, 'invalidate_caches'):
+            finder.invalidate_caches()
+
+PathFinder.invalidate_caches = staticmethod(_PathFinder_invalidate_caches)
+
+def _PathFinder_path_hooks(path):
+    for hook in sys.path_hooks:
+        try:
+            return hook(path)
+        except ImportError:
+            continue
+    return None
+
+PathFinder._path_hooks = staticmethod(_PathFinder_path_hooks)
+
+def _PathFinder_path_importer_cache(cls, path):
+    if path == '':
+        try:
+            path = _os.getcwd()
+        except (FileNotFoundError, PermissionError):
+            return None
+    try:
+        return sys.path_importer_cache[path]
+    except KeyError:
+        finder = cls._path_hooks(path)
+        sys.path_importer_cache[path] = finder
+        return finder
+
+PathFinder._path_importer_cache = classmethod(_PathFinder_path_importer_cache)
+
+def _PathFinder_get_spec(cls, fullname, path, target=None):
+    for entry in path:
+        if not isinstance(entry, str):
+            continue
+        finder = cls._path_importer_cache(entry)
+        if finder is None:
+            continue
+        spec = finder.find_spec(fullname, target)
+        if spec is not None:
+            return spec
+    return None
+
+PathFinder._get_spec = classmethod(_PathFinder_get_spec)
+
+def _PathFinder_find_spec(cls, fullname, path=None, target=None):
+    if path is None:
+        path = sys.path
+    return cls._get_spec(fullname, path, target)
+
+PathFinder.find_spec = classmethod(_PathFinder_find_spec)
+"#;
+        self.execute_source_module_from_text(
+            &module,
+            "_frozen_importlib_external",
+            "<bootstrap _frozen_importlib_external helpers>",
+            source.to_string(),
+        )
+    }
+
     pub(super) fn install_frozen_module_loader_state(
         &mut self,
         module_name: &str,
@@ -1713,6 +1944,7 @@ ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set
                 ("fspath", BuiltinFunction::OsFspath),
                 ("unlink", BuiltinFunction::OsRemove),
                 ("remove", BuiltinFunction::OsRemove),
+                ("replace", BuiltinFunction::OsReplace),
                 ("popen", BuiltinFunction::OsPopen),
             ],
             vec![
@@ -1910,6 +2142,7 @@ ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set
                 ("rmdir", BuiltinFunction::OsRmdir),
                 ("unlink", BuiltinFunction::OsRemove),
                 ("remove", BuiltinFunction::OsRemove),
+                ("replace", BuiltinFunction::OsReplace),
                 ("utime", BuiltinFunction::OsUTime),
                 ("scandir", BuiltinFunction::OsScandir),
                 ("_path_normpath", BuiltinFunction::OsPathNormPath),
@@ -10994,11 +11227,35 @@ ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set
     }
 
     pub(super) fn run_path_hooks_for_root(&mut self, root: &std::path::Path) -> Option<Value> {
-        if self.import_path_hooks_has_default_hook {
-            Some(self.make_file_finder_importer(root))
-        } else {
-            None
+        let Some(path_hooks) = self.sys_list_obj("path_hooks") else {
+            return None;
+        };
+        let hooks = match &*path_hooks.kind() {
+            Object::List(values) => values.clone(),
+            _ => return None,
+        };
+        let path_value = Value::Str(root.to_string_lossy().to_string());
+        for hook in hooks {
+            if matches_finder_kind(&hook, DEFAULT_PATH_HOOK) || self.is_filefinder_path_hook(&hook)
+            {
+                return Some(self.make_file_finder_importer(root));
+            }
+            match self.call_internal(hook, vec![path_value.clone()], HashMap::new()) {
+                Ok(InternalCallOutcome::Value(importer)) => return Some(importer),
+                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    let err = self.runtime_error_from_active_exception("path hook failed");
+                    if !self.path_hook_error_is_import_error(&err) {
+                        return None;
+                    }
+                }
+                Err(err) => {
+                    if !self.path_hook_error_is_import_error(&err) {
+                        return None;
+                    }
+                }
+            }
         }
+        None
     }
 
     fn try_make_cpython_file_finder_importer(&mut self, root: &std::path::Path) -> Option<Value> {
@@ -11815,7 +12072,7 @@ ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set
         self.heap.alloc_instance(InstanceObject::new(class))
     }
 
-    fn loader_class_from_modules(&self, class_name: &str) -> Option<ObjRef> {
+    pub(super) fn loader_class_from_modules(&self, class_name: &str) -> Option<ObjRef> {
         for module_name in [
             "importlib.machinery",
             "_frozen_importlib_external",
@@ -12966,6 +13223,9 @@ ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set
         level: usize,
     ) -> Result<String, RuntimeError> {
         if level == 0 {
+            if requested.is_empty() {
+                return Err(RuntimeError::value_error("Empty module name"));
+            }
             return Ok(requested.to_string());
         }
 

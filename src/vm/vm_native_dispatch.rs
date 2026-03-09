@@ -13211,6 +13211,7 @@ impl Vm {
             BuiltinFunction::OsFsEncode => self.builtin_os_fsencode(args, kwargs),
             BuiltinFunction::OsFsDecode => self.builtin_os_fsdecode(args, kwargs),
             BuiltinFunction::OsRemove => self.builtin_os_remove(args, kwargs),
+            BuiltinFunction::OsReplace => self.builtin_os_replace(args, kwargs),
             BuiltinFunction::OsPopen => self.builtin_os_popen(args, kwargs),
             BuiltinFunction::OsWaitStatusToExitCode => {
                 self.builtin_os_waitstatus_to_exitcode(args, kwargs)
@@ -13606,6 +13607,8 @@ impl Vm {
             BuiltinFunction::JsonDecoderScanString => {
                 self.builtin_json_decoder_scanstring(args, kwargs)
             }
+            BuiltinFunction::MarshalLoads => self.builtin_marshal_loads(args, kwargs),
+            BuiltinFunction::MarshalDumps => self.builtin_marshal_dumps(args, kwargs),
             BuiltinFunction::PyLongIntToDecimalString => {
                 self.builtin_pylong_int_to_decimal_string(args, kwargs)
             }

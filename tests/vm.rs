@@ -309,6 +309,15 @@ fn compile_cpython_pyc(source: &str, module_name: &str) -> Option<PathBuf> {
     None
 }
 
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
 #[test]
 fn executes_constant_expression() {
     let module = parser::parse_module("42").expect("parse should succeed");
@@ -19163,6 +19172,227 @@ fn import_uses_child_sys_modules_entry_created_during_parent_import() {
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.add_module_path(lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn frozen_importlib_external_exposes_supported_file_loaders_and_path_hook() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = "import _frozen_importlib_external as external\nimport importlib.machinery as machinery\nloaders = external._get_supported_file_loaders()\nsource_loader = loaders[-2]\nbytecode_loader = loaders[-1]\nhook = machinery.FileFinder.path_hook(*loaders)\nok = (callable(hook) and source_loader[0] is machinery.SourceFileLoader and source_loader[1] is external.SOURCE_SUFFIXES and bytecode_loader[0] is machinery.SourcelessFileLoader and bytecode_loader[1] is external.BYTECODE_SUFFIXES)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn frozen_importlib_exposes_gcd_import_for_source_importlib_module_api() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let path_literal = lib_path.to_string_lossy().replace('\\', "\\\\");
+    let source = "import _frozen_importlib as bootstrap\nimport sys\nsys.path = ['PLACEHOLDER']\nmodule = bootstrap._gcd_import('email')\nok = (module.__name__ == 'email')\n"
+        .replace("PLACEHOLDER", &path_literal);
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn builtin_import_empty_name_level_zero_raises_value_error() {
+    let source = "import builtins\nok = False\ntry:\n    builtins.__import__('')\nexcept ValueError as exc:\n    ok = (str(exc) == 'Empty module name')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn deleted_cwd_pathfinder_find_spec_returns_none_instead_of_getcwd_runtime_error() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_deleted_cwd_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let script = "import importlib.machinery as machinery\nimport os\nimport sys\npath = sys.argv[1]\nos.chdir(path)\ntry:\n    os.rmdir(path)\nexcept OSError:\n    print('skip')\nelse:\n    sys.path = ['']\n    print(machinery.PathFinder.find_spec('whatever') is None)\n";
+    let output = Command::new(pyrs_bin)
+        .env("PYRS_CPYTHON_LIB", &lib_path)
+        .arg("-S")
+        .arg("-c")
+        .arg(script)
+        .arg(temp_dir.to_string_lossy().to_string())
+        .output()
+        .expect("spawn deleted cwd probe");
+    let _ = std::fs::remove_dir(&temp_dir);
+    assert!(
+        output.status.success(),
+        "probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result = stdout.trim();
+    assert!(
+        result == "True" || result == "skip",
+        "unexpected deleted cwd probe output: {}",
+        stdout
+    );
+}
+
+#[test]
+fn source_importlib_uses_python_filefinder_path_hook_closures() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-importlib-source-path-hook-closures", move || {
+        let path_literal = lib_path.to_string_lossy().replace('\\', "\\\\");
+        let source = format!(
+            "import sys\nimport zipimport\nfrom test.test_importlib import util\nimportlib = util.import_importlib('importlib')['Source']\nmachinery = util.import_importlib('importlib.machinery')['Source']\nhook = machinery.FileFinder.path_hook(*importlib._bootstrap_external._get_supported_file_loaders())\nsys.path = ['{path_literal}']\nsys.path_hooks = [zipimport.zipimporter, hook]\nsys.path_importer_cache = {{}}\nmodule = importlib.import_module('email')\nok = (module.__name__ == 'email')\n"
+        );
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn os_stat_follow_symlinks_keyword_and_lstat_keep_regular_file_mode() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-os-stat-follow-symlinks", move || {
+        let source = "import os\nimport pathlib\nimport stat\nimport tempfile\nroot = pathlib.Path(tempfile.mkdtemp(prefix='pyrs_stat_'))\nfile = root / 'file'\nfile.write_text('x')\nlstat_mode = file.lstat().st_mode\nstat_mode = os.stat(file, follow_symlinks=False).st_mode\nok = (not file.is_symlink() and not os.path.islink(file) and stat.S_ISREG(lstat_mode) and stat.S_ISREG(stat_mode))\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn pathlib_copy_follow_symlinks_true_materializes_zip_symlink_targets() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-pathlib-copy-follow-symlinks", move || {
+        let source = "import pathlib\nimport tempfile\nfrom test.test_pathlib.support.zip_path import ZipPathGround, ReadableZipPath\nground = ZipPathGround(ReadableZipPath)\nroot = ground.setup()\nground.create_hierarchy(root)\nground.create_symlink(root / 'dirC' / 'linkC', 'fileC')\nground.create_symlink(root / 'dirC' / 'linkD', 'dirD')\ntarget = pathlib.Path(tempfile.mkdtemp(prefix='pyrs_copy_')) / 'copyC'\n(root / 'dirC').copy(target)\nfile_link = target / 'linkC'\ndir_link = target / 'linkD'\nok = (not file_link.is_symlink() and file_link.is_file() and file_link.read_text() == 'this is file C\\n' and not dir_link.is_symlink() and dir_link.is_dir() and (dir_link / 'fileD').read_text() == 'this is file D\\n')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn zipimporter_non_zip_directory_raises_zipimporterror_with_path_attr() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let path_literal = lib_path.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import zipimport\npath = '{path_literal}'\nok = False\ntry:\n    zipimport.zipimporter(path)\nexcept zipimport.ZipImportError as exc:\n    ok = (getattr(exc, 'path', None) == path)\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn exposes_sys_pycache_prefix_defaulting_to_none() {
+    let source = "import sys\nok = hasattr(sys, 'pycache_prefix') and sys.pycache_prefix is None\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn os_replace_overwrites_existing_destination_file() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_os_replace_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let src = temp_dir.join("src.txt");
+    let dst = temp_dir.join("dst.txt");
+    std::fs::write(&src, b"new").expect("write src");
+    std::fs::write(&dst, b"old").expect("write dst");
+    let src_literal = src.to_string_lossy().replace('\\', "\\\\");
+    let dst_literal = dst.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import os\nimport posix\nos.replace('{src_literal}', '{dst_literal}')\nwith open('{dst_literal}', 'rb') as handle:\n    data = handle.read()\nok = (data == b'new' and (not os.path.exists('{src_literal}')) and callable(posix.replace))\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    let _ = std::fs::remove_file(&dst);
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn marshal_loads_decodes_cpython_marshaled_code_objects() {
+    let Some(pyc_path) = compile_cpython_pyc("answer = 42\n", "marshal_code") else {
+        return;
+    };
+    let bytes = std::fs::read(&pyc_path).expect("read pyc");
+    assert!(bytes.len() > 16, "expected pyc payload");
+    let payload_hex = hex_bytes(&bytes[16..]);
+    let source = format!(
+        "import marshal\nimport types\npayload = bytes.fromhex('{payload_hex}')\ncode = marshal.loads(payload)\nns = {{}}\nexec(code, ns)\nallow_code_blocked = False\ntry:\n    marshal.loads(payload, allow_code=False)\nexcept ValueError as exc:\n    allow_code_blocked = ('code objects' in str(exc)) or ('disallowed' in str(exc))\nok = (isinstance(code, types.CodeType) and ns['answer'] == 42 and code.co_filename.endswith('marshal_code.py') and allow_code_blocked)\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn marshal_dumps_and_loads_roundtrip_basic_values_without_code() {
+    let source = "import marshal\nvalue = {'nums': [1, 2, 3], 'payload': b'hi'}\npayload = marshal.dumps(value, allow_code=False)\nroundtrip = marshal.loads(payload, allow_code=False)\nok = (isinstance(payload, bytes) and roundtrip == value)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn marshal_dumps_and_loads_roundtrip_module_code_objects() {
+    let source = "import marshal\nimport types\ncode = compile('value = 42\\n', 'marshal_roundtrip.py', 'exec')\npayload = marshal.dumps(code)\nroundtrip = marshal.loads(payload)\nns = {}\nexec(roundtrip, ns)\nok = (isinstance(roundtrip, types.CodeType) and roundtrip.co_filename == 'marshal_roundtrip.py' and ns['value'] == 42)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }

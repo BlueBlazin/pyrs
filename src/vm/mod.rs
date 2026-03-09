@@ -1644,7 +1644,12 @@ impl Vm {
             .expect("install _frozen_importlib importer helpers");
         vm.install_frozen_importlib_modulespec_helpers()
             .expect("install _frozen_importlib ModuleSpec helpers");
+        vm.install_frozen_importlib_import_helpers()
+            .expect("install _frozen_importlib import helpers");
+        vm.install_frozen_importlib_external_helpers()
+            .expect("install _frozen_importlib_external helpers");
         vm.normalize_bootstrap_module_classes();
+        vm.install_default_meta_path_finder();
         vm.install_builtins_module();
         vm.refresh_warnings_fallback_defaults();
         vm.install_loaded_frozen_module_loader_states();
@@ -2971,7 +2976,7 @@ impl Vm {
                 attrs.entry(attr.to_string()).or_insert(Value::None);
             }
         }
-        if is_import_error_family(exception.name.as_str()) {
+        if self.exception_inherits(exception.name.as_str(), "ImportError") {
             let mut attrs = exception.attrs.borrow_mut();
             if !attrs.contains_key("msg") {
                 attrs.insert("msg".to_string(), message_value.clone());
@@ -4724,6 +4729,9 @@ impl Vm {
                 .insert("dont_write_bytecode".to_string(), Value::Bool(false));
             module_data
                 .globals
+                .insert("pycache_prefix".to_string(), Value::None);
+            module_data
+                .globals
                 .insert("platlibdir".to_string(), Value::Str("lib".to_string()));
             module_data.globals.insert(
                 "getfilesystemencoding".to_string(),
@@ -5458,6 +5466,16 @@ impl Vm {
                     "__module__".to_string(),
                     Value::Str("_frozen_importlib_external".to_string()),
                 );
+                if name == "FileFinder" {
+                    class_data.attrs.insert(
+                        "find_spec".to_string(),
+                        Value::Builtin(BuiltinFunction::ImportlibFileFinderFindSpec),
+                    );
+                    class_data.attrs.insert(
+                        "invalidate_caches".to_string(),
+                        Value::Builtin(BuiltinFunction::ImportlibFileFinderInvalidateCaches),
+                    );
+                }
             }
             class
         };
@@ -5492,6 +5510,7 @@ impl Vm {
                     "_path_join",
                     BuiltinFunction::FrozenImportlibExternalPathJoin,
                 ),
+                ("_pyrs_path_hook", BuiltinFunction::ImportlibPathHook),
             ],
             vec![
                 (
@@ -6138,6 +6157,35 @@ impl Vm {
                 self.heap
                     .alloc_tuple(mro.into_iter().map(Value::Class).collect::<Vec<_>>()),
             );
+        }
+    }
+
+    fn install_default_meta_path_finder(&mut self) {
+        let Some(path_finder) = self.loader_class_from_modules("PathFinder") else {
+            return;
+        };
+        let Some(sys_module) = self.modules.get("sys").cloned() else {
+            return;
+        };
+        let Object::Module(module_data) = &mut *sys_module.kind_mut() else {
+            return;
+        };
+        let Some(Value::List(meta_path)) = module_data.globals.get("meta_path").cloned() else {
+            return;
+        };
+        let Object::List(values) = &mut *meta_path.kind_mut() else {
+            return;
+        };
+        let default_value = Value::Class(path_finder);
+        let mut replaced = false;
+        for value in values.iter_mut() {
+            if matches_finder_kind(value, DEFAULT_META_PATH_FINDER) {
+                *value = default_value.clone();
+                replaced = true;
+            }
+        }
+        if !replaced {
+            values.push(default_value);
         }
     }
 
@@ -12693,6 +12741,24 @@ fn matches_finder_kind(value: &Value, expected: &str) -> bool {
     match value {
         Value::Str(name) => name == expected,
         Value::Builtin(BuiltinFunction::ImportlibPathHook) => expected == DEFAULT_PATH_HOOK,
+        Value::Class(class) => {
+            if expected != DEFAULT_META_PATH_FINDER {
+                return false;
+            }
+            matches!(
+                &*class.kind(),
+                Object::Class(class_data)
+                    if class_data.name == "PathFinder"
+                        && matches!(
+                            class_data.attrs.get("__module__"),
+                            Some(Value::Str(module_name))
+                                if matches!(
+                                    module_name.as_str(),
+                                    "_frozen_importlib_external" | "importlib._bootstrap_external"
+                                )
+                        )
+            )
+        }
         Value::Instance(instance) => matches!(
             &*instance.kind(),
             Object::Instance(instance_data)

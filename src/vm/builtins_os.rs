@@ -363,8 +363,8 @@ impl Vm {
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new("getcwd() expects no arguments"));
         }
-        let cwd = std::env::current_dir()
-            .map_err(|err| RuntimeError::new(format!("getcwd failed: {err}")))?;
+        let cwd =
+            std::env::current_dir().map_err(|err| Self::os_error_from_io("getcwd failed", err))?;
         Ok(Value::Str(cwd.to_string_lossy().to_string()))
     }
 
@@ -1413,10 +1413,20 @@ impl Vm {
     pub(super) fn builtin_os_stat(
         &mut self,
         args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() != 1 {
+        if args.len() != 1 {
             return Err(RuntimeError::new("stat() expects one argument"));
+        }
+        let follow_symlinks = if let Some(value) = kwargs.remove("follow_symlinks") {
+            is_truthy(&value)
+        } else {
+            true
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "stat() got an unexpected keyword argument",
+            ));
         }
         let metadata = match &args[0] {
             Value::Int(fd) => {
@@ -1446,10 +1456,15 @@ impl Vm {
             }
             _ => {
                 let (path, _) = self.path_arg_to_pathbuf_and_type(args[0].clone())?;
-                fs::metadata(path).map_err(|err| Self::os_error_from_io("stat failed", err))?
+                if follow_symlinks {
+                    fs::metadata(path).map_err(|err| Self::os_error_from_io("stat failed", err))?
+                } else {
+                    fs::symlink_metadata(path)
+                        .map_err(|err| Self::os_error_from_io("lstat failed", err))?
+                }
             }
         };
-        self.build_stat_result(metadata, false)
+        self.build_stat_result(metadata)
     }
 
     pub(super) fn builtin_os_lstat(
@@ -1463,7 +1478,7 @@ impl Vm {
         let (path, _) = self.path_arg_to_pathbuf_and_type(args[0].clone())?;
         let metadata = fs::symlink_metadata(path)
             .map_err(|err| Self::os_error_from_io("lstat failed", err))?;
-        self.build_stat_result(metadata, true)
+        self.build_stat_result(metadata)
     }
 
     pub(super) fn builtin_os_mkdir(
@@ -1815,7 +1830,7 @@ impl Vm {
         } else {
             fs::symlink_metadata(path).map_err(|err| Self::os_error_from_io("lstat failed", err))?
         };
-        self.build_stat_result(metadata, !follow_symlinks)
+        self.build_stat_result(metadata)
     }
 
     pub(super) fn builtin_os_direntry_is_dir(
@@ -2255,6 +2270,34 @@ impl Vm {
         let (path, _) = self.path_arg_to_pathbuf_and_type(args[0].clone())?;
         fs::remove_file(path).map_err(|err| Self::os_error_from_io("remove failed", err))?;
         Ok(Value::None)
+    }
+
+    pub(super) fn builtin_os_replace(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("replace() expects src and dst"));
+        }
+        let (src, _) = self.path_arg_to_pathbuf_and_type(args[0].clone())?;
+        let (dst, _) = self.path_arg_to_pathbuf_and_type(args[1].clone())?;
+        match fs::rename(&src, &dst) {
+            Ok(()) => Ok(Value::None),
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
+                ) && dst.is_file() =>
+            {
+                fs::remove_file(&dst)
+                    .map_err(|remove_err| Self::os_error_from_io("replace failed", remove_err))?;
+                fs::rename(&src, &dst)
+                    .map_err(|rename_err| Self::os_error_from_io("replace failed", rename_err))?;
+                Ok(Value::None)
+            }
+            Err(err) => Err(Self::os_error_from_io("replace failed", err)),
+        }
     }
 
     pub(super) fn builtin_os_waitstatus_to_exitcode(
@@ -4151,7 +4194,6 @@ impl Vm {
     pub(super) fn build_stat_result(
         &self,
         metadata: fs::Metadata,
-        use_symlink_mode: bool,
     ) -> Result<Value, RuntimeError> {
         let stat_result_class = self
             .modules
@@ -4185,7 +4227,7 @@ impl Vm {
         #[cfg(unix)]
         let mut st_mode = if file_type.is_dir() {
             0o040000
-        } else if file_type.is_symlink() || use_symlink_mode {
+        } else if file_type.is_symlink() {
             0o120000
         } else {
             0o100000
@@ -4193,7 +4235,7 @@ impl Vm {
         #[cfg(not(unix))]
         let st_mode = if file_type.is_dir() {
             0o040000
-        } else if file_type.is_symlink() || use_symlink_mode {
+        } else if file_type.is_symlink() {
             0o120000
         } else {
             0o100000
@@ -4925,10 +4967,7 @@ impl Vm {
                 filename_idx += 1;
             }
             if let Some(split_idx) = split_idx {
-                (
-                    path[..split_idx].to_string(),
-                    path[split_idx..].to_string(),
-                )
+                (path[..split_idx].to_string(), path[split_idx..].to_string())
             } else {
                 (path, String::new())
             }
@@ -5721,13 +5760,17 @@ impl Vm {
         if decode_is_builtin {
             return match decoded {
                 Value::Str(text) => Ok(text),
-                _ => Err(RuntimeError::type_error("decoder should return a string result")),
+                _ => Err(RuntimeError::type_error(
+                    "decoder should return a string result",
+                )),
             };
         }
         let first = self.codec_result_first_value(decoded, "decode")?;
         match first {
             Value::Str(text) => Ok(text),
-            _ => Err(RuntimeError::type_error("decoder should return a string result")),
+            _ => Err(RuntimeError::type_error(
+                "decoder should return a string result",
+            )),
         }
     }
 

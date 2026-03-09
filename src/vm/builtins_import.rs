@@ -129,7 +129,7 @@ impl Vm {
         level: usize,
     ) -> Result<String, RuntimeError> {
         if level == 0 {
-            return Ok(requested.to_string());
+            return self.resolve_import_name(requested, 0);
         }
         match globals {
             Value::Dict(_) | Value::Module(_) => {}
@@ -659,7 +659,7 @@ impl Vm {
 
         let (level, requested) = split_relative_import_name(&name);
         let resolved_name = if level == 0 {
-            name
+            self.resolve_import_name(&name, 0)?
         } else {
             let package = package.ok_or_else(|| {
                 RuntimeError::new("import_module() relative import requires package argument")
@@ -1081,7 +1081,7 @@ impl Vm {
 
         let (level, requested) = split_relative_import_name(&name);
         let target = if level == 0 {
-            name
+            self.resolve_import_name(&name, 0)?
         } else {
             let package = package
                 .ok_or_else(|| RuntimeError::new("relative resolve_name() requires package"))?;
@@ -1227,7 +1227,7 @@ impl Vm {
 
         let (level, requested) = split_relative_import_name(&name);
         let resolved_name = if level == 0 {
-            name
+            self.resolve_import_name(&name, 0)?
         } else {
             let package = package.ok_or_else(|| {
                 RuntimeError::new("find_spec() relative import requires package argument")
@@ -1703,7 +1703,7 @@ impl Vm {
         let path = self.path_arg_to_string(args[0].clone())?;
         let metadata =
             fs::metadata(path).map_err(|err| RuntimeError::new(format!("stat failed: {err}")))?;
-        self.build_stat_result(metadata, false)
+        self.build_stat_result(metadata)
     }
 
     pub(super) fn builtin_frozen_importlib_external_unpack_uint16(
