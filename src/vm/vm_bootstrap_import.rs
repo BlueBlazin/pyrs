@@ -11914,10 +11914,13 @@ ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set
         package_dirs: &[PathBuf],
         is_namespace: bool,
     ) -> Value {
-        let parent = name
-            .rsplit_once('.')
-            .map(|(parent, _)| parent.to_string())
-            .unwrap_or_default();
+        let parent = if is_package {
+            name.to_string()
+        } else {
+            name.rsplit_once('.')
+                .map(|(parent, _)| parent.to_string())
+                .unwrap_or_default()
+        };
         let loader_value = self.loader_spec_value_for_module(
             name,
             origin,

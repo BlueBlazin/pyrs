@@ -19092,6 +19092,22 @@ fn import_uses_explicit_globals_for_relative_package_resolution() {
 }
 
 #[test]
+fn source_importlib_restores_package_attr_for_package_specs() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-importlib-source-package-attr", move || {
+        let source = "from test.test_importlib import util\nsource_importlib = util.import_importlib('importlib')['Source']\nwith util.mock_spec('pkg.__init__') as importer:\n    with util.import_state(meta_path=[importer]):\n        del importer['pkg'].__package__\n        module = source_importlib.__import__('pkg')\nok = (module.__package__ == 'pkg' and module.__spec__.parent == 'pkg')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn frozen_module_repr_uses_spec_origin() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
