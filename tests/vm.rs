@@ -17883,7 +17883,15 @@ try:
     os.close(999999)
 except OSError:
     caught = True
-ok = st.st_mtime >= 2 and caught
+ok = (
+    st.st_mtime >= 2
+    and isinstance(st.st_atime_ns, int)
+    and isinstance(st.st_mtime_ns, int)
+    and isinstance(st.st_ctime_ns, int)
+    and st.st_atime_ns == 1_000_000_000
+    and st.st_mtime_ns == 2_000_000_000
+    and caught
+)
 "#,
         path = file.to_string_lossy().replace('\\', "\\\\"),
         empty = empty_dir.to_string_lossy().replace('\\', "\\\\"),
@@ -17906,6 +17914,39 @@ fn os_ftruncate_bad_fd_sets_oserror_errno_and_args() {
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+#[cfg(unix)]
+fn os_scandir_permission_denied_uses_permissionerror() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_os_scandir_perm_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::set_permissions(&temp_dir, std::fs::Permissions::from_mode(0o000))
+        .expect("remove permissions");
+
+    let source = format!(
+        "import os\nname = ''\ntry:\n    list(os.scandir({path:?}))\nexcept Exception as exc:\n    name = type(exc).__name__\n",
+        path = temp_dir.to_string_lossy().to_string(),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("name"), Some(Value::Str("PermissionError".to_string())));
+
+    std::fs::set_permissions(&temp_dir, std::fs::Permissions::from_mode(0o700))
+        .expect("restore permissions");
+    std::fs::remove_dir(&temp_dir).expect("remove temp dir");
 }
 
 #[test]

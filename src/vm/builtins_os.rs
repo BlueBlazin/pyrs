@@ -7,8 +7,8 @@ use super::{
     format_value, fs, is_pyrs_executable, is_truthy, mul_values, normalize_codec_encoding,
     normalize_codec_errors, parse_decimal_bigint_literal, parse_modules_to_block_literal,
     parse_string_formatter, pow_values, seconds_to_system_time, split_formatter_field_name,
-    system_time_to_secs_f64, unknown_codec_error_handler, value_from_bigint, value_to_bigint,
-    value_to_f64, value_to_int, value_to_process_text, value_to_sequence_items,
+    unknown_codec_error_handler, value_from_bigint, value_to_bigint, value_to_f64, value_to_int,
+    value_to_process_text, value_to_sequence_items,
 };
 #[cfg(unix)]
 use super::{collect_env_entries, collect_process_argv, is_missing_attribute_error};
@@ -31,6 +31,25 @@ const SUBPROCESS_PIPE_ENCODING_ATTR: &str = "__pyrs_encoding";
 const SUBPROCESS_PIPE_TEXT_ATTR: &str = "__pyrs_text";
 const SUBPROCESS_STDERR_TO_STDOUT_ATTR: &str = "__pyrs_stderr_to_stdout";
 const PATHLIB_PATH_VALUE_ATTR: &str = "__pyrs_path_value__";
+
+#[cfg(not(unix))]
+fn system_time_to_ns_i64(time: SystemTime) -> Option<i64> {
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(duration) => {
+            let secs = i128::from(duration.as_secs());
+            let nanos = i128::from(duration.subsec_nanos());
+            let total = secs.checked_mul(1_000_000_000)?.checked_add(nanos)?;
+            i64::try_from(total).ok()
+        }
+        Err(err) => {
+            let duration = err.duration();
+            let secs = i128::from(duration.as_secs());
+            let nanos = i128::from(duration.subsec_nanos());
+            let total = secs.checked_mul(1_000_000_000)?.checked_add(nanos)?;
+            i64::try_from(-total).ok()
+        }
+    }
+}
 
 fn unicode_is_private_use(code: u32) -> bool {
     matches!(
@@ -1723,13 +1742,13 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new("os.ScandirIterator missing"))?;
 
         let mut rows = Vec::new();
-        let entries = fs::read_dir(&path)
-            .map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
+        let entries =
+            fs::read_dir(&path).map_err(|err| Self::os_error_from_io("scandir failed", err))?;
         for entry in entries {
-            let entry = entry.map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
+            let entry = entry.map_err(|err| Self::os_error_from_io("scandir failed", err))?;
             let file_type = entry
                 .file_type()
-                .map_err(|err| RuntimeError::new(format!("scandir failed: {err}")))?;
+                .map_err(|err| Self::os_error_from_io("scandir failed", err))?;
             let name = entry.file_name().to_string_lossy().to_string();
             let full_path = entry.path().to_string_lossy().to_string();
             let direntry = self.alloc_instance_for_class(&direntry_class);
@@ -4295,21 +4314,49 @@ impl Vm {
         }
 
         let st_size = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
-        let st_atime = metadata
-            .accessed()
-            .ok()
-            .and_then(system_time_to_secs_f64)
-            .unwrap_or(0.0);
-        let st_mtime = metadata
-            .modified()
-            .ok()
-            .and_then(system_time_to_secs_f64)
-            .unwrap_or(0.0);
-        let st_ctime = metadata
-            .created()
-            .ok()
-            .and_then(system_time_to_secs_f64)
-            .unwrap_or(st_mtime);
+        #[cfg(unix)]
+        let (st_atime, st_mtime, st_ctime, st_atime_ns, st_mtime_ns, st_ctime_ns) = {
+            use std::os::unix::fs::MetadataExt;
+
+            let st_atime = metadata.atime() as f64 + (metadata.atime_nsec() as f64 / 1_000_000_000.0);
+            let st_mtime = metadata.mtime() as f64 + (metadata.mtime_nsec() as f64 / 1_000_000_000.0);
+            let st_ctime = metadata.ctime() as f64 + (metadata.ctime_nsec() as f64 / 1_000_000_000.0);
+            let st_atime_ns = metadata
+                .atime()
+                .saturating_mul(1_000_000_000)
+                .saturating_add(metadata.atime_nsec());
+            let st_mtime_ns = metadata
+                .mtime()
+                .saturating_mul(1_000_000_000)
+                .saturating_add(metadata.mtime_nsec());
+            let st_ctime_ns = metadata
+                .ctime()
+                .saturating_mul(1_000_000_000)
+                .saturating_add(metadata.ctime_nsec());
+            (st_atime, st_mtime, st_ctime, st_atime_ns, st_mtime_ns, st_ctime_ns)
+        };
+        #[cfg(not(unix))]
+        let (st_atime, st_mtime, st_ctime, st_atime_ns, st_mtime_ns, st_ctime_ns) = {
+            let st_atime_ns = metadata
+                .accessed()
+                .ok()
+                .and_then(system_time_to_ns_i64)
+                .unwrap_or(0);
+            let st_mtime_ns = metadata
+                .modified()
+                .ok()
+                .and_then(system_time_to_ns_i64)
+                .unwrap_or(0);
+            let st_ctime_ns = metadata
+                .created()
+                .ok()
+                .and_then(system_time_to_ns_i64)
+                .unwrap_or(st_mtime_ns);
+            let st_atime = st_atime_ns as f64 / 1_000_000_000.0;
+            let st_mtime = st_mtime_ns as f64 / 1_000_000_000.0;
+            let st_ctime = st_ctime_ns as f64 / 1_000_000_000.0;
+            (st_atime, st_mtime, st_ctime, st_atime_ns, st_mtime_ns, st_ctime_ns)
+        };
 
         if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
             instance_data
@@ -4327,6 +4374,15 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("st_ctime".to_string(), Value::Float(st_ctime));
+            instance_data
+                .attrs
+                .insert("st_atime_ns".to_string(), Value::Int(st_atime_ns));
+            instance_data
+                .attrs
+                .insert("st_mtime_ns".to_string(), Value::Int(st_mtime_ns));
+            instance_data
+                .attrs
+                .insert("st_ctime_ns".to_string(), Value::Int(st_ctime_ns));
 
             #[cfg(unix)]
             {
