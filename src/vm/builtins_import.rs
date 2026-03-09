@@ -2,9 +2,9 @@ use super::{
     BUILTIN_MODULE_LOADER, HashMap, ImportReturnPolicy, ModuleObject, NAMESPACE_LOADER,
     OPCODE_METADATA, ObjRef, Object, OpcodeMetadata, PathBuf, Rc, RuntimeError, SOURCE_FILE_LOADER,
     SOURCELESS_FILE_LOADER, Value, Vm, bytes_like_from_value, cache_path_from_source_path,
-    cache_path_from_source_path_with_optimization, class_attr_lookup, compiler, fs, is_truthy,
-    opcode_flags_contains, parser, source_path_from_cache_path, split_relative_import_name,
-    value_to_int, value_to_path,
+    cache_path_from_source_path_with_optimization, class_attr_lookup, compiler, dict_get_value, fs,
+    is_truthy, opcode_flags_contains, parser, source_path_from_cache_path,
+    split_relative_import_name, value_to_int, value_to_path,
 };
 use crate::runtime::{
     BOOTSTRAP_FROZEN_MODULES, bootstrap_frozen_module_info, is_bootstrap_builtin_module,
@@ -190,6 +190,103 @@ impl Vm {
         };
 
         self.resolve_import_name_from_package(&package, requested, level)
+    }
+
+    fn module_not_found_error_matches_name(&self, err: &RuntimeError, expected: &str) -> bool {
+        if err.exception_name() != Some("ModuleNotFoundError") {
+            return false;
+        }
+        err.exception
+            .as_ref()
+            .and_then(|exception| exception.attrs.borrow().get("name").cloned())
+            .is_some_and(|value| matches!(value, Value::Str(name) if name == expected))
+    }
+
+    fn handle_import_fromlist(
+        &mut self,
+        module: &ObjRef,
+        fromlist: Value,
+        recursive: bool,
+    ) -> Result<(), RuntimeError> {
+        let module_name = match &*module.kind() {
+            Object::Module(module_data) => module_data.name.clone(),
+            _ => String::new(),
+        };
+        for entry in self.collect_iterable_values(fromlist)? {
+            let entry_name = match entry {
+                Value::Str(name) => name,
+                other => {
+                    let where_name = if recursive {
+                        format!("{module_name}.__all__")
+                    } else {
+                        "``from list''".to_string()
+                    };
+                    return Err(RuntimeError::type_error(format!(
+                        "Item in {where_name} must be str, not {}",
+                        self.value_type_name_for_error(&other)
+                    )));
+                }
+            };
+            if entry_name == "*" {
+                if recursive {
+                    continue;
+                }
+                let has_all = matches!(
+                    self.builtin_hasattr(
+                        vec![
+                            Value::Module(module.clone()),
+                            Value::Str("__all__".to_string())
+                        ],
+                        HashMap::new()
+                    )?,
+                    Value::Bool(true)
+                );
+                if has_all {
+                    let all = self.builtin_getattr(
+                        vec![
+                            Value::Module(module.clone()),
+                            Value::Str("__all__".to_string()),
+                        ],
+                        HashMap::new(),
+                    )?;
+                    self.handle_import_fromlist(module, all, true)?;
+                }
+                continue;
+            }
+            let has_attr = matches!(
+                self.builtin_hasattr(
+                    vec![
+                        Value::Module(module.clone()),
+                        Value::Str(entry_name.clone())
+                    ],
+                    HashMap::new()
+                )?,
+                Value::Bool(true)
+            );
+            if has_attr {
+                continue;
+            }
+            let from_name = format!("{module_name}.{entry_name}");
+            match self.import_module_object_with_policy(
+                &from_name,
+                ImportReturnPolicy::DeferredWhenFramesQueued,
+            ) {
+                Ok(_) => {}
+                Err(err) if self.module_not_found_error_matches_name(&err, &from_name) => {
+                    let blocked = self
+                        .sys_dict_obj("modules")
+                        .and_then(|modules| {
+                            dict_get_value(&modules, &Value::Str(from_name.clone()))
+                        })
+                        .is_some_and(|value| matches!(value, Value::None));
+                    if blocked {
+                        return Err(err);
+                    }
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn builtin_imp_is_builtin(
@@ -408,7 +505,7 @@ impl Vm {
             0
         };
         if level < 0 {
-            return Err(RuntimeError::new("level must be >= 0"));
+            return Err(RuntimeError::value_error("level must be >= 0"));
         }
 
         let globals_value = if let Some(value) = kw_globals {
@@ -427,7 +524,11 @@ impl Vm {
             &resolved_name,
             ImportReturnPolicy::DeferredWhenFramesQueued,
         )?;
-        let result = if self.fromlist_requested(&fromlist) {
+        let has_fromlist = self.fromlist_requested(&fromlist);
+        if has_fromlist {
+            self.handle_import_fromlist(&module, fromlist.clone(), false)?;
+        }
+        let result = if has_fromlist {
             module
         } else {
             self.module_for_plain_import(&resolved_name, module)

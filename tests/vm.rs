@@ -19108,6 +19108,26 @@ fn source_importlib_restores_package_attr_for_package_specs() {
 }
 
 #[test]
+fn import_fromlist_respects_sys_modules_none_blocker() {
+    let source = "import builtins\nimport sys\npkg = 'fine'\nsubmod = 'fine.bogus'\nmodule = type(sys)(pkg)\nmodule.__path__ = []\nsys.modules[pkg] = module\nsys.modules[submod] = None\ntry:\n    builtins.__import__(pkg, fromlist=['bogus'])\n    ok = False\nexcept ModuleNotFoundError as exc:\n    ok = (exc.name == submod)\nfinally:\n    del sys.modules[pkg]\n    del sys.modules[submod]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn import_negative_level_raises_value_error() {
+    let source = "import builtins\nok = False\ntry:\n    builtins.__import__('os', globals(), level=-1)\nexcept ValueError as exc:\n    ok = (str(exc) == 'level must be >= 0')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn frozen_module_repr_uses_spec_origin() {
     let Some(lib_path) = cpython_lib_path() else {
         return;

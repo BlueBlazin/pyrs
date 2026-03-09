@@ -141,6 +141,8 @@ Resolved locally since this snapshot and awaiting the next full benchmark rerun:
 - meta-path loader execution now applies CPython `module_from_spec` semantics when `create_module()` returns `None` or a module object, registering the module before `exec_module()`, so `test.test_importlib` no longer falls back to `ModuleNotFoundError` at the first PEP 451 loader case
 - builtin `__import__` now honors explicit `globals['__package__']` / `globals['__spec__']` package context for relative imports, so `test.test_importlib.import_.test___package__` moved past the earlier caller-frame resolution failure and is now down to later package-attribute semantics
 - Rust-built package `ModuleSpec` instances now carry CPython-style `parent` semantics (`spec.parent == spec.name` for packages), which cleared the source-importlib `__package__` restoration failure for `test.test_importlib.import_.test___package__.Setting__package__PEP451`
+- builtin `__import__` now performs CPython-style `fromlist` submodule handling, including propagating `ModuleNotFoundError` when `sys.modules['pkg.submod']` is explicitly blocked with `None`, which cleared `test.test_importlib.import_.test_api.*.test_blocked_fromlist`
+- builtin `__import__` now raises `ValueError` instead of a generic runtime error for negative import levels, which cleared `test.test_importlib.import_.test_api.*.test_negative_level`
 - `from email import policy` no longer leaks a partially initialized `email.policy` module during bootstrap import
 - `test.test_email.test_pickleable` no longer overflows while materializing address headers (`header_store_parse` pyc name layout and `Message.__setitem__` operator dispatch fixed locally)
 
