@@ -1,12 +1,10 @@
 # Extension C-API v1 Slice
 
-Status: active baseline (Milestone 15).
-
 This is the first shipped `libpyrs-capi` contract slice used by compiled extension smoke tests.
 
 ## Header
 
-- `/Users/$USER/pyrs/include/pyrs_capi.h`
+- `include/pyrs_capi.h`
 - Buffer view structs:
   - `PyrsBufferViewV1 { const uint8_t* data; uintptr_t len; int readonly; }`
   - `PyrsWritableBufferViewV1 { uint8_t* data; uintptr_t len; }`
@@ -179,7 +177,7 @@ Return semantics:
 - Thread/GIL APIs.
 - Multi-phase module lifecycle APIs.
 
-These are tracked in `/Users/$USER/pyrs/docs/EXTENSION_CAPABILITY_MATRIX.md`.
+See `docs/EXTENSION_CAPABILITY_MATRIX.md` for the broader tested surface.
 
 ## Smoke Coverage Map
 

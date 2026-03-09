@@ -1,8 +1,8 @@
 ---
 layout: ../../layouts/DocsLayout.astro
-title: PYRS Docs | Roadmap and Workstreams
-description: Current workstreams and closure gates for PYRS.
-pageTitle: Roadmap and Workstreams
+title: PYRS Docs | Evidence and Workstreams
+description: Current PYRS workstreams and the artifacts that support them.
+pageTitle: Evidence and Workstreams
 ---
 
 import DocSection from "../../components/docs/DocSection.astro";
@@ -10,8 +10,8 @@ import DataTable from "../../components/docs/DataTable.astro";
 import Callout from "../../components/docs/Callout.astro";
 
 <DocSection>
-	The original numbered milestone plan is now historical context rather than the authoritative day-to-day
-	tracker. Current planning is workstream-based and closes against explicit parity, readiness, and probe gates.
+	PYRS no longer treats internal roadmap/backlog docs as authoritative status. Current status is derived from
+	source, tests, and checked-in probe artifacts.
 </DocSection>
 
 <DocSection title="Current Workstreams">
@@ -38,12 +38,12 @@ import Callout from "../../components/docs/Callout.astro";
 <DocSection title="How Closure Is Tracked">
 	<DataTable headers={["Workstream", "Current focus"]}>
 		<tr>
-			<td>Release blockers</td>
-			<td><code>docs/PRODUCTION_READINESS.md</code> and <code>docs/STUB_ACCOUNTING.md</code>.</td>
+			<td>Runtime and stdlib compatibility</td>
+			<td><code>tests/cpython_harness.rs</code>, <code>tests/differential_cpython.rs</code>, and <code>perf/cpython_compat_benchmark_latest/</code>.</td>
 		</tr>
 		<tr>
 			<td>Stdlib/runtime baselines</td>
-			<td><code>docs/STDLIB_FULL_BASELINE.md</code> and <code>perf/stdlib_full_probe_latest.json</code>.</td>
+			<td><code>tests/stdlib_common_usecases.rs</code>, <code>perf/stdlib_compat_extended_latest.json</code>, and <code>perf/stdlib_full_probe_latest.json</code>.</td>
 		</tr>
 		<tr>
 			<td>Language parity</td>
@@ -51,37 +51,37 @@ import Callout from "../../components/docs/Callout.astro";
 		</tr>
 		<tr>
 			<td>Native extensions/scientific stack</td>
-			<td><code>docs/CAPI_PLAN.md</code>, <code>docs/CAPI_LIFETIME_MODEL.md</code>, and <code>docs/NUMPY_BRINGUP_GATE.md</code>.</td>
+			<td><code>docs/EXTENSION_CAPABILITY_MATRIX.md</code>, <code>docs/NUMPY_BRINGUP_GATE.md</code>, and <code>perf/numpy_gate_direct_latest.json</code>.</td>
 		</tr>
 	</DataTable>
 	<Callout title="Policy">
-		Closure is gate-driven: workstreams do not close on partial behavior or temporary workaround accumulation.
+		If a status claim is not visible in code, tests, or a checked-in probe artifact, treat it as non-authoritative.
 	</Callout>
 </DocSection>
 
-<DocSection title="Legacy Milestone Note">
+<DocSection title="Historical Note">
 	<DataTable headers={["Area", "Rule"]}>
 		<tr>
 			<td>Historical numbering</td>
-			<td>The old 0-16 milestone map is still useful as rough historical scope, but it is no longer the primary status source.</td>
+			<td>Old milestone terminology may still appear in commit history and notes, but it is no longer the primary status source.</td>
 		</tr>
 		<tr>
 			<td>Current practice</td>
-			<td>Use the linked readiness/probe docs for current status instead of assuming milestone labels are current.</td>
+			<td>Use tests, headers, source modules, and checked-in artifacts for current status.</td>
 		</tr>
 		<tr>
 			<td>Why keep this page</td>
-			<td>It gives high-level direction and points at the trackers that actually determine launch readiness.</td>
+			<td>It points at the evidence sources that currently define progress.</td>
 		</tr>
 	</DataTable>
 </DocSection>
 
 <DocSection title="Canonical Internal Trackers">
 	<ul class="docs-list">
-		<li><code>docs/ROADMAP.md</code></li>
-		<li><code>docs/PRODUCTION_READINESS.md</code></li>
-		<li><code>docs/STUB_ACCOUNTING.md</code></li>
-		<li><code>docs/ENGINEERING_GATES.md</code></li>
-		<li><code>docs/RELEASE_PLAN_BETA.md</code></li>
+		<li><code>docs/README.md</code></li>
+		<li><code>docs/CPYTHON_COMPAT_PRIORITIES.md</code></li>
+		<li><code>docs/LANGUAGE_FEATURE_MANIFEST.md</code></li>
+		<li><code>docs/EXTENSION_CAPABILITY_MATRIX.md</code></li>
+		<li><code>docs/NUMPY_BRINGUP_GATE.md</code></li>
 	</ul>
 </DocSection>

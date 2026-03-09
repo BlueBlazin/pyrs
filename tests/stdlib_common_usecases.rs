@@ -95,7 +95,7 @@ fn top_stdlib_common_usecase_baseline_gate() {
         return;
     };
 
-    // Baseline thresholds from docs/STDLIB_COMMON_USECASE_CHECKLIST.md.
+    // Baseline thresholds for the curated stdlib smoke gate.
     const MIN_IMPORT_PASS: usize = 26;
     const MIN_SMOKE_PASS: usize = 26;
     let timeout = Duration::from_secs(12);

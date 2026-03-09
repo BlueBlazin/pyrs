@@ -1,7 +1,5 @@
 # WASM Module Support Policy (codex/wasm)
 
-Status: branch-local draft for browser preflight behavior.
-
 This document defines the canonical module-level blocker mapping used by:
 
 - `src/wasm/mod.rs` (`WASM_MODULE_BLOCKER_POLICY`)

@@ -1,102 +1,86 @@
 # CPython Compatibility Priorities
 
 ## Purpose
+
 This document turns the checked-in CPython compatibility benchmark into a
-working execution order for runtime + stdlib parity work.
+practical execution order.
 
-It is not the canonical release tracker. Use:
+It is intentionally narrower than the old planning docs. The evidence for this
+file comes from:
 
-- `docs/PRODUCTION_READINESS.md` for release blockers and closure criteria
-- `docs/COMPATIBILITY.md` for subsystem status
-- `docs/CPYTHON_COMPAT_BENCHMARK.md` for benchmark generation and artifact layout
-
-The benchmark is most useful when multiple open parity lanes are plausible and
-we need to choose the next highest-leverage root-cause wave.
+- `perf/cpython_compat_benchmark_latest/summary.json`
+- `perf/cpython_compat_benchmark_latest/derived_summary.json`
+- `scripts/run_cpython_compat_focus.py`
+- targeted runtime and harness tests under `tests/`
 
 ## Current Snapshot
 
-Source snapshot: `perf/cpython_compat_benchmark_latest`
-
-- `summary.json`
-- `derived_summary.json`
+Artifact root: `perf/cpython_compat_benchmark_latest`
 
 Snapshot metadata:
 
-- Generated: `2026-03-07T12:20:56Z`
-- Benchmark git head: `112191cfb20934ae59a28efa2890d8780cb2878a`
-- Host: macOS `arm64`
+- generated at: `2026-03-07T12:20:56Z`
+- git head: `112191cfb20934ae59a28efa2890d8780cb2878a`
+- host: macOS `arm64`
 
 Headline counts:
 
-- Discoverable benchmark entries: `492`
-- Runnable entries after inventory: `452`
-- Clean-pass modules: `38`
-- Modules that execute but still fail cases: `246`
-- Blocked modules (`load_error` + `process_error` + `process_timeout`): `138`
-- Discoverable test cases: `47,040`
-- Executed case outcomes: `19,793`
-- Passed case outcomes: `10,524`
-- Executed subtest outcomes: `40,662`
-- Passed subtest outcomes: `38,203`
+- discoverable benchmark entries: `492`
+- runnable entries after inventory: `452`
+- clean-pass modules: `38`
+- modules that execute but still fail cases: `246`
+- blocked modules (`load_error` + `process_error` + `process_timeout`): `138`
+- discoverable test cases: `47,040`
+- executed case outcomes: `19,793`
+- passed case outcomes: `10,524`
+- executed subtest outcomes: `40,662`
+- passed subtest outcomes: `38,203`
 
-The two benchmark signals that should drive sequencing are:
+The main leverage signal is still blocked execution coverage:
 
-1. Only `22.4%` of discoverable cases currently pass (`10,524 / 47,040`).
-2. `26,439` discoverable cases are still trapped behind module-level
-   `load_error`, `process_error`, or `process_timeout`.
-
-That second number is the main leverage source. Moving blocked modules into
-normal pass/fail execution is usually worth more than shaving small failure
-clusters inside already-runnable modules.
+- discoverable cases currently trapped behind blocked modules: `26,439`
 
 ## Prioritization Rules
 
 1. Fix root causes that convert blocked modules into runnable modules before
    chasing isolated assertion deltas.
-2. If a benchmark lane overlaps an open P0 blocker in
-   `docs/PRODUCTION_READINESS.md`, treat the P0 blocker as the primary closure
-   target.
-3. Prefer user-visible stdlib/runtime behavior over CPython-internal
-   test-helper-only surfaces.
-4. Use focused suites for local loops; use the full benchmark only at
-   checkpoint boundaries.
+2. Prefer changes that move shared runtime substrate used by many stdlib
+   modules.
+3. Prefer user-visible runtime and stdlib surfaces over CPython-internal
+   test-helper-only rows.
+4. Promote areas that already have dedicated source modules and targeted tests
+   even if the raw benchmark count is smaller.
 
 ## Current Execution Order
 
 | Order | Lane | Why now | Primary focused suite(s) |
 |---|---|---|---|
-| 1 | Import/bootstrap load errors | Largest single blocked bucket: `79` modules, `16,320` discoverable cases | `high-leverage`, `import-bootstrap` |
-| 2 | Process errors and timeouts | Stability failures still hide `10,119` discoverable cases and overlap active P0 blockers | `timeouts-crashes`, `high-leverage` |
-| 3 | OS/filesystem/socket transport parity | Largest user-visible failure cluster among already-runnable modules | `os-fs-socket` |
-| 4 | Object model/call/descriptor/format parity | Broadest cross-cutting runtime lane after transport/OS work | `object-model-call` |
+| 1 | Import/bootstrap load errors | Largest blocked bucket: `79` modules, `16,320` discoverable cases | `high-leverage`, `import-bootstrap` |
+| 2 | Process errors and timeouts | Stability failures still hide `10,119` discoverable cases | `timeouts-crashes`, `high-leverage` |
+| 3 | OS/filesystem/socket transport parity | Largest user-visible failure cluster among runnable modules | `os-fs-socket` |
+| 4 | Object model/call/descriptor/format parity | Broadest cross-cutting runtime lane after transport work | `object-model-call` |
 | 5 | Text/codecs/XML substrate | Concentrated cluster with good focused payoff after broader runtime lanes move | `text-codecs-xml` |
 
 ## Lane Details
 
 ### 1. Import/bootstrap load errors
 
-Why this is first:
+Why first:
 
-- `79` runnable modules currently stop at `load_error`.
-- Those rows alone hide `16,320` discoverable cases.
-- Many of these failures are shared substrate problems rather than
-  module-specific bugs.
+- `79` runnable modules currently stop at `load_error`
+- those rows hide `16,320` discoverable cases
+- many failures are shared substrate defects rather than per-module bugs
 
-Current signatures and examples:
+Current signatures:
 
-- Missing socket constants/features:
-  - `AttributeError: module 'socket' has no attribute 'IPPROTO_TCP'`
-- Constructor/object-model mismatches during import-time class setup:
-  - `TypeError: object.__init__() takes exactly one argument`
-- Stdlib object-method gaps that break import-time initialization:
-  - `AttributeError: 'datetime' object has no attribute 'timetuple'`
-- Native substrate holes:
-  - `ImportError: cannot import name '_array_reconstructor' from 'array'`
-- Threading/concurrency bootstrap gaps:
-  - missing `concurrent.futures.InterpreterPoolExecutor`
-  - missing `threading._HAVE_THREAD_NATIVE_ID`
+- `AttributeError: module 'socket' has no attribute 'IPPROTO_TCP'`
+- `TypeError: object.__init__() takes exactly one argument`
+- `AttributeError: 'datetime' object has no attribute 'timetuple'`
+- `ImportError: cannot import name '_array_reconstructor' from 'array'`
+- missing `concurrent.futures.InterpreterPoolExecutor`
+- missing `threading._HAVE_THREAD_NATIVE_ID`
 
-High-value modules in this lane:
+High-value modules:
 
 - `test.test_email`
 - `test.test_pathlib`
@@ -106,37 +90,29 @@ High-value modules in this lane:
 - `test.test_array`
 - `test.test_asyncio.test_tasks`
 
-Release-gate overlap:
-
-- importlib/pkgutil/resources long-tail parity
-- descriptor/object-model long-tail parity
-- asyncio/subprocess/threading bootstrap behavior
-
 Closure evidence:
 
-- the module moves from `load_error` into normal pass/fail execution
-- the underlying missing substrate is covered by targeted regression tests
-- the same fix does not rely on a local compatibility shim that diverges from
-  CPython
+- a module moves from `load_error` into ordinary pass/fail execution
+- the missing substrate is covered by targeted regressions
+- the fix is in shared runtime code, not a one-off compatibility patch
 
 ### 2. Process errors and timeouts
 
-Why this is second:
+Why second:
 
-- `34` modules currently end in `process_error`.
-- `25` modules currently end in `process_timeout`.
-- Together they hide `10,119` discoverable cases and prevent trustworthy
-  semantic debugging in those areas.
+- `34` modules currently end in `process_error`
+- `25` modules currently end in `process_timeout`
+- together they hide `10,119` discoverable cases
 
 Largest blocked rows:
 
-- Timeouts:
+- timeouts:
   - `test.test_pickle`
   - `test.test_set`
   - `test.test_sqlite3`
   - `test.test_sys_settrace`
   - `test.test_threading`
-- Process errors:
+- process errors:
   - `test.test_unittest`
   - `test.test_tarfile`
   - `test.test_io`
@@ -144,33 +120,24 @@ Largest blocked rows:
 
 Observed patterns:
 
-- hard crashes / negative return codes in codec, tar, and statistics paths
-- stack overflow or runaway recursion in copy/exception-group style paths
+- hard crashes and negative return codes
+- runaway recursion / stack overflow
 - non-terminating behavior in pickle, set, sqlite3, tracing, and threading
-
-Release-gate overlap:
-
-- `pickle` / `pickletools` / `copyreg`
-- `_io` behavioral parity
-- hash-container closure (`set`)
-- threading / multiprocessing / sqlite3 stability
 
 Closure evidence:
 
-- focused runs no longer report `process_error` or `process_timeout`
-- the affected modules produce ordinary case-level pass/fail results
-- targeted tests capture the prior crash or hang trigger
+- focused runs stop reporting `process_error` / `process_timeout`
+- the module starts producing ordinary case-level failures
+- targeted tests capture the old crash or hang trigger
 
 ### 3. OS/filesystem/socket transport parity
 
-Why this is third:
+Why third:
 
-- It is the largest user-visible failed cluster among modules that already run.
-- The same substrate affects `os`, `pathlib`, `socket`, `subprocess`,
-  `selectors`, and `asyncio`.
-- These are common-usage stdlib surfaces, not benchmark-only helpers.
+- biggest user-visible failed cluster among modules that already run
+- overlaps `os`, `pathlib`, `socket`, `subprocess`, `selectors`, and `asyncio`
 
-Largest modules in this lane:
+Largest modules:
 
 - `test.test_socket`: `736` non-pass
 - `test.test_mailbox`: `347` non-pass
@@ -180,41 +147,24 @@ Largest modules in this lane:
 
 Current signatures:
 
-- missing socket operations:
-  - `bind`
-  - `connect`
-  - `recvmsg`
-  - `recvmsg_into`
-  - `sendmsg`
-- filesystem API gaps:
-  - `DirEntry.is_junction`
-  - `os.fwalk`
-- OS semantic mismatches:
-  - file creation/removal error mapping
-  - directory lifecycle semantics
-
-Release-gate overlap:
-
-- top-stdlib baseline credibility for `os`, `pathlib`, `subprocess`, `asyncio`
-- import/bootstrap failures that depend on socket and filesystem substrate
+- missing socket operations: `bind`, `connect`, `recvmsg`, `recvmsg_into`, `sendmsg`
+- filesystem API gaps: `DirEntry.is_junction`, `os.fwalk`
+- OS semantic mismatches around error mapping and directory lifecycle
 
 Closure evidence:
 
 - `os-fs-socket` stops failing on missing primitive APIs
-- `socket`/`selectors`/`asyncio` failures shift from missing methods/constants
-  to narrower semantic deltas
-- path and directory-lifecycle behavior is covered by targeted regression tests
+- failures shift from missing methods/constants to narrower semantic deltas
+- path and directory-lifecycle semantics land with targeted regression tests
 
 ### 4. Object model/call/descriptor/format parity
 
-Why this is fourth:
+Why fourth:
 
-- This is the broadest cross-cutting runtime bucket after OS/transport work.
-- Fixes here fan out into import-time blockers and already-runnable modules.
-- It directly overlaps the open object-model long tail in
-  `docs/COMPATIBILITY.md`.
+- broadest cross-cutting runtime lane after OS/transport work
+- fixes here fan out into import-time blockers and already-runnable modules
 
-Largest modules in this lane:
+Largest modules:
 
 - `test.test_enum`: `348` non-pass
 - `test.test_configparser`: `268` non-pass
@@ -232,28 +182,20 @@ Current signatures:
 - call/vectorcall mismatches in `_testcapi`-backed paths
 - missing code-object debug/introspection support used by traceback/dis
 
-Release-gate overlap:
-
-- descriptor / metaclass / slots long-tail parity
-- constructor and call-protocol correctness used by stdlib bootstrap
-- traceback / inspect / enum / dataclass follow-on behavior
-
 Closure evidence:
 
 - object-model-call regressions collapse across multiple unrelated modules
-- fixes are implemented in shared runtime substrate, not per-module patching
-- targeted tests cover the relevant constructor/call/format/introspection paths
+- fixes land in shared runtime substrate, not per-module patching
+- constructor/call/format/introspection paths get direct regression tests
 
 ### 5. Text/codecs/XML substrate
 
-Why this is fifth:
+Why fifth:
 
-- It is smaller than the lanes above but unusually concentrated.
-- A few substrate fixes can retire a large cluster quickly.
-- It is valuable once the higher-leverage bootstrap/runtime lanes stop hiding
-  broader failures.
+- smaller than the lanes above, but unusually concentrated
+- a few substrate fixes can retire a large cluster quickly
 
-Largest modules in this lane:
+Largest modules:
 
 - `test.test_codecs`: `242` non-pass
 - `test.test_xml_etree_c`: `141` non-pass
@@ -263,64 +205,63 @@ Largest modules in this lane:
 Current signatures:
 
 - `LookupError: unsupported encoding`
-- missing `codecs` helpers:
-  - `ascii_encode`
-  - `latin_1_encode`
-  - `utf_16_encode`
-  - `utf_7_decode`
-- XML parser API mismatches:
-  - `ParserCreate(..., intern=...)`
-  - element removal / namespace canonicalization differences
+- missing codec helpers such as `ascii_encode`, `latin_1_encode`,
+  `utf_16_encode`, and `utf_7_decode`
+- XML parser API mismatches such as `ParserCreate(..., intern=...)`
 
 Closure evidence:
 
 - codec helper failures disappear from `test_codecs`-family runs
-- XML parser failures move from API-surface gaps to narrower semantic deltas
-- targeted regressions cover both the native substrate and the stdlib-facing
-  behavior
+- XML failures move from API-surface gaps to narrower semantic deltas
+- targeted regressions cover both substrate and stdlib-facing behavior
 
 ## Promote Above Raw Benchmark Count
 
-These areas should be promoted even when their benchmark row counts are not at
-the top of the table:
+These should stay near the front of the queue even when raw benchmark counts
+are lower, because they already have dedicated implementation surfaces and
+targeted validation:
 
 - `json`
+  - source: `src/vm/stdlib/json.rs`
+  - evidence: `tests/vm.rs`, `tests/cpython_harness.rs`
 - `_csv` / `csv`
-- `_sre`
+  - source: `src/vm/stdlib/csv.rs`
+  - evidence: `tests/vm.rs`, `tests/cpython_harness.rs`
+- `_sre` / `re`
+  - source: `src/vm/stdlib/re.rs`
+  - evidence: `tests/vm.rs`, `tests/cpython_harness.rs`
 - `pickle` / `pickletools` / `copyreg`
+  - source: `src/vm/stdlib/pickle.rs`
+  - evidence: `tests/vm.rs`, `tests/cpython_harness.rs`
 - `_io`
-- hash-container semantic/perf closure
-
-Reason: these are explicit release gates in `docs/PRODUCTION_READINESS.md`.
-When a fix overlaps one of these blockers and a benchmark lane, use the blocker
-module as the primary closure target and use the benchmark lane as supporting
-evidence.
+  - source: `src/vm/builtins_io.rs`
+  - evidence: `tests/vm.rs`, `tests/cpython_harness.rs`
+- extension bridge / scientific stack
+  - source: `src/vm/vm_extensions.rs`, `src/vm/vm_extensions/*`
+  - evidence: `tests/extension_smoke.rs`, `scripts/probe_numpy_gate.py`
 
 ## Deprioritize Until Product-Facing Gaps Shrink
 
-These rows can move the raw benchmark number, but they usually should not lead
-the queue unless they block shared shipped behavior:
+These rows can move the benchmark number, but they should usually trail the
+product-facing runtime lanes above:
 
 - `test.test_clinic`
 - `test.test_capi`
 - `_testinternalcapi`-specific gaps
 - `_opcode` specialization/test-helper-only flags
-- generic `implementation detail specific to cpython` cases with no direct
-  runtime product impact
+- generic `implementation detail specific to cpython` failures with no clear
+  user-facing runtime impact
 
 ## Focused Suite Cadence
 
-Use `scripts/run_cpython_compat_focus.py` instead of hand-building
-`--entry-file` lists for routine loops.
+Use `scripts/run_cpython_compat_focus.py` for short loops.
 
 Recommended cadence:
 
-- Use `smoke` first when changing benchmark plumbing or runner invocation.
-- Use one thematic suite per root-cause wave until the main failure signature
-  moves.
-- Re-run `high-leverage` after cross-cutting fixes to confirm broader impact.
-- Re-run the full benchmark only at checkpoint boundaries after focused suites
-  show material movement.
+- `smoke` after benchmark-runner or command-path changes
+- one thematic suite per root-cause wave
+- `high-leverage` after shared runtime fixes
+- full benchmark only at checkpoint boundaries
 
 Useful commands:
 
@@ -333,5 +274,4 @@ Useful commands:
 
 The focused runner writes `selected_entries.txt` and `focus_request.json` into
 its output directory and refuses to reuse a directory with a different request
-unless `--force` is passed. That keeps focused artifacts from being mixed across
-different slices.
+unless `--force` is passed.

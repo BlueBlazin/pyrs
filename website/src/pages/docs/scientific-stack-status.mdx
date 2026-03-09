@@ -15,7 +15,7 @@ import Callout from "../../components/docs/Callout.astro";
 	execution gates.
 </DocSection>
 
-<DocSection title="Base NumPy Gate (2026-02-23 snapshot)">
+<DocSection title="Base NumPy Gate (2026-02-24 artifact)">
 	<DataTable headers={["Gate", "Status"]}>
 		<tr>
 			<td><code>numpy_import</code></td>
@@ -32,7 +32,7 @@ import Callout from "../../components/docs/Callout.astro";
 	</DataTable>
 </DocSection>
 
-<DocSection title="Direct Scientific-Stack Probe Snapshot (2026-02-23)">
+<DocSection title="Direct Scientific-Stack Probe Snapshot (2026-02-24 artifact)">
 	<DataTable headers={["Probe", "Status"]}>
 		<tr>
 			<td><code>scipy_import</code></td>
@@ -57,15 +57,13 @@ import Callout from "../../components/docs/Callout.astro";
 	</DataTable>
 </DocSection>
 
-<DocSection title="Active P0 Blockers">
+<DocSection title="Current Failure Shapes">
 	<ul class="docs-list">
-		<li><code>numpy.ma.core</code> import still overflows stack in current direct bring-up flow.</li>
-		<li>Pandas direct path currently fails in <code>pandas._libs.tslibs.dtypes</code> with class-attribute lookup mismatch.</li>
-		<li>Matplotlib direct path still fails in tuple-unpack/call-materialization paths for Cython-heavy modules.</li>
+		<li>Pandas direct-mode probes currently fail because <code>pyarrow</code> is not found during <code>pandas._libs.lib</code> initialization.</li>
+		<li>Matplotlib direct-mode probes currently fail with stack overflow.</li>
 	</ul>
-	<Callout title="Execution Model">
-		The current extension-compatibility workstream uses a two-lane strategy: Stable ABI closure (Lane A)
-		and non-abi3 scientific-stack closure (Lane B).
+	<Callout title="Evidence Source">
+		These statements are taken from the checked-in <code>perf/numpy_gate_direct_latest.json</code> artifact.
 	</Callout>
 </DocSection>
 
@@ -81,8 +79,6 @@ import Callout from "../../components/docs/Callout.astro";
 <DocSection title="Canonical Internal Trackers">
 	<ul class="docs-list">
 		<li><code>docs/NUMPY_BRINGUP_GATE.md</code></li>
-		<li><code>docs/CAPI_PLAN.md</code></li>
-		<li><code>docs/CAPI_LIFETIME_MODEL.md</code></li>
 		<li><code>docs/EXTENSION_CAPABILITY_MATRIX.md</code></li>
 		<li><code>perf/numpy_gate_direct_latest.json</code></li>
 	</ul>

@@ -1,33 +1,38 @@
-# C-API NoOp Inventory
+# C-API No-Op Inventory
 
-Purpose: track intentional C-API no-op/placeholder behavior that still exists in `pyrs` and define explicit closure criteria.
+## Purpose
 
-Last updated: 2026-02-22
+This file exists because `scripts/check_capi_noop_inventory.py` validates it
+directly against the exported C-API source in `src/vm/vm_extensions/`.
 
-## Scope
+The check is conservative. It looks for obvious placeholder exports such as:
 
-This document covers C-API exports in `src/vm/vm_extensions/*` whose current behavior is intentionally no-op or placeholder semantics.
+- empty function bodies
+- trivial `0` / `1` returns
+- trivial null-pointer returns
 
-It does **not** cover Python-level `BuiltinFunction::NoOp` placeholders; those are tracked by:
-- `docs/NOOP_BUILTIN_INVENTORY.txt`
-- `tests/noop_inventory.rs`
+## Current Checked-In Result
 
-## A. Empty-body C-API Exports (true no-op)
+Latest manifest: `perf/capi_noop_inventory.json`
 
-None.
+- detected no-op symbols: none
+- missing-from-doc symbols: none
+- stale documented symbols: none
 
-## B. Placeholder C-API Exports (non-empty, still no-op semantics)
+That means the current checked-in source does not expose any C-API exports that
+match the gate's placeholder heuristics.
 
-None.
+## Local Validation
 
-## Closure and Ownership
+```bash
+python3 scripts/check_capi_noop_inventory.py --manifest perf/capi_noop_inventory.json
+```
 
-- Canonical progress tracker: `docs/STUB_ACCOUNTING.md` (Milestone 15 extension ecosystem row).
-- Safety constraints: `docs/CAPI_LIFETIME_MODEL.md`.
-- Execution plan: `docs/CAPI_PLAN.md`.
-- Ordered implementation checklist: `docs/CAPI_NOOP_EXECUTION_ORDER.md`.
+## Interpretation
 
-A C-API no-op is only considered closed when:
-1. behavior matches CPython 3.14 semantics (or explicit supported-scope policy is documented and enforced),
-2. targeted regression tests exist and are green,
-3. strict/scientific extension gates show no regressions from the change.
+This inventory is intentionally narrow:
+
+- it covers C-API exports in `src/vm/vm_extensions/*`
+- it does not cover Python-level builtin no-op placeholders
+- it does not prove full CPython compatibility; it only guards against obvious
+  placeholder exports surviving unnoticed

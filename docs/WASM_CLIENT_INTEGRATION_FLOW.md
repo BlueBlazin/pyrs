@@ -1,7 +1,5 @@
 # WASM Client Integration Flow (codex/wasm)
 
-Status: branch-local draft.
-
 This guide defines the recommended browser call order for current wasm APIs.
 
 ## Recommended Call Order

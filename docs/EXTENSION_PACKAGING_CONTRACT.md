@@ -1,61 +1,56 @@
-# Extension Packaging and Build Contract
+# Native Extension Packaging and Build Contract
 
-Status: active draft (Milestone 15 substrate).
+## Purpose
 
-This document defines how native-extension packaging/build will work for `pyrs` and what is currently supported.
+This document describes the extension loading and source-build contract that is
+implemented today.
 
-## Compatibility Modes
+Primary evidence:
 
-1. `pyrs314` (source-build mode, primary):
-   - Extensions are built against `pyrs` headers/libraries.
-   - This is the only mode that will be advertised until ABI evidence is green.
-2. `cp314` wheel-compat mode (deferred):
-   - Reuse of CPython wheels is permitted only for explicitly verified ABI subsets.
+- `include/pyrs_capi.h`
+- `tests/extension_smoke.rs`
+- `src/vm/vm_extensions.rs`
+- `src/vm/vm_extensions/capi_v1.rs`
 
-## Current Implemented Surface
+## Current Supported Import Forms
 
-- Import path can discover extension manifests with suffix `.pyrs-ext`.
-- Loader can instantiate a manifest-backed extension module via `pyrs.ExtensionFileLoader`.
-- Manifest dynamic entrypoint is supported via `entrypoint=dynamic:<symbol>` + `library=<path>`.
-- Direct shared-object imports are supported (`module.so` / `module.dylib` / `module.pyd`) with default init symbol `pyrs_extension_init_v1` and fallback to `PyInit_<module>`.
-- Tagged CPython-style shared-object names are recognized for import resolution (e.g. `module.cpython-314-*.so`).
-- First C-API header/symbol slice is shipped in `/Users/$USER/pyrs/include/pyrs_capi.h`.
-- Builtin `_sysconfigdata__*` now exposes extension-build essentials (`SOABI`, `EXT_SUFFIX`, `CC`, `LDSHARED`, include/lib dir hints) for source-build toolchains.
-- Extension smoke now includes a compile+import flow that consumes these `_sysconfigdata__*` build vars end-to-end.
-- Loaded dynamic modules now expose explicit symbol metadata (`__pyrs_extension_expected_symbol__`, `__pyrs_extension_symbol_family__`) for ABI-mode diagnostics.
-- A CPython single-phase init compatibility slice is available for direct `PyInit_<module>` entrypoints (`PyModule_Create2`, `PyModule_AddObjectRef`, `PyModule_AddIntConstant`, `PyModule_AddStringConstant`, core constructors, `PyErr_*`, and refcount helpers).
+Manifest-backed import:
 
-This is still an early substrate, not full C-extension compatibility.
+- extension manifest suffix: `.pyrs-ext`
+- loader entrypoint: `pyrs.ExtensionFileLoader`
+- supported manifest entrypoints:
+  - `hello_ext`
+  - `dynamic:<symbol>`
 
-## Manifest Contract (`.pyrs-ext`)
+Direct shared-object import:
 
-Manifest format is line-based key/value (`key=value`) with comments (`#`) allowed.
+- recognized filename families:
+  - `module.so`
+  - `module.dylib`
+  - `module.pyd`
+  - tagged CPython-style names such as `module.cpython-314-*.so`
+- runtime tries `pyrs_extension_init_v1` first
+- runtime falls back to `PyInit_<module>` when present
+
+## Manifest Contract
+
+Manifest format is line-based `key=value` with `#` comments.
 
 Required keys:
-- `module`: fully-qualified module name.
-- `abi`: currently must be `pyrs314`.
-- `entrypoint`: supported values:
-  - `hello_ext` (internal smoke entrypoint),
-  - `dynamic:<symbol>` (shared-library symbol).
 
-Conditional keys:
-- `library`: required when using `entrypoint=dynamic:<symbol>`; may be absolute or manifest-relative.
+- `module`
+- `abi`
+- `entrypoint`
 
-Supported dynamic init symbol contract (v1):
-- receives `PyrsApiV1` and `module_ctx`.
-- can set module globals directly or via init-scoped object handles.
-- can import modules during init/call paths via `module_import`.
-- can load imported-module attributes via `module_get_attr`.
-- can persist module-owned native state via `module_set_state` / `module_get_state`, and configure finalize hooks via `module_set_finalize`, with finalize+free teardown on replacement/clear/churn/drop paths.
-- can register positional/keyword native callables via `module_add_function` / `module_add_function_kw`.
-- can query generic object length and subscript semantics via `object_len` / `object_get_item`.
-- can iterate from native code via `object_get_iter` / `object_iter_next`.
-- can get/set/delete/check object attributes from native code via `object_get_attr` / `object_set_attr` / `object_del_attr` / `object_has_attr`.
-- can perform type relation checks via `object_is_instance` / `object_is_subclass`.
-- can invoke Python callables from native code via handle-based `object_call(...)` and fast helpers (`object_call_noargs`, `object_call_onearg`).
-- can query last error text via `error_get_message(...)` and clear state with `error_clear(...)`.
-- can report import-time failure details via `error_set(...)`.
-- can export/import named native capsules across extensions via `capsule_export(...)` and `capsule_import(...)`.
+Conditional key:
+
+- `library`
+  - required for `entrypoint=dynamic:<symbol>`
+  - may be absolute or manifest-relative
+
+Current accepted ABI tag:
+
+- `pyrs314`
 
 Example:
 
@@ -74,32 +69,63 @@ entrypoint=dynamic:pyrs_extension_init_v1
 library=libnative_mod.so
 ```
 
-## Planned Build Contract (next phases)
+## Source-Build Contract
 
-1. Produce `libpyrs-capi` with versioned symbols.
-2. Publish headers and `sysconfig` values for extension compilation.
-3. Add build metadata for PEP 517 backends to compile against `pyrs314`.
-4. Add wheel tag policy and acceptance matrix (`pyrs314-*`).
-5. Gate any future `cp314` claims on symbol-level ABI conformance tests.
+The current source-build substrate is exposed through builtin
+`_sysconfigdata__*` values exercised by `tests/extension_smoke.rs`.
+
+Implemented build keys include:
+
+- `SOABI`
+- `EXT_SUFFIX`
+- `CC`
+- `LDSHARED`
+- `AR`
+- `ARFLAGS`
+- `CCSHARED`
+- `BLDSHARED`
+- `CPPFLAGS`
+- `LDFLAGS`
+- `LIBPL`
+- `INCLUDEDIR`
+- `Py_ENABLE_SHARED`
+
+The smoke suite includes a compile-and-import round trip that consumes those
+values end to end.
+
+## Current C-API Entry Surface
+
+For direct CPython-style `PyInit_<module>` entrypoints, the implemented
+single-phase compatibility slice currently includes:
+
+- `PyModule_Create2`
+- `PyModule_AddObjectRef`
+- `PyModule_AddIntConstant`
+- `PyModule_AddStringConstant`
+- core scalar/bytes constructors used by the smoke fixtures
+- `PyErr_*` baseline helpers
+- `Py_[X]IncRef` / `Py_[X]DecRef`
+
+For manifest-backed native modules using `pyrs_extension_init_v1`, the current
+handle-based API surface is documented in `docs/EXTENSION_CAPI_V1.md`.
 
 ## Diagnostics Contract
 
-Unsupported extension paths must fail explicitly with:
-- unsupported ABI tag,
-- unsupported entrypoint,
-- missing/invalid manifest keys,
-- unimplemented C-ABI surfaces.
+Unsupported extension paths must fail explicitly for cases such as:
 
-Current loader behavior tries `pyrs_extension_init_v1` first and then `PyInit_<module>` for direct shared-object imports; unsupported/missing C-ABI surfaces still fail explicitly.
+- unsupported ABI tag
+- unsupported entrypoint
+- missing manifest keys
+- missing shared library
+- missing init symbol
+- unimplemented runtime/C-ABI surface
 
 No silent fallback is allowed for native-extension errors.
 
-## CI and Quality Gates
+## Explicitly Out Of Scope
 
-- `hello_ext` smoke path is required green in CI.
-- compiled native extension smoke path is required green in CI.
-- NumPy bring-up probe artifacts are generated and tracked separately.
-- Any extension-surface change must update:
-  - `docs/EXTENSION_CAPABILITY_MATRIX.md`
-  - `docs/EXTENSION_ECOSYSTEM_DESIGN.md`
-  - this file.
+These are not current support claims:
+
+- PEP 489 multi-phase init
+- general CPython wheel compatibility
+- broad CPython C-extension compatibility beyond the tested surface

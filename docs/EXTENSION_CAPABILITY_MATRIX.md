@@ -1,8 +1,10 @@
-# Extension Capability Matrix (Milestone 15)
+# Extension Capability Matrix
 
-Status: active (source-of-truth for extension surface claims).
+This matrix records extension-surface claims that have direct test or probe
+evidence in-tree.
 
-Scope: native-extension runtime path needed for NumPy/SciPy/Pandas/Matplotlib.
+Scope: the native-extension runtime path exercised by compiled smoke fixtures
+and the current scientific-stack probe.
 
 Legend:
 - `DONE`: implemented and test-covered.
@@ -56,5 +58,5 @@ Legend:
 ## Policy
 
 1. A surface cannot be marked `DONE` without deterministic test evidence.
-2. Temporary scaffolding must be tracked in `docs/STUB_ACCOUNTING.md` with closure criteria.
+2. Notes should point at tests, headers, or probe artifacts, not planning docs.
 3. This matrix must be updated in the same checkpoint as any extension-surface behavior change.

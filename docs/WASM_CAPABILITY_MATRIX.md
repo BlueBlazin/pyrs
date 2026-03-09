@@ -1,9 +1,8 @@
 # WASM Capability Matrix (codex/wasm)
 
-Status: branch-local draft for the isolated wasm track.
-
-This matrix documents browser-mode capability contracts for the `codex/wasm`
-branch. It is intentionally strict: unsupported behavior must fail explicitly.
+This matrix documents the current browser-mode capability contract implemented
+by the wasm host and bridge exports. It is intentionally strict: unsupported
+behavior must fail explicitly.
 
 ## Capability Table
 
@@ -101,5 +100,5 @@ When a wasm-mode operation requires an unsupported capability:
 Any capability change in `WasmHost::supports(...)` must update:
 
 1. this matrix,
-2. wasm API contract docs (`docs/WASM_EXECUTION_PLAN.md`),
+2. the wasm contract docs that expose the affected keys/results,
 3. wasm bridge behavior where applicable (`src/wasm/mod.rs`).

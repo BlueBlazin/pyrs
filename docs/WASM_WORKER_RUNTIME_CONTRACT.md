@@ -1,7 +1,5 @@
 # WASM Worker Runtime Contract (codex/wasm)
 
-Status: branch-local draft.
-
 This document defines the browser worker-runtime contract currently exposed by:
 
 - `wasm_worker_info()`

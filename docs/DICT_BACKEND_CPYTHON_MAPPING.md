@@ -44,8 +44,9 @@ the existing interpreter object model intact.
 3. Growth/shrink heuristics are approximate to CPython behavior but not yet
    fully tuned against CPython internals.
 
-These differences are tracked as remaining Milestone 13/14 performance and
-algorithmic closure work.
+These differences are real implementation deltas, not compatibility claims.
+They should be evaluated against source behavior and benchmark evidence when
+dict performance or edge semantics change.
 
 ## Validation Coverage
 

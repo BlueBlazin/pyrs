@@ -50,7 +50,7 @@ import Callout from "../../components/docs/Callout.astro";
 	</DataTable>
 </DocSection>
 
-<DocSection title="Scientific-Stack Snapshot (2026-02-23)">
+<DocSection title="Scientific-Stack Snapshot (2026-02-24)">
 	<DataTable headers={["Gate", "Status"]}>
 		<tr>
 			<td><code>import numpy as np</code></td>
@@ -69,13 +69,10 @@ import Callout from "../../components/docs/Callout.astro";
 			<td>PASS (latest direct probe snapshot)</td>
 		</tr>
 		<tr>
-			<td><code>import pandas</code>, matplotlib probes</td>
-			<td>Still failing in direct mode; active root-cause closure work remains.</td>
+			<td><code>import pandas</code>, <code>matplotlib</code> probes</td>
+			<td>Pandas currently fails on missing <code>pyarrow</code>; matplotlib currently fails with stack overflow in direct mode.</td>
 		</tr>
 	</DataTable>
-	<Callout title="Execution Lock">
-		C-API lifetime-model closure and scientific-stack bring-up are currently the primary extension-compatibility execution lock.
-	</Callout>
 </DocSection>
 
 <DocSection title="Probe Commands">
@@ -92,8 +89,7 @@ import Callout from "../../components/docs/Callout.astro";
 		<li><code>docs/EXTENSION_CAPABILITY_MATRIX.md</code></li>
 		<li><code>docs/EXTENSION_PACKAGING_CONTRACT.md</code></li>
 		<li><code>docs/EXTENSION_CAPI_V1.md</code></li>
-		<li><code>docs/CAPI_PLAN.md</code></li>
-		<li><code>docs/CAPI_LIFETIME_MODEL.md</code></li>
 		<li><code>docs/NUMPY_BRINGUP_GATE.md</code></li>
+		<li><code>perf/numpy_gate_direct_latest.json</code></li>
 	</ul>
 </DocSection>

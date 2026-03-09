@@ -48,7 +48,7 @@ import Callout from "../../components/docs/Callout.astro";
 		</tr>
 		<tr>
 			<td>Strict parity closure</td>
-			<td>Tracked separately in production-readiness and stub-accounting gates.</td>
+			<td>Visible in the targeted CPython harness lanes and probe artifacts.</td>
 		</tr>
 	</DataTable>
 	<Callout title="Interpretation Rule">
@@ -67,10 +67,9 @@ import Callout from "../../components/docs/Callout.astro";
 
 <DocSection title="Canonical Internal Trackers">
 	<ul class="docs-list">
-		<li><code>docs/STDLIB_COMMON_USECASE_CHECKLIST.md</code></li>
-		<li><code>docs/STDLIB_EXTENDED_COMMON_USECASE_CHECKLIST.md</code></li>
-		<li><code>docs/STDLIB_FULL_BASELINE.md</code></li>
-		<li><code>docs/PRODUCTION_READINESS.md</code></li>
-		<li><code>docs/STUB_ACCOUNTING.md</code></li>
+		<li><code>tests/stdlib_common_usecases.rs</code></li>
+		<li><code>perf/stdlib_compat_extended_latest.json</code></li>
+		<li><code>perf/stdlib_full_probe_latest.json</code></li>
+		<li><code>docs/CPYTHON_COMPAT_BENCHMARK.md</code></li>
 	</ul>
 </DocSection>

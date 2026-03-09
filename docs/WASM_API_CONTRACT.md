@@ -1,9 +1,9 @@
 # WASM API Contract (codex/wasm)
 
-Status: branch-local draft, API version `1`.
-
 This document defines the JS-facing contract currently exported by
 `src/wasm/mod.rs`.
+
+API version: `1`.
 
 ## Execution Mode Matrix
 

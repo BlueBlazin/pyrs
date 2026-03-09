@@ -215,10 +215,10 @@ cargo test
 ## Docs
 
 - Website/docs source: [`website/`](website/)
-- Project roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md)
-- Compatibility tracker: [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md)
-- Production readiness tracker: [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md)
-- Stub/partial parity ledger: [`docs/STUB_ACCOUNTING.md`](docs/STUB_ACCOUNTING.md)
+- Audited docs index: [`docs/README.md`](docs/README.md)
+- CPython benchmark runner: [`docs/CPYTHON_COMPAT_BENCHMARK.md`](docs/CPYTHON_COMPAT_BENCHMARK.md)
+- Extension capability matrix: [`docs/EXTENSION_CAPABILITY_MATRIX.md`](docs/EXTENSION_CAPABILITY_MATRIX.md)
+- NumPy bring-up probe: [`docs/NUMPY_BRINGUP_GATE.md`](docs/NUMPY_BRINGUP_GATE.md)
 
 ## Contributing
 

@@ -126,7 +126,7 @@ When changing playground worker/runtime contracts, keep these in sync:
 
 - `docs/WASM_API_CONTRACT.md`
 - `docs/WASM_CLIENT_INTEGRATION_FLOW.md`
-- `docs/REPL_SHARED_CORE_DESIGN.md` (if REPL architecture/ownership changes)
+- `docs/VM_ARCHITECTURE_MAP.md` (if runtime ownership or placement changes)
 
 ## Validation Checklist for Typical Changes
 

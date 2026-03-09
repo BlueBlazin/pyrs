@@ -77,36 +77,27 @@ Build a production-grade Python interpreter in Rust with source + bytecode + ext
 
 ## Performance Policy
 - Canonical benchmark gates:
-  - `scripts/bench_fib_gate.sh 5`
-  - `scripts/bench_dispatch_hotpath.sh 5`
-  - `scripts/bench_dict_backend.sh 5`
-  - `scripts/bench_startup_gate.sh 7`
-- All optimization work must update `docs/OPTIMIZATION_BACKLOG.md` in the same checkpoint.
+- `scripts/bench_fib_gate.sh 5`
+- `scripts/bench_dispatch_hotpath.sh 5`
+- `scripts/bench_dict_backend.sh 5`
+- `scripts/bench_startup_gate.sh 7`
+- All optimization work must update the relevant benchmark artifact or source-backed reference doc in the same checkpoint.
 
 ## Canonical Documents (may be outdated)
 - Docs index and ownership map: `docs/README.md`
-- Production blockers and release criteria: `docs/PRODUCTION_READINESS.md`
-- Beta release checkpoint plan: `docs/RELEASE_PLAN_BETA.md`
-- Extension ecosystem architecture plan: `docs/EXTENSION_ECOSYSTEM_DESIGN.md`
+- CPython benchmark runner: `docs/CPYTHON_COMPAT_BENCHMARK.md`
+- CPython compatibility priorities: `docs/CPYTHON_COMPAT_PRIORITIES.md`
 - Extension capability matrix: `docs/EXTENSION_CAPABILITY_MATRIX.md`
 - Extension packaging/build contract: `docs/EXTENSION_PACKAGING_CONTRACT.md`
 - Extension C-API v1 slice: `docs/EXTENSION_CAPI_V1.md`
 - NumPy bring-up tracker: `docs/NUMPY_BRINGUP_GATE.md`
-- Partial/stub ledger: `docs/STUB_ACCOUNTING.md`
-- Top stdlib common-usecase tracker: `docs/STDLIB_COMMON_USECASE_CHECKLIST.md`
-- Object-model parity audit: `docs/OBJECT_MODEL_AUDIT.md`
-- Pure-stdlib migration policy: `docs/STDLIB_MIGRATION_PLAN.md`
-- Engineering gates: `docs/ENGINEERING_GATES.md`
-- Algorithmic/semantic audit backlog: `docs/ALGO_AUDIT_BACKLOG.md`
-- Compatibility matrix: `docs/COMPATIBILITY.md`
+- Builtin parity gate: `docs/BUILTIN_PARITY.md`
+- Language feature manifest/inventory: `docs/LANGUAGE_FEATURE_MANIFEST.md`, `docs/LANGUAGE_FEATURE_INVENTORY.md`
 - VM architecture map: `docs/VM_ARCHITECTURE_MAP.md`
-- Optimization execution plan: `docs/OPTIMIZATION_PLAN.md`
-- Optimization backlog/status: `docs/OPTIMIZATION_BACKLOG.md`
-- Builtin parity gate and policy: `docs/BUILTIN_PARITY.md`, `docs/BUILTIN_OPTIMIZATION_POLICY.md`
 - Unicode-name table provenance: `docs/UNICODE_NAME_DATA.md`
 
 ## Reference Artifacts
 - Dict backend CPython mapping: `docs/DICT_BACKEND_CPYTHON_MAPPING.md`
-- Dict backend benchmark snapshot: `docs/DICT_BACKEND_BENCHMARK.md`
 - Clone audit artifacts: `docs/CLONE_BASELINE.txt`, `docs/CLONE_AUDIT.md`
+- C-API no-op inventory: `docs/CAPI_NOOP_INVENTORY.md`
 - No-op inventory snapshot: `docs/NOOP_BUILTIN_INVENTORY.txt`

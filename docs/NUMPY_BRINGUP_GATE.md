@@ -1,14 +1,20 @@
 # NumPy Bring-Up Gate
 
-Status: active extension-compatibility bring-up lane.
+## Purpose
 
-Purpose: track direct native-extension execution gates for NumPy and scientific-stack bring-up.
+This document tracks the probe cases and current checked-in artifact for native
+extension bring-up around NumPy and the local scientific stack.
 
-Execution model: see `docs/CAPI_PLAN.md`.
-- Lane A: Stable ABI (`abi3`) closure.
-- Lane B: non-`abi3` CPython C-API/runtime surfaces required by real scientific-stack wheels.
+Primary evidence:
 
-## Gate Definitions
+- `scripts/probe_numpy_gate.py`
+- `perf/numpy_gate_direct_latest.json`
+- `tests/extension_smoke.rs`
+- targeted NumPy regressions in `tests/vm.rs`
+
+## Probe Cases
+
+Required base cases:
 
 1. `numpy_import`
    - snippet: `import numpy as np`
@@ -24,16 +30,17 @@ Execution model: see `docs/CAPI_PLAN.md`.
      - `assert nt.float64 is not None`
      - `assert nt.bool_ is not None`
 
-Optional scientific-stack probe cases (`--include-scientific-stack`):
+Optional scientific-stack cases:
+
 - `scipy_import`
 - `pandas_import`
 - `pandas_series_sum`
 - `matplotlib_import`
 - `matplotlib_pyplot_smoke`
 
-## Probe Commands
+## Commands
 
-Base gate:
+Base/direct-mode probe:
 
 ```bash
 python3 scripts/probe_numpy_gate.py \
@@ -43,7 +50,7 @@ python3 scripts/probe_numpy_gate.py \
   --timeout 20
 ```
 
-Direct-mode gate + scientific stack:
+Direct mode with local scientific stack:
 
 ```bash
 python3 scripts/probe_numpy_gate.py \
@@ -56,19 +63,7 @@ python3 scripts/probe_numpy_gate.py \
   --timeout 30
 ```
 
-Local site-packages probe mode:
-
-```bash
-python3 scripts/probe_numpy_gate.py \
-  --pyrs target/debug/pyrs \
-  --cpython-lib .local/Python-3.14.3/Lib \
-  --probe-local-numpy \
-  --python-probe-bin python3 \
-  --out perf/numpy_gate_local_probe_latest.json \
-  --timeout 20
-```
-
-Source-build mode:
+Source-build probe:
 
 ```bash
 python3 scripts/probe_numpy_gate.py \
@@ -81,85 +76,59 @@ python3 scripts/probe_numpy_gate.py \
   --timeout 30
 ```
 
-## Current Snapshot (2026-02-23)
+## Current Checked-In Artifact
 
-- Direct mode only; CPython bridge mode was removed.
-- Base NumPy gate is green:
-  - `numpy_import`: `PASS`
-  - `numpy_ndarray_sum`: `PASS`
-  - `numpy_numerictypes_core`: `PASS`
-- Direct smoke sanity is green for:
-  - `import numpy as np`
-  - `np.dtype('int8')`
-  - `np.random.default_rng()` construction
-  - `np.random.default_rng().random()` execution
-  - `np.random.default_rng().integers(0, 2, size=4)`
-  - `np.random.default_rng().integers(0, 2, 4)`
-  - `callable(np.random.default_rng().integers)` is `True`
-  - `repr(np.random.default_rng().integers)` now renders without unresolved format markers
-    (`%U` / `%V`) and matches cyfunction-style output.
-- Lifetime stability update:
-  - repeated subprocess runs of `import numpy as np; np.random.default_rng()` are now stable
-    in debug mode (20/20 local runs, no segfault).
-  - escaped compat-object pinning now preserves `ob_type` children, preventing freed type-pointer
-    reuse in NumPy random context-manager paths.
-  - `_thread` lock substrate now reuses a heap-cached lock class instead of allocating a new class
-    object per lock instance, removing a core source of stale type-pointer churn.
-- Latest direct scientific-stack probe (`perf/numpy_gate_direct_latest.json`):
-  - `scipy_import`: `PASS`
-  - `pandas_import`: `FAIL`
-  - `pandas_series_sum`: `FAIL`
-  - `matplotlib_import`: `FAIL`
-  - `matplotlib_pyplot_smoke`: `FAIL`
-- Lifetime substrate is in active migration (`docs/CAPI_LIFETIME_MODEL.md`):
-  - VM-global pointer registry is authoritative for pointer provenance/liveness.
-  - Per-context owned-pointer shadow set has been removed.
-  - Owned-pointer free transitions are centralized.
-- ndarray subclass descriptor parity update:
-  - `class M(np.ndarray): pass` now inherits `__array_finalize__` correctly.
-  - `np.ndarray.view(base, M)` now returns subtype instances with working descriptor access
-    (`out.dtype` no longer fails).
-  - regression tests landed:
-    - `tests/vm.rs::numpy_ndarray_subclass_inherits_array_finalize_descriptor`
-    - `tests/vm.rs::numpy_ndarray_view_subclass_preserves_dtype_descriptor_access`.
+Artifact: `perf/numpy_gate_direct_latest.json`
 
-## Current P0 Blockers
+- timestamp: `2026-02-24T01:57:38Z`
+- total cases: `8`
+- passed: `4`
+- failed: `4`
+- skipped: `0`
 
-0. `numpy.ma.core` import is not closed (hard blocker for ndarray subclass semantics).
-   - Current failure shape in `pyrs`: stack overflow during import (`import numpy.ma.core`),
-     after the `MaskedArray.dtype -> super().dtype` descriptor-bind blocker was fixed.
-   - Observed behavior:
-     - import path reaches ndarray subclass/descriptor flows but eventually enters an
-       unbounded recursion path in runtime/C-API interaction.
-   - CPython reference surfaces for closure:
-     - `Objects/typeobject.c`: `super_getattro` resolution contract.
-     - `Objects/descrobject.c`: data-descriptor binding contract (`getset_descriptor` / member descriptor).
-   - Required closure direction:
-     - finish root-cause closure of recursive proxy/descriptor dispatch in this import path
-       (no recursion-depth caps as final behavior; preserve CPython ordering/semantics).
+Base NumPy gate status:
 
-1. Pandas import path still fails in direct mode.
-   - `pandas_import` and `pandas_series_sum` now fail later in the init chain at
-     `pandas._libs.tslibs.dtypes` with:
-     `AttributeError: type 'type' has no attribute 'keys'`.
-   - active root-cause lane: class-attribute lookup parity for extension-created/owned type
-     objects (dict-method exposure via type dictionaries).
-2. Matplotlib import path still fails in direct mode.
-   - `matplotlib_import` / `matplotlib_pyplot_smoke` currently fail with repeated tuple-unpack
-     shape errors (`expected at least 256`) and a later `attempted to call non-function`.
-   - active root-cause lane: extension call-arg/value materialization parity for Cython-heavy modules.
+- `numpy_import`: `PASS`
+- `numpy_ndarray_sum`: `PASS`
+- `numpy_numerictypes_core`: `PASS`
 
-## Operating Rules
+Scientific-stack status:
 
-1. No bridge fallback, shim patching, or test-by-test attr patch churn.
-2. Fix shared substrate root causes first, then close downstream module failures.
-3. Update this document and `perf/numpy_gate_direct_latest.json` in the same checkpoint as behavior changes.
-4. Add/adjust targeted regression tests with every blocker closure.
+- `scipy_import`: `PASS`
+- `pandas_import`: `FAIL`
+- `pandas_series_sum`: `FAIL`
+- `matplotlib_import`: `FAIL`
+- `matplotlib_pyplot_smoke`: `FAIL`
 
-## Closure Criteria
+Failure shapes recorded in the artifact:
 
-NumPy bring-up baseline is closed only when all are true:
+- pandas cases currently fail because `pyarrow` is not found during
+  `pandas._libs.lib` initialization
+- matplotlib cases currently fail with stack overflow
 
-1. All base gate cases are `PASS` on required platforms.
-2. No open P0 blockers remain for exercised extension surfaces in `docs/EXTENSION_CAPABILITY_MATRIX.md`.
-3. CI includes the probe in a dedicated extension bring-up lane.
+Local-module discovery in the same artifact confirms that `numpy`, `scipy`,
+`pandas`, and `matplotlib` are all visible from the configured local
+`site-packages`, so the current failures are beyond simple import-path wiring.
+
+## Regression Anchors In Tests
+
+Targeted NumPy runtime regressions currently include:
+
+- `tests/vm.rs::numpy_random_default_rng_constructs_without_non_function_call_errors`
+- `tests/vm.rs::numpy_random_default_rng_random_path_preserves_context_manager_specials`
+
+Native-extension substrate coverage lives primarily in:
+
+- `tests/extension_smoke.rs`
+
+## Closure Rule
+
+For the checked-in direct probe, this gate is only considered closed when all
+of the following are true:
+
+1. the three required NumPy base cases stay `PASS`
+2. scientific-stack failures are either removed or replaced by narrower,
+   well-understood missing-dependency failures that are explicitly visible in
+   the probe artifact
+3. targeted regressions exist for every root-cause fix that changes the direct
+   extension runtime path
