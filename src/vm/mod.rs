@@ -3360,12 +3360,6 @@ impl Vm {
                 roots.push(exc.clone());
             }
         }
-        // Instances awaiting deferred __del__ finalization are still strongly
-        // referenced by the VM and must survive cycle clearing until their
-        // finalizer runs.
-        for instance in self.pending_del_instances.values() {
-            roots.push(Value::Instance(instance.clone()));
-        }
         roots.extend(self.generator_returns.values().cloned());
         roots
     }
@@ -3410,9 +3404,10 @@ impl Vm {
 
     pub fn gc_collect(&mut self) -> usize {
         self.run_pending_del_finalizers(false);
-        let roots = self.collect_gc_roots();
-        let unreachable = self.heap.unreachable_objects(&roots);
+        let initial_roots = self.collect_gc_roots();
+        let unreachable = self.heap.unreachable_objects(&initial_roots);
         let unreachable_count = unreachable.len();
+        let mut finalized_any = false;
         for obj in unreachable {
             let obj_id = obj.id();
             self.pending_del_instances.remove(&obj_id);
@@ -3447,12 +3442,18 @@ impl Vm {
                 _ => continue,
             };
             self.finalized_del_objects.insert(obj_id);
+            finalized_any = true;
             let _ = self.call_internal_preserving_caller(del_method, Vec::new(), HashMap::new());
             if let Some(frame) = self.frames.last_mut() {
                 frame.active_exception = None;
                 frame.except_star_match_lasti = None;
             }
         }
+        let roots = if finalized_any {
+            self.collect_gc_roots()
+        } else {
+            initial_roots
+        };
         self.heap.collect_cycles(&roots);
         self.gc_last_allocation_count = self.heap.total_allocations();
         self.gc_counts[0] = 0;
@@ -3500,8 +3501,7 @@ impl Vm {
             return;
         }
 
-        let roots = self.collect_gc_roots();
-        self.heap.collect_cycles(&roots);
+        let _ = self.gc_collect();
         self.gc_last_allocation_count = self.heap.total_allocations();
         self.gc_counts[0] = 0;
         self.gc_auto_check_budget = GC_AUTO_CHECK_INTERVAL;
