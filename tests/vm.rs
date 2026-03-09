@@ -3835,6 +3835,30 @@ ok = (d.log == [('set', 'a', 1), ('del', 'a')])
 }
 
 #[test]
+fn dict_subclass_super_init_accepts_mapping_and_kwargs() {
+    let source = r#"class D(dict):
+    def __init__(self, *args, **kwargs):
+        self.marker = "ok"
+        self["seed"] = 0
+        super().__init__(*args, **kwargs)
+
+d = D({"a": 1}, b=2)
+ok = (
+    d["seed"] == 0
+    and d["a"] == 1
+    and d["b"] == 2
+    and d.marker == "ok"
+    and list(d.items()) == [("seed", 0), ("a", 1), ("b", 2)]
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_dict_equality_independent_of_insertion_order() {
     let source = "a = {'left': 1, 'right': 2}\nb = {'right': 2, 'left': 1}\nok = (a == b) and not (a != b)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -14782,6 +14806,23 @@ fn list_subclass_inherits_basic_list_behavior() {
 #[test]
 fn list_subclass_constructor_accepts_iterable_argument() {
     let source = "class L(list):\n    pass\nx = L([1, 2, 3])\nok = (len(x) == 3 and x[0] == 1 and x[2] == 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn list_subclass_super_init_accepts_iterable_argument() {
+    let source = r#"class L(list):
+    def __init__(self, seq):
+        self.marker = "ok"
+        super().__init__(seq)
+
+x = L([1, 2, 3])
+ok = (list(x) == [1, 2, 3] and x.marker == "ok")
+"#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

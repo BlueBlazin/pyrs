@@ -1543,6 +1543,16 @@ impl Vm {
             "__init__" if builtin == BuiltinFunction::Type => {
                 Ok(Value::Builtin(BuiltinFunction::TypeInit))
             }
+            "__init__" if builtin == BuiltinFunction::List => Ok(self.alloc_native_unbound_method(
+                "__list_unbound_method__",
+                Value::Builtin(BuiltinFunction::List),
+                NativeMethodKind::ListInit,
+            )),
+            "__init__" if builtin == BuiltinFunction::Dict => Ok(self.alloc_native_unbound_method(
+                "__dict_unbound_method__",
+                Value::Builtin(BuiltinFunction::Dict),
+                NativeMethodKind::DictInit,
+            )),
             "__init__" if self.builtin_is_type_object(builtin) => {
                 Ok(Value::Builtin(BuiltinFunction::ObjectInit))
             }
@@ -2393,6 +2403,22 @@ impl Vm {
         class: &ObjRef,
         attr_name: &str,
     ) -> Option<Value> {
+        if attr_name == "__init__" {
+            if self.class_has_builtin_list_base(class) {
+                return Some(self.alloc_native_unbound_method(
+                    "__list_unbound_method__",
+                    Value::Builtin(BuiltinFunction::List),
+                    NativeMethodKind::ListInit,
+                ));
+            }
+            if self.class_has_builtin_dict_base(class) {
+                return Some(self.alloc_native_unbound_method(
+                    "__dict_unbound_method__",
+                    Value::Builtin(BuiltinFunction::Dict),
+                    NativeMethodKind::DictInit,
+                ));
+            }
+        }
         if attr_name == "__new__" {
             let class_name = match &*class.kind() {
                 Object::Class(class_data) => class_data.name.clone(),
@@ -7078,6 +7104,10 @@ impl Vm {
             {
                 return Ok(AttrAccessOutcome::Value(proxy_attr));
             }
+            if let Some(inherited_init) = self.load_attr_class_builtin_base_method(class, attr_name)
+            {
+                return Ok(AttrAccessOutcome::Value(inherited_init));
+            }
             Value::Builtin(BuiltinFunction::ObjectInit)
         } else if attr_name == "__getstate__" {
             Value::Builtin(BuiltinFunction::ObjectGetState)
@@ -8929,6 +8959,32 @@ impl Vm {
 
         let remaining_mro = mro.into_iter().skip(start_idx).collect::<Vec<_>>();
         for class in &remaining_mro {
+            if attr_name == "__init__" && self.class_has_builtin_list_base(class) {
+                let list_init_receiver = match &receiver_value {
+                    Value::List(list) => Some(list.clone()),
+                    Value::Instance(instance) => Some(instance.clone()),
+                    _ => None,
+                };
+                if let Some(list_init_receiver) = list_init_receiver {
+                    return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                        NativeMethodKind::ListInit,
+                        list_init_receiver,
+                    )));
+                }
+            }
+            if attr_name == "__init__" && self.class_has_builtin_dict_base(class) {
+                let dict_init_receiver = match &receiver_value {
+                    Value::Dict(dict) => Some(dict.clone()),
+                    Value::Instance(instance) => Some(instance.clone()),
+                    _ => None,
+                };
+                if let Some(dict_init_receiver) = dict_init_receiver {
+                    return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                        NativeMethodKind::DictInit,
+                        dict_init_receiver,
+                    )));
+                }
+            }
             let class_attr = class_attr_lookup_direct(&class, attr_name)
                 .or_else(|| self.load_cpython_proxy_attr(&class, attr_name));
             if let Some(attr) = class_attr {

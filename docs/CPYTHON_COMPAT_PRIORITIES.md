@@ -48,6 +48,8 @@ Recent closures since this snapshot:
   `datetime.datetime.utctimetuple()` now exist for stdlib-facing callers
 - `array._array_reconstructor` is now present and rebuilds arrays from
   CPython machine-format payloads in the builtin `array` module
+- builtin `dict` / `list` subclass `super().__init__` now resolve to the
+  container initializers instead of falling through to `object.__init__`
 - builtin `threading` / `_thread` now expose native-id surface, including
   `threading._HAVE_THREAD_NATIVE_ID`
 

@@ -7,16 +7,17 @@
 use std::cell::Cell;
 
 use super::{
-    BigInt, BoundMethod, BuiltinFunction, CodeObject, ExceptionObject, FormatterFieldKey, Frame,
-    GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome, HashMap, InstanceObject,
-    Instruction, InternalCallOutcome, IteratorKind, IteratorObject, MAPPING_PROXY_STORAGE_ATTR,
-    ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object, Opcode, Ordering,
-    PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc, ReMode, RePatternValue, RuntimeError, Value, Vm,
-    bigint_to_fixed_bytes, bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup,
-    class_name_for_instance, decode_text_bytes, dict_get_value, dict_remove_value, dict_set_value,
-    dict_set_value_checked, encode_text_bytes, ensure_hashable, exception_is_named,
-    find_bytes_subslice, format_repr, format_value, is_truthy, memoryview_bounds,
-    memoryview_decode_tolist, memoryview_format_for_view, memoryview_shape_and_strides_from_parts,
+    BigInt, BoundMethod, BuiltinFunction, CodeObject, DICT_BACKING_STORAGE_ATTR, ExceptionObject,
+    FormatterFieldKey, Frame, GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome,
+    HashMap, InstanceObject, Instruction, InternalCallOutcome, IteratorKind, IteratorObject,
+    LIST_BACKING_STORAGE_ATTR, MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeCallResult,
+    NativeMethodKind, ObjRef, Object, Opcode, Ordering, PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc,
+    ReMode, RePatternValue, RuntimeError, Value, Vm, bigint_to_fixed_bytes,
+    bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup, class_name_for_instance,
+    decode_text_bytes, dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked,
+    encode_text_bytes, ensure_hashable, exception_is_named, find_bytes_subslice, format_repr,
+    format_value, is_truthy, memoryview_bounds, memoryview_decode_tolist,
+    memoryview_format_for_view, memoryview_shape_and_strides_from_parts,
     normalize_codec_encoding, normalize_codec_errors, parse_memoryview_cast_format,
     parse_string_formatter, py_rsplit_whitespace, py_split_whitespace, py_splitlines,
     re_pattern_from_compiled_object, runtime_error_matches_exception, split_formatter_field_name,
@@ -640,6 +641,7 @@ impl Vm {
                 kind,
                 NativeMethodKind::FunctoolsPartialCall
                     | NativeMethodKind::ExtensionFunctionCall(_)
+                    | NativeMethodKind::DictInit
                     | NativeMethodKind::DictUpdateMethod
                     | NativeMethodKind::IntToBytes
                     | NativeMethodKind::StrFormat
@@ -1058,19 +1060,34 @@ impl Vm {
                         "dict.__init__() expects at most one argument",
                     ));
                 }
-                if !matches!(&*receiver.kind(), Object::Dict(_)) {
-                    return Err(RuntimeError::new("dict.__init__() receiver must be dict"));
-                }
-                {
-                    let mut receiver_kind = receiver.kind_mut();
-                    let Object::Dict(entries) = &mut *receiver_kind else {
-                        unreachable!();
-                    };
-                    entries.clear();
-                }
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => receiver.clone(),
+                    Object::Instance(instance_data)
+                        if self.class_has_builtin_dict_base(&instance_data.class) =>
+                    {
+                        if let Some(backing_dict) = self.instance_backing_dict(&receiver) {
+                            backing_dict
+                        } else {
+                            let dict_value = match self.heap.alloc_dict(Vec::new()) {
+                                Value::Dict(obj) => obj,
+                                _ => unreachable!(),
+                            };
+                            if let Object::Instance(instance_data) = &mut *receiver.kind_mut() {
+                                instance_data.attrs.insert(
+                                    DICT_BACKING_STORAGE_ATTR.to_string(),
+                                    Value::Dict(dict_value.clone()),
+                                );
+                            }
+                            dict_value
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("dict.__init__() receiver must be dict"));
+                    }
+                };
                 match self.call_native_method(
                     NativeMethodKind::DictUpdateMethod,
-                    receiver,
+                    dict_receiver,
                     args,
                     kwargs,
                 )? {
@@ -1845,9 +1862,34 @@ impl Vm {
                 } else {
                     Vec::new()
                 };
-                let mut receiver_kind = receiver.kind_mut();
+                let list_receiver = match &*receiver.kind() {
+                    Object::List(_) => receiver.clone(),
+                    Object::Instance(instance_data)
+                        if self.class_has_builtin_list_base(&instance_data.class) =>
+                    {
+                        if let Some(backing_list) = self.instance_backing_list(&receiver) {
+                            backing_list
+                        } else {
+                            let list_value = match self.heap.alloc_list(Vec::new()) {
+                                Value::List(obj) => obj,
+                                _ => unreachable!(),
+                            };
+                            if let Object::Instance(instance_data) = &mut *receiver.kind_mut() {
+                                instance_data.attrs.insert(
+                                    LIST_BACKING_STORAGE_ATTR.to_string(),
+                                    Value::List(list_value.clone()),
+                                );
+                            }
+                            list_value
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("list.__init__() receiver must be list"));
+                    }
+                };
+                let mut receiver_kind = list_receiver.kind_mut();
                 let Object::List(values) = &mut *receiver_kind else {
-                    return Err(RuntimeError::new("list.__init__() receiver must be list"));
+                    unreachable!();
                 };
                 values.clear();
                 values.append(&mut incoming);
