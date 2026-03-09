@@ -18974,6 +18974,21 @@ fn frozen_importer_exec_module_populates_live_module_namespace() {
 }
 
 #[test]
+fn frozen_module_repr_uses_spec_origin() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path.insert(0, {lib_path:?})\nimport importlib.util as util\nimport importlib.machinery as machinery\nspec = machinery.FrozenImporter.find_spec('__hello__')\nmodule = util.module_from_spec(spec)\nmachinery.FrozenImporter.exec_module(module)\nok = (repr(module) == \"<module '__hello__' (frozen)>\")\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_frozen_importlib_module_lock_helpers() {
     let source = "import _frozen_importlib as frozen\nimport gc\nimport weakref\nlock = frozen._get_module_lock('demo')\nwr = weakref.ref(lock)\nacquired_once = lock.acquire()\nacquired_twice = lock.acquire()\nlocked_before_release = lock.locked()\nlock.release()\nlocked_after_one_release = lock.locked()\nlock.release()\nlocked_after_two_releases = lock.locked()\nhas_helpers = (hasattr(frozen, '_ModuleLock') and hasattr(frozen, '_DeadlockError') and hasattr(frozen, '_module_locks') and hasattr(frozen, '_blocking_on') and hasattr(frozen, '_get_module_lock') and hasattr(frozen, '_lock_unlock_module'))\ndel lock\ngc.collect()\ncollected = ('demo' not in frozen._module_locks and wr() is None)\nok = (has_helpers and acquired_once and acquired_twice and locked_before_release and locked_after_one_release and (not locked_after_two_releases) and collected)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

@@ -11039,6 +11039,59 @@ fn module_wrapped_value(receiver: &ObjRef, key: &str) -> Option<Value> {
     module_data.globals.get(key).cloned()
 }
 
+fn dict_string_key_value(dict: &ObjRef, key: &str) -> Option<Value> {
+    let Object::Dict(entries) = &*dict.kind() else {
+        return None;
+    };
+    entries.find(&Value::Str(key.to_string())).cloned()
+}
+
+fn module_namespace_value(module: &ModuleObject, key: &str) -> Option<Value> {
+    module
+        .dict
+        .as_ref()
+        .and_then(|dict| dict_string_key_value(dict, key))
+        .or_else(|| module.globals.get(key).cloned())
+}
+
+fn format_module_repr(module: &ModuleObject) -> String {
+    let module_name = match module_namespace_value(module, "__name__") {
+        Some(Value::Str(name)) => name,
+        _ => module.name.clone(),
+    };
+    if let Some(Value::Instance(spec_obj)) = module_namespace_value(module, "__spec__")
+        && let Object::Instance(instance_data) = &*spec_obj.kind()
+    {
+        let spec_name = match instance_data.attrs.get("name") {
+            Some(Value::Str(name)) => name.clone(),
+            _ => module_name.clone(),
+        };
+        if let Some(Value::Str(origin)) = instance_data.attrs.get("origin") {
+            if origin == "built-in" || origin == "frozen" {
+                return format!(
+                    "<module {} ({origin})>",
+                    format_repr_string(&spec_name)
+                );
+            }
+            if matches!(instance_data.attrs.get("has_location"), Some(Value::Bool(true))) {
+                return format!(
+                    "<module {} from {}>",
+                    format_repr_string(&spec_name),
+                    format_repr_string(origin)
+                );
+            }
+        }
+    }
+    if let Some(Value::Str(file)) = module_namespace_value(module, "__file__") {
+        return format!(
+            "<module {} from {}>",
+            format_repr_string(&module_name),
+            format_repr_string(&file)
+        );
+    }
+    format!("<module {}>", format_repr_string(&module_name))
+}
+
 fn bound_method_receiver_value(receiver: &ObjRef) -> Option<Value> {
     module_wrapped_value(receiver, "bound_receiver")
         .or_else(|| module_wrapped_value(receiver, "value"))
@@ -11671,7 +11724,7 @@ pub fn format_value(value: &Value) -> String {
             _ => "<generator>".to_string(),
         },
         Value::Module(obj) => match &*obj.kind() {
-            Object::Module(module) => format!("<module {}>", module.name),
+            Object::Module(module) => format_module_repr(module),
             _ => "<module ?>".to_string(),
         },
         Value::Class(obj) => match &*obj.kind() {
