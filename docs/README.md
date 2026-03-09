@@ -62,7 +62,7 @@ Use this file to find canonical ownership quickly.
 ## Validation and Artifacts
 - `docs/BUILTIN_PARITY.md`: builtin parity gate definition and closure rules.
 - `docs/CPYTHON_COMPAT_BENCHMARK.md`: full CPython `Lib/test` benchmark runner, artifact layout, and dispatch flow.
-- `docs/CPYTHON_COMPAT_PRIORITIES.md`: benchmark-derived execution priorities and focused suite recommendations.
+- `docs/CPYTHON_COMPAT_PRIORITIES.md`: benchmark-derived priority lanes mapped to release blockers and focused-suite loops.
 - `docs/NUMPY_BRINGUP_GATE.md`: NumPy import/ndarray bring-up probe and current status.
 - `scripts/run_cpython_compat_focus.py`: named focused CPython benchmark slices for shorter local loops.
 - `perf/language_feature_manifest_latest.json`: latest CPython differential probe run for source-language manifest.
