@@ -11243,6 +11243,27 @@ impl Vm {
         }
     }
 
+    fn interpreter_whence_runtime() -> Value {
+        Value::Int(1)
+    }
+
+    fn interpreters_is_shareable_value(value: &Value) -> bool {
+        match value {
+            Value::None
+            | Value::Bool(_)
+            | Value::Int(_)
+            | Value::BigInt(_)
+            | Value::Float(_)
+            | Value::Str(_)
+            | Value::Bytes(_) => true,
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(items) => items.iter().all(Self::interpreters_is_shareable_value),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     pub(super) fn builtin_array_reconstructor(
         &mut self,
         mut args: Vec<Value>,
@@ -11412,6 +11433,141 @@ impl Vm {
             module_data.globals.insert("values".to_string(), values);
         }
         Ok(Value::Module(module))
+    }
+
+    pub(super) fn builtin_interpreters_get_current(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "get_current() takes no arguments",
+            ));
+        }
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Int(0),
+            Self::interpreter_whence_runtime(),
+        ]))
+    }
+
+    pub(super) fn builtin_interpreters_get_main(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_interpreters_get_current(args, kwargs)
+    }
+
+    pub(super) fn builtin_interpreters_list_all(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::type_error(
+                "list_all() takes at most one argument",
+            ));
+        }
+        let _ = kwargs.get("require_ready");
+        Ok(self.heap.alloc_list(vec![self.heap.alloc_tuple(vec![
+            Value::Int(0),
+            Self::interpreter_whence_runtime(),
+        ])]))
+    }
+
+    pub(super) fn builtin_interpreters_whence(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error("whence() takes exactly one argument"));
+        }
+        let id = value_to_int(args.remove(0))?;
+        if id == 0 {
+            Ok(Self::interpreter_whence_runtime())
+        } else {
+            Err(RuntimeError::with_exception(
+                "InterpreterNotFoundError",
+                Some(format!("unrecognized interpreter ID {id}")),
+            ))
+        }
+    }
+
+    pub(super) fn builtin_interpreters_is_shareable(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "is_shareable() takes exactly one argument",
+            ));
+        }
+        Ok(Value::Bool(Self::interpreters_is_shareable_value(&args[0])))
+    }
+
+    pub(super) fn builtin_interpreters_is_running(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "is_running() takes exactly one argument",
+            ));
+        }
+        Ok(Value::Bool(value_to_int(args.remove(0))? == 0))
+    }
+
+    pub(super) fn builtin_interpreters_refop(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "_interpreters ref operation takes exactly one argument",
+            ));
+        }
+        let _ = value_to_int(args.remove(0))?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_interpreters_unsupported_operation(
+        &mut self,
+        _args: Vec<Value>,
+        _kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        Err(RuntimeError::with_exception(
+            "NotImplementedError",
+            Some("subinterpreters are not implemented yet".to_string()),
+        ))
+    }
+
+    pub(super) fn builtin_interpqueues_register_heap_types(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 3 {
+            return Err(RuntimeError::type_error(
+                "_register_heap_types() takes exactly three arguments",
+            ));
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_interpqueues_unsupported_operation(
+        &mut self,
+        _args: Vec<Value>,
+        _kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        Err(RuntimeError::with_exception(
+            "NotImplementedError",
+            Some("cross-interpreter queues are not implemented yet".to_string()),
+        ))
     }
 
     pub(super) fn builtin_dict_with_order(

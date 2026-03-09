@@ -6096,6 +6096,76 @@ impl Vm {
             ],
             vec![("typecodes", Value::Str("bBuhHiIlLqQfdw".to_string()))],
         );
+        self.install_builtin_module(
+            "_interpreters",
+            &[
+                ("create", BuiltinFunction::InterpretersUnsupportedOperation),
+                ("list_all", BuiltinFunction::InterpretersListAll),
+                ("get_current", BuiltinFunction::InterpretersGetCurrent),
+                ("get_main", BuiltinFunction::InterpretersGetMain),
+                ("whence", BuiltinFunction::InterpretersWhence),
+                ("incref", BuiltinFunction::InterpretersRefOp),
+                ("decref", BuiltinFunction::InterpretersRefOp),
+                ("is_shareable", BuiltinFunction::InterpretersIsShareable),
+                ("is_running", BuiltinFunction::InterpretersIsRunning),
+                ("destroy", BuiltinFunction::InterpretersUnsupportedOperation),
+                (
+                    "set___main___attrs",
+                    BuiltinFunction::InterpretersUnsupportedOperation,
+                ),
+                ("exec", BuiltinFunction::InterpretersUnsupportedOperation),
+                ("call", BuiltinFunction::InterpretersUnsupportedOperation),
+            ],
+            vec![
+                ("WHENCE_UNKNOWN", Value::Int(0)),
+                ("WHENCE_RUNTIME", Value::Int(1)),
+                ("WHENCE_LEGACY_CAPI", Value::Int(2)),
+                ("WHENCE_CAPI", Value::Int(3)),
+                ("WHENCE_XI", Value::Int(4)),
+                ("WHENCE_STDLIB", Value::Int(5)),
+                (
+                    "InterpreterError",
+                    Value::ExceptionType("InterpreterError".to_string()),
+                ),
+                (
+                    "InterpreterNotFoundError",
+                    Value::ExceptionType("InterpreterNotFoundError".to_string()),
+                ),
+                (
+                    "NotShareableError",
+                    Value::ExceptionType("NotShareableError".to_string()),
+                ),
+            ],
+        );
+        self.install_builtin_module(
+            "_interpqueues",
+            &[
+                ("create", BuiltinFunction::InterpQueuesUnsupportedOperation),
+                ("list_all", BuiltinFunction::InterpQueuesUnsupportedOperation),
+                ("bind", BuiltinFunction::InterpQueuesUnsupportedOperation),
+                ("release", BuiltinFunction::InterpQueuesUnsupportedOperation),
+                (
+                    "get_queue_defaults",
+                    BuiltinFunction::InterpQueuesUnsupportedOperation,
+                ),
+                ("get_maxsize", BuiltinFunction::InterpQueuesUnsupportedOperation),
+                ("is_full", BuiltinFunction::InterpQueuesUnsupportedOperation),
+                ("get_count", BuiltinFunction::InterpQueuesUnsupportedOperation),
+                ("put", BuiltinFunction::InterpQueuesUnsupportedOperation),
+                ("get", BuiltinFunction::InterpQueuesUnsupportedOperation),
+                (
+                    "_register_heap_types",
+                    BuiltinFunction::InterpQueuesRegisterHeapTypes,
+                ),
+            ],
+            vec![
+                ("QueueError", Value::ExceptionType("QueueError".to_string())),
+                (
+                    "QueueNotFoundError",
+                    Value::ExceptionType("QueueNotFoundError".to_string()),
+                ),
+            ],
+        );
         let errno_constants = vec![
             ("EPERM", 1),
             ("ENOENT", 2),

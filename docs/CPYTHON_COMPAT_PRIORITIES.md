@@ -50,6 +50,9 @@ Recent closures since this snapshot:
   CPython machine-format payloads in the builtin `array` module
 - builtin `array.array` now participates as a module-qualified type object so
   stdlib test modules can subclass it during import
+- builtin `_interpreters` / `_interpqueues` import substrate now lets
+  `concurrent.futures.InterpreterPoolExecutor` import through the CPython
+  stdlib layer, while runtime behavior remains to be implemented
 - builtin `dict` / `list` subclass `super().__init__` now resolve to the
   container initializers instead of falling through to `object.__init__`
 - builtin `threading` / `_thread` now expose native-id surface, including

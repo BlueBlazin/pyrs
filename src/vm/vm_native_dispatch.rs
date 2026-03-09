@@ -12911,6 +12911,32 @@ impl Vm {
             BuiltinFunction::Tuple => self.builtin_tuple(args, kwargs),
             BuiltinFunction::ArrayArray => self.builtin_array_array(args, kwargs),
             BuiltinFunction::ArrayReconstructor => self.builtin_array_reconstructor(args, kwargs),
+            BuiltinFunction::InterpretersGetCurrent => {
+                self.builtin_interpreters_get_current(args, kwargs)
+            }
+            BuiltinFunction::InterpretersGetMain => {
+                self.builtin_interpreters_get_main(args, kwargs)
+            }
+            BuiltinFunction::InterpretersListAll => {
+                self.builtin_interpreters_list_all(args, kwargs)
+            }
+            BuiltinFunction::InterpretersWhence => self.builtin_interpreters_whence(args, kwargs),
+            BuiltinFunction::InterpretersIsShareable => {
+                self.builtin_interpreters_is_shareable(args, kwargs)
+            }
+            BuiltinFunction::InterpretersIsRunning => {
+                self.builtin_interpreters_is_running(args, kwargs)
+            }
+            BuiltinFunction::InterpretersRefOp => self.builtin_interpreters_refop(args, kwargs),
+            BuiltinFunction::InterpretersUnsupportedOperation => {
+                self.builtin_interpreters_unsupported_operation(args, kwargs)
+            }
+            BuiltinFunction::InterpQueuesRegisterHeapTypes => {
+                self.builtin_interpqueues_register_heap_types(args, kwargs)
+            }
+            BuiltinFunction::InterpQueuesUnsupportedOperation => {
+                self.builtin_interpqueues_unsupported_operation(args, kwargs)
+            }
             BuiltinFunction::Dict => self.builtin_dict(args, kwargs),
             BuiltinFunction::DictFromKeys => self.builtin_dict_fromkeys(args, kwargs),
             BuiltinFunction::Set => self.builtin_set(args, kwargs),

@@ -3343,6 +3343,12 @@ impl Vm {
                 roots.push(exc.clone());
             }
         }
+        // Instances awaiting deferred __del__ finalization are still strongly
+        // referenced by the VM and must survive cycle clearing until their
+        // finalizer runs.
+        for instance in self.pending_del_instances.values() {
+            roots.push(Value::Instance(instance.clone()));
+        }
         roots.extend(self.generator_returns.values().cloned());
         roots
     }
@@ -11690,8 +11696,11 @@ pub(super) fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "NotADirectoryError" => Some("OSError"),
         "PermissionError" => Some("OSError"),
         "UnsupportedOperation" => Some("OSError"),
+        "InterpreterError" => Some("Exception"),
+        "InterpreterNotFoundError" => Some("InterpreterError"),
         "TypeError" => Some("Exception"),
         "ValueError" => Some("Exception"),
+        "NotShareableError" => Some("TypeError"),
         "PickleError" => Some("Exception"),
         "PicklingError" => Some("PickleError"),
         "UnpicklingError" => Some("PickleError"),
@@ -11724,6 +11733,8 @@ pub(super) fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "InternalError" => Some("DatabaseError"),
         "ProgrammingError" => Some("DatabaseError"),
         "NotSupportedError" => Some("DatabaseError"),
+        "QueueError" => Some("RuntimeError"),
+        "QueueNotFoundError" => Some("QueueError"),
         "UnicodeError" => Some("ValueError"),
         "UnicodeEncodeError" => Some("UnicodeError"),
         "UnicodeDecodeError" => Some("UnicodeError"),

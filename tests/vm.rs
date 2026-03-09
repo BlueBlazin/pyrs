@@ -15178,6 +15178,30 @@ ok = (
 }
 
 #[test]
+fn interpreters_bootstrap_modules_export_import_time_surface() {
+    let source = r#"import _interpreters
+import _interpqueues
+ok = (
+    _interpreters.WHENCE_RUNTIME == 1
+    and _interpreters.get_current() == (0, 1)
+    and _interpreters.get_main() == (0, 1)
+    and _interpreters.list_all() == [(0, 1)]
+    and _interpreters.whence(0) == 1
+    and _interpreters.is_shareable((1, "x", b"y"))
+    and _interpreters.is_shareable([1]) is False
+    and _interpreters.incref(0) is None
+    and _interpreters.decref(0) is None
+    and _interpqueues._register_heap_types(object, Exception, Exception) is None
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn weakref_finalize_exposes_detach_tuple_contract() {
     let source = r#"import weakref
 class Box:
@@ -19735,6 +19759,80 @@ ok = (
 }
 
 #[test]
+fn concurrent_futures_interpreter_pool_imports_with_cpython_lib_path() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping concurrent.futures interpreter import probe (CPython Lib path not available)"
+        );
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("concurrent-futures-interpreter-import".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"from concurrent import futures, interpreters
+from concurrent.interpreters import _queues as queues
+current = interpreters.get_current()
+main = interpreters.get_main()
+listed = [interp.id for interp in interpreters.list_all()]
+unsupported = ""
+try:
+    interpreters.create()
+except Exception as exc:
+    unsupported = type(exc).__name__
+ok = (
+    futures.InterpreterPoolExecutor.__module__ == "concurrent.futures.interpreter"
+    and futures.InterpreterPoolExecutor.__name__ == "InterpreterPoolExecutor"
+    and current.id == 0
+    and current.whence == "runtime init"
+    and main.id == 0
+    and listed == [0]
+    and unsupported == "NotImplementedError"
+    and queues.Queue.__module__ == "concurrent.interpreters._queues"
+    and issubclass(queues.QueueEmpty, queues.QueueError)
+    and issubclass(queues.QueueFull, queues.QueueError)
+)
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn concurrent.futures interpreter import probe");
+    handle
+        .join()
+        .expect("concurrent.futures interpreter import probe thread should complete");
+}
+
+#[test]
+fn concurrent_futures_test_future_module_can_import_with_cpython_lib_path() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping test.test_concurrent_futures.test_future import probe (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("concurrent-futures-test-future-import".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import test.test_concurrent_futures.test_future as test_future
+ok = (test_future.FutureTests.__module__ == "test.test_concurrent_futures.test_future")
+"#;
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn test.test_concurrent_futures.test_future import probe");
+    handle
+        .join()
+        .expect("test.test_concurrent_futures.test_future import probe thread should complete");
+}
+
+#[test]
 fn asyncio_pure_module_can_import_with_cpython_lib_path() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pure-asyncio import probe (CPython Lib path not available)");
@@ -22905,6 +23003,73 @@ ok = invalid_arg and len(records) >= 1 and records[0] == (True, True, True, True
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn deferred_del_instances_keep_attrs_until_shutdown_finalization() {
+    let source = r#"import sys
+records = []
+errors = []
+def capture(unraisable):
+    errors.append(type(unraisable.exc_value).__name__)
+sys.unraisablehook = capture
+class Pending:
+    def __init__(self, name):
+        self.name = name
+    def __del__(self):
+        records.append(self.name)
+def make():
+    Pending("first")
+    Pending("second")
+make()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+
+    vm.gc_collect();
+    vm.run_shutdown_hooks().expect("shutdown should succeed");
+
+    let records = list_values(vm.get_global("records")).expect("records should be a list");
+    let errors = list_values(vm.get_global("errors")).expect("errors should be a list");
+    assert_eq!(records.len(), 2, "expected two finalized records, got {records:?}");
+    let mut names = records
+        .into_iter()
+        .map(|value| match value {
+            Value::Str(text) => text,
+            other => panic!("expected string finalizer record, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, vec!["first".to_string(), "second".to_string()]);
+    assert!(errors.is_empty(), "unexpected unraisable errors: {errors:?}");
+}
+
+#[test]
+fn custom_new_returning_foreign_object_does_not_leave_del_candidate() {
+    let source = r#"records = []
+class Sentinel:
+    pass
+sentinel = Sentinel()
+class CustomNew:
+    def __new__(cls):
+        return sentinel
+    def __del__(self):
+        records.append("ghost")
+result = CustomNew()
+ok = (result is sentinel)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    vm.run_shutdown_hooks().expect("shutdown should succeed");
+
+    let records = list_values(vm.get_global("records")).expect("records should be a list");
+    assert!(records.is_empty(), "unexpected ghost finalizers: {records:?}");
 }
 
 #[test]

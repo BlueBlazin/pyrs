@@ -5104,6 +5104,16 @@ pub enum BuiltinFunction {
     WeakDictCopy,
     ArrayArray,
     ArrayReconstructor,
+    InterpretersGetCurrent,
+    InterpretersGetMain,
+    InterpretersListAll,
+    InterpretersWhence,
+    InterpretersIsShareable,
+    InterpretersIsRunning,
+    InterpretersRefOp,
+    InterpretersUnsupportedOperation,
+    InterpQueuesRegisterHeapTypes,
+    InterpQueuesUnsupportedOperation,
     GcCollect,
     GcEnable,
     GcDisable,
@@ -8524,6 +8534,104 @@ functions outside a stub module should always be followed by an implementation t
             BuiltinFunction::ArrayReconstructor => Err(RuntimeError::new(
                 "_array_reconstructor() builtin not available in runtime-only call path",
             )),
+            BuiltinFunction::InterpretersGetCurrent
+            | BuiltinFunction::InterpretersGetMain => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::type_error(
+                        "_interpreters helper takes no arguments",
+                    ));
+                }
+                Ok(heap.alloc_tuple(vec![Value::Int(0), Value::Int(1)]))
+            }
+            BuiltinFunction::InterpretersListAll => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::type_error(
+                        "list_all() takes at most one argument",
+                    ));
+                }
+                Ok(heap.alloc_list(vec![heap.alloc_tuple(vec![
+                    Value::Int(0),
+                    Value::Int(1),
+                ])]))
+            }
+            BuiltinFunction::InterpretersWhence => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error(
+                        "whence() takes exactly one argument",
+                    ));
+                }
+                let id = value_to_int(args[0].clone())?;
+                if id == 0 {
+                    Ok(Value::Int(1))
+                } else {
+                    Err(RuntimeError::with_exception(
+                        "InterpreterNotFoundError",
+                        Some(format!("unrecognized interpreter ID {id}")),
+                    ))
+                }
+            }
+            BuiltinFunction::InterpretersIsShareable => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error(
+                        "is_shareable() takes exactly one argument",
+                    ));
+                }
+                fn is_shareable(value: &Value) -> bool {
+                    match value {
+                        Value::None
+                        | Value::Bool(_)
+                        | Value::Int(_)
+                        | Value::BigInt(_)
+                        | Value::Float(_)
+                        | Value::Str(_)
+                        | Value::Bytes(_) => true,
+                        Value::Tuple(obj) => match &*obj.kind() {
+                            Object::Tuple(items) => items.iter().all(is_shareable),
+                            _ => false,
+                        },
+                        _ => false,
+                    }
+                }
+                Ok(Value::Bool(is_shareable(&args[0])))
+            }
+            BuiltinFunction::InterpretersIsRunning => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error(
+                        "is_running() takes exactly one argument",
+                    ));
+                }
+                let id = value_to_int(args[0].clone())?;
+                Ok(Value::Bool(id == 0))
+            }
+            BuiltinFunction::InterpretersRefOp => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error(
+                        "_interpreters ref operation takes exactly one argument",
+                    ));
+                }
+                let _ = value_to_int(args[0].clone())?;
+                Ok(Value::None)
+            }
+            BuiltinFunction::InterpretersUnsupportedOperation => Err(
+                RuntimeError::with_exception(
+                    "NotImplementedError",
+                    Some("subinterpreters are not implemented yet".to_string()),
+                ),
+            ),
+            BuiltinFunction::InterpQueuesRegisterHeapTypes => {
+                if args.len() != 3 {
+                    return Err(RuntimeError::type_error(
+                        "_register_heap_types() takes exactly three arguments",
+                    ));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::InterpQueuesUnsupportedOperation => Err(
+                RuntimeError::with_exception(
+                    "NotImplementedError",
+                    Some("cross-interpreter queues are not implemented yet".to_string()),
+                ),
+            ),
             BuiltinFunction::GcCollect => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new(
@@ -12172,6 +12280,22 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::FrozenSet => "frozenset".to_string(),
         BuiltinFunction::Bytes => "bytes".to_string(),
         BuiltinFunction::ByteArray => "bytearray".to_string(),
+        BuiltinFunction::InterpretersGetCurrent => "_interpreters.get_current".to_string(),
+        BuiltinFunction::InterpretersGetMain => "_interpreters.get_main".to_string(),
+        BuiltinFunction::InterpretersListAll => "_interpreters.list_all".to_string(),
+        BuiltinFunction::InterpretersWhence => "_interpreters.whence".to_string(),
+        BuiltinFunction::InterpretersIsShareable => "_interpreters.is_shareable".to_string(),
+        BuiltinFunction::InterpretersIsRunning => "_interpreters.is_running".to_string(),
+        BuiltinFunction::InterpretersRefOp => "_interpreters._refop".to_string(),
+        BuiltinFunction::InterpretersUnsupportedOperation => {
+            "_interpreters._unsupported_operation".to_string()
+        }
+        BuiltinFunction::InterpQueuesRegisterHeapTypes => {
+            "_interpqueues._register_heap_types".to_string()
+        }
+        BuiltinFunction::InterpQueuesUnsupportedOperation => {
+            "_interpqueues._unsupported_operation".to_string()
+        }
         BuiltinFunction::MemoryView => "memoryview".to_string(),
         BuiltinFunction::Zip => "zip".to_string(),
         BuiltinFunction::Map => "map".to_string(),

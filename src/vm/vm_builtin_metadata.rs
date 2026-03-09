@@ -5756,7 +5756,7 @@ impl Vm {
         }
 
         let class_value = Value::Class(class.clone());
-        let mut instance = self.alloc_instance_for_class(&class);
+        let mut instance: Option<ObjRef> = None;
         let mut used_custom_new = false;
         if let Some(raw_new_callable) = class_attr_lookup(&class, "__new__") {
             let new_callable = self
@@ -5811,7 +5811,7 @@ impl Vm {
                                 value,
                             )));
                         };
-                        instance = created_instance;
+                        instance = Some(created_instance);
                     }
                     InternalCallOutcome::CallerExceptionHandled => {
                         return Ok(InternalCallDispatch::Return(
@@ -5821,6 +5821,10 @@ impl Vm {
                 }
             }
         }
+        if !used_custom_new {
+            instance = Some(self.alloc_instance_for_class(&class));
+        }
+        let instance = instance.expect("class call should have instance after __new__");
         let is_typing_paramspec_attr_class = match &*class.kind() {
             Object::Class(class_data) => {
                 matches!(
