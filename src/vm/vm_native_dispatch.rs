@@ -12868,6 +12868,7 @@ impl Vm {
             BuiltinFunction::List => self.builtin_list(args, kwargs),
             BuiltinFunction::Tuple => self.builtin_tuple(args, kwargs),
             BuiltinFunction::ArrayArray => self.builtin_array_array(args, kwargs),
+            BuiltinFunction::ArrayReconstructor => self.builtin_array_reconstructor(args, kwargs),
             BuiltinFunction::Dict => self.builtin_dict(args, kwargs),
             BuiltinFunction::DictFromKeys => self.builtin_dict_fromkeys(args, kwargs),
             BuiltinFunction::Set => self.builtin_set(args, kwargs),

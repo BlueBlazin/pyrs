@@ -6090,7 +6090,10 @@ impl Vm {
         );
         self.install_builtin_module(
             "array",
-            &[("array", BuiltinFunction::ArrayArray)],
+            &[
+                ("array", BuiltinFunction::ArrayArray),
+                ("_array_reconstructor", BuiltinFunction::ArrayReconstructor),
+            ],
             vec![("typecodes", Value::Str("bBuhHiIlLqQfdw".to_string()))],
         );
         let errno_constants = vec![

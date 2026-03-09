@@ -46,6 +46,8 @@ Recent closures since this snapshot:
   and related socket protocol constants
 - `datetime.date.timetuple()` / `datetime.datetime.timetuple()` and
   `datetime.datetime.utctimetuple()` now exist for stdlib-facing callers
+- `array._array_reconstructor` is now present and rebuilds arrays from
+  CPython machine-format payloads in the builtin `array` module
 - builtin `threading` / `_thread` now expose native-id surface, including
   `threading._HAVE_THREAD_NATIVE_ID`
 

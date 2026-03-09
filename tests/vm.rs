@@ -15070,6 +15070,34 @@ fn array_constructor_rejects_str_initializer_for_numeric_typecode() {
 }
 
 #[test]
+fn array_reconstructor_imports_and_rebuilds_unsigned_byte_arrays() {
+    let source = r#"import array
+from array import _array_reconstructor
+rebuilt = _array_reconstructor(array.array, "B", 0, b"ABC")
+rebuilt_shorts = _array_reconstructor(array.array, "h", 5, b"\x80\x00\x7f\xff\x00\x00")
+wrong_len = False
+try:
+    _array_reconstructor(array.array, "BB", 0, b"")
+except TypeError:
+    wrong_len = True
+ok = (
+    array._array_reconstructor is _array_reconstructor
+    and rebuilt.typecode == "B"
+    and rebuilt.itemsize == 1
+    and list(rebuilt) == [65, 66, 67]
+    and list(rebuilt_shorts) == [-32768, 32767, 0]
+    and rebuilt.tobytes() == b"ABC"
+    and wrong_len
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn weakref_finalize_exposes_detach_tuple_contract() {
     let source = r#"import weakref
 class Box:

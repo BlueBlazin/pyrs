@@ -5089,6 +5089,7 @@ pub enum BuiltinFunction {
     WeakDictUpdate,
     WeakDictCopy,
     ArrayArray,
+    ArrayReconstructor,
     GcCollect,
     GcEnable,
     GcDisable,
@@ -8506,6 +8507,9 @@ functions outside a stub module should always be followed by an implementation t
                 }
                 Ok(Value::Module(module))
             }
+            BuiltinFunction::ArrayReconstructor => Err(RuntimeError::new(
+                "_array_reconstructor() builtin not available in runtime-only call path",
+            )),
             BuiltinFunction::GcCollect => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new(

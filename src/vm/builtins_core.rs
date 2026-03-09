@@ -11074,6 +11074,227 @@ impl Vm {
         Ok(self.heap.alloc_tuple(values))
     }
 
+    fn decode_array_reconstructor_initializer(
+        &self,
+        mformat_code: i64,
+        raw_items: &[u8],
+    ) -> Result<Value, RuntimeError> {
+        fn invalid_machine_format_error() -> RuntimeError {
+            RuntimeError::value_error("third argument must be a valid machine format code")
+        }
+
+        fn invalid_item_size_error() -> RuntimeError {
+            RuntimeError::value_error("string length not a multiple of item size")
+        }
+
+        fn decode_integer_values(
+            raw_items: &[u8],
+            itemsize: usize,
+            little_endian: bool,
+            signed: bool,
+        ) -> Result<Vec<Value>, RuntimeError> {
+            if raw_items.len() % itemsize != 0 {
+                return Err(invalid_item_size_error());
+            }
+            Ok(raw_items
+                .chunks_exact(itemsize)
+                .map(|chunk| value_from_bigint(bigint_from_bytes(chunk, little_endian, signed)))
+                .collect())
+        }
+
+        fn decode_float_values(
+            raw_items: &[u8],
+            little_endian: bool,
+        ) -> Result<Vec<Value>, RuntimeError> {
+            if raw_items.len() % 4 != 0 {
+                return Err(invalid_item_size_error());
+            }
+            Ok(raw_items
+                .chunks_exact(4)
+                .map(|chunk| {
+                    let raw = [chunk[0], chunk[1], chunk[2], chunk[3]];
+                    let value = if little_endian {
+                        f32::from_le_bytes(raw)
+                    } else {
+                        f32::from_be_bytes(raw)
+                    };
+                    Value::Float(value as f64)
+                })
+                .collect())
+        }
+
+        fn decode_double_values(
+            raw_items: &[u8],
+            little_endian: bool,
+        ) -> Result<Vec<Value>, RuntimeError> {
+            if raw_items.len() % 8 != 0 {
+                return Err(invalid_item_size_error());
+            }
+            Ok(raw_items
+                .chunks_exact(8)
+                .map(|chunk| {
+                    let raw = [
+                        chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6],
+                        chunk[7],
+                    ];
+                    let value = if little_endian {
+                        f64::from_le_bytes(raw)
+                    } else {
+                        f64::from_be_bytes(raw)
+                    };
+                    Value::Float(value)
+                })
+                .collect())
+        }
+
+        const UNSIGNED_INT8: i64 = 0;
+        const SIGNED_INT8: i64 = 1;
+        const UNSIGNED_INT16_LE: i64 = 2;
+        const UNSIGNED_INT16_BE: i64 = 3;
+        const SIGNED_INT16_LE: i64 = 4;
+        const SIGNED_INT16_BE: i64 = 5;
+        const UNSIGNED_INT32_LE: i64 = 6;
+        const UNSIGNED_INT32_BE: i64 = 7;
+        const SIGNED_INT32_LE: i64 = 8;
+        const SIGNED_INT32_BE: i64 = 9;
+        const UNSIGNED_INT64_LE: i64 = 10;
+        const UNSIGNED_INT64_BE: i64 = 11;
+        const SIGNED_INT64_LE: i64 = 12;
+        const SIGNED_INT64_BE: i64 = 13;
+        const IEEE_754_FLOAT_LE: i64 = 14;
+        const IEEE_754_FLOAT_BE: i64 = 15;
+        const IEEE_754_DOUBLE_LE: i64 = 16;
+        const IEEE_754_DOUBLE_BE: i64 = 17;
+        const UTF16_LE: i64 = 18;
+        const UTF16_BE: i64 = 19;
+        const UTF32_LE: i64 = 20;
+        const UTF32_BE: i64 = 21;
+
+        match mformat_code {
+            UNSIGNED_INT8 => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 1, true, false,
+            )?)),
+            SIGNED_INT8 => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 1, true, true,
+            )?)),
+            UNSIGNED_INT16_LE => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 2, true, false,
+            )?)),
+            UNSIGNED_INT16_BE => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 2, false, false,
+            )?)),
+            SIGNED_INT16_LE => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 2, true, true,
+            )?)),
+            SIGNED_INT16_BE => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 2, false, true,
+            )?)),
+            UNSIGNED_INT32_LE => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 4, true, false,
+            )?)),
+            UNSIGNED_INT32_BE => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 4, false, false,
+            )?)),
+            SIGNED_INT32_LE => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 4, true, true,
+            )?)),
+            SIGNED_INT32_BE => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 4, false, true,
+            )?)),
+            UNSIGNED_INT64_LE => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 8, true, false,
+            )?)),
+            UNSIGNED_INT64_BE => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 8, false, false,
+            )?)),
+            SIGNED_INT64_LE => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 8, true, true,
+            )?)),
+            SIGNED_INT64_BE => Ok(self.heap.alloc_list(decode_integer_values(
+                raw_items, 8, false, true,
+            )?)),
+            IEEE_754_FLOAT_LE => {
+                Ok(self.heap.alloc_list(decode_float_values(raw_items, true)?))
+            }
+            IEEE_754_FLOAT_BE => {
+                Ok(self.heap.alloc_list(decode_float_values(raw_items, false)?))
+            }
+            IEEE_754_DOUBLE_LE => {
+                Ok(self.heap.alloc_list(decode_double_values(raw_items, true)?))
+            }
+            IEEE_754_DOUBLE_BE => {
+                Ok(self.heap.alloc_list(decode_double_values(raw_items, false)?))
+            }
+            UTF16_LE => Ok(Value::Str(decode_text_bytes(raw_items, "utf-16-le", "strict")?)),
+            UTF16_BE => Ok(Value::Str(decode_text_bytes(raw_items, "utf-16-be", "strict")?)),
+            UTF32_LE => Ok(Value::Str(decode_text_bytes(raw_items, "utf-32-le", "strict")?)),
+            UTF32_BE => Ok(Value::Str(decode_text_bytes(raw_items, "utf-32-be", "strict")?)),
+            _ => Err(invalid_machine_format_error()),
+        }
+    }
+
+    pub(super) fn builtin_array_reconstructor(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 4 {
+            return Err(RuntimeError::new(
+                "_array_reconstructor() expects exactly 4 arguments",
+            ));
+        }
+        let arraytype = args.remove(0);
+        if !matches!(arraytype, Value::Builtin(BuiltinFunction::ArrayArray)) {
+            return Err(RuntimeError::type_error(format!(
+                "first argument must be a type object, not {}",
+                self.value_type_name_for_error(&arraytype)
+            )));
+        }
+        let typecode_text = match args.remove(0) {
+            Value::Str(text) => text,
+            other => {
+                return Err(RuntimeError::type_error(format!(
+                    "_array_reconstructor(): argument 2 must be a unicode character, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        let mut typecode_chars = typecode_text.chars();
+        let typecode = match (typecode_chars.next(), typecode_chars.next()) {
+            (Some(ch), None) => ch,
+            _ => {
+                return Err(RuntimeError::type_error(format!(
+                    "_array_reconstructor(): argument 2 must be a unicode character, not a string of length {}",
+                    typecode_text.chars().count()
+                )));
+            }
+        };
+        let mformat_code = value_to_int(args.remove(0))?;
+        let raw_items = match args.remove(0) {
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(bytes) => bytes.clone(),
+                _ => Vec::new(),
+            },
+            other => {
+                return Err(RuntimeError::type_error(format!(
+                    "fourth argument should be bytes, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        let initializer = self.decode_array_reconstructor_initializer(mformat_code, &raw_items)?;
+        match self.call_internal(
+            arraytype,
+            vec![Value::Str(typecode.to_string()), initializer],
+            HashMap::new(),
+        )? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => Err(
+                self.runtime_error_from_active_exception("_array_reconstructor() failed"),
+            ),
+        }
+    }
+
     pub(super) fn builtin_array_array(
         &mut self,
         mut args: Vec<Value>,
