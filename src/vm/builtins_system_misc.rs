@@ -4637,13 +4637,20 @@ impl Vm {
         let source_text = source_lines.concat();
         let mut lexer = crate::parser::lexer::Lexer::new(&source_text);
         let tokens = lexer.tokenize().map_err(|err| {
-            RuntimeError::with_exception(
-                "SyntaxError",
-                Some(format!(
-                    "{} (line {}, column {})",
-                    err.message, err.line, err.column
-                )),
-            )
+            let mut syntax_error = self.compile_syntax_error_runtime_error(
+                err.message,
+                "<string>",
+                &source_text,
+                Some(err.line),
+                Some(err.column),
+            );
+            if let Some(exception) = syntax_error.exception.as_mut() {
+                let mut attrs = exception.attrs.borrow_mut();
+                attrs.insert("end_lineno".to_string(), Value::None);
+                attrs.insert("end_offset".to_string(), Value::None);
+                attrs.insert("print_file_and_line".to_string(), Value::None);
+            }
+            syntax_error
         })?;
 
         let physical_lines = if source_text.is_empty() {

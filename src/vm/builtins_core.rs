@@ -7519,7 +7519,7 @@ impl Vm {
         Ok(Value::Code(code))
     }
 
-    fn compile_syntax_error_runtime_error(
+    pub(super) fn compile_syntax_error_runtime_error(
         &mut self,
         message: String,
         filename: &str,

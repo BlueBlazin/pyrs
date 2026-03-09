@@ -2375,6 +2375,17 @@ fn compile_parse_error_populates_syntaxerror_location_attrs() {
 }
 
 #[test]
+fn tokenize_tokenizer_iter_indentation_error_exposes_syntaxerror_attrs() {
+    let source = "import _tokenize\nkind = ''\nmsg = None\nlineno = None\noffset = None\ntext = None\nlines = iter(['if True:\\n', '    pass\\n', '  pass\\n', ''])\ntry:\n    list(_tokenize.TokenizerIter(lambda: next(lines), extra_tokens=False))\nexcept IndentationError as exc:\n    kind = type(exc).__name__\n    msg = exc.msg\n    lineno = exc.lineno\n    offset = exc.offset\n    text = exc.text\nok = (kind == 'IndentationError' and msg == 'unindent does not match any outer indentation level' and lineno == 3 and offset == 7 and text == '  pass')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

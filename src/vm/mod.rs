@@ -2888,6 +2888,23 @@ impl Vm {
             .as_ref()
             .map(|text| Value::Str(text.clone()))
             .unwrap_or(Value::None);
+        if self.exception_inherits(exception.name.as_str(), "SyntaxError") {
+            let mut attrs = exception.attrs.borrow_mut();
+            if !attrs.contains_key("msg") {
+                attrs.insert("msg".to_string(), message_value.clone());
+            }
+            for attr in [
+                "filename",
+                "lineno",
+                "offset",
+                "text",
+                "end_lineno",
+                "end_offset",
+                "print_file_and_line",
+            ] {
+                attrs.entry(attr.to_string()).or_insert(Value::None);
+            }
+        }
         if is_import_error_family(exception.name.as_str()) {
             let mut attrs = exception.attrs.borrow_mut();
             if !attrs.contains_key("msg") {

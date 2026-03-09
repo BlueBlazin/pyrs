@@ -12461,6 +12461,12 @@ impl RuntimeError {
     pub fn with_exception(name: impl Into<String>, message: Option<String>) -> Self {
         let name = name.into();
         let exception = ExceptionObject::new(name.clone(), message.clone());
+        if is_syntax_error_family(name.as_str()) {
+            ensure_syntax_error_attrs(
+                &mut exception.attrs.borrow_mut(),
+                message.clone().map(Value::Str).unwrap_or(Value::None),
+            );
+        }
         if matches!(name.as_str(), "StopIteration" | "StopAsyncIteration") {
             exception.attrs.borrow_mut().insert(
                 "value".to_string(),
@@ -12644,6 +12650,15 @@ fn runtime_error_exception_from_message(message: &str) -> Option<ExceptionObject
         });
 
     let exception = ExceptionObject::new(exception_type.clone(), exception_message.clone());
+    if is_syntax_error_family(exception_type.as_str()) {
+        ensure_syntax_error_attrs(
+            &mut exception.attrs.borrow_mut(),
+            exception_message
+                .clone()
+                .map(Value::Str)
+                .unwrap_or(Value::None),
+        );
+    }
     if matches!(
         exception_type.as_str(),
         "StopIteration" | "StopAsyncIteration"
@@ -12788,6 +12803,30 @@ fn is_os_error_family(name: &str) -> bool {
 #[inline]
 fn is_import_error_family(name: &str) -> bool {
     matches!(name, "ImportError" | "ModuleNotFoundError")
+}
+
+fn is_syntax_error_family(name: &str) -> bool {
+    matches!(
+        name,
+        "SyntaxError" | "IndentationError" | "TabError" | "_IncompleteInputError"
+    )
+}
+
+fn ensure_syntax_error_attrs(attrs: &mut HashMap<String, Value>, message: Value) {
+    if !attrs.contains_key("msg") {
+        attrs.insert("msg".to_string(), message);
+    }
+    for attr in [
+        "filename",
+        "lineno",
+        "offset",
+        "text",
+        "end_lineno",
+        "end_offset",
+        "print_file_and_line",
+    ] {
+        attrs.entry(attr.to_string()).or_insert(Value::None);
+    }
 }
 
 fn extract_os_error_errno(message: &str) -> Option<i64> {

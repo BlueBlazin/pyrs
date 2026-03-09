@@ -53,6 +53,9 @@ Recent closures since this snapshot:
 - builtin `_interpreters` / `_interpqueues` import substrate now lets
   `concurrent.futures.InterpreterPoolExecutor` import through the CPython
   stdlib layer, while runtime behavior remains to be implemented
+- SyntaxError-family exceptions raised through `_tokenize.TokenizerIter` and
+  generic runtime exception normalization now expose CPython-style `msg` and
+  location attrs, removing the old `test.test_unittest` process-error shape
 - builtin `dict` / `list` subclass `super().__init__` now resolve to the
   container initializers instead of falling through to `object.__init__`
 - builtin `threading` / `_thread` now expose native-id surface, including
