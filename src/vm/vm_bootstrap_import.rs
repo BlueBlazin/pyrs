@@ -2109,6 +2109,12 @@ FrozenImporter.exec_module = staticmethod(_FrozenImporter_exec_module)
             vec![
                 ("sep", Value::Str("/".to_string())),
                 ("pathsep", Value::Str(":".to_string())),
+                ("altsep", Value::None),
+                ("curdir", Value::Str(".".to_string())),
+                ("pardir", Value::Str("..".to_string())),
+                ("extsep", Value::Str(".".to_string())),
+                ("defpath", Value::Str("/bin:/usr/bin".to_string())),
+                ("devnull", Value::Str("/dev/null".to_string())),
             ],
         );
         self.install_builtin_module(
@@ -3217,6 +3223,8 @@ FrozenImporter.exec_module = staticmethod(_FrozenImporter_exec_module)
                 ("utf_8_encode", BuiltinFunction::CodecsUtf8Encode),
                 ("utf_8_decode", BuiltinFunction::CodecsUtf8Decode),
                 ("escape_decode", BuiltinFunction::CodecsEscapeDecode),
+                ("charmap_encode", BuiltinFunction::CodecsCharmapEncode),
+                ("charmap_decode", BuiltinFunction::CodecsCharmapDecode),
                 (
                     "make_identity_dict",
                     BuiltinFunction::CodecsMakeIdentityDict,

@@ -16,12 +16,12 @@ use super::{
     Value, Vm, Write, add_values, bigint_from_bytes, bytes_like_from_value,
     call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, compare_ge, compare_gt,
     compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
-    dict_set_value_checked, div_values, encode_text_bytes, floor_div_values, format_float_hex,
-    format_repr, format_value, frame_cell_value, invert_value,
+    dict_set_value_checked, div_values, floor_div_values, format_float_hex, format_repr,
+    format_value, frame_cell_value, invert_value,
     is_import_error_family, is_missing_attribute_error, is_os_error_family,
     is_runtime_type_name_marker, is_truthy, matmul_values, mod_values, mul_values, neg_value,
-    normalize_codec_encoding, normalize_codec_errors, or_values, ordering_from_cmp_value,
-    parse_hex_float_literal, parser, pos_value, round_float_with_ndigits,
+    or_values, ordering_from_cmp_value, parse_hex_float_literal, parser, pos_value,
+    round_float_with_ndigits,
     runtime_error_matches_exception, sub_values, value_from_bigint, value_from_object_ref,
     value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
     with_bytes_like_source, xor_values,
@@ -5596,13 +5596,12 @@ impl Vm {
             };
         }
 
-        let encoding =
-            normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
-        let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
+        let encoding = encoding.unwrap_or(Value::Str("utf-8".to_string()));
+        let errors = errors.unwrap_or(Value::Str("strict".to_string()));
         match object {
             Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
                 let bytes = bytes_like_from_value(object)?;
-                let decoded = decode_text_bytes(&bytes, &encoding, &errors)?;
+                let decoded = self.decode_bytes_with_codec_fallback(&bytes, encoding, errors)?;
                 Ok(Value::Str(decoded))
             }
             _ => Err(RuntimeError::new("decoding str is not supported")),
@@ -5690,11 +5689,11 @@ impl Vm {
                     "{constructor_name}() argument 'encoding' without a string argument"
                 )));
             };
-            let encoding =
-                normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
-            let errors =
-                normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
-            return encode_text_bytes(&text, &encoding, &errors);
+            return self.encode_text_with_codec_fallback(
+                &text,
+                encoding.unwrap_or(Value::Str("utf-8".to_string())),
+                errors.unwrap_or(Value::Str("strict".to_string())),
+            );
         }
 
         match object {

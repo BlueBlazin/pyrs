@@ -7,8 +7,8 @@ use super::{
     format_value, fs, is_pyrs_executable, is_truthy, mul_values, normalize_codec_encoding,
     normalize_codec_errors, parse_decimal_bigint_literal, parse_modules_to_block_literal,
     parse_string_formatter, pow_values, seconds_to_system_time, split_formatter_field_name,
-    system_time_to_secs_f64, value_from_bigint, value_to_bigint, value_to_f64, value_to_int,
-    value_to_process_text, value_to_sequence_items,
+    system_time_to_secs_f64, unknown_codec_error_handler, value_from_bigint, value_to_bigint,
+    value_to_f64, value_to_int, value_to_process_text, value_to_sequence_items,
 };
 #[cfg(unix)]
 use super::{collect_env_entries, collect_process_argv, is_missing_attribute_error};
@@ -5410,10 +5410,11 @@ impl Vm {
             Value::Str(text) => text,
             _ => return Err(RuntimeError::new("encode() argument must be str")),
         };
-        let encoding =
-            normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
-        let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
-        let encoded = encode_text_bytes(&text, &encoding, &errors)?;
+        let encoded = self.encode_text_with_codec_fallback(
+            &text,
+            encoding.unwrap_or(Value::Str("utf-8".to_string())),
+            errors.unwrap_or(Value::Str("strict".to_string())),
+        )?;
         Ok(self.heap.alloc_bytes(encoded))
     }
 
@@ -5458,10 +5459,11 @@ impl Vm {
         }
         let source = args.remove(0);
         let bytes = bytes_like_from_value(source)?;
-        let encoding =
-            normalize_codec_encoding(encoding.unwrap_or(Value::Str("utf-8".to_string())))?;
-        let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
-        let decoded = decode_text_bytes(&bytes, &encoding, &errors)?;
+        let decoded = self.decode_bytes_with_codec_fallback(
+            &bytes,
+            encoding.unwrap_or(Value::Str("utf-8".to_string())),
+            errors.unwrap_or(Value::Str("strict".to_string())),
+        )?;
         Ok(Value::Str(decoded))
     }
 
@@ -5598,6 +5600,377 @@ impl Vm {
             self.heap.alloc_bytes(decoded),
             Value::Int(bytes.len() as i64),
         ]))
+    }
+
+    fn codec_result_first_value(&self, value: Value, opname: &str) -> Result<Value, RuntimeError> {
+        let Value::Tuple(tuple_obj) = value else {
+            return Err(RuntimeError::new(format!(
+                "TypeError: {opname} codec must return a tuple",
+            )));
+        };
+        let Object::Tuple(items) = &*tuple_obj.kind() else {
+            return Err(RuntimeError::new(format!(
+                "TypeError: {opname} codec must return a tuple",
+            )));
+        };
+        items.first().cloned().ok_or_else(|| {
+            RuntimeError::new(format!(
+                "TypeError: {opname} codec must return a non-empty tuple",
+            ))
+        })
+    }
+
+    pub(super) fn encode_text_via_codec_lookup(
+        &mut self,
+        text: &str,
+        encoding: &str,
+        errors: &str,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        let codec_info = self.call_builtin(
+            BuiltinFunction::CodecsLookup,
+            vec![Value::Str(encoding.to_string())],
+            HashMap::new(),
+        )?;
+        let encode = self.builtin_getattr(
+            vec![codec_info, Value::Str("encode".to_string())],
+            HashMap::new(),
+        )?;
+        let encode_is_builtin = matches!(encode, Value::Builtin(BuiltinFunction::CodecsEncode));
+        let encode_args = if encode_is_builtin {
+            vec![
+                Value::Str(text.to_string()),
+                Value::Str(encoding.to_string()),
+                Value::Str(errors.to_string()),
+            ]
+        } else {
+            vec![Value::Str(text.to_string()), Value::Str(errors.to_string())]
+        };
+        let encoded =
+            match self.call_internal_preserving_caller(encode, encode_args, HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception("encode() failed"));
+                }
+            };
+        if encode_is_builtin {
+            return bytes_like_from_value(encoded)
+                .map_err(|_| RuntimeError::type_error("encoder should return a bytes object"));
+        }
+        let first = self.codec_result_first_value(encoded, "encode")?;
+        bytes_like_from_value(first)
+            .map_err(|_| RuntimeError::type_error("encoder should return a bytes object"))
+    }
+
+    pub(super) fn decode_text_via_codec_lookup(
+        &mut self,
+        payload: &[u8],
+        encoding: &str,
+        errors: &str,
+    ) -> Result<String, RuntimeError> {
+        let codec_info = self.call_builtin(
+            BuiltinFunction::CodecsLookup,
+            vec![Value::Str(encoding.to_string())],
+            HashMap::new(),
+        )?;
+        let decode = self.builtin_getattr(
+            vec![codec_info, Value::Str("decode".to_string())],
+            HashMap::new(),
+        )?;
+        let decode_is_builtin = matches!(decode, Value::Builtin(BuiltinFunction::CodecsDecode));
+        let decode_args = if decode_is_builtin {
+            vec![
+                self.heap.alloc_bytes(payload.to_vec()),
+                Value::Str(encoding.to_string()),
+                Value::Str(errors.to_string()),
+            ]
+        } else {
+            vec![
+                self.heap.alloc_bytes(payload.to_vec()),
+                Value::Str(errors.to_string()),
+            ]
+        };
+        let decoded =
+            match self.call_internal_preserving_caller(decode, decode_args, HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception("decode() failed"));
+                }
+            };
+        if decode_is_builtin {
+            return match decoded {
+                Value::Str(text) => Ok(text),
+                _ => Err(RuntimeError::type_error("decoder should return a string result")),
+            };
+        }
+        let first = self.codec_result_first_value(decoded, "decode")?;
+        match first {
+            Value::Str(text) => Ok(text),
+            _ => Err(RuntimeError::type_error("decoder should return a string result")),
+        }
+    }
+
+    pub(super) fn encode_text_with_codec_fallback(
+        &mut self,
+        text: &str,
+        encoding: Value,
+        errors: Value,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        let requested_encoding = match encoding {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("encoding must be string")),
+        };
+        let errors = normalize_codec_errors(errors)?;
+        match normalize_codec_encoding(Value::Str(requested_encoding.clone())) {
+            Ok(normalized) => match encode_text_bytes(text, &normalized, &errors) {
+                Ok(bytes) => Ok(bytes),
+                Err(err) if err.message.contains("unsupported encoding") => {
+                    self.encode_text_via_codec_lookup(text, &normalized, &errors)
+                }
+                Err(err) => Err(err),
+            },
+            Err(err) if err.message.contains("unsupported encoding") => {
+                self.encode_text_via_codec_lookup(text, &requested_encoding, &errors)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn decode_bytes_with_codec_fallback(
+        &mut self,
+        bytes: &[u8],
+        encoding: Value,
+        errors: Value,
+    ) -> Result<String, RuntimeError> {
+        let requested_encoding = match encoding {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("encoding must be string")),
+        };
+        let errors = normalize_codec_errors(errors)?;
+        match normalize_codec_encoding(Value::Str(requested_encoding.clone())) {
+            Ok(normalized) => match decode_text_bytes(bytes, &normalized, &errors) {
+                Ok(text) => Ok(text),
+                Err(err) if err.message.contains("unsupported encoding") => {
+                    self.decode_text_via_codec_lookup(bytes, &normalized, &errors)
+                }
+                Err(err) => Err(err),
+            },
+            Err(err) if err.message.contains("unsupported encoding") => {
+                self.decode_text_via_codec_lookup(bytes, &requested_encoding, &errors)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn charmap_decode_char(&self, mapping: &Value, byte: u8) -> Result<Option<char>, RuntimeError> {
+        match mapping {
+            Value::None => Ok(Some(byte as char)),
+            Value::Str(table) => Ok(table.chars().nth(byte as usize)),
+            Value::Dict(dict) => match dict_get_value(dict, &Value::Int(byte as i64)) {
+                Some(Value::Int(codepoint)) => {
+                    let codepoint = u32::try_from(codepoint).map_err(|_| {
+                        RuntimeError::type_error("character mapping must return valid code points")
+                    })?;
+                    let Some(ch) = char::from_u32(codepoint) else {
+                        return Err(RuntimeError::type_error(
+                            "character mapping must return valid code points",
+                        ));
+                    };
+                    Ok(Some(ch))
+                }
+                Some(Value::Str(text)) => Ok(text.chars().next()),
+                Some(Value::None) | None => Ok(None),
+                Some(_) => Err(RuntimeError::type_error(
+                    "character mapping must return integer, string, or None",
+                )),
+            },
+            _ => Err(RuntimeError::type_error(
+                "character mapping must be dict, string, or None",
+            )),
+        }
+    }
+
+    fn charmap_encode_byte(&self, mapping: &Value, ch: char) -> Result<Option<u8>, RuntimeError> {
+        let codepoint = canonical_codepoint_for_internal_char(ch);
+        match mapping {
+            Value::None => Ok(u8::try_from(codepoint).ok()),
+            Value::Str(table) => Ok(table
+                .chars()
+                .position(|candidate| candidate == ch)
+                .and_then(|index| u8::try_from(index).ok())),
+            Value::Dict(dict) => {
+                let mapped = dict_get_value(dict, &Value::Int(codepoint as i64))
+                    .or_else(|| dict_get_value(dict, &Value::Str(ch.to_string())));
+                match mapped {
+                    Some(Value::Int(byte)) => {
+                        let byte = u8::try_from(byte).map_err(|_| {
+                            RuntimeError::type_error(
+                                "character mapping must return integer in range(256)",
+                            )
+                        })?;
+                        Ok(Some(byte))
+                    }
+                    Some(Value::Bytes(bytes_obj)) => {
+                        let Object::Bytes(bytes) = &*bytes_obj.kind() else {
+                            unreachable!();
+                        };
+                        if bytes.len() != 1 {
+                            return Err(RuntimeError::type_error(
+                                "character mapping must return 1-byte bytes",
+                            ));
+                        }
+                        Ok(Some(bytes[0]))
+                    }
+                    Some(Value::Str(text)) => {
+                        let bytes = text.as_bytes();
+                        if bytes.len() != 1 {
+                            return Err(RuntimeError::type_error(
+                                "character mapping must return 1-byte strings",
+                            ));
+                        }
+                        Ok(Some(bytes[0]))
+                    }
+                    Some(Value::None) | None => Ok(None),
+                    Some(_) => Err(RuntimeError::type_error(
+                        "character mapping must return integer, bytes, string, or None",
+                    )),
+                }
+            }
+            _ => Err(RuntimeError::type_error(
+                "character mapping must be dict, string, or None",
+            )),
+        }
+    }
+
+    pub(super) fn builtin_codecs_charmap_encode(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "charmap_encode() expects object, optional errors, optional mapping",
+            ));
+        }
+        let mut errors = if args.len() >= 2 {
+            Some(args.remove(1))
+        } else {
+            None
+        };
+        let mut mapping = if args.len() >= 2 {
+            Some(args.remove(1))
+        } else {
+            None
+        };
+        if let Some(value) = kwargs.remove("errors") {
+            if errors.is_some() {
+                return Err(RuntimeError::new(
+                    "charmap_encode() got multiple values for errors",
+                ));
+            }
+            errors = Some(value);
+        }
+        if let Some(value) = kwargs.remove("mapping") {
+            if mapping.is_some() {
+                return Err(RuntimeError::new(
+                    "charmap_encode() got multiple values for mapping",
+                ));
+            }
+            mapping = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "charmap_encode() got an unexpected keyword argument",
+            ));
+        }
+        let text = match args.remove(0) {
+            Value::Str(text) => text,
+            _ => return Err(RuntimeError::new("charmap_encode() argument must be str")),
+        };
+        let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
+        let mapping = mapping.unwrap_or(Value::None);
+        let mut encoded = Vec::with_capacity(text.len());
+        for ch in text.chars() {
+            if let Some(byte) = self.charmap_encode_byte(&mapping, ch)? {
+                encoded.push(byte);
+                continue;
+            }
+            match errors.as_str() {
+                "strict" | "surrogatepass" => {
+                    return Err(RuntimeError::new("character maps to <undefined>"));
+                }
+                "ignore" => {}
+                "replace" | "surrogateescape" => encoded.push(b'?'),
+                _ => return Err(unknown_codec_error_handler(&errors)),
+            }
+        }
+        Ok(self.heap.alloc_tuple(vec![
+            self.heap.alloc_bytes(encoded),
+            Value::Int(text.chars().count() as i64),
+        ]))
+    }
+
+    pub(super) fn builtin_codecs_charmap_decode(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "charmap_decode() expects object, optional errors, optional mapping",
+            ));
+        }
+        let mut errors = if args.len() >= 2 {
+            Some(args.remove(1))
+        } else {
+            None
+        };
+        let mut mapping = if args.len() >= 2 {
+            Some(args.remove(1))
+        } else {
+            None
+        };
+        if let Some(value) = kwargs.remove("errors") {
+            if errors.is_some() {
+                return Err(RuntimeError::new(
+                    "charmap_decode() got multiple values for errors",
+                ));
+            }
+            errors = Some(value);
+        }
+        if let Some(value) = kwargs.remove("mapping") {
+            if mapping.is_some() {
+                return Err(RuntimeError::new(
+                    "charmap_decode() got multiple values for mapping",
+                ));
+            }
+            mapping = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "charmap_decode() got an unexpected keyword argument",
+            ));
+        }
+        let bytes = bytes_like_from_value(args.remove(0))?;
+        let errors = normalize_codec_errors(errors.unwrap_or(Value::Str("strict".to_string())))?;
+        let mapping = mapping.unwrap_or(Value::None);
+        let mut decoded = String::with_capacity(bytes.len());
+        for byte in &bytes {
+            if let Some(ch) = self.charmap_decode_char(&mapping, *byte)? {
+                decoded.push(ch);
+                continue;
+            }
+            match errors.as_str() {
+                "strict" | "surrogatepass" => {
+                    return Err(RuntimeError::new("character maps to <undefined>"));
+                }
+                "ignore" => {}
+                "replace" | "surrogateescape" => decoded.push('\u{FFFD}'),
+                _ => return Err(unknown_codec_error_handler(&errors)),
+            }
+        }
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::Str(decoded), Value::Int(bytes.len() as i64)]))
     }
 
     pub(super) fn builtin_codecs_make_identity_dict(

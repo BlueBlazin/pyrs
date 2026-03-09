@@ -3239,21 +3239,18 @@ impl Vm {
                     },
                     _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
-                let encoding = normalize_codec_encoding(
-                    args.first()
-                        .cloned()
-                        .or(kw_encoding)
-                        .unwrap_or(Value::Str("utf-8".to_string())),
-                )?;
-                let errors = normalize_codec_errors(
-                    args.get(1)
-                        .cloned()
-                        .or(kw_errors)
-                        .unwrap_or(Value::Str("strict".to_string())),
-                )?;
-                Ok(NativeCallResult::Value(self.heap.alloc_bytes(
-                    encode_text_bytes(&text, &encoding, &errors)?,
-                )))
+                let encoding = args
+                    .first()
+                    .cloned()
+                    .or(kw_encoding)
+                    .unwrap_or(Value::Str("utf-8".to_string()));
+                let errors = args
+                    .get(1)
+                    .cloned()
+                    .or(kw_errors)
+                    .unwrap_or(Value::Str("strict".to_string()));
+                let encoded = self.encode_text_with_codec_fallback(&text, encoding, errors)?;
+                Ok(NativeCallResult::Value(self.heap.alloc_bytes(encoded)))
             }
             NativeMethodKind::StrDecode => {
                 let mut kw_encoding = None;
@@ -3361,19 +3358,17 @@ impl Vm {
                     },
                     _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                 };
-                let encoding = normalize_codec_encoding(
-                    args.first()
-                        .cloned()
-                        .or(kw_encoding)
-                        .unwrap_or(Value::Str("utf-8".to_string())),
-                )?;
-                let errors = normalize_codec_errors(
-                    args.get(1)
-                        .cloned()
-                        .or(kw_errors)
-                        .unwrap_or(Value::Str("strict".to_string())),
-                )?;
-                let text = decode_text_bytes(&bytes, &encoding, &errors)?;
+                let encoding = args
+                    .first()
+                    .cloned()
+                    .or(kw_encoding)
+                    .unwrap_or(Value::Str("utf-8".to_string()));
+                let errors = args
+                    .get(1)
+                    .cloned()
+                    .or(kw_errors)
+                    .unwrap_or(Value::Str("strict".to_string()));
+                let text = self.decode_bytes_with_codec_fallback(&bytes, encoding, errors)?;
                 Ok(NativeCallResult::Value(Value::Str(text)))
             }
             NativeMethodKind::BytesHex => {
@@ -13628,6 +13623,12 @@ impl Vm {
             BuiltinFunction::CodecsUtf8Encode => self.builtin_codecs_utf_8_encode(args, kwargs),
             BuiltinFunction::CodecsUtf8Decode => self.builtin_codecs_utf_8_decode(args, kwargs),
             BuiltinFunction::CodecsEscapeDecode => self.builtin_codecs_escape_decode(args, kwargs),
+            BuiltinFunction::CodecsCharmapEncode => {
+                self.builtin_codecs_charmap_encode(args, kwargs)
+            }
+            BuiltinFunction::CodecsCharmapDecode => {
+                self.builtin_codecs_charmap_decode(args, kwargs)
+            }
             BuiltinFunction::CodecsMakeIdentityDict => {
                 self.builtin_codecs_make_identity_dict(args, kwargs)
             }

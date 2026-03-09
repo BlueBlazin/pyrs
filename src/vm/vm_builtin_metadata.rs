@@ -622,6 +622,8 @@ impl Vm {
                 BuiltinFunction::CodecsUtf8Encode => "utf_8_encode",
                 BuiltinFunction::CodecsUtf8Decode => "utf_8_decode",
                 BuiltinFunction::CodecsEscapeDecode => "escape_decode",
+                BuiltinFunction::CodecsCharmapEncode => "charmap_encode",
+                BuiltinFunction::CodecsCharmapDecode => "charmap_decode",
                 BuiltinFunction::CodecsMakeIdentityDict => "make_identity_dict",
                 BuiltinFunction::CodecsLookup => "lookup",
                 BuiltinFunction::CodecsRegister => "register",
@@ -1324,6 +1326,8 @@ impl Vm {
             | BuiltinFunction::CodecsUtf8Encode
             | BuiltinFunction::CodecsUtf8Decode
             | BuiltinFunction::CodecsEscapeDecode
+            | BuiltinFunction::CodecsCharmapEncode
+            | BuiltinFunction::CodecsCharmapDecode
             | BuiltinFunction::CodecsMakeIdentityDict
             | BuiltinFunction::CodecsLookup
             | BuiltinFunction::CodecsRegister

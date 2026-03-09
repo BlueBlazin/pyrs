@@ -5616,6 +5616,8 @@ pub enum BuiltinFunction {
     CodecsUtf8Encode,
     CodecsUtf8Decode,
     CodecsEscapeDecode,
+    CodecsCharmapEncode,
+    CodecsCharmapDecode,
     CodecsMakeIdentityDict,
     CodecsLookup,
     CodecsRegister,
@@ -9247,6 +9249,8 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::CodecsUtf8Encode
             | BuiltinFunction::CodecsUtf8Decode
             | BuiltinFunction::CodecsEscapeDecode
+            | BuiltinFunction::CodecsCharmapEncode
+            | BuiltinFunction::CodecsCharmapDecode
             | BuiltinFunction::CodecsMakeIdentityDict
             | BuiltinFunction::CodecsLookup
             | BuiltinFunction::CodecsRegister

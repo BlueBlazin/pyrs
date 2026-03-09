@@ -4944,6 +4944,29 @@ ok = (
 }
 
 #[test]
+fn cp437_codec_roundtrips_via_pure_encodings_registry() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping cp437 codec test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("codecs-cp437-registry".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = format!(
+                "import sys, codecs\nsys.path.insert(0, {lib_path:?})\ncodec = codecs.lookup('cp437')\ndecoded = b'\\x82'.decode('cp437')\nencoded = 'é'.encode('cp437')\nok = (codec.name == 'cp437' and decoded == 'é' and encoded == b'\\x82')\n"
+            );
+            let module = parser::parse_module(&source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn cp437 codec thread");
+    handle.join().expect("cp437 codec thread should complete");
+}
+
+#[test]
 fn io_open_with_utf8_encoding_works_with_pure_codecs() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping io utf-8 open test (CPython Lib path not available)");
@@ -18690,7 +18713,7 @@ fn exposes_os_seek_constants() {
 
 #[test]
 fn exposes_os_platform_separator_constants() {
-    let source = "import os\nok = hasattr(os, 'altsep') and os.curdir == '.' and os.pardir == '..' and os.extsep == '.'\n";
+    let source = "import os\nok = hasattr(os, 'altsep') and hasattr(os.path, 'altsep') and os.curdir == '.' and os.pardir == '..' and os.extsep == '.' and os.path.extsep == '.'\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
