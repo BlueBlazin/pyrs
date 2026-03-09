@@ -19030,6 +19030,22 @@ fn frozen_importer_exec_module_populates_live_module_namespace() {
 }
 
 #[test]
+fn os_path_aliases_to_posixpath_when_cpython_lib_path_is_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-os-path-alias-posixpath", move || {
+        let source = "import sys\nimport os\nimport posixpath\nimport pathlib\nok = (os.path is posixpath and sys.modules['os.path'] is posixpath and pathlib.Path.parser is posixpath)\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn frozen_module_repr_uses_spec_origin() {
     let Some(lib_path) = cpython_lib_path() else {
         return;

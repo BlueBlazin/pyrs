@@ -306,7 +306,25 @@ impl Vm {
             }
             canonical
         };
+        self.sync_standard_os_path_aliases(&module_name);
         self.sync_re_module_flag_aliases(&canonical);
+    }
+
+    fn sync_standard_os_path_aliases(&mut self, module_name: &str) {
+        let platform_path_name = if cfg!(windows) { "ntpath" } else { "posixpath" };
+        if module_name != "os" && module_name != platform_path_name {
+            return;
+        }
+        let Some(path_module) = self.modules.get(platform_path_name).cloned() else {
+            return;
+        };
+        if let Some(os_module) = self.modules.get("os").cloned() {
+            self.upsert_module_global(&os_module, "path", Value::Module(path_module.clone()));
+        }
+        self.modules
+            .insert("os.path".to_string(), path_module.clone());
+        self.refresh_sys_modules_dict();
+        self.link_module_chain("os.path", path_module);
     }
 
     #[inline]
