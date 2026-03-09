@@ -19,47 +19,40 @@ Artifact root: `perf/cpython_compat_benchmark_latest`
 
 Snapshot metadata:
 
-- generated at: `2026-03-07T12:20:56Z`
-- git head: `112191cfb20934ae59a28efa2890d8780cb2878a`
+- generated at: `2026-03-09T05:36:36Z`
+- git head: `775b50502268024d67fee75758348f1fdbff8a69`
 - host: macOS `arm64`
 
 Headline counts:
 
 - discoverable benchmark entries: `492`
-- runnable entries after inventory: `452`
-- clean-pass modules: `38`
-- modules that execute but still fail cases: `246`
-- blocked modules (`load_error` + `process_error` + `process_timeout`): `138`
+- runnable entries after inventory: `454`
+- clean-pass modules: `41`
+- modules that execute but still fail cases: `265`
+- blocked modules (`load_error` + `process_error` + `process_timeout`): `118`
 - discoverable test cases: `47,040`
-- executed case outcomes: `19,793`
-- passed case outcomes: `10,524`
-- executed subtest outcomes: `40,662`
-- passed subtest outcomes: `38,203`
+- executed case outcomes: `23,303`
+- passed case outcomes: `11,332`
+- executed subtest outcomes: `41,421`
+- passed subtest outcomes: `38,344`
 
 The main leverage signal is still blocked execution coverage:
 
-- discoverable cases currently trapped behind blocked modules: `26,439`
+- discoverable cases currently trapped behind blocked modules: `23,051`
 
-Recent closures since this snapshot:
+Movement from the prior checked-in snapshot:
 
-- import/bootstrap substrate fixes have landed for missing `socket.IPPROTO_TCP`
-  and related socket protocol constants
-- `datetime.date.timetuple()` / `datetime.datetime.timetuple()` and
-  `datetime.datetime.utctimetuple()` now exist for stdlib-facing callers
-- `array._array_reconstructor` is now present and rebuilds arrays from
-  CPython machine-format payloads in the builtin `array` module
-- builtin `array.array` now participates as a module-qualified type object so
-  stdlib test modules can subclass it during import
-- builtin `_interpreters` / `_interpqueues` import substrate now lets
-  `concurrent.futures.InterpreterPoolExecutor` import through the CPython
-  stdlib layer, while runtime behavior remains to be implemented
-- SyntaxError-family exceptions raised through `_tokenize.TokenizerIter` and
-  generic runtime exception normalization now expose CPython-style `msg` and
-  location attrs, removing the old `test.test_unittest` process-error shape
-- builtin `dict` / `list` subclass `super().__init__` now resolve to the
-  container initializers instead of falling through to `object.__init__`
-- builtin `threading` / `_thread` now expose native-id surface, including
-  `threading._HAVE_THREAD_NATIVE_ID`
+- clean-pass modules moved from `38` to `41`
+- blocked modules moved from `138` to `118`
+- discoverable cases hidden behind blocked modules moved from `26,439` to
+  `23,051`
+- executed case outcomes moved from `19,793` to `23,303`
+- major drivers were the recent import/bootstrap fixes for socket protocol
+  constants, `datetime.timetuple()`, `array` reconstruction/type-object
+  surface, `_interpreters` import substrate, threading native-id exposure,
+  SyntaxError attribute normalization, container `super().__init__`
+  dispatch, and the GC/finalizer fix that restored CPython-style collection of
+  deferred `__del__` self-cycles during `gc.collect()`
 
 ## Prioritization Rules
 
@@ -76,74 +69,44 @@ Recent closures since this snapshot:
 
 | Order | Lane | Why now | Primary focused suite(s) |
 |---|---|---|---|
-| 1 | Import/bootstrap load errors | Largest blocked bucket: `79` modules, `16,320` discoverable cases | `high-leverage`, `import-bootstrap` |
-| 2 | Process errors and timeouts | Stability failures still hide `10,119` discoverable cases | `timeouts-crashes`, `high-leverage` |
-| 3 | OS/filesystem/socket transport parity | Largest user-visible failure cluster among runnable modules | `os-fs-socket` |
-| 4 | Object model/call/descriptor/format parity | Broadest cross-cutting runtime lane after transport work | `object-model-call` |
+| 1 | Process errors and timeouts | Largest blocked bucket now hides `12,719` discoverable cases | `timeouts-crashes`, `high-leverage` |
+| 2 | Import/bootstrap load errors | Remaining load blockers still hide `10,332` discoverable cases | `high-leverage`, `import-bootstrap` |
+| 3 | Asyncio / OS / socket transport parity | Largest user-visible runnable cluster now spans asyncio task coverage plus socket and OS gaps | `high-leverage`, `os-fs-socket` |
+| 4 | Object model / container / call / format parity | Broadest cross-cutting runtime lane after concurrency/transport work | `object-model-call` |
 | 5 | Text/codecs/XML substrate | Concentrated cluster with good focused payoff after broader runtime lanes move | `text-codecs-xml` |
 
 ## Lane Details
 
-### 1. Import/bootstrap load errors
+### 1. Process errors and timeouts
 
 Why first:
 
-- `79` runnable modules currently stop at `load_error`
-- those rows hide `16,320` discoverable cases
-- many failures are shared substrate defects rather than per-module bugs
-
-Current signatures:
-
-- `AttributeError: module 'socket' has no attribute 'IPPROTO_TCP'`
-- `TypeError: object.__init__() takes exactly one argument`
-- `AttributeError: 'datetime' object has no attribute 'timetuple'`
-- `ImportError: cannot import name '_array_reconstructor' from 'array'`
-- missing `concurrent.futures.InterpreterPoolExecutor`
-- missing `threading._HAVE_THREAD_NATIVE_ID`
-
-High-value modules:
-
-- `test.test_email`
-- `test.test_pathlib`
-- `test.test_importlib`
-- `test.test_datetime`
-- `test.test_ast`
-- `test.test_array`
-- `test.test_asyncio.test_tasks`
-
-Closure evidence:
-
-- a module moves from `load_error` into ordinary pass/fail execution
-- the missing substrate is covered by targeted regressions
-- the fix is in shared runtime code, not a one-off compatibility patch
-
-### 2. Process errors and timeouts
-
-Why second:
-
-- `34` modules currently end in `process_error`
-- `25` modules currently end in `process_timeout`
-- together they hide `10,119` discoverable cases
+- `35` modules currently end in `process_error`
+- `29` modules currently end in `process_timeout`
+- together they hide `12,719` discoverable cases
 
 Largest blocked rows:
 
 - timeouts:
+  - `test.test_email`
+  - `test.test_datetime`
   - `test.test_pickle`
+  - `test.test_decimal`
   - `test.test_set`
   - `test.test_sqlite3`
   - `test.test_sys_settrace`
-  - `test.test_threading`
 - process errors:
-  - `test.test_unittest`
   - `test.test_tarfile`
   - `test.test_io`
   - `test.test_statistics`
+  - `test.test___all__`
 
 Observed patterns:
 
-- hard crashes and negative return codes
-- runaway recursion / stack overflow
-- non-terminating behavior in pickle, set, sqlite3, tracing, and threading
+- hard crashes and negative return codes (`-10`, `-11`, `-6`)
+- `_io` destructor/finalizer churn precedes at least one of the aborting runs
+- non-terminating behavior is now concentrated in email, datetime, pickle,
+  decimal, set, sqlite3, and tracing
 
 Closure evidence:
 
@@ -151,63 +114,102 @@ Closure evidence:
 - the module starts producing ordinary case-level failures
 - targeted tests capture the old crash or hang trigger
 
-### 3. OS/filesystem/socket transport parity
+### 2. Import/bootstrap load errors
+
+Why second:
+
+- `54` runnable modules currently stop at `load_error`
+- those rows hide `10,332` discoverable cases
+- remaining failures are shared parser/import/class-subclass substrate defects
+
+Current signatures:
+
+- `RuntimeError: parse error in module 'test.test_pathlib.test_pathlib' ... expected Colon`
+- `TypeError: object.__init_subclass__() takes no keyword arguments`
+- `AttributeError: module '_frozen_importlib' has no attribute '_ModuleLock'`
+
+High-value modules:
+
+- `test.test_pathlib`
+- `test.test_importlib`
+- `test.test_capi`
+- `test.test_ctypes`
+- `test.test_idle`
+
+Closure evidence:
+
+- a module moves from `load_error` into ordinary pass/fail execution
+- the missing substrate is covered by targeted regressions
+- the fix is in shared runtime code, not a one-off compatibility patch
+
+### 3. Asyncio / OS / socket transport parity
 
 Why third:
 
 - biggest user-visible failed cluster among modules that already run
-- overlaps `os`, `pathlib`, `socket`, `subprocess`, `selectors`, and `asyncio`
+- now overlaps asyncio task/future coverage plus `os`, `socket`, `mailbox`,
+  and related transport paths
 
 Largest modules:
 
-- `test.test_socket`: `736` non-pass
+- `test.test_asyncio.test_tasks`: `850` non-pass
+- `test.test_socket`: `734` non-pass
 - `test.test_mailbox`: `347` non-pass
 - `test.test_os`: `313` non-pass
+- `test.test_asyncio.test_futures`: `129` non-pass
 - `test.test_imaplib`: `109` non-pass
-- `test.test_selectors`: `99` non-pass
 
 Current signatures:
 
+- `requires the C _asyncio module`
 - missing socket operations: `bind`, `connect`, `recvmsg`, `recvmsg_into`, `sendmsg`
-- filesystem API gaps: `DirEntry.is_junction`, `os.fwalk`
+- missing filesystem surface: `DirEntry.is_junction`
+- filesystem API gaps: `os.fwalk`
 - OS semantic mismatches around error mapping and directory lifecycle
 
 Closure evidence:
 
+- asyncio task/future runs stop failing on missing `_asyncio`
 - `os-fs-socket` stops failing on missing primitive APIs
 - failures shift from missing methods/constants to narrower semantic deltas
 - path and directory-lifecycle semantics land with targeted regression tests
 
-### 4. Object model/call/descriptor/format parity
+### 4. Object model / container / call / format parity
 
 Why fourth:
 
-- broadest cross-cutting runtime lane after OS/transport work
+- broadest cross-cutting runtime lane after concurrency/transport work
 - fixes here fan out into import-time blockers and already-runnable modules
+- `array` semantics now sit in this lane because the import blockers are gone
+  and the remaining regressions are runtime-shape defects
 
 Largest modules:
 
+- `test.test_array`: `816` non-pass
 - `test.test_enum`: `348` non-pass
+- `test.test_unittest`: `343` non-pass
 - `test.test_configparser`: `268` non-pass
 - `test.test_traceback`: `219` non-pass
 - `test.test_call`: `181` non-pass
-- `test.test_functools`: `164` non-pass
-- `test.test_memoryview`: `119` non-pass
+- `test.test_functools`: `160` non-pass
 
 Current signatures:
 
+- `TypeError: subscript unsupported type`
+- `RuntimeError: store subscript unsupported type`
+- `AttributeError: module '__array__' has no attribute 'append'`
 - `RuntimeError: string must be string`
 - `AttributeError: str has no attribute 'format_map'`
-- `TypeError: object.__init__() takes exactly one argument`
+- `SystemError: SystemError: NULL result without error in __get__()`
 - enum recursion / repr / reverse-iteration mismatches
-- call/vectorcall mismatches in `_testcapi`-backed paths
+- call/vectorcall and descriptor mismatches in `_testcapi`-backed paths
 - missing code-object debug/introspection support used by traceback/dis
 
 Closure evidence:
 
-- object-model-call regressions collapse across multiple unrelated modules
+- object-model/container regressions collapse across multiple unrelated modules
 - fixes land in shared runtime substrate, not per-module patching
-- constructor/call/format/introspection paths get direct regression tests
+- constructor/call/container/format/introspection paths get direct regression tests
 
 ### 5. Text/codecs/XML substrate
 
@@ -218,10 +220,10 @@ Why fifth:
 
 Largest modules:
 
-- `test.test_codecs`: `242` non-pass
-- `test.test_xml_etree_c`: `141` non-pass
+- `test.test_codecs`: `241` non-pass
+- `test.test_xml_etree_c`: `140` non-pass
 - `test.test_sax`: `136` non-pass
-- `test.test_xml_etree`: `121` non-pass
+- `test.test_xml_etree`: `122` non-pass
 
 Current signatures:
 

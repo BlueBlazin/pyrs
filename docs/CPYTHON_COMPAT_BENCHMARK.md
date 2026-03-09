@@ -27,6 +27,14 @@ This benchmark is intended to answer:
 - Focused preset runner:
   - `scripts/run_cpython_compat_focus.py`
 
+## Latest Artifact
+
+- root: `perf/cpython_compat_benchmark_latest`
+- completed at: `2026-03-09T05:36:36Z`
+- git head: `775b50502268024d67fee75758348f1fdbff8a69`
+- host: macOS `arm64`
+- elapsed: `2,196.7s` (`36m 37s`)
+
 ## Example Run
 
 ```bash
@@ -71,7 +79,7 @@ For a curated batch file:
 Entry files are newline-delimited module names. Blank lines and `#` comments are
 ignored.
 
-For focused benchmark slices instead of the full 46-minute run:
+For focused benchmark slices instead of the current ~37-minute full sharded run on this host:
 
 ```bash
 python3 scripts/run_cpython_compat_focus.py --list-suites
