@@ -4,25 +4,84 @@ use super::{
     INSTANCE_DICT_STORAGE_ATTR, ImportDirCacheEntry, ImportReturnPolicy, InstanceObject,
     InternalCallOutcome, LOCAL_SHIM_MODULES, LOCAL_SHIM_PRECEDENCE_MODULES, ModuleObject,
     ModuleSourceInfo, NAMESPACE_LOADER, NativeMethodKind, NativeMethodObject, ObjRef, Object,
-    PURE_STDLIB_ABC_MODULES, PURE_STDLIB_CODECS_MODULES, PURE_STDLIB_COLLECTIONS_MODULES,
-    PURE_STDLIB_COLORIZE_MODULES, PURE_STDLIB_DECIMAL_MODULES, PURE_STDLIB_FUNCTOOLS_MODULES,
-    PURE_STDLIB_FUTURE_MODULES, PURE_STDLIB_INSPECT_MODULES, PURE_STDLIB_IO_MODULES,
-    PURE_STDLIB_JSON_MODULES, PURE_STDLIB_OPERATOR_MODULES, PURE_STDLIB_OS_MODULES,
-    PURE_STDLIB_OSX_SUPPORT_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
-    PURE_STDLIB_PLATFORM_MODULES, PURE_STDLIB_RE_MODULES, PURE_STDLIB_SIGNAL_MODULES,
-    PURE_STDLIB_SOCKET_MODULES, PURE_STDLIB_SSL_MODULES, PURE_STDLIB_SUBPROCESS_MODULES,
-    PURE_STDLIB_SYSCONFIG_MODULES, PURE_STDLIB_TYPES_MODULES, PURE_STDLIB_UUID_MODULES,
-    PURE_STDLIB_ASYNCIO_MODULES,
-    PURE_STDLIB_WEAKREF_MODULES, Path, PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
-    SIGNAL_SIGINT, SIGNAL_SIGKILL, SIGNAL_SIGTERM, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
-    SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler, cpython, dict_get_value,
-    dict_remove_value, dict_set_value, matches_finder_kind, parse_uuid_like_string, parser,
-    source_path_from_cache_path,
+    PURE_STDLIB_ABC_MODULES, PURE_STDLIB_ASYNCIO_MODULES, PURE_STDLIB_CODECS_MODULES,
+    PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_COLORIZE_MODULES, PURE_STDLIB_DECIMAL_MODULES,
+    PURE_STDLIB_FUNCTOOLS_MODULES, PURE_STDLIB_FUTURE_MODULES, PURE_STDLIB_INSPECT_MODULES,
+    PURE_STDLIB_IO_MODULES, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_OPERATOR_MODULES,
+    PURE_STDLIB_OS_MODULES, PURE_STDLIB_OSX_SUPPORT_MODULES, PURE_STDLIB_PATHLIB_MODULES,
+    PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_PLATFORM_MODULES, PURE_STDLIB_RE_MODULES,
+    PURE_STDLIB_SIGNAL_MODULES, PURE_STDLIB_SOCKET_MODULES, PURE_STDLIB_SSL_MODULES,
+    PURE_STDLIB_SUBPROCESS_MODULES, PURE_STDLIB_SYSCONFIG_MODULES, PURE_STDLIB_TYPES_MODULES,
+    PURE_STDLIB_UUID_MODULES, PURE_STDLIB_WEAKREF_MODULES, Path, PathBuf, Rc, RuntimeError,
+    SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGKILL, SIGNAL_SIGTERM,
+    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm,
+    cached_module_path, compiler, cpython, dict_get_value, dict_remove_value, dict_set_value,
+    matches_finder_kind, parse_uuid_like_string, parser, source_path_from_cache_path,
 };
 use crate::extensions::{
     PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
 };
 use crate::runtime::types_export_name_info;
+
+#[cfg(unix)]
+fn socket_bootstrap_constant(name: &str) -> i64 {
+    match name {
+        "AF_UNSPEC" => libc::AF_UNSPEC as i64,
+        "AF_UNIX" => libc::AF_UNIX as i64,
+        "AF_INET" => libc::AF_INET as i64,
+        "AF_INET6" => libc::AF_INET6 as i64,
+        "SOCK_STREAM" => libc::SOCK_STREAM as i64,
+        "SOCK_DGRAM" => libc::SOCK_DGRAM as i64,
+        "SOCK_RAW" => libc::SOCK_RAW as i64,
+        "SOCK_RDM" => libc::SOCK_RDM as i64,
+        "SOCK_SEQPACKET" => libc::SOCK_SEQPACKET as i64,
+        "SOL_SOCKET" => libc::SOL_SOCKET as i64,
+        "SO_TYPE" => libc::SO_TYPE as i64,
+        "SO_REUSEADDR" => libc::SO_REUSEADDR as i64,
+        "SCM_RIGHTS" => libc::SCM_RIGHTS as i64,
+        "AI_PASSIVE" => libc::AI_PASSIVE as i64,
+        "AI_CANONNAME" => libc::AI_CANONNAME as i64,
+        "AI_NUMERICHOST" => libc::AI_NUMERICHOST as i64,
+        "AI_ADDRCONFIG" => libc::AI_ADDRCONFIG as i64,
+        "AI_NUMERICSERV" => libc::AI_NUMERICSERV as i64,
+        "IPPROTO_IP" => libc::IPPROTO_IP as i64,
+        "IPPROTO_TCP" => libc::IPPROTO_TCP as i64,
+        "IPPROTO_UDP" => libc::IPPROTO_UDP as i64,
+        "IPPROTO_IPV6" => libc::IPPROTO_IPV6 as i64,
+        "TCP_NODELAY" => libc::TCP_NODELAY as i64,
+        _ => panic!("unknown socket bootstrap constant: {name}"),
+    }
+}
+
+#[cfg(not(unix))]
+fn socket_bootstrap_constant(name: &str) -> i64 {
+    match name {
+        "AF_UNSPEC" => 0,
+        "AF_UNIX" => 1,
+        "AF_INET" => 2,
+        "AF_INET6" => 10,
+        "SOCK_STREAM" => 1,
+        "SOCK_DGRAM" => 2,
+        "SOCK_RAW" => 3,
+        "SOCK_RDM" => 4,
+        "SOCK_SEQPACKET" => 5,
+        "SOL_SOCKET" => 1,
+        "SO_TYPE" => 3,
+        "SO_REUSEADDR" => 2,
+        "SCM_RIGHTS" => 1,
+        "AI_PASSIVE" => 1,
+        "AI_CANONNAME" => 2,
+        "AI_NUMERICHOST" => 4,
+        "AI_ADDRCONFIG" => 32,
+        "AI_NUMERICSERV" => 1024,
+        "IPPROTO_IP" => 0,
+        "IPPROTO_TCP" => 6,
+        "IPPROTO_UDP" => 17,
+        "IPPROTO_IPV6" => 41,
+        "TCP_NODELAY" => 1,
+        _ => panic!("unknown socket bootstrap constant: {name}"),
+    }
+}
 
 const PYRS_MODULE_INITIALIZING_FLAG: &str = "__pyrs_module_initializing__";
 const UNSUPPORTED_EXTENSION_IMPORT_MODULES: &[&str] = &[
@@ -6141,16 +6200,25 @@ impl Vm {
             "_interpqueues",
             &[
                 ("create", BuiltinFunction::InterpQueuesUnsupportedOperation),
-                ("list_all", BuiltinFunction::InterpQueuesUnsupportedOperation),
+                (
+                    "list_all",
+                    BuiltinFunction::InterpQueuesUnsupportedOperation,
+                ),
                 ("bind", BuiltinFunction::InterpQueuesUnsupportedOperation),
                 ("release", BuiltinFunction::InterpQueuesUnsupportedOperation),
                 (
                     "get_queue_defaults",
                     BuiltinFunction::InterpQueuesUnsupportedOperation,
                 ),
-                ("get_maxsize", BuiltinFunction::InterpQueuesUnsupportedOperation),
+                (
+                    "get_maxsize",
+                    BuiltinFunction::InterpQueuesUnsupportedOperation,
+                ),
                 ("is_full", BuiltinFunction::InterpQueuesUnsupportedOperation),
-                ("get_count", BuiltinFunction::InterpQueuesUnsupportedOperation),
+                (
+                    "get_count",
+                    BuiltinFunction::InterpQueuesUnsupportedOperation,
+                ),
                 ("put", BuiltinFunction::InterpQueuesUnsupportedOperation),
                 ("get", BuiltinFunction::InterpQueuesUnsupportedOperation),
                 (
@@ -8791,29 +8859,89 @@ impl Vm {
                 ("gaierror", Value::ExceptionType("Exception".to_string())),
                 ("timeout", Value::ExceptionType("Exception".to_string())),
                 ("has_ipv6", Value::Bool(false)),
-                ("AF_UNSPEC", Value::Int(libc::AF_UNSPEC as i64)),
-                ("AF_UNIX", Value::Int(libc::AF_UNIX as i64)),
-                ("AF_INET", Value::Int(libc::AF_INET as i64)),
-                ("AF_INET6", Value::Int(libc::AF_INET6 as i64)),
-                ("SOCK_STREAM", Value::Int(libc::SOCK_STREAM as i64)),
-                ("SOCK_DGRAM", Value::Int(libc::SOCK_DGRAM as i64)),
-                ("SOCK_RAW", Value::Int(libc::SOCK_RAW as i64)),
-                ("SOCK_RDM", Value::Int(libc::SOCK_RDM as i64)),
-                ("SOCK_SEQPACKET", Value::Int(libc::SOCK_SEQPACKET as i64)),
-                ("SOL_SOCKET", Value::Int(libc::SOL_SOCKET as i64)),
-                ("SO_TYPE", Value::Int(libc::SO_TYPE as i64)),
-                ("SO_REUSEADDR", Value::Int(libc::SO_REUSEADDR as i64)),
-                ("SCM_RIGHTS", Value::Int(libc::SCM_RIGHTS as i64)),
-                ("AI_PASSIVE", Value::Int(libc::AI_PASSIVE as i64)),
-                ("AI_CANONNAME", Value::Int(libc::AI_CANONNAME as i64)),
-                ("AI_NUMERICHOST", Value::Int(libc::AI_NUMERICHOST as i64)),
-                ("AI_ADDRCONFIG", Value::Int(libc::AI_ADDRCONFIG as i64)),
-                ("AI_NUMERICSERV", Value::Int(libc::AI_NUMERICSERV as i64)),
-                ("IPPROTO_IP", Value::Int(libc::IPPROTO_IP as i64)),
-                ("IPPROTO_TCP", Value::Int(libc::IPPROTO_TCP as i64)),
-                ("IPPROTO_UDP", Value::Int(libc::IPPROTO_UDP as i64)),
-                ("IPPROTO_IPV6", Value::Int(libc::IPPROTO_IPV6 as i64)),
-                ("TCP_NODELAY", Value::Int(libc::TCP_NODELAY as i64)),
+                (
+                    "AF_UNSPEC",
+                    Value::Int(socket_bootstrap_constant("AF_UNSPEC")),
+                ),
+                ("AF_UNIX", Value::Int(socket_bootstrap_constant("AF_UNIX"))),
+                ("AF_INET", Value::Int(socket_bootstrap_constant("AF_INET"))),
+                (
+                    "AF_INET6",
+                    Value::Int(socket_bootstrap_constant("AF_INET6")),
+                ),
+                (
+                    "SOCK_STREAM",
+                    Value::Int(socket_bootstrap_constant("SOCK_STREAM")),
+                ),
+                (
+                    "SOCK_DGRAM",
+                    Value::Int(socket_bootstrap_constant("SOCK_DGRAM")),
+                ),
+                (
+                    "SOCK_RAW",
+                    Value::Int(socket_bootstrap_constant("SOCK_RAW")),
+                ),
+                (
+                    "SOCK_RDM",
+                    Value::Int(socket_bootstrap_constant("SOCK_RDM")),
+                ),
+                (
+                    "SOCK_SEQPACKET",
+                    Value::Int(socket_bootstrap_constant("SOCK_SEQPACKET")),
+                ),
+                (
+                    "SOL_SOCKET",
+                    Value::Int(socket_bootstrap_constant("SOL_SOCKET")),
+                ),
+                ("SO_TYPE", Value::Int(socket_bootstrap_constant("SO_TYPE"))),
+                (
+                    "SO_REUSEADDR",
+                    Value::Int(socket_bootstrap_constant("SO_REUSEADDR")),
+                ),
+                (
+                    "SCM_RIGHTS",
+                    Value::Int(socket_bootstrap_constant("SCM_RIGHTS")),
+                ),
+                (
+                    "AI_PASSIVE",
+                    Value::Int(socket_bootstrap_constant("AI_PASSIVE")),
+                ),
+                (
+                    "AI_CANONNAME",
+                    Value::Int(socket_bootstrap_constant("AI_CANONNAME")),
+                ),
+                (
+                    "AI_NUMERICHOST",
+                    Value::Int(socket_bootstrap_constant("AI_NUMERICHOST")),
+                ),
+                (
+                    "AI_ADDRCONFIG",
+                    Value::Int(socket_bootstrap_constant("AI_ADDRCONFIG")),
+                ),
+                (
+                    "AI_NUMERICSERV",
+                    Value::Int(socket_bootstrap_constant("AI_NUMERICSERV")),
+                ),
+                (
+                    "IPPROTO_IP",
+                    Value::Int(socket_bootstrap_constant("IPPROTO_IP")),
+                ),
+                (
+                    "IPPROTO_TCP",
+                    Value::Int(socket_bootstrap_constant("IPPROTO_TCP")),
+                ),
+                (
+                    "IPPROTO_UDP",
+                    Value::Int(socket_bootstrap_constant("IPPROTO_UDP")),
+                ),
+                (
+                    "IPPROTO_IPV6",
+                    Value::Int(socket_bootstrap_constant("IPPROTO_IPV6")),
+                ),
+                (
+                    "TCP_NODELAY",
+                    Value::Int(socket_bootstrap_constant("TCP_NODELAY")),
+                ),
                 ("_GLOBAL_DEFAULT_TIMEOUT", Value::None),
             ],
         );
