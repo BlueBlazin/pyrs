@@ -19,40 +19,43 @@ Artifact root: `perf/cpython_compat_benchmark_latest`
 
 Snapshot metadata:
 
-- generated at: `2026-03-09T05:36:36Z`
-- git head: `775b50502268024d67fee75758348f1fdbff8a69`
+- completed at: `2026-03-10T12:40:12Z`
+- git head: `1349056a0795ab231f7f91ccf5a9ebff0d7adc3e`
 - host: macOS `arm64`
 
 Headline counts:
 
 - discoverable benchmark entries: `492`
-- runnable entries after inventory: `454`
-- clean-pass modules: `41`
-- modules that execute but still fail cases: `265`
-- blocked modules (`load_error` + `process_error` + `process_timeout`): `118`
+- runnable entries after inventory: `452`
+- clean-pass modules: `43`
+- modules that execute but still fail cases: `252`
+- blocked modules (`load_error` + `process_error` + `process_timeout`): `131`
 - discoverable test cases: `47,040`
-- executed case outcomes: `23,303`
-- passed case outcomes: `11,332`
-- executed subtest outcomes: `41,421`
-- passed subtest outcomes: `38,344`
+- executed case outcomes: `16,080`
+- passed case outcomes: `8,477`
+- executed subtest outcomes: `35,152`
+- passed subtest outcomes: `32,656`
 
-The main leverage signal is still blocked execution coverage:
+The main leverage signal is blocked execution coverage, and this snapshot is
+timeout-heavy:
 
-- discoverable cases currently trapped behind blocked modules: `23,051`
+- discoverable cases currently trapped behind blocked modules: `30,342`
+- timeout rows alone now hide `17,153` discoverable cases
 
-Movement from the prior checked-in snapshot:
+Movement from the 2026-03-09 checked-in snapshot:
 
-- clean-pass modules moved from `38` to `41`
-- blocked modules moved from `138` to `118`
-- discoverable cases hidden behind blocked modules moved from `26,439` to
-  `23,051`
-- executed case outcomes moved from `19,793` to `23,303`
-- major drivers were the recent import/bootstrap fixes for socket protocol
-  constants, `datetime.timetuple()`, `array` reconstruction/type-object
-  surface, `_interpreters` import substrate, threading native-id exposure,
-  SyntaxError attribute normalization, container `super().__init__`
-  dispatch, and the GC/finalizer fix that restored CPython-style collection of
-  deferred `__del__` self-cycles during `gc.collect()`
+- clean-pass modules moved from `41` to `43`
+- runnable entries after inventory moved from `454` to `452`
+- modules that execute but still fail cases moved from `265` to `252`
+- blocked modules moved from `118` to `131`
+- discoverable cases hidden behind blocked modules moved from `23,051` to
+  `30,342`
+- executed case outcomes moved from `23,303` to `16,080`
+- major drivers were new timeout-heavy regressions in
+  `test.test_importlib`, `test.test_unittest`,
+  `test.test_asyncio.test_tasks`, `test.test_array`, `test.test_socket`, and
+  `test.test_io`, plus fresh load blockers in `test.test_argparse` and
+  `test.test_decimal`
 
 ## Prioritization Rules
 
@@ -69,11 +72,11 @@ Movement from the prior checked-in snapshot:
 
 | Order | Lane | Why now | Primary focused suite(s) |
 |---|---|---|---|
-| 1 | Process errors and timeouts | Largest blocked bucket now hides `12,719` discoverable cases | `timeouts-crashes`, `high-leverage` |
-| 2 | Import/bootstrap load errors | Remaining load blockers still hide `10,332` discoverable cases | `high-leverage`, `import-bootstrap` |
-| 3 | Asyncio / OS / socket transport parity | Largest user-visible runnable cluster now spans asyncio task coverage plus socket and OS gaps | `high-leverage`, `os-fs-socket` |
-| 4 | Object model / container / call / format parity | Broadest cross-cutting runtime lane after concurrency/transport work | `object-model-call` |
-| 5 | Text/codecs/XML substrate | Concentrated cluster with good focused payoff after broader runtime lanes move | `text-codecs-xml` |
+| 1 | Process timeouts and crashes | `process_timeout` + `process_error` now hide `21,267` discoverable cases, overwhelmingly more than any other bucket | `timeouts-crashes`, `high-leverage` |
+| 2 | Import/bootstrap load errors | Remaining `load_error` rows still hide `9,075` discoverable cases | `high-leverage`, `import-bootstrap` |
+| 3 | OS / pathlib / socket filesystem parity | Largest user-visible runnable cluster is now centered on `pathlib`, `os`, selectors, and socket-adjacent filesystem behavior | `high-leverage`, `os-fs-socket` |
+| 4 | Call / descriptor / warnings / object model parity | Broadest shared runtime lane after blocked execution and filesystem transport work | `object-model-call` |
+| 5 | Codecs / XML / annotation substrate | Concentrated bootstrap and runtime signature cluster with good focused payoff once the larger blockers move | `text-codecs-xml` |
 
 ## Lane Details
 
@@ -81,32 +84,39 @@ Movement from the prior checked-in snapshot:
 
 Why first:
 
-- `35` modules currently end in `process_error`
-- `29` modules currently end in `process_timeout`
-- together they hide `12,719` discoverable cases
+- `34` modules currently end in `process_error`
+- `52` modules currently end in `process_timeout`
+- together they hide `21,267` discoverable cases
 
 Largest blocked rows:
 
 - timeouts:
   - `test.test_email`
+  - `test.test_importlib`
   - `test.test_datetime`
+  - `test.test_unittest`
+  - `test.test_asyncio.test_tasks`
   - `test.test_pickle`
-  - `test.test_decimal`
-  - `test.test_set`
-  - `test.test_sqlite3`
-  - `test.test_sys_settrace`
-- process errors:
-  - `test.test_tarfile`
+  - `test.test_array`
+  - `test.test_socket`
   - `test.test_io`
+  - `test.test_set`
+- process errors:
+  - `test.test_enum`
+  - `test.test_tarfile`
   - `test.test_statistics`
-  - `test.test___all__`
+  - `test.test_posix`
+  - `test.test_str`
+  - `test.test_itertools`
 
 Observed patterns:
 
-- hard crashes and negative return codes (`-10`, `-11`, `-6`)
-- `_io` destructor/finalizer churn precedes at least one of the aborting runs
-- non-terminating behavior is now concentrated in email, datetime, pickle,
-  decimal, set, sqlite3, and tracing
+- `40` timeout rows currently end with no stderr at all, which points to
+  event-loop or scheduler stalls instead of ordinary assertion failures
+- other timeouts still surface destructor churn or unreaped-child warnings in
+  asyncio, `_io`, subprocess, and XML cleanup paths
+- process errors are dominated by stack overflows / panics (`-6`) and
+  codec-path crashes (`-11`)
 
 Closure evidence:
 
@@ -118,64 +128,31 @@ Closure evidence:
 
 Why second:
 
-- `54` runnable modules currently stop at `load_error`
-- those rows hide `10,332` discoverable cases
-- remaining failures are shared parser/import/class-subclass substrate defects
+- `45` runnable modules currently stop at `load_error`
+- those rows hide `9,075` discoverable cases
+- remaining failures are still shared parser/import/bootstrap substrate defects
 
 Current snapshot signatures still to address:
 
-- `test.test_capi` load/import substrate gaps
-- `test.test_ctypes` load/import substrate gaps
-- `test.test_idle` configparser/string-method substrate gaps
-
-Resolved locally since this snapshot and awaiting the next full benchmark rerun:
-
-- `RuntimeError: parse error in module 'test.test_pathlib.test_pathlib' ... expected Colon`
-- `TypeError: object.__init_subclass__() takes no keyword arguments`
-- `AttributeError: module '_frozen_importlib' has no attribute '_ModuleLock'`
-- builtin `os.path.splitext()` now matches CPython’s leading-dot behavior (`'..' -> ('..', '')`), which cleared `pathlib.types` stem/suffix failures
-- builtin `slice` now exposes `start` / `stop` / `step` plus bound and unbound `indices()`, which cleared `Path.parents` slicing in `test.test_pathlib`
-- builtin `os.path.splitroot()` is now exposed with CPython-compatible POSIX results, which cleared `Path.with_name()` / `Path.with_segments()` fallback failures in `test.test_pathlib`
-- when the CPython stdlib path is active, `os.path` now aliases the real platform path module (`posixpath` on POSIX), so `pathlib.Path.parser` matches CPython and Windows-only `pathlib` cases stop running on POSIX
-- bootstrap `_frozen_importlib.ModuleSpec` now has the CPython constructor/property surface needed by fresh `importlib` bootstrap, so the source-importlib lane no longer dies on placeholder-spec objects before hitting real loader behavior
-- meta-path loader execution now applies CPython `module_from_spec` semantics when `create_module()` returns `None` or a module object, registering the module before `exec_module()`, so `test.test_importlib` no longer falls back to `ModuleNotFoundError` at the first PEP 451 loader case
-- builtin `__import__` now honors explicit `globals['__package__']` / `globals['__spec__']` package context for relative imports, so `test.test_importlib.import_.test___package__` moved past the earlier caller-frame resolution failure and is now down to later package-attribute semantics
-- Rust-built package `ModuleSpec` instances now carry CPython-style `parent` semantics (`spec.parent == spec.name` for packages), which cleared the source-importlib `__package__` restoration failure for `test.test_importlib.import_.test___package__.Setting__package__PEP451`
-- builtin `__import__` now performs CPython-style `fromlist` submodule handling, including propagating `ModuleNotFoundError` when `sys.modules['pkg.submod']` is explicitly blocked with `None`, which cleared `test.test_importlib.import_.test_api.*.test_blocked_fromlist`
-- builtin `__import__` now raises `ValueError` instead of a generic runtime error for negative import levels, which cleared `test.test_importlib.import_.test_api.*.test_negative_level`
-- builtin `__import__('')` / `importlib.import_module('')` / `find_spec('')` now raise CPython-style `ValueError('Empty module name')`, which cleared `test.test_importlib.import_.test_relative_imports.*.test_empty_name_w_level_0`
-- builtin `__import__` now returns non-module `sys.modules[name]` cache entries directly for direct builtin calls, which cleared `test.test_importlib.import_.test_caching.*.test_using_cache`
-- module initialization from `ModuleSpec` now preserves existing import-set attrs like `__path__` / `__package__` when they are already populated, while still refreshing `__spec__`, which cleared the source-importlib meta-path parent-path identity failure in `test.test_importlib.import_.test_meta_path.*.test_with_path`
-- builtin `__import__` now re-checks `sys.modules[fullname]` after importing a parent for plain dotted imports, matching CPython’s side-effect handling when a non-package parent injects the child entry, which cleared `test.test_importlib.import_.test_packages.*.test_module_not_package_but_side_effects`
-- builtin `marshal.loads()` / `marshal.dumps()` now cover CPython marshal payloads plus the importlib module-code round-trip needed by `_bootstrap_external`, so the source-importlib lane no longer dies in `_code_to_timestamp_pyc` before real import semantics run
-- builtin `os.stat(..., follow_symlinks=False)` now accepts the CPython keyword surface and `os.lstat()` / `stat_result.st_mode` preserve the actual file type instead of forcing symlink bits, which cleared the false-symlink `pathlib.copy(..., follow_symlinks=True)` failure shape and moved `test.test_pathlib` on to `bytes(Path(...))`
-- bytes-like conversion now honors `__bytes__()` before fallback iteration and `os.fsencode()` / `os.fsdecode()` apply `os.fspath()` first, which cleared `bytes(Path(...))` and the `Path.with_name(b'...')` / `Path.with_suffix(b'...')` CPython TypeError lane in `test.test_pathlib`
-- builtin `bytes.startswith()` / `bytes.endswith()` now raise CPython-style first-argument `TypeError`, and string `repr()` now switches quote style like CPython when that avoids escaping, which preserves the exact `KeyError.__str__()` surface needed by `test.test_importlib.import_.test_relative_imports.*.test_malicious_relative_import`
-- builtin `__import__` now returns the parent object for relative dotted imports from raw `sys.modules` instead of re-importing the parent package, matching CPython’s malicious-cache behavior and clearing the prior `ModuleNotFoundError: module 'a' not found` failure in `test.test_importlib`
-- builtin `os.symlink()` / `posix.symlink()` are now exposed with the CPython positional `target_is_directory` surface on Unix, which clears `Path.symlink_to()` fixture setup and moves `test.test_pathlib` on to deeper `posixpath.realpath()` / string-method parity instead of missing-substrate failures
-- builtin `str` now exposes CPython-style bound and unbound `find()` / `rfind()` / `rindex()` descriptors, and `str.index()` / `str.rindex()` now raise `ValueError('substring not found')` for empty reversed slices instead of returning `-1`, which moved `test.test_pathlib` past the `str has no attribute 'rindex'` realpath failure and down to OS-error subclassing
-- builtin `__import__` now treats omitted relative-import globals like CPython’s empty-globals path, raising `KeyError(\"'__name__' not in globals\")` when `__name__` is absent and `ImportError('attempted relative import with no known parent package')` when `__package__ == ''`, which cleared the remaining caller-frame leakage in `test.test_importlib.import_.test_api`
-- builtin `os.scandir()` now maps `std::io::Error` through the CPython OSError subclass surface instead of raising generic `OSError`, which cleared the `PermissionError` mismatch in `test.test_pathlib` directory-copy permission cases
-- builtin `os.stat()` / `os.lstat()` now populate CPython-style `stat_result.st_atime_ns` / `st_mtime_ns` / `st_ctime_ns` fields from the underlying OS metadata, and Unix `st_ctime` now comes from inode status-change time instead of file creation time, which moved `test.test_pathlib` past metadata-copy attribute gaps and down to `os.utime(ns=..., follow_symlinks=...)`
-- builtin `os.utime()` now accepts the CPython `ns=` / `follow_symlinks=` keyword surface on Unix, advertises `os.utime` through `os.supports_follow_symlinks`, and uses path-based timestamp updates instead of file-descriptor writes, which cleared the `pathlib.copy(..., preserve_metadata=True)` keyword/dir-path blocker
-- builtin `_operator` now mirrors the existing accelerated operator function surface instead of exposing only `_compare_digest`, so CPython `Lib/operator.py` replaces its pure-Python `add()` / `lt()` / etc. definitions with builtin callables and `test.test_pathlib` moved past the bogus `concat_path = operator.add` bound-method failure into deeper `glob` recursion-limit semantics
-- CLI execution now runs inside a dedicated large-stack worker thread, and CLI-created VMs carry a CPython-sized stack-safe recursion ceiling instead of the default conservative `100`-frame clamp, which cleared the deep `Path.glob('../..../..')` recursion failure in `test.test_pathlib` and moved the module on to later teardown / `pwd` substrate issues
-- builtin `os.walk()` now invokes its `onerror` callback with the synthesized `OSError` installed as the active exception context, so bare `raise` inside the callback re-raises the original `PermissionError` like CPython instead of failing with `RuntimeError: no active exception to reraise`; this moved `test.test_pathlib` past the `rmtree()` teardown callback failure and on to later `os.listdir()` / `pwd` substrate gaps
-- builtin `os.listdir()` now maps `std::io::Error` through the CPython `OSError` subclass surface and fills the exception `filename` attribute from the requested path, which cleared the later `test.test_pathlib` cleanup failure and moved the module on to real device-type predicate semantics
-- Unix `stat_result.st_mode` now preserves the full native `MetadataExt::mode()` bitfield instead of collapsing everything into regular-file / directory / symlink buckets, which cleared `Path.is_char_device()` and the related special-file predicate lane in `test.test_pathlib`
-- pure path-string parsing now distinguishes CPython path-manipulation helpers from real filesystem calls: `posix._path_splitroot_ex` accepts embedded NUL in string inputs like CPython, so `Path('fileA\\x00').is_junction()` now returns `False` instead of raising `ValueError`; `test.test_pathlib` is down to the broader socket primitive gap (`socket.bind`)
-- `_frozen_importlib_external` now exposes the CPython `_LoaderBasics`, `FileLoader`, `SourceLoader`, and `PathFinder.find_distributions()` surface needed by direct `importlib.abc` / `importlib.metadata` imports, so the importlib metadata lane is no longer blocked on missing loader-class bootstrap and is now down to `collections.defaultdict` constructor/subclass semantics during fixture discovery
-- builtin `codecs` now exposes the CPython BOM aliases plus the buffered incremental/base helper surface needed by `encodings.*` modules (`BufferedIncrementalDecoder`, `BufferedIncrementalEncoder`, stream init helpers, and `getencoder` / `getdecoder` / `getreader` / `getwriter` wrappers), which clears the strict `json` BOM-detection crash and restores builtin `codecs.lookup('utf-8')` when `codecs` is already resident before stdlib `encodings` modules import
-- `from email import policy` no longer leaks a partially initialized `email.policy` module during bootstrap import
-- `test.test_email.test_pickleable` no longer overflows while materializing address headers (`header_store_parse` pyc name layout and `Message.__setitem__` operator dispatch fixed locally)
+- negative-complex literal import-time unary-minus is still wrong in
+  `test.test_argparse` (`TypeError: unsupported operand type for -`)
+- `test.test_decimal` still hits `SignalDict.keys()` mapping-surface gaps
+- missing `codecs.latin_1_encode` still blocks multiprocessing-forkserver and
+  related bootstrap lanes
+- `_opcode.ENABLE_SPECIALIZATION*` flags are still missing for compile and
+  monitoring imports
+- parser / AST / inspection substrate gaps remain visible in `test.test_ast`,
+  `test.test_grammar`, `test.test_dis`, and
+  `test.test_inspect.test_inspect`
 
 High-value modules after this checkpoint:
 
+- `test.test_argparse`
 - `test.test_capi`
+- `test.test_decimal`
 - `test.test_ctypes`
 - `test.test_idle`
-- `test.test_email`
-- `test.test_datetime`
+- `test.test_inspect.test_inspect`
 
 Closure evidence:
 
@@ -183,101 +160,110 @@ Closure evidence:
 - the missing substrate is covered by targeted regressions
 - the fix is in shared runtime code, not a one-off compatibility patch
 
-### 3. Asyncio / OS / socket transport parity
+### 3. OS / pathlib / socket filesystem parity
 
 Why third:
 
-- biggest user-visible failed cluster among modules that already run
-- now overlaps asyncio task/future coverage plus `os`, `socket`, `mailbox`,
-  and related transport paths
+- biggest user-visible failed cluster among modules that already run now sits
+  in `pathlib`, `os`, selectors, and socket-adjacent filesystem behavior
+- `test.test_socket` itself has moved back into the timeout bucket, so address
+  family and socket primitive work should stay tied to the filesystem lane
 
 Largest modules:
 
-- `test.test_asyncio.test_tasks`: `850` non-pass
-- `test.test_socket`: `734` non-pass
-- `test.test_mailbox`: `347` non-pass
-- `test.test_os`: `313` non-pass
+- `test.test_pathlib`: `436` non-pass
+- `test.test_os`: `253` non-pass
 - `test.test_asyncio.test_futures`: `129` non-pass
 - `test.test_imaplib`: `109` non-pass
+- `test.test_selectors`: `99` non-pass
+- `test.test_ftplib`: `93` non-pass
 
 Current signatures:
 
-- `requires the C _asyncio module`
-- missing socket operations: `bind`, `connect`, `recvmsg`, `recvmsg_into`, `sendmsg`
-- missing filesystem surface: `DirEntry.is_junction`
-- filesystem API gaps: `os.fwalk`
-- OS semantic mismatches around error mapping and directory lifecycle
+- `RuntimeError: bind() address family is unsupported`
+- `RuntimeError: utime() times must be a 2-sequence`
+- `AttributeError: 'socket' object has no attribute 'setsockopt'`
+- `TypeError: protocol must be int`
+- platform-path handling is still too eager in `pathlib`
+  (`requires Windows-flavoured path class`, Windows-only cases not being
+  pruned early enough)
 
 Closure evidence:
 
-- asyncio task/future runs stop failing on missing `_asyncio`
-- `os-fs-socket` stops failing on missing primitive APIs
-- failures shift from missing methods/constants to narrower semantic deltas
-- path and directory-lifecycle semantics land with targeted regression tests
+- `os-fs-socket` stops failing on missing or incorrectly typed primitive APIs
+- `pathlib` moves from broad API-shape mismatches to narrower semantic deltas
+- bind/setsockopt/address-family and `utime()` semantics land with targeted
+  regression tests
 
-### 4. Object model / container / call / format parity
+### 4. Call / descriptor / warnings / object model parity
 
 Why fourth:
 
-- broadest cross-cutting runtime lane after concurrency/transport work
-- fixes here fan out into import-time blockers and already-runnable modules
-- `array` semantics now sit in this lane because the import blockers are gone
-  and the remaining regressions are runtime-shape defects
+- broadest cross-cutting runtime lane after blocked execution and filesystem
+  transport work
+- fixes here fan out into warnings, call machinery, interpreters,
+  `memoryview`, and process-pool behavior
 
 Largest modules:
 
-- `test.test_array`: `816` non-pass
-- `test.test_enum`: `348` non-pass
-- `test.test_unittest`: `343` non-pass
-- `test.test_configparser`: `268` non-pass
-- `test.test_traceback`: `219` non-pass
 - `test.test_call`: `181` non-pass
 - `test.test_functools`: `160` non-pass
+- `test.test_warnings`: `132` non-pass
+- `test.test_interpreters`: `121` non-pass
+- `test.test_concurrent_futures.test_process_pool`: `115` non-pass
+- `test.test_memoryview`: `113` non-pass
 
 Current signatures:
 
-- `TypeError: subscript unsupported type`
-- `RuntimeError: store subscript unsupported type`
-- `AttributeError: module '__array__' has no attribute 'append'`
-- `RuntimeError: string must be string`
-- `AttributeError: str has no attribute 'format_map'`
 - `SystemError: SystemError: NULL result without error in __get__()`
-- enum recursion / repr / reverse-iteration mismatches
-- call/vectorcall and descriptor mismatches in `_testcapi`-backed paths
-- missing code-object debug/introspection support used by traceback/dis
+- `RuntimeError: module attribute '__warningregistry__' does not exist`
+- `TypeError: object.__init__() takes exactly one argument`
+- `requires the C _functools module`
+- `NotImplementedError: subinterpreters are not implemented yet`
+- vectorcall / `_testcapi` helper mismatches are still visible in subtest
+  failure signatures
 
 Closure evidence:
 
-- object-model/container regressions collapse across multiple unrelated modules
+- call/descriptor/warnings regressions collapse across multiple unrelated
+  modules
 - fixes land in shared runtime substrate, not per-module patching
-- constructor/call/container/format/introspection paths get direct regression tests
+- constructor/call/descriptor/warning paths get direct regression tests
 
-### 5. Text/codecs/XML substrate
+### 5. Codecs / XML / annotation substrate
 
 Why fifth:
 
-- smaller than the lanes above, but unusually concentrated
-- a few substrate fixes can retire a large cluster quickly
+- smaller than the lanes above, but still unusually concentrated
+- fixes here affect XML parsers, source encoding, multiprocessing bootstrap,
+  and annotation/AST exposure together
 
 Largest modules:
 
-- `test.test_codecs`: `241` non-pass
-- `test.test_xml_etree_c`: `140` non-pass
 - `test.test_sax`: `136` non-pass
-- `test.test_xml_etree`: `122` non-pass
+- `test.test_minidom`: `82` non-pass
+- `test.test_source_encoding`: `81` non-pass
+- `test.test_annotationlib` is now runnable and exposes annotation/AST
+  surface mismatches instead of import-time failure
+- `test.test_xml_etree` / `test.test_xml_etree_c` are still noisy, but most of
+  that lane currently shows up as subtest-level failures rather than headline
+  case-level non-pass counts
+- codec helper gaps still show up indirectly across import/bootstrap lanes even
+  when `test.test_codecs` is not the headline module
 
 Current signatures:
 
-- `LookupError: unsupported encoding`
-- missing codec helpers such as `ascii_encode`, `latin_1_encode`,
-  `utf_16_encode`, and `utf_7_decode`
-- XML parser API mismatches such as `ParserCreate(..., intern=...)`
+- missing codec helpers such as `latin_1_encode`
+- XML parser API mismatches such as `xmlparser.intern`
+- struct-format substrate still rejects `F` and `D`
+- annotation / AST helper surfaces are still off
+  (`function.__annotate__`, `Constant.kind`)
 
 Closure evidence:
 
-- codec helper failures disappear from `test_codecs`-family runs
+- codec helper failures disappear from bootstrap and runtime lanes
 - XML failures move from API-surface gaps to narrower semantic deltas
-- targeted regressions cover both substrate and stdlib-facing behavior
+- targeted regressions cover codec, XML, and annotation-facing behavior
 
 ## Promote Above Raw Benchmark Count
 

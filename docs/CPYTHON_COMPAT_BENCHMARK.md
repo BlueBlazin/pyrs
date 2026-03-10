@@ -30,10 +30,10 @@ This benchmark is intended to answer:
 ## Latest Artifact
 
 - root: `perf/cpython_compat_benchmark_latest`
-- completed at: `2026-03-09T05:36:36Z`
-- git head: `775b50502268024d67fee75758348f1fdbff8a69`
+- completed at: `2026-03-10T12:40:12Z`
+- git head: `1349056a0795ab231f7f91ccf5a9ebff0d7adc3e`
 - host: macOS `arm64`
-- elapsed: `2,196.7s` (`36m 37s`)
+- elapsed: `3,491.6s` (`58m 12s`)
 
 ## Example Run
 
@@ -79,7 +79,7 @@ For a curated batch file:
 Entry files are newline-delimited module names. Blank lines and `#` comments are
 ignored.
 
-For focused benchmark slices instead of the current ~37-minute full sharded run on this host:
+For focused benchmark slices instead of the current ~58-minute full sharded run on this host:
 
 ```bash
 python3 scripts/run_cpython_compat_focus.py --list-suites
