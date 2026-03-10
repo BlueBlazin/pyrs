@@ -2269,7 +2269,8 @@ namereplace_errors = lookup_error("namereplace")
                 .insert("__module__".to_string(), Value::Str("posix".to_string()));
         }
         let os_supports_follow_symlinks = if cfg!(unix) {
-            self.heap.alloc_set(vec![Value::Builtin(BuiltinFunction::OsUTime)])
+            self.heap
+                .alloc_set(vec![Value::Builtin(BuiltinFunction::OsUTime)])
         } else {
             self.heap.alloc_set(Vec::new())
         };
@@ -3955,6 +3956,10 @@ namereplace_errors = lookup_error("namereplace")
             &[
                 ("encode", BuiltinFunction::CodecsEncode),
                 ("decode", BuiltinFunction::CodecsDecode),
+                ("ascii_encode", BuiltinFunction::CodecsAsciiEncode),
+                ("ascii_decode", BuiltinFunction::CodecsAsciiDecode),
+                ("latin_1_encode", BuiltinFunction::CodecsLatin1Encode),
+                ("latin_1_decode", BuiltinFunction::CodecsLatin1Decode),
                 ("utf_8_encode", BuiltinFunction::CodecsUtf8Encode),
                 ("utf_8_decode", BuiltinFunction::CodecsUtf8Decode),
                 ("escape_decode", BuiltinFunction::CodecsEscapeDecode),
@@ -12304,7 +12309,12 @@ namereplace_errors = lookup_error("namereplace")
             .unwrap_or(Value::None);
         let frozen_info = if matches!(
             loader_name,
-            Some(SOURCE_FILE_LOADER | SOURCELESS_FILE_LOADER | NAMESPACE_LOADER | EXTENSION_FILE_LOADER)
+            Some(
+                SOURCE_FILE_LOADER
+                    | SOURCELESS_FILE_LOADER
+                    | NAMESPACE_LOADER
+                    | EXTENSION_FILE_LOADER
+            )
         ) {
             None
         } else {

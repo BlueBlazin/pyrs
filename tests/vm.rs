@@ -2492,7 +2492,9 @@ fn compile_filename_type_errors_match_cpython() {
 #[test]
 fn importlib_source_to_code_accepts_bytes_path() {
     let Some(lib_path) = cpython_lib_path() else {
-        eprintln!("skipping importlib source_to_code bytes-path test (CPython Lib path not available)");
+        eprintln!(
+            "skipping importlib source_to_code bytes-path test (CPython Lib path not available)"
+        );
         return;
     };
     let source = format!(
@@ -5097,6 +5099,26 @@ fn builtin_codecs_supports_utf8_lookup_after_stdlib_encodings_are_added() {
 }
 
 #[test]
+fn builtin_codecs_supports_ascii_and_latin1_registry_entries() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!(
+            "skipping builtin codecs ascii/latin-1 lookup test (CPython Lib path not available)"
+        );
+        return;
+    };
+    run_with_large_stack("vm-builtin-codecs-single-byte-lookup", move || {
+        let source = format!(
+            "import sys\nsys.path.insert(0, {lib_path:?})\nimport codecs, encodings.ascii, encodings.latin_1\nascii_info = codecs.lookup('ascii')\nlatin_info = codecs.lookup('latin-1')\nascii_value = encodings.ascii.Codec().encode('A')\nlatin_value = encodings.latin_1.Codec().encode('é')\nlatin_decoded = encodings.latin_1.Codec().decode(b'\\xe9')\nok = (ascii_info.name == 'ascii' and latin_info.name == 'iso8859-1' and ascii_value == (b'A', 1) and latin_value == (b'\\xe9', 1) and latin_decoded == ('é', 1))\n"
+        );
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn builtin_codecs_bom_constants_allow_json_byte_detection() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping builtin codecs BOM test (CPython Lib path not available)");
@@ -5595,18 +5617,21 @@ fn pathlib_writablepath_docstrings_match_concrete_path_methods() {
         eprintln!("skipping pathlib writablepath docstring test (CPython Lib path not available)");
         return;
     };
-    run_with_large_stack("pathlib_writablepath_docstrings_match_concrete_path_methods", move || {
-        let source = r#"import pathlib
+    run_with_large_stack(
+        "pathlib_writablepath_docstrings_match_concrete_path_methods",
+        move || {
+            let source = r#"import pathlib
 import pathlib.types
 ok = pathlib.Path.symlink_to.__doc__ == pathlib.types._WritablePath.symlink_to.__doc__
 "#;
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.add_module_path(lib_path);
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        },
+    );
 }
 
 #[test]
@@ -12887,6 +12912,57 @@ ok = callable(strict) and callable(ignore) and (roundtrip is custom_handler)
 }
 
 #[test]
+fn codecs_single_byte_helpers_match_cpython_contracts() {
+    let source = r#"import _codecs
+ascii_encoded = _codecs.ascii_encode('A') == (b'A', 1)
+ascii_decoded = _codecs.ascii_decode(b'A') == ('A', 1)
+latin_encoded = _codecs.latin_1_encode('é') == (b'\xe9', 1)
+latin_decoded = _codecs.latin_1_decode(b'\xe9') == ('é', 1)
+ascii_type_error = False
+latin_type_error = False
+kw_error = False
+count_error = False
+try:
+    _codecs.ascii_encode(b'A')
+except Exception as exc:
+    ascii_type_error = (
+        type(exc).__name__ == 'TypeError'
+        and str(exc) == 'ascii_encode() argument 1 must be str, not bytes'
+    )
+try:
+    _codecs.latin_1_decode('é')
+except Exception as exc:
+    latin_type_error = (
+        type(exc).__name__ == 'TypeError'
+        and str(exc) == "a bytes-like object is required, not 'str'"
+    )
+try:
+    _codecs.latin_1_encode('é', errors='strict')
+except Exception as exc:
+    kw_error = (
+        type(exc).__name__ == 'TypeError'
+        and 'takes no keyword arguments' in str(exc)
+    )
+try:
+    _codecs.latin_1_decode(b'\xe9', 'strict', True)
+except Exception as exc:
+    count_error = (
+        type(exc).__name__ == 'TypeError'
+        and str(exc) == 'latin_1_decode expected at most 2 arguments, got 3'
+    )
+ok = (
+    ascii_encoded and ascii_decoded and latin_encoded and latin_decoded
+    and ascii_type_error and latin_type_error and kw_error and count_error
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn os_bad_fd_errors_expose_errno_and_strerror_attrs() {
     let source = r#"import os
 caught = False
@@ -14434,15 +14510,18 @@ fn re_match_backtracks_optional_greedy_prefix_group_before_tail() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
     };
-    run_with_large_stack("re_match_backtracks_optional_greedy_prefix_group_before_tail", move || {
-        let source = "import glob\nimport re\npat = re.compile(glob.translate('**/*/fileB', recursive=True, include_hidden=True))\nroot = '/tmp/root/'\nm1 = pat.match(root + 'dirB/fileB', len(root))\nm2 = pat.match(root + 'dirA/linkC/fileB', len(root))\nok = (\n    m1 is not None and m1.group(0) == 'dirB/fileB'\n    and m2 is not None and m2.group(0) == 'dirA/linkC/fileB'\n)\n";
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.add_module_path(lib_path);
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+    run_with_large_stack(
+        "re_match_backtracks_optional_greedy_prefix_group_before_tail",
+        move || {
+            let source = "import glob\nimport re\npat = re.compile(glob.translate('**/*/fileB', recursive=True, include_hidden=True))\nroot = '/tmp/root/'\nm1 = pat.match(root + 'dirB/fileB', len(root))\nm2 = pat.match(root + 'dirA/linkC/fileB', len(root))\nok = (\n    m1 is not None and m1.group(0) == 'dirB/fileB'\n    and m2 is not None and m2.group(0) == 'dirA/linkC/fileB'\n)\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        },
+    );
 }
 
 #[test]
@@ -18383,7 +18462,10 @@ fn os_scandir_permission_denied_uses_permissionerror() {
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("name"), Some(Value::Str("PermissionError".to_string())));
+    assert_eq!(
+        vm.get_global("name"),
+        Some(Value::Str("PermissionError".to_string()))
+    );
     assert_eq!(
         vm.get_global("filename"),
         Some(Value::Str(temp_dir.to_string_lossy().to_string()))
@@ -20021,7 +20103,10 @@ fn cpython_operator_module_overrides_add_with_operator_builtin() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let last_line = stdout.lines().last().unwrap_or_default().trim();
-    assert_eq!(last_line, "True", "expected probe to print True, got:\n{stdout}");
+    assert_eq!(
+        last_line, "True",
+        "expected probe to print True, got:\n{stdout}"
+    );
 }
 
 #[test]

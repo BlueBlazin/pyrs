@@ -1168,8 +1168,9 @@ impl Vm {
                 let value = match self.call_internal(default_factory, Vec::new(), HashMap::new())? {
                     InternalCallOutcome::Value(value) => value,
                     InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(self
-                            .runtime_error_from_active_exception("defaultdict factory failed"));
+                        return Err(
+                            self.runtime_error_from_active_exception("defaultdict factory failed")
+                        );
                     }
                 };
                 dict_set_value_checked(&dict_receiver, key, value.clone())?;
@@ -5616,7 +5617,10 @@ impl Vm {
                 start = start.clamp(0, len);
                 end = end.clamp(0, len);
                 if end < start {
-                    if matches!(kind, NativeMethodKind::StrIndex | NativeMethodKind::StrRIndex) {
+                    if matches!(
+                        kind,
+                        NativeMethodKind::StrIndex | NativeMethodKind::StrRIndex
+                    ) {
                         return Err(RuntimeError::value_error("substring not found"));
                     }
                     return Ok(NativeCallResult::Value(Value::Int(-1)));
@@ -5634,7 +5638,10 @@ impl Vm {
                 let Some(slice) = text.get(start_byte..end_byte) else {
                     return Ok(NativeCallResult::Value(Value::Int(-1)));
                 };
-                let found = if matches!(kind, NativeMethodKind::StrRFind | NativeMethodKind::StrRIndex) {
+                let found = if matches!(
+                    kind,
+                    NativeMethodKind::StrRFind | NativeMethodKind::StrRIndex
+                ) {
                     slice.rfind(&needle)
                 } else {
                     slice.find(&needle)
@@ -5645,8 +5652,10 @@ impl Vm {
                         text[..absolute_byte].chars().count() as i64
                     })
                     .unwrap_or(-1);
-                if matches!(kind, NativeMethodKind::StrIndex | NativeMethodKind::StrRIndex)
-                    && found < 0
+                if matches!(
+                    kind,
+                    NativeMethodKind::StrIndex | NativeMethodKind::StrRIndex
+                ) && found < 0
                 {
                     return Err(RuntimeError::value_error("substring not found"));
                 }
@@ -5900,10 +5909,14 @@ impl Vm {
                             let receiver_arg = args.remove(0);
                             let text = match receiver_arg {
                                 Value::Str(value) => value,
-                                Value::Instance(instance) => self
-                                    .instance_backing_str(&instance)
-                                    .ok_or_else(|| RuntimeError::type_error("str receiver is invalid"))?,
-                                _ => return Err(RuntimeError::type_error("str receiver is invalid")),
+                                Value::Instance(instance) => {
+                                    self.instance_backing_str(&instance).ok_or_else(|| {
+                                        RuntimeError::type_error("str receiver is invalid")
+                                    })?
+                                }
+                                _ => {
+                                    return Err(RuntimeError::type_error("str receiver is invalid"));
+                                }
                             };
                             (text, args.first())
                         } else {
@@ -13740,6 +13753,10 @@ impl Vm {
             }
             BuiltinFunction::CodecsEncode => self.builtin_codecs_encode(args, kwargs),
             BuiltinFunction::CodecsDecode => self.builtin_codecs_decode(args, kwargs),
+            BuiltinFunction::CodecsAsciiEncode => self.builtin_codecs_ascii_encode(args, kwargs),
+            BuiltinFunction::CodecsAsciiDecode => self.builtin_codecs_ascii_decode(args, kwargs),
+            BuiltinFunction::CodecsLatin1Encode => self.builtin_codecs_latin_1_encode(args, kwargs),
+            BuiltinFunction::CodecsLatin1Decode => self.builtin_codecs_latin_1_decode(args, kwargs),
             BuiltinFunction::CodecsUtf8Encode => self.builtin_codecs_utf_8_encode(args, kwargs),
             BuiltinFunction::CodecsUtf8Decode => self.builtin_codecs_utf_8_decode(args, kwargs),
             BuiltinFunction::CodecsEscapeDecode => self.builtin_codecs_escape_decode(args, kwargs),

@@ -1,3 +1,5 @@
+#[cfg(not(unix))]
+use super::seconds_to_system_time;
 use super::{
     AtexitHandler, BuiltinFunction, ClassObject, Command, ExceptionObject, FormatterFieldKey,
     HashMap, InstanceObject, InternalCallOutcome, IsTerminal, ModuleObject, NativeMethodKind,
@@ -12,8 +14,6 @@ use super::{
 };
 #[cfg(unix)]
 use super::{collect_env_entries, collect_process_argv, is_missing_attribute_error};
-#[cfg(not(unix))]
-use super::seconds_to_system_time;
 use crate::unicode::canonical_codepoint_for_internal_char;
 #[cfg(unix)]
 use std::ffi::{CStr, CString};
@@ -1669,7 +1669,9 @@ impl Vm {
         let errno = value_to_int(args.remove(0))?;
         let errno =
             i32::try_from(errno).map_err(|_| RuntimeError::new("strerror() errno out of range"))?;
-        Ok(Value::Str(std::io::Error::from_raw_os_error(errno).to_string()))
+        Ok(Value::Str(
+            std::io::Error::from_raw_os_error(errno).to_string(),
+        ))
     }
 
     pub(super) fn builtin_os_chmod(
@@ -1743,15 +1745,21 @@ impl Vm {
                     Object::Tuple(values) if values.len() == 2 => {
                         Ok((values[0].clone(), values[1].clone()))
                     }
-                    _ => Err(RuntimeError::new(format!("utime() {name} must be a 2-tuple"))),
+                    _ => Err(RuntimeError::new(format!(
+                        "utime() {name} must be a 2-tuple"
+                    ))),
                 },
                 Value::List(obj) => match &*obj.kind() {
                     Object::List(values) if values.len() == 2 => {
                         Ok((values[0].clone(), values[1].clone()))
                     }
-                    _ => Err(RuntimeError::new(format!("utime() {name} must be a 2-sequence"))),
+                    _ => Err(RuntimeError::new(format!(
+                        "utime() {name} must be a 2-sequence"
+                    ))),
                 },
-                _ => Err(RuntimeError::new(format!("utime() {name} must be a 2-sequence"))),
+                _ => Err(RuntimeError::new(format!(
+                    "utime() {name} must be a 2-sequence"
+                ))),
             }
         }
 
@@ -2289,9 +2297,10 @@ impl Vm {
                     exc,
                 )? {
                     InternalCallOutcome::Value(_) => Ok(()),
-                    InternalCallOutcome::CallerExceptionHandled => Err(
-                        vm.runtime_error_from_active_exception("walk() onerror callback raised"),
-                    ),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        Err(vm
+                            .runtime_error_from_active_exception("walk() onerror callback raised"))
+                    }
                 }
             }
 
@@ -4314,8 +4323,8 @@ impl Vm {
         &self,
         name: &str,
     ) -> Result<Option<(String, String, i64, i64, String, String, String)>, RuntimeError> {
-        let c_name = CString::new(name)
-            .map_err(|_| RuntimeError::value_error("embedded null character"))?;
+        let c_name =
+            CString::new(name).map_err(|_| RuntimeError::value_error("embedded null character"))?;
         let entry = unsafe { libc::getpwnam(c_name.as_ptr()) };
         if entry.is_null() {
             return Ok(None);
@@ -4547,10 +4556,7 @@ impl Vm {
         value_to_int(args[0].clone())
     }
 
-    pub(super) fn build_stat_result(
-        &self,
-        metadata: fs::Metadata,
-    ) -> Result<Value, RuntimeError> {
+    pub(super) fn build_stat_result(&self, metadata: fs::Metadata) -> Result<Value, RuntimeError> {
         let platform_os_module = if cfg!(windows) { "nt" } else { "posix" };
         let stat_result_class = self
             .modules
@@ -4612,9 +4618,12 @@ impl Vm {
         let (st_atime, st_mtime, st_ctime, st_atime_ns, st_mtime_ns, st_ctime_ns) = {
             use std::os::unix::fs::MetadataExt;
 
-            let st_atime = metadata.atime() as f64 + (metadata.atime_nsec() as f64 / 1_000_000_000.0);
-            let st_mtime = metadata.mtime() as f64 + (metadata.mtime_nsec() as f64 / 1_000_000_000.0);
-            let st_ctime = metadata.ctime() as f64 + (metadata.ctime_nsec() as f64 / 1_000_000_000.0);
+            let st_atime =
+                metadata.atime() as f64 + (metadata.atime_nsec() as f64 / 1_000_000_000.0);
+            let st_mtime =
+                metadata.mtime() as f64 + (metadata.mtime_nsec() as f64 / 1_000_000_000.0);
+            let st_ctime =
+                metadata.ctime() as f64 + (metadata.ctime_nsec() as f64 / 1_000_000_000.0);
             let st_atime_ns = metadata
                 .atime()
                 .saturating_mul(1_000_000_000)
@@ -4627,7 +4636,14 @@ impl Vm {
                 .ctime()
                 .saturating_mul(1_000_000_000)
                 .saturating_add(metadata.ctime_nsec());
-            (st_atime, st_mtime, st_ctime, st_atime_ns, st_mtime_ns, st_ctime_ns)
+            (
+                st_atime,
+                st_mtime,
+                st_ctime,
+                st_atime_ns,
+                st_mtime_ns,
+                st_ctime_ns,
+            )
         };
         #[cfg(not(unix))]
         let (st_atime, st_mtime, st_ctime, st_atime_ns, st_mtime_ns, st_ctime_ns) = {
@@ -4649,7 +4665,14 @@ impl Vm {
             let st_atime = st_atime_ns as f64 / 1_000_000_000.0;
             let st_mtime = st_mtime_ns as f64 / 1_000_000_000.0;
             let st_ctime = st_ctime_ns as f64 / 1_000_000_000.0;
-            (st_atime, st_mtime, st_ctime, st_atime_ns, st_mtime_ns, st_ctime_ns)
+            (
+                st_atime,
+                st_mtime,
+                st_ctime,
+                st_atime_ns,
+                st_mtime_ns,
+                st_ctime_ns,
+            )
         };
 
         if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
@@ -5055,7 +5078,8 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("_path_normpath() expects one argument"));
         }
-        let (path, return_bytes) = self.fspath_arg_to_string_and_type_unvalidated(args[0].clone())?;
+        let (path, return_bytes) =
+            self.fspath_arg_to_string_and_type_unvalidated(args[0].clone())?;
         if path.is_empty() {
             return if return_bytes {
                 Ok(self.heap.alloc_bytes(b".".to_vec()))
@@ -5928,6 +5952,146 @@ impl Vm {
             errors.unwrap_or(Value::Str("strict".to_string())),
         )?;
         Ok(Value::Str(decoded))
+    }
+
+    fn parse_stateless_text_codec_encode_args(
+        &self,
+        function_name: &str,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<(String, String), RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "{function_name}() takes no keyword arguments",
+            )));
+        }
+        if args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "{function_name} expected at least 1 argument, got 0",
+            )));
+        }
+        if args.len() > 2 {
+            return Err(RuntimeError::type_error(format!(
+                "{function_name} expected at most 2 arguments, got {}",
+                args.len()
+            )));
+        }
+        let mut args = args.into_iter();
+        let source = args.next().expect("validated encode arg count");
+        let source_type_name = self.value_type_name_for_error(&source);
+        let text = match source {
+            Value::Str(text) => text,
+            _ => {
+                return Err(RuntimeError::type_error(format!(
+                    "{function_name}() argument 1 must be str, not {source_type_name}",
+                )));
+            }
+        };
+        let errors = match args.next() {
+            Some(value) => normalize_codec_errors(value)?,
+            None => "strict".to_string(),
+        };
+        Ok((text, errors))
+    }
+
+    fn parse_stateless_text_codec_decode_args(
+        &self,
+        function_name: &str,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<(Vec<u8>, String), RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "{function_name}() takes no keyword arguments",
+            )));
+        }
+        if args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "{function_name} expected at least 1 argument, got 0",
+            )));
+        }
+        if args.len() > 2 {
+            return Err(RuntimeError::type_error(format!(
+                "{function_name} expected at most 2 arguments, got {}",
+                args.len()
+            )));
+        }
+        let mut args = args.into_iter();
+        let source = args.next().expect("validated decode arg count");
+        let source_type_name = self.value_type_name_for_error(&source);
+        let bytes = bytes_like_from_value(source).map_err(|_| {
+            RuntimeError::type_error(format!(
+                "a bytes-like object is required, not '{source_type_name}'",
+            ))
+        })?;
+        let errors = match args.next() {
+            Some(value) => normalize_codec_errors(value)?,
+            None => "strict".to_string(),
+        };
+        Ok((bytes, errors))
+    }
+
+    fn stateless_text_codec_encode(
+        &self,
+        function_name: &str,
+        encoding: &str,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let (text, errors) =
+            self.parse_stateless_text_codec_encode_args(function_name, args, kwargs)?;
+        let encoded = encode_text_bytes(&text, encoding, &errors)?;
+        Ok(self.heap.alloc_tuple(vec![
+            self.heap.alloc_bytes(encoded),
+            Value::Int(text.chars().count() as i64),
+        ]))
+    }
+
+    fn stateless_text_codec_decode(
+        &self,
+        function_name: &str,
+        encoding: &str,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let (bytes, errors) =
+            self.parse_stateless_text_codec_decode_args(function_name, args, kwargs)?;
+        let decoded = decode_text_bytes(&bytes, encoding, &errors)?;
+        Ok(self
+            .heap
+            .alloc_tuple(vec![Value::Str(decoded), Value::Int(bytes.len() as i64)]))
+    }
+
+    pub(super) fn builtin_codecs_ascii_encode(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.stateless_text_codec_encode("ascii_encode", "ascii", args, kwargs)
+    }
+
+    pub(super) fn builtin_codecs_ascii_decode(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.stateless_text_codec_decode("ascii_decode", "ascii", args, kwargs)
+    }
+
+    pub(super) fn builtin_codecs_latin_1_encode(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.stateless_text_codec_encode("latin_1_encode", "latin-1", args, kwargs)
+    }
+
+    pub(super) fn builtin_codecs_latin_1_decode(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.stateless_text_codec_decode("latin_1_decode", "latin-1", args, kwargs)
     }
 
     pub(super) fn builtin_codecs_utf_8_encode(

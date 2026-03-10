@@ -619,6 +619,10 @@ impl Vm {
                 BuiltinFunction::FunctoolsCachedProperty => "cached_property",
                 BuiltinFunction::CodecsEncode => "encode",
                 BuiltinFunction::CodecsDecode => "decode",
+                BuiltinFunction::CodecsAsciiEncode => "ascii_encode",
+                BuiltinFunction::CodecsAsciiDecode => "ascii_decode",
+                BuiltinFunction::CodecsLatin1Encode => "latin_1_encode",
+                BuiltinFunction::CodecsLatin1Decode => "latin_1_decode",
                 BuiltinFunction::CodecsUtf8Encode => "utf_8_encode",
                 BuiltinFunction::CodecsUtf8Decode => "utf_8_decode",
                 BuiltinFunction::CodecsEscapeDecode => "escape_decode",
@@ -1348,6 +1352,10 @@ impl Vm {
             BuiltinFunction::CollectionsDefaultDict => "collections",
             BuiltinFunction::CodecsEncode
             | BuiltinFunction::CodecsDecode
+            | BuiltinFunction::CodecsAsciiEncode
+            | BuiltinFunction::CodecsAsciiDecode
+            | BuiltinFunction::CodecsLatin1Encode
+            | BuiltinFunction::CodecsLatin1Decode
             | BuiltinFunction::CodecsUtf8Encode
             | BuiltinFunction::CodecsUtf8Decode
             | BuiltinFunction::CodecsEscapeDecode
@@ -1589,27 +1597,24 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::List),
                 NativeMethodKind::ListInit,
             )),
-            "__init__" if builtin == BuiltinFunction::CollectionsDefaultDict => Ok(
-                self.alloc_native_unbound_method(
+            "__init__" if builtin == BuiltinFunction::CollectionsDefaultDict => Ok(self
+                .alloc_native_unbound_method(
                     "__defaultdict_unbound_method__",
                     Value::Builtin(BuiltinFunction::CollectionsDefaultDict),
                     NativeMethodKind::DefaultDictInit,
-                ),
-            ),
-            "__init__" if builtin == BuiltinFunction::CollectionsOrderedDict => Ok(
-                self.alloc_native_unbound_method(
+                )),
+            "__init__" if builtin == BuiltinFunction::CollectionsOrderedDict => Ok(self
+                .alloc_native_unbound_method(
                     "__ordereddict_unbound_method__",
                     Value::Builtin(BuiltinFunction::CollectionsOrderedDict),
                     NativeMethodKind::DictInit,
-                ),
-            ),
-            "__missing__" if builtin == BuiltinFunction::CollectionsDefaultDict => Ok(
-                self.alloc_native_unbound_method(
+                )),
+            "__missing__" if builtin == BuiltinFunction::CollectionsDefaultDict => Ok(self
+                .alloc_native_unbound_method(
                     "__defaultdict_missing_unbound_method__",
                     Value::Builtin(BuiltinFunction::CollectionsDefaultDict),
                     NativeMethodKind::DefaultDictMissing,
-                ),
-            ),
+                )),
             "__init__" if builtin == BuiltinFunction::Dict => Ok(self.alloc_native_unbound_method(
                 "__dict_unbound_method__",
                 Value::Builtin(BuiltinFunction::Dict),
@@ -3729,10 +3734,7 @@ impl Vm {
             return Ok(self.alloc_native_bound_method(NativeMethodKind::DefaultDictInit, dict));
         }
         if attr_name == "__missing__" && self.defaultdict_factories.contains_key(&dict.id()) {
-            return Ok(self.alloc_native_bound_method(
-                NativeMethodKind::DefaultDictMissing,
-                dict,
-            ));
+            return Ok(self.alloc_native_bound_method(NativeMethodKind::DefaultDictMissing, dict));
         }
         if attr_name == "__reduce_ex__" || attr_name == "__reduce__" {
             return Ok(self.alloc_reduce_ex_bound_method(Value::Dict(dict)));
