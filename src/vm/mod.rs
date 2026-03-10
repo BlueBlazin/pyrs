@@ -53,8 +53,8 @@ use self::containers::{
 use self::ops::{
     add_values, and_values, compare_ge, compare_gt, compare_in, compare_le, compare_lt,
     compare_order, div_values, floor_div_values, invert_value, lshift_values, matmul_values,
-    mod_values, mul_values, neg_value, or_values, ordering_from_cmp_value, pos_value, pow_values,
-    rshift_values, sub_values, xor_values,
+    mod_values, mod_values_runtime, mul_values, neg_value, or_values, ordering_from_cmp_value,
+    pos_value, pow_values, rshift_values, sub_values, xor_values,
 };
 use self::stdlib::bz2::{Bz2CompressorState, Bz2DecompressorState};
 use self::stdlib::expat::ExpatParserState;

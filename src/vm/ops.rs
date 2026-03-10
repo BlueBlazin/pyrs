@@ -5,9 +5,9 @@ use std::cmp::Ordering;
 use super::class_name_for_instance;
 use super::containers::{dedup_hashable_values, dict_contains_key_checked, ensure_hashable};
 use super::{
-    DICT_BACKING_STORAGE_ATTR, LIST_BACKING_STORAGE_ATTR, NumericValue, STR_BACKING_STORAGE_ATTR,
-    env_var_present_cached, mod_float, numeric_as_complex, numeric_as_f64, numeric_pair,
-    python_floor_div, python_mod, value_to_int,
+    DICT_BACKING_STORAGE_ATTR, IteratorKind, LIST_BACKING_STORAGE_ATTR, NumericValue,
+    STR_BACKING_STORAGE_ATTR, Vm, env_var_present_cached, mod_float, numeric_as_complex,
+    numeric_as_f64, numeric_pair, python_floor_div, python_mod, value_to_int,
 };
 use crate::runtime::{
     BigInt, BuiltinFunction, Heap, Object, RuntimeError, Value, format_repr, format_value,
@@ -411,6 +411,17 @@ pub(super) fn mod_values(left: Value, right: Value, heap: &Heap) -> Result<Value
     }
 }
 
+pub(crate) fn mod_values_runtime(
+    vm: &mut Vm,
+    left: Value,
+    right: Value,
+) -> Result<Value, RuntimeError> {
+    if let Value::Str(format) = &left {
+        return string_percent_format_runtime(vm, format, right).map(Value::Str);
+    }
+    mod_values(left, right, &vm.heap)
+}
+
 fn bytes_percent_format(format: &[u8], right: Value) -> Result<Vec<u8>, RuntimeError> {
     let positional_args = match &right {
         Value::Tuple(obj) => match &*obj.kind() {
@@ -510,17 +521,21 @@ fn value_to_bytes_percent_value(value: Value) -> Result<Vec<u8>, RuntimeError> {
     }
 }
 
-fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeError> {
-    let mut positional_args = match &right {
+fn percent_format_positional_args(right: &Value) -> Vec<Value> {
+    match right {
         Value::Tuple(obj) => match &*obj.kind() {
             Object::Tuple(values) => values.clone(),
             _ => vec![right.clone()],
         },
         Value::Instance(_) => {
-            namedtuple_instance_percent_args(&right).unwrap_or_else(|| vec![right.clone()])
+            namedtuple_instance_percent_args(right).unwrap_or_else(|| vec![right.clone()])
         }
         _ => vec![right.clone()],
-    };
+    }
+}
+
+fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeError> {
+    let mut positional_args = percent_format_positional_args(&right);
     let mapping = match &right {
         Value::Dict(obj) => match &*obj.kind() {
             Object::Dict(entries) => Some(entries.clone()),
@@ -695,6 +710,237 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
     }
 
     if !used_mapping && arg_idx < positional_args.len() {
+        return Err(RuntimeError::type_error(
+            "not all arguments converted during string formatting",
+        ));
+    }
+    positional_args.clear();
+    Ok(out)
+}
+
+fn string_percent_runtime_mapping_candidate(
+    vm: &mut Vm,
+    right: &Value,
+) -> Result<Option<Value>, RuntimeError> {
+    match right {
+        Value::Tuple(_) | Value::Str(_) => Ok(None),
+        Value::Iterator(iterator) => match &*iterator.kind() {
+            Object::Iterator(iterator_data)
+                if matches!(iterator_data.kind, IteratorKind::RangeObject { .. }) =>
+            {
+                Ok(Some(right.clone()))
+            }
+            _ => Ok(None),
+        },
+        Value::Instance(instance) if class_name_for_instance(instance).as_deref() == Some("range") => {
+            Ok(Some(right.clone()))
+        }
+        Value::Instance(instance)
+            if vm.instance_backing_tuple(instance).is_some()
+                || vm.instance_backing_str(instance).is_some() =>
+        {
+            Ok(None)
+        }
+        _ if vm.lookup_bound_special_method(right, "__getitem__")?.is_some() => Ok(Some(right.clone())),
+        _ => Ok(None),
+    }
+}
+
+fn string_percent_runtime_mapping_lookup(
+    vm: &mut Vm,
+    mapping: &Value,
+    key: &str,
+) -> Result<Value, RuntimeError> {
+    let key_value = Value::Str(key.to_string());
+    match mapping {
+        Value::Dict(obj) => match &*obj.kind() {
+            Object::Dict(entries) => entries
+                .iter()
+                .find_map(|(entry_key, entry_value)| match entry_key {
+                    Value::Str(name) if name == key => Some(entry_value.clone()),
+                    _ => None,
+                })
+                .ok_or_else(|| RuntimeError::key_error(key.to_string())),
+            _ => Err(RuntimeError::type_error("format requires a mapping")),
+        },
+        _ => vm
+            .getitem_value(mapping.clone(), key_value)
+            .map_err(|err| match err.message.as_str() {
+                "key not found" => RuntimeError::key_error(key.to_string()),
+                _ => err,
+            }),
+    }
+}
+
+fn string_percent_format_runtime(
+    vm: &mut Vm,
+    format: &str,
+    right: Value,
+) -> Result<String, RuntimeError> {
+    let mut positional_args = percent_format_positional_args(&right);
+    let mapping = string_percent_runtime_mapping_candidate(vm, &right)?;
+
+    let chars: Vec<char> = format.chars().collect();
+    let mut idx = 0usize;
+    let mut arg_idx = 0usize;
+    let mut used_mapping = false;
+    let mut out = String::new();
+
+    while idx < chars.len() {
+        if chars[idx] != '%' {
+            out.push(chars[idx]);
+            idx += 1;
+            continue;
+        }
+        idx += 1;
+        if idx >= chars.len() {
+            return Err(RuntimeError::value_error("incomplete format"));
+        }
+        if chars[idx] == '%' {
+            out.push('%');
+            idx += 1;
+            continue;
+        }
+
+        let mut mapping_key: Option<String> = None;
+        if chars[idx] == '(' {
+            idx += 1;
+            let key_start = idx;
+            while idx < chars.len() && chars[idx] != ')' {
+                idx += 1;
+            }
+            if idx >= chars.len() {
+                return Err(RuntimeError::value_error("incomplete format key"));
+            }
+            mapping_key = Some(chars[key_start..idx].iter().collect());
+            idx += 1;
+        }
+
+        let mut left_align = false;
+        let mut zero_pad = false;
+        let mut force_sign = false;
+        let mut space_sign = false;
+        let mut alternate = false;
+        while idx < chars.len() && "#0- +".contains(chars[idx]) {
+            match chars[idx] {
+                '-' => left_align = true,
+                '0' => zero_pad = true,
+                '+' => force_sign = true,
+                ' ' => space_sign = true,
+                '#' => alternate = true,
+                _ => {}
+            }
+            idx += 1;
+        }
+
+        let mut width: Option<usize> = None;
+        if idx < chars.len() && chars[idx] == '*' {
+            if mapping_key.is_some() {
+                return Err(RuntimeError::type_error("format requires a mapping"));
+            }
+            if arg_idx >= positional_args.len() {
+                return Err(RuntimeError::type_error(
+                    "not enough arguments for format string",
+                ));
+            }
+            let width_value = value_to_int(positional_args[arg_idx].clone())?;
+            arg_idx += 1;
+            idx += 1;
+            if width_value < 0 {
+                left_align = true;
+                width = Some(width_value.unsigned_abs() as usize);
+            } else {
+                width = Some(width_value as usize);
+            }
+        } else {
+            let width_start = idx;
+            while idx < chars.len() && chars[idx].is_ascii_digit() {
+                idx += 1;
+            }
+            if idx > width_start {
+                width = Some(
+                    chars[width_start..idx]
+                        .iter()
+                        .collect::<String>()
+                        .parse::<usize>()
+                        .map_err(|_| RuntimeError::value_error("invalid width in format string"))?,
+                );
+            }
+        }
+
+        let mut precision: Option<usize> = None;
+        if idx < chars.len() && chars[idx] == '.' {
+            idx += 1;
+            if idx < chars.len() && chars[idx] == '*' {
+                if mapping_key.is_some() {
+                    return Err(RuntimeError::type_error("format requires a mapping"));
+                }
+                if arg_idx >= positional_args.len() {
+                    return Err(RuntimeError::type_error(
+                        "not enough arguments for format string",
+                    ));
+                }
+                let precision_value = value_to_int(positional_args[arg_idx].clone())?;
+                arg_idx += 1;
+                idx += 1;
+                if precision_value >= 0 {
+                    precision = Some(precision_value as usize);
+                }
+            } else {
+                let precision_start = idx;
+                while idx < chars.len() && chars[idx].is_ascii_digit() {
+                    idx += 1;
+                }
+                let precision_text = chars[precision_start..idx].iter().collect::<String>();
+                precision = if precision_text.is_empty() {
+                    Some(0)
+                } else {
+                    Some(precision_text.parse::<usize>().map_err(|_| {
+                        RuntimeError::value_error("invalid precision in format string")
+                    })?)
+                };
+            }
+        }
+        while idx < chars.len() && "hlL".contains(chars[idx]) {
+            idx += 1;
+        }
+        if idx >= chars.len() {
+            return Err(RuntimeError::value_error("incomplete format"));
+        }
+        let conversion = chars[idx];
+        idx += 1;
+
+        let value = if let Some(key) = mapping_key {
+            used_mapping = true;
+            arg_idx = positional_args.len();
+            let mapping_value = mapping
+                .as_ref()
+                .ok_or_else(|| RuntimeError::type_error("format requires a mapping"))?;
+            string_percent_runtime_mapping_lookup(vm, mapping_value, &key)?
+        } else {
+            if arg_idx >= positional_args.len() {
+                return Err(RuntimeError::type_error(
+                    "not enough arguments for format string",
+                ));
+            }
+            let value = positional_args[arg_idx].clone();
+            arg_idx += 1;
+            value
+        };
+
+        let formatted = format_percent_value(
+            value, conversion, precision, force_sign, space_sign, alternate,
+        )?;
+        out.push_str(&apply_percent_width(
+            formatted,
+            width,
+            left_align,
+            zero_pad && !left_align,
+            conversion,
+        ));
+    }
+
+    if !used_mapping && arg_idx < positional_args.len() && mapping.is_none() {
         return Err(RuntimeError::type_error(
             "not all arguments converted during string formatting",
         ));

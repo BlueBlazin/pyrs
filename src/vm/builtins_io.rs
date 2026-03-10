@@ -312,7 +312,7 @@ impl Vm {
             Some(opener)
         };
 
-        let fd = match file_arg {
+        let (fd, name_value) = match file_arg {
             Value::Int(fd) => {
                 if fd < 0 {
                     return Err(RuntimeError::bad_file_descriptor());
@@ -326,11 +326,11 @@ impl Vm {
                 }) else {
                     return Err(RuntimeError::bad_file_descriptor());
                 };
-                resolved_fd
+                (resolved_fd, Value::Int(fd))
             }
             Value::Bool(flag) => {
                 let fd = if flag { 1 } else { 0 };
-                self.resolve_open_file_fd(fd).unwrap_or(fd)
+                (self.resolve_open_file_fd(fd).unwrap_or(fd), Value::Int(fd))
             }
             pathlike => {
                 if !closefd {
@@ -384,7 +384,7 @@ impl Vm {
                     }) else {
                         return Err(RuntimeError::bad_file_descriptor());
                     };
-                    resolved_fd
+                    (resolved_fd, open_path.opener_arg)
                 } else {
                     let mut options = fs::OpenOptions::new();
                     match mode_kind {
@@ -417,7 +417,7 @@ impl Vm {
                     let file = options
                         .open(&open_path.path)
                         .map_err(|err| RuntimeError::new(format!("open() failed: {err}")))?;
-                    self.alloc_open_fd(file)
+                    (self.alloc_open_fd(file), open_path.opener_arg)
                 }
             }
         };
@@ -436,8 +436,17 @@ impl Vm {
             }
             raw_mode
         };
-        let raw_instance =
-            self.alloc_io_file_instance("FileIO", fd, &raw_mode, true, closefd, None, None, None)?;
+        let raw_instance = self.alloc_io_file_instance(
+            "FileIO",
+            fd,
+            name_value.clone(),
+            &raw_mode,
+            true,
+            closefd,
+            None,
+            None,
+            None,
+        )?;
         let buffered_instance = if buffering == 0 {
             raw_instance.clone()
         } else {
@@ -451,6 +460,7 @@ impl Vm {
             let instance = self.alloc_io_file_instance(
                 buffered_class,
                 fd,
+                name_value.clone(),
                 &raw_mode,
                 true,
                 closefd,
@@ -482,6 +492,7 @@ impl Vm {
         let text_instance = self.alloc_io_file_instance(
             "TextIOWrapper",
             fd,
+            name_value,
             &mode,
             false,
             closefd,
@@ -1853,6 +1864,7 @@ impl Vm {
         &mut self,
         class_name: &str,
         fd: i64,
+        name: Value,
         mode: &str,
         binary: bool,
         closefd: bool,
@@ -1898,7 +1910,7 @@ impl Vm {
             .insert("closefd".to_string(), Value::Bool(closefd));
         instance_data
             .attrs
-            .insert("name".to_string(), Value::Int(fd));
+            .insert("name".to_string(), name);
         let encoding_value = if binary {
             encoding.map(Value::Str).unwrap_or(Value::None)
         } else {

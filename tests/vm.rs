@@ -13877,7 +13877,11 @@ fn executes_string_percent_formatting() {
 b = '%(name)s' % {'name': 'ok'}\n\
 c = '%d' % 7\n\
 d = '%.3f' % 1.23456\n\
-e = '%6.2f' % 1.5\n";
+e = '%6.2f' % 1.5\n\
+f = 'literal' % {'prog': 'ignored'}\n\
+g = 'literal' % [1]\n\
+h = 'literal' % range(1)\n\
+i = 'literal' % b'x'\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -13888,6 +13892,10 @@ e = '%6.2f' % 1.5\n";
     assert_eq!(vm.get_global("c"), Some(Value::Str("7".to_string())));
     assert_eq!(vm.get_global("d"), Some(Value::Str("1.235".to_string())));
     assert_eq!(vm.get_global("e"), Some(Value::Str("  1.50".to_string())));
+    assert_eq!(vm.get_global("f"), Some(Value::Str("literal".to_string())));
+    assert_eq!(vm.get_global("g"), Some(Value::Str("literal".to_string())));
+    assert_eq!(vm.get_global("h"), Some(Value::Str("literal".to_string())));
+    assert_eq!(vm.get_global("i"), Some(Value::Str("literal".to_string())));
 }
 
 #[test]
@@ -14837,6 +14845,55 @@ fn argparse_parse_args_accepts_explicit_positional_list() {
     };
     run_with_large_stack("vm-argparse-stdlib", move || {
         let source = "import argparse\np = argparse.ArgumentParser()\np.add_argument('x')\nns = p.parse_args(['hello'])\nok = (ns.x == 'hello')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn open_preserves_path_name_attribute() {
+    let source = "f = open('Cargo.toml', 'r', encoding='utf-8')\n\
+name = f.name\n\
+text = f.read(8)\n\
+f.close()\n\
+ok = isinstance(name, str) and name.endswith('Cargo.toml') and text == '[package'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn argparse_custom_usage_without_prog_placeholder_raises_wrapped_error() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-argparse-custom-usage", move || {
+        let source = r#"from test.test_argparse import ArgumentParserError, ErrorRaisingArgumentParser
+parser = ErrorRaisingArgumentParser(prog='PROG')
+parser.add_argument('--foo', action='store_true')
+parser.add_argument('bar', type=float)
+subparsers = parser.add_subparsers(required=False, help='command help')
+parser3 = subparsers.add_parser('3', description='3 description', usage='PROG --foo bar 3 t ...')
+parser3.add_argument('t', type=int, help='t help')
+parser3.add_argument('u', nargs='...', help='u help')
+kind = None
+detail = None
+try:
+    parser.parse_args('0.5 3'.split())
+except ArgumentParserError as exc:
+    kind = exc.args[0]
+    detail = exc.args[2]
+except Exception as exc:
+    kind = type(exc).__name__
+    detail = str(exc)
+ok = kind == 'SystemExit' and detail == 'usage: PROG --foo bar 3 t ...\nPROG bar 3: error: the following arguments are required: t\n'
+"#;
         let module = parser::parse_module(source).expect("parse should succeed");
         let code = compiler::compile_module(&module).expect("compile should succeed");
         let mut vm = Vm::new();

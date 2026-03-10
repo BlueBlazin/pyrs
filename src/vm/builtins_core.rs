@@ -19,8 +19,8 @@ use super::{
     ensure_hashable,
     dict_set_value_checked, div_values, floor_div_values, format_float_hex, format_repr,
     format_value, frame_cell_value, invert_value, is_missing_attribute_error, is_os_error_family,
-    is_runtime_type_name_marker, is_truthy, matmul_values, mod_values, mul_values, neg_value,
-    or_values, ordering_from_cmp_value, parse_hex_float_literal, parser, pos_value,
+    is_runtime_type_name_marker, is_truthy, matmul_values, mod_values_runtime, mul_values,
+    neg_value, or_values, ordering_from_cmp_value, parse_hex_float_literal, parser, pos_value,
     round_float_with_ndigits, runtime_error_matches_exception, sub_values, value_from_bigint,
     value_from_object_ref, value_to_bigint, value_to_f64, value_to_int, weakref_target_id,
     weakref_target_object, with_bytes_like_source, xor_values,
@@ -14430,7 +14430,7 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
-        match mod_values(left.clone(), right.clone(), &self.heap) {
+        match mod_values_runtime(self, left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err)
                 if err.message.contains("unsupported operand type")

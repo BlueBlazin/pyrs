@@ -3,7 +3,7 @@ use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
 use crate::runtime::{Object, Value};
 use crate::unicode::{canonical_codepoint_for_internal_char, internal_char_from_codepoint};
-use crate::vm::{BuiltinFunction, dict_set_value_checked, mod_values, value_to_int};
+use crate::vm::{BuiltinFunction, dict_set_value_checked, mod_values_runtime, value_to_int};
 
 use super::{
     _Py_NotImplementedStruct, CpythonBuffer, CpythonBufferProcs, CpythonObjectHead,
@@ -705,7 +705,7 @@ pub unsafe extern "C" fn PyUnicode_Format(format: *mut c_void, arg: *mut c_void)
         }
         // SAFETY: VM pointer is valid for active C-API context lifetime.
         let vm = unsafe { &mut *context.vm };
-        let rendered = match mod_values(format_value, arg_value, &vm.heap) {
+        let rendered = match mod_values_runtime(vm, format_value, arg_value) {
             Ok(value) => value,
             Err(err) => {
                 context.set_error(err.message);
