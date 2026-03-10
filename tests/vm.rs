@@ -532,7 +532,7 @@ ok = (
     and repr(type(itertools.chain)) == "<class 'type'>"
 )
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
+    let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
@@ -583,7 +583,7 @@ ok = (
     and bad_text == "'list_iterator' object is not reversible"
 )
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
+    let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
@@ -2449,6 +2449,56 @@ fn compile_parse_error_raises_syntax_error_type() {
 fn compile_parse_error_populates_syntaxerror_location_attrs() {
     let source = "ok = False\ntry:\n    compile('a $ b', '<string>', 'exec')\nexcept SyntaxError as exc:\n    ok = (exc.filename == '<string>' and exc.lineno == 1 and isinstance(exc.offset, int) and exc.text == 'a $ b')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn compile_accepts_bytes_filename_and_normalizes_code_filename() {
+    let source = "code = compile('x = 1\\n', b'module.py', 'exec')\nok = (code.co_filename == 'module.py')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn compile_accepts_pathlike_filename_and_normalizes_code_filename() {
+    let source = "class P:\n    def __fspath__(self):\n        return b'pkg/mod.py'\ncode = compile('x = 1\\n', P(), 'exec')\nok = (code.co_filename == 'pkg/mod.py')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn compile_filename_type_errors_match_cpython() {
+    let source = "class P:\n    def __fspath__(self):\n        return 1\nmsg1 = ''\nmsg2 = ''\ntry:\n    compile('x = 1\\n', 1, 'exec')\nexcept TypeError as exc:\n    msg1 = str(exc)\ntry:\n    compile('x = 1\\n', P(), 'exec')\nexcept TypeError as exc:\n    msg2 = str(exc)\nok = (\n    msg1 == 'expected str, bytes or os.PathLike object, not int'\n    and msg2 == 'expected P.__fspath__() to return str or bytes, not int'\n)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn importlib_source_to_code_accepts_bytes_path() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping importlib source_to_code bytes-path test (CPython Lib path not available)");
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path.insert(0, {lib_path:?})\nimport importlib.abc as abc\ncode = abc.InspectLoader.source_to_code(b'x = 1\\n', b'pkg/mod.py')\nok = (code.co_filename == 'pkg/mod.py')\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");

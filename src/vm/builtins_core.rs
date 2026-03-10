@@ -7768,6 +7768,59 @@ impl Vm {
         self.build_ast_node("Expression", None, vec![("body", body)])
     }
 
+    fn compile_filename_bytes_to_string(&self, bytes_obj: ObjRef) -> Result<String, RuntimeError> {
+        let Object::Bytes(bytes) = &*bytes_obj.kind() else {
+            return Err(RuntimeError::type_error(
+                "compile() filename must be str, bytes or os.PathLike",
+            ));
+        };
+        decode_text_bytes(bytes, "utf-8", "surrogateescape")
+    }
+
+    fn compile_call_fspath(&mut self, value: Value) -> Result<Value, RuntimeError> {
+        let type_name = self.value_type_name_for_error(&value);
+        let Some(fspath) = self.lookup_bound_special_method(&value, "__fspath__")? else {
+            return Err(RuntimeError::type_error(format!(
+                "expected str, bytes or os.PathLike object, not {type_name}",
+            )));
+        };
+        match self.call_internal(fspath, Vec::new(), HashMap::new())? {
+            InternalCallOutcome::Value(path @ Value::Str(_))
+            | InternalCallOutcome::Value(path @ Value::Bytes(_)) => Ok(path),
+            InternalCallOutcome::Value(other) => Err(RuntimeError::type_error(format!(
+                "expected {type_name}.__fspath__() to return str or bytes, not {}",
+                self.value_type_name_for_error(&other)
+            ))),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("__fspath__() failed"))
+            }
+        }
+    }
+
+    fn compile_filename_arg_to_string(&mut self, value: Value) -> Result<String, RuntimeError> {
+        let normalized = match value {
+            Value::Str(path) => return Ok(path),
+            Value::Bytes(bytes_obj) => return self.compile_filename_bytes_to_string(bytes_obj),
+            Value::Instance(instance) => {
+                if let Some(path) = self.instance_backing_str(&instance) {
+                    return Ok(path);
+                }
+                if let Some(Value::Bytes(bytes_obj)) = self.instance_backing_bytes_like(&instance) {
+                    return self.compile_filename_bytes_to_string(bytes_obj);
+                }
+                self.compile_call_fspath(Value::Instance(instance))?
+            }
+            other => self.compile_call_fspath(other)?,
+        };
+        match normalized {
+            Value::Str(path) => Ok(path),
+            Value::Bytes(bytes_obj) => self.compile_filename_bytes_to_string(bytes_obj),
+            _ => Err(RuntimeError::type_error(
+                "compile() filename must be str, bytes or os.PathLike",
+            )),
+        }
+    }
+
     pub(super) fn builtin_compile(
         &mut self,
         mut args: Vec<Value>,
@@ -7874,10 +7927,7 @@ impl Vm {
                     .map_err(|_| RuntimeError::new("compile() source is not valid UTF-8"))?
             }
         };
-        let filename = match filename_arg {
-            Value::Str(value) => value,
-            _ => return Err(RuntimeError::new("compile() filename must be str")),
-        };
+        let filename = self.compile_filename_arg_to_string(filename_arg)?;
         let mode = match mode_arg {
             Value::Str(value) => value,
             _ => return Err(RuntimeError::new("compile() mode must be str")),
