@@ -2490,6 +2490,17 @@ fn compile_filename_type_errors_match_cpython() {
 }
 
 #[test]
+fn compile_decodes_bytes_source_using_pep263_cookie() {
+    let source = "payload = b'# coding: latin-1\\r\\nvalue = \"\\xe9\"\\r\\n'\ncode = compile(payload, 'pkg/mod.py', 'exec')\nns = {}\nexec(code, ns)\nok = (code.co_filename == 'pkg/mod.py' and ns['value'] == 'é')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn importlib_source_to_code_accepts_bytes_path() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!(
@@ -20009,6 +20020,36 @@ fn frozen_importlib_exposes_gcd_import_for_source_importlib_module_api() {
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.add_module_path(lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn frozen_importlib_load_helpers_execute_and_reload_modules() {
+    let source = "import _frozen_importlib as frozen\nimport sys\nclass Loader:\n    def create_module(self, spec):\n        return None\n    def exec_module(self, module):\n        module.loaded = getattr(module, 'loaded', 0) + 1\nname = 'pyrs_frozen_load_helper'\nsys.modules.pop(name, None)\nloader = Loader()\nspec = frozen.spec_from_loader(name, loader)\nmodule = frozen._load_unlocked(spec)\nloaded_once = (module is sys.modules[name] and module.loaded == 1)\nreloaded = frozen._load_module_shim(loader, name)\nloaded_twice = (reloaded is sys.modules[name] and reloaded.loaded == 2)\ndel sys.modules[name]\nok = (hasattr(frozen, '_call_with_frames_removed') and loaded_once and loaded_twice)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn frozen_importlib_external_source_loader_uses_bootstrap_and_decode_helpers() {
+    let source = "import _frozen_importlib_external as ext\nimport sys\nclass Loader(ext.SourceLoader):\n    def __init__(self, data, path):\n        self._data = data\n        self._path = path\n    def get_filename(self, fullname):\n        return self._path\n    def get_data(self, path):\n        return self._data\n    def path_stats(self, path):\n        return {'mtime': 0, 'size': len(self._data)}\nname = 'pyrs_frozen_external_loader'\nsys.modules.pop(name, None)\nloader = Loader(b'# coding: latin-1\\r\\nvalue = \"\\xe9\"\\r\\n', 'pyrs_frozen_external_loader.py')\nmodule = loader.load_module(name)\nsource = loader.get_source(name)\ndel sys.modules[name]\nok = (module.value == 'é' and source == '# coding: latin-1\\nvalue = \"é\"\\n')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn frozen_importlib_external_source_loader_populates_file_and_path_attrs() {
+    let source = "import _frozen_importlib_external as ext\nimport sys\nclass Loader(ext.SourceLoader):\n    def __init__(self, data, path):\n        self._data = data\n        self._path = path\n    def get_filename(self, fullname):\n        return self._path\n    def get_data(self, path):\n        return self._data\n    def path_stats(self, path):\n        return {'mtime': 0, 'size': len(self._data)}\nname = 'pkg'\nsys.modules.pop(name, None)\nloader = Loader(b'loaded_file = __file__\\nloaded_path = list(__path__)\\n', 'pkg/__init__.py')\nmodule = loader.load_module(name)\ndel sys.modules[name]\nok = (module.loaded_file == 'pkg/__init__.py' and module.loaded_path == ['pkg'])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }

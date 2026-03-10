@@ -1218,15 +1218,37 @@ ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set
         let Some(module) = self.modules.get("_frozen_importlib").cloned() else {
             return Ok(());
         };
-        let has_gcd_import = if let Object::Module(module_data) = &*module.kind() {
+        let has_import_helpers = if let Object::Module(module_data) = &*module.kind() {
             module_data.globals.contains_key("_gcd_import")
+                && module_data.globals.contains_key("_call_with_frames_removed")
+                && module_data.globals.contains_key("_load_module_shim")
+                && module_data.globals.contains_key("_load_unlocked")
         } else {
             false
         };
-        if has_gcd_import {
+        if has_import_helpers {
             return Ok(());
         }
+        let warnings_module = self.modules.get("_warnings").cloned();
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            if let Some(warnings_module) = warnings_module {
+                module_data
+                    .globals
+                    .entry("_warnings".to_string())
+                    .or_insert(Value::Module(warnings_module));
+            }
+            module_data
+                .globals
+                .entry("module_from_spec".to_string())
+                .or_insert(Value::Builtin(BuiltinFunction::ImportlibModuleFromSpec));
+        }
         let source = r#"
+def _object_name(obj):
+    try:
+        return obj.__qualname__
+    except AttributeError:
+        return type(obj).__qualname__
+
 def _resolve_name(name, package, level):
     bits = package.rsplit('.', level - 1)
     if len(bits) < level:
@@ -1252,6 +1274,109 @@ def _gcd_import(name, package=None, level=0):
     if level > 0:
         name = _resolve_name(name, package, level)
     return __import__(name, {}, {}, ['_gcd_import'], 0)
+
+def _call_with_frames_removed(f, *args, **kwds):
+    return f(*args, **kwds)
+
+def _exec(spec, module):
+    name = spec.name
+    with _ModuleLockManager(name):
+        if sys.modules.get(name) is not module:
+            raise ImportError(f"module {name!r} not in sys.modules", name=name)
+        if spec.loader is None:
+            if spec.submodule_search_locations is None:
+                raise ImportError('missing loader', name=spec.name)
+        else:
+            if not hasattr(spec.loader, 'exec_module'):
+                msg = (
+                    f"{_object_name(spec.loader)}.exec_module() not found; "
+                    "falling back to load_module()"
+                )
+                _warnings.warn(msg, ImportWarning)
+                spec.loader.load_module(name)
+            else:
+                spec.loader.exec_module(module)
+        module = sys.modules.pop(spec.name)
+        sys.modules[spec.name] = module
+    return module
+
+def _load_backward_compatible(spec):
+    try:
+        spec.loader.load_module(spec.name)
+    except:
+        if spec.name in sys.modules:
+            module = sys.modules.pop(spec.name)
+            sys.modules[spec.name] = module
+        raise
+    module = sys.modules.pop(spec.name)
+    sys.modules[spec.name] = module
+    if getattr(module, '__loader__', None) is None:
+        try:
+            module.__loader__ = spec.loader
+        except AttributeError:
+            pass
+    if getattr(module, '__package__', None) is None:
+        try:
+            module.__package__ = module.__name__
+            if not hasattr(module, '__path__'):
+                module.__package__ = spec.name.rpartition('.')[0]
+        except AttributeError:
+            pass
+    if getattr(module, '__spec__', None) is None:
+        try:
+            module.__spec__ = spec
+        except AttributeError:
+            pass
+    return module
+
+def _load_unlocked(spec):
+    if spec.loader is not None and not hasattr(spec.loader, 'exec_module'):
+        msg = (
+            f"{_object_name(spec.loader)}.exec_module() not found; "
+            "falling back to load_module()"
+        )
+        _warnings.warn(msg, ImportWarning)
+        return _load_backward_compatible(spec)
+
+    module = module_from_spec(spec)
+    spec._initializing = True
+    try:
+        sys.modules[spec.name] = module
+        try:
+            if spec.loader is None:
+                if spec.submodule_search_locations is None:
+                    raise ImportError('missing loader', name=spec.name)
+            else:
+                spec.loader.exec_module(module)
+        except:
+            try:
+                del sys.modules[spec.name]
+            except KeyError:
+                pass
+            raise
+        module = sys.modules.pop(spec.name)
+        sys.modules[spec.name] = module
+        _verbose_message('import {!r} # {!r}', spec.name, spec.loader)
+    finally:
+        spec._initializing = False
+    return module
+
+def _load(spec):
+    with _ModuleLockManager(spec.name):
+        return _load_unlocked(spec)
+
+def _load_module_shim(self, fullname):
+    msg = (
+        "the load_module() method is deprecated and slated for removal in "
+        "Python 3.15; use exec_module() instead"
+    )
+    _warnings.warn(msg, DeprecationWarning)
+    spec = spec_from_loader(fullname, self)
+    if fullname in sys.modules:
+        module = sys.modules[fullname]
+        _exec(spec, module)
+        return sys.modules[fullname]
+    return _load(spec)
 "#;
         self.execute_source_module_from_text(
             &module,
@@ -1285,17 +1410,47 @@ def _gcd_import(name, package=None, level=0):
                         Object::Class(class_data) if class_data.attrs.contains_key("find_spec")
                     )
             );
-            has_supported_file_loaders && has_file_finder_path_hook && has_pathfinder_find_spec
+            let has_decode_source = module_data.globals.contains_key("decode_source");
+            let has_bootstrap = module_data.globals.contains_key("_bootstrap");
+            let has_cache_from_source = module_data.globals.contains_key("cache_from_source");
+            let has_bytecode_helpers = module_data.globals.contains_key("_classify_pyc")
+                && module_data.globals.contains_key("_compile_bytecode")
+                && module_data.globals.contains_key("_code_to_timestamp_pyc")
+                && module_data.globals.contains_key("_code_to_hash_pyc");
+            has_supported_file_loaders
+                && has_file_finder_path_hook
+                && has_pathfinder_find_spec
+                && has_decode_source
+                && has_bootstrap
+                && has_cache_from_source
+                && has_bytecode_helpers
         } else {
             false
         };
         if has_helpers {
             return Ok(());
         }
+        let bootstrap_module = self.modules.get("_frozen_importlib").cloned();
+        if let Object::Module(module_data) = &mut *module.kind_mut()
+            && let Some(bootstrap_module) = bootstrap_module
+        {
+            module_data
+                .globals
+                .entry("_bootstrap".to_string())
+                .or_insert(Value::Module(bootstrap_module));
+            module_data
+                .globals
+                .entry("cache_from_source".to_string())
+                .or_insert(Value::Builtin(BuiltinFunction::ImportlibCacheFromSource));
+        }
         let source = r#"
 import _imp
+import _io
+import marshal
 import os as _os
 import sys
+
+MAGIC_NUMBER = _imp.pyc_magic_number_token.to_bytes(4, 'little')
 
 def _LoaderBasics_is_package(self, fullname):
     filename = _path_split(self.get_filename(fullname))[1]
@@ -1532,6 +1687,145 @@ def _PathFinder_find_distributions(*args, **kwargs):
     return MetadataPathFinder.find_distributions(*args, **kwargs)
 
 PathFinder.find_distributions = staticmethod(_PathFinder_find_distributions)
+
+def _classify_pyc(data, name, exc_details):
+    magic = data[:4]
+    if magic != MAGIC_NUMBER:
+        message = f'bad magic number in {name!r}: {magic!r}'
+        _bootstrap._verbose_message('{}', message)
+        raise ImportError(message, **exc_details)
+    if len(data) < 16:
+        message = f'reached EOF while reading pyc header of {name!r}'
+        _bootstrap._verbose_message('{}', message)
+        raise EOFError(message)
+    flags = _unpack_uint32(data[4:8])
+    if flags & ~0b11:
+        raise ImportError(f'invalid flags {flags!r} in {name!r}', **exc_details)
+    return flags
+
+def _validate_timestamp_pyc(data, source_mtime, source_size, name, exc_details):
+    if _unpack_uint32(data[8:12]) != (source_mtime & 0xFFFFFFFF):
+        message = f'bytecode is stale for {name!r}'
+        _bootstrap._verbose_message('{}', message)
+        raise ImportError(message, **exc_details)
+    if (
+        source_size is not None
+        and _unpack_uint32(data[12:16]) != (source_size & 0xFFFFFFFF)
+    ):
+        raise ImportError(f'bytecode is stale for {name!r}', **exc_details)
+
+def _validate_hash_pyc(data, source_hash, name, exc_details):
+    if data[8:16] != source_hash:
+        raise ImportError(
+            f'hash in bytecode doesn\'t match hash of source {name!r}',
+            **exc_details,
+        )
+
+def _compile_bytecode(data, name=None, bytecode_path=None, source_path=None):
+    code = marshal.loads(data)
+    if isinstance(code, type(compile('', '<bytecode>', 'exec'))):
+        _bootstrap._verbose_message('code object from {!r}', bytecode_path)
+        if source_path is not None:
+            _imp._fix_co_filename(code, source_path)
+        return code
+    raise ImportError(f'Non-code object in {bytecode_path!r}', name=name, path=bytecode_path)
+
+def _code_to_timestamp_pyc(code, mtime=0, source_size=0):
+    data = bytearray(MAGIC_NUMBER)
+    data.extend(_pack_uint32(0))
+    data.extend(_pack_uint32(mtime))
+    data.extend(_pack_uint32(source_size))
+    data.extend(marshal.dumps(code))
+    return data
+
+def _code_to_hash_pyc(code, source_hash, checked=True):
+    data = bytearray(MAGIC_NUMBER)
+    flags = 0b1 | checked << 1
+    data.extend(_pack_uint32(flags))
+    assert len(source_hash) == 8
+    data.extend(source_hash)
+    data.extend(marshal.dumps(code))
+    return data
+
+def _decode_source_normalize_cookie_name(name):
+    lowered = name.lower().replace('_', '-')
+    if lowered == 'utf-8' or lowered.startswith('utf-8-'):
+        return 'utf-8'
+    if (
+        lowered in ('latin-1', 'iso-8859-1', 'iso-latin-1')
+        or lowered.startswith('latin-1-')
+        or lowered.startswith('iso-8859-1-')
+        or lowered.startswith('iso-latin-1-')
+    ):
+        return 'iso-8859-1'
+    return name
+
+def _decode_source_extract_cookie(line):
+    index = 0
+    while index < len(line) and line[index] in b' \t\x0c':
+        index += 1
+    if index >= len(line) or line[index:index + 1] != b'#':
+        return None
+    haystack = line[index:]
+    scan = 1
+    while scan + 7 <= len(haystack):
+        if haystack[scan:scan + 6] == b'coding' and haystack[scan + 6:scan + 7] in (b':', b'='):
+            start = scan + 7
+            while start < len(haystack) and haystack[start] in b' \t':
+                start += 1
+            end = start
+            while end < len(haystack) and (
+                (48 <= haystack[end] <= 57)
+                or (65 <= haystack[end] <= 90)
+                or (97 <= haystack[end] <= 122)
+                or haystack[end] in b'-_.'
+            ):
+                end += 1
+            if end > start:
+                return _decode_source_normalize_cookie_name(
+                    haystack[start:end].decode('ascii')
+                )
+            return None
+        scan += 1
+    return None
+
+def _decode_source_line_is_blank_or_comment(line):
+    index = 0
+    while index < len(line) and line[index] in b' \t\x0c':
+        index += 1
+    if index >= len(line):
+        return True
+    return line[index:index + 1] in (b'#', b'\r', b'\n')
+
+def _decode_source_encoding(source_bytes):
+    lines = source_bytes.splitlines(True)
+    if not lines:
+        return 'utf-8'
+    bom_found = False
+    default_encoding = 'utf-8'
+    first = lines[0]
+    if first.startswith(b'\xef\xbb\xbf'):
+        bom_found = True
+        default_encoding = 'utf-8-sig'
+        first = first[3:]
+    encoding = _decode_source_extract_cookie(first)
+    if encoding is not None:
+        if bom_found and encoding != 'utf-8':
+            raise SyntaxError('encoding problem: utf-8')
+        return 'utf-8-sig' if bom_found else encoding
+    if not _decode_source_line_is_blank_or_comment(first):
+        return default_encoding
+    if len(lines) > 1:
+        encoding = _decode_source_extract_cookie(lines[1])
+        if encoding is not None:
+            if bom_found and encoding != 'utf-8':
+                raise SyntaxError('encoding problem: utf-8')
+            return 'utf-8-sig' if bom_found else encoding
+    return default_encoding
+
+def decode_source(source_bytes):
+    encoding = _decode_source_encoding(source_bytes)
+    return source_bytes.decode(encoding).replace('\r\n', '\n').replace('\r', '\n')
 
 def source_from_cache(path):
     if sys.implementation.cache_tag is None:

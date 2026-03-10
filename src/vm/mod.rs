@@ -4043,12 +4043,9 @@ impl Vm {
         let Some(encoding) = python_source_extract_cookie_encoding(line) else {
             return Ok(None);
         };
-        self.call_builtin(
-            BuiltinFunction::CodecsLookup,
-            vec![Value::Str(encoding.clone())],
-            HashMap::new(),
-        )
-        .map_err(|_| python_source_unknown_encoding_error(filename, &encoding))?;
+        self.decode_text_bytes_with_codec_fallback(&[], &encoding, "strict")
+            .map(|_| ())
+            .map_err(|_| python_source_unknown_encoding_error(filename, &encoding))?;
         if bom_found {
             if encoding != "utf-8" {
                 return Err(python_source_encoding_problem_error(filename));

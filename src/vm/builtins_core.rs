@@ -7919,15 +7919,32 @@ impl Vm {
         }
         let request_ast = (flags & PYCF_ONLY_AST) != 0;
 
-        let source_text = match source_arg {
+        let source_input = match source_arg {
             Value::Str(value) => value,
             other => {
                 let bytes = bytes_like_from_value(other)?;
-                String::from_utf8(bytes)
-                    .map_err(|_| RuntimeError::new("compile() source is not valid UTF-8"))?
+                let filename = self.compile_filename_arg_to_string(filename_arg)?;
+                let filename_for_decode = (!filename.is_empty()).then_some(filename.as_str());
+                let source_text = self.decode_python_source_bytes(&bytes, filename_for_decode)?;
+                return self.compile_source_text_to_code(
+                    source_text,
+                    filename,
+                    mode_arg,
+                    request_ast,
+                );
             }
         };
         let filename = self.compile_filename_arg_to_string(filename_arg)?;
+        self.compile_source_text_to_code(source_input, filename, mode_arg, request_ast)
+    }
+
+    fn compile_source_text_to_code(
+        &mut self,
+        source_text: String,
+        filename: String,
+        mode_arg: Value,
+        request_ast: bool,
+    ) -> Result<Value, RuntimeError> {
         let mode = match mode_arg {
             Value::Str(value) => value,
             _ => return Err(RuntimeError::new("compile() mode must be str")),

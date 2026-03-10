@@ -1,9 +1,10 @@
 use super::{
     BUILTIN_MODULE_LOADER, HashMap, ImportReturnPolicy, ModuleObject, NAMESPACE_LOADER,
-    OPCODE_METADATA, ObjRef, Object, OpcodeMetadata, PathBuf, Rc, RuntimeError, SOURCE_FILE_LOADER,
-    SOURCELESS_FILE_LOADER, Value, Vm, bytes_like_from_value, cache_path_from_source_path,
-    cache_path_from_source_path_with_optimization, class_attr_lookup, compiler, dict_get_value, fs,
-    is_truthy, opcode_flags_contains, parser, source_path_from_cache_path,
+    OPCODE_METADATA, ObjRef, Object, OpcodeMetadata, PathBuf, Rc, RuntimeError,
+    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, Value, Vm, bytes_like_from_value,
+    cache_path_from_source_path, cache_path_from_source_path_with_optimization,
+    class_attr_lookup, compiler, dict_get_value, fs, is_truthy, opcode_flags_contains, parser,
+    source_path_from_cache_path, InternalCallOutcome,
     split_relative_import_name, value_to_int, value_to_path,
 };
 use crate::runtime::{
@@ -1648,15 +1649,15 @@ impl Vm {
         } else {
             kwargs.remove("loader").unwrap_or(Value::None)
         };
-        let origin = if !args.is_empty() {
+        let mut origin = if !args.is_empty() {
             args.remove(0)
         } else {
             kwargs.remove("origin").unwrap_or(Value::None)
         };
         let is_package_value = if !args.is_empty() {
-            args.remove(0)
+            Some(args.remove(0))
         } else {
-            kwargs.remove("is_package").unwrap_or(Value::Bool(false))
+            kwargs.remove("is_package")
         };
         kwargs.remove("cached");
         kwargs.remove("submodule_search_locations");
@@ -1665,20 +1666,100 @@ impl Vm {
                 "spec_from_loader() got an unexpected keyword argument",
             ));
         }
-        let is_package = match is_package_value {
-            Value::Bool(value) => value,
-            other => is_truthy(&other),
+
+        let call_loader_method = |vm: &mut Vm,
+                                  loader: Value,
+                                  attr_name: &str,
+                                  name: &str|
+         -> Result<Option<Value>, RuntimeError> {
+            let Some(method) = vm.optional_getattr_value(loader, attr_name)? else {
+                return Ok(None);
+            };
+            match vm.call_internal_preserving_caller(
+                method,
+                vec![Value::Str(name.to_string())],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(value) => Ok(Some(value)),
+                InternalCallOutcome::CallerExceptionHandled => Err(
+                    vm.runtime_error_from_active_exception("spec_from_loader() loader call failed"),
+                ),
+            }
+        };
+
+        if matches!(origin, Value::None)
+            && let Some(loader_origin) =
+                self.optional_getattr_value(loader.clone(), "_ORIGIN")?
+        {
+            origin = loader_origin;
+        }
+
+        let mut is_package = match is_package_value {
+            Some(Value::Bool(value)) => Some(value),
+            Some(other) => Some(is_truthy(&other)),
+            None => None,
+        };
+
+        if matches!(origin, Value::None)
+            && !matches!(loader, Value::None)
+            && let Some(location_value) =
+                call_loader_method(self, loader.clone(), "get_filename", &name)?
+        {
+            let location = value_to_path(&location_value)?;
+            let location_path = PathBuf::from(&location);
+            if is_package.is_none() {
+                is_package = Some(
+                    call_loader_method(self, loader.clone(), "is_package", &name)?
+                        .as_ref()
+                        .map_or(false, is_truthy),
+                );
+            }
+            let is_package = is_package.unwrap_or(false);
+            let cached_path = PathBuf::from(cache_path_from_source_path(&location));
+            let package_dirs = if is_package {
+                location_path
+                    .parent()
+                    .map(|parent| vec![parent.to_path_buf()])
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let spec = self.build_module_spec_value(
+                &name,
+                Some(&location_path),
+                Some(&cached_path),
+                None,
+                is_package,
+                package_dirs.as_slice(),
+                false,
+            );
+            self.set_module_spec_field(&spec, "loader", loader);
+            self.set_module_spec_field(&spec, "__spec__", Value::None);
+            return Ok(spec);
+        }
+
+        if is_package.is_none() {
+            is_package = Some(
+                call_loader_method(self, loader.clone(), "is_package", &name)?
+                    .as_ref()
+                    .map_or(false, is_truthy),
+            );
+        }
+        let origin_path = match &origin {
+            Value::Str(path) => Some(PathBuf::from(path)),
+            Value::Bytes(_) => Some(PathBuf::from(value_to_path(&origin)?)),
+            _ => None,
         };
         let spec = self.build_module_spec_value(
             &name,
-            None,
+            origin_path.as_ref(),
             None,
             if matches!(loader, Value::None) {
                 None
             } else {
                 Some(BUILTIN_MODULE_LOADER)
             },
-            is_package,
+            is_package.unwrap_or(false),
             &[],
             false,
         );
