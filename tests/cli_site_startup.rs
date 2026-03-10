@@ -36,6 +36,20 @@ fn pyrs_bin() -> PathBuf {
     panic!("unable to locate pyrs binary for CLI startup tests");
 }
 
+fn cpython_lib_path() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("PYRS_CPYTHON_LIB") {
+        let path = PathBuf::from(path);
+        if path.join("test/test_argparse.py").is_file() {
+            return Some(path);
+        }
+    }
+    let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".local/Python-3.14.3/Lib");
+    if candidate.join("test/test_argparse.py").is_file() {
+        return Some(candidate);
+    }
+    None
+}
+
 fn run_pyrs(root: &Path, args: &[&str], extra_env: &[(&str, &Path)]) -> (i32, String, String) {
     let mut cmd = Command::new(pyrs_bin());
     for arg in args {
@@ -141,6 +155,44 @@ fn cli_accepts_cpython_compat_flag_prefixes_before_script_path() {
     );
     assert_eq!(code, 0, "stderr:\n{stderr}");
     assert_eq!(stdout.trim(), "ok");
+}
+
+#[test]
+fn cli_accepts_compact_x_options_before_script_path() {
+    let root = temp_root("cli_compact_x_options");
+    let stdlib = root.join("Lib");
+    fs::create_dir_all(&stdlib).expect("create stdlib");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
+
+    let script = root.join("main.py");
+    fs::write(
+        &script,
+        "import sys\nprint(sys.flags.utf8_mode)\nprint('utf8' in sys._xoptions)\nprint(sys._xoptions.get('tracemalloc'))\n",
+    )
+    .expect("write script");
+
+    let script_arg = script.to_string_lossy();
+    let (code, stdout, stderr) = run_pyrs(
+        &root,
+        &["-I", "-Xutf8", "-Xtracemalloc=5", script_arg.as_ref()],
+        &[("PYRS_CPYTHON_LIB", stdlib.as_path())],
+    );
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(lines, vec!["1", "True", "5"], "stdout:\n{stdout}");
+}
+
+#[test]
+fn cli_matches_cpython_argparse_progname_script_case() {
+    let Some(stdlib) = cpython_lib_path() else {
+        return;
+    };
+    let root = temp_root("cli_argparse_progname");
+    fs::create_dir_all(&root).expect("create root");
+    let source = "import shutil\nimport test.test_argparse as mod\nshutil.rmtree('packageæ', ignore_errors=True)\ncase = mod.TestProgName('test_script')\nresult = case.defaultTestResult()\ncase.run(result)\nok = len(result.failures) == 0 and len(result.errors) == 0\nprint(ok)\n";
+    let (code, stdout, stderr) = run_pyrs(&root, &["-S", "-c", source], &[("PYRS_CPYTHON_LIB", stdlib.as_path())]);
+    assert_eq!(code, 0, "stderr:\n{stderr}\nstdout:\n{stdout}");
+    assert_eq!(stdout.trim(), "True", "stdout:\n{stdout}\nstderr:\n{stderr}");
 }
 
 #[test]

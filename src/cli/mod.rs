@@ -21,6 +21,84 @@ const CPYTHON_STDLIB_RELEASE_PAGE_URL: &str =
 const CLI_EXECUTION_STACK_SIZE: usize = 32 * 1024 * 1024;
 const CLI_STACK_SAFE_RECURSION_LIMIT: i64 = 1000;
 
+fn store_cli_xoption(entries: &mut Vec<(String, Value)>, key: String, value: Value) {
+    if let Some(existing) = entries.iter_mut().find(|(existing_key, _)| *existing_key == key) {
+        existing.1 = value;
+    } else {
+        entries.push((key, value));
+    }
+}
+
+fn parse_x_option(
+    raw: &str,
+    traceback_caret_enabled: &mut bool,
+    startup_tracemalloc_limit: &mut Option<usize>,
+    dev_mode: &mut bool,
+    utf8_mode: &mut Option<bool>,
+    warn_default_encoding: &mut bool,
+    xoptions: &mut Vec<(String, Value)>,
+) -> Result<(), String> {
+    if raw.is_empty() {
+        return Err("-X expects an option".to_string());
+    }
+    let (key, value) = match raw.split_once('=') {
+        Some((key, value)) => (key, Some(value)),
+        None => (raw, None),
+    };
+    let stored_value = value
+        .map(|value| Value::Str(value.to_string()))
+        .unwrap_or(Value::Bool(true));
+
+    match key {
+        "no_debug_ranges" => {
+            if value.is_some() {
+                return Err("invalid -X no_debug_ranges value".to_string());
+            }
+            *traceback_caret_enabled = false;
+        }
+        "tracemalloc" => {
+            let limit = match value {
+                None => 1,
+                Some(raw_limit) => {
+                    let limit = raw_limit
+                        .parse::<usize>()
+                        .map_err(|_| format!("invalid -X tracemalloc value: {raw_limit}"))?;
+                    if !(1..=65_535).contains(&limit) {
+                        return Err(format!("invalid -X tracemalloc value: {raw_limit}"));
+                    }
+                    limit
+                }
+            };
+            *startup_tracemalloc_limit = Some(limit);
+        }
+        "dev" => {
+            if value.is_some() {
+                return Err("invalid -X dev value".to_string());
+            }
+            *dev_mode = true;
+        }
+        "utf8" => {
+            let enabled = match value {
+                None => true,
+                Some("1") => true,
+                Some("0") => false,
+                Some(other) => return Err(format!("invalid -X utf8 value: {other}")),
+            };
+            *utf8_mode = Some(enabled);
+        }
+        "warn_default_encoding" => {
+            if value.is_some() {
+                return Err("invalid -X warn_default_encoding value".to_string());
+            }
+            *warn_default_encoding = true;
+        }
+        _ => {}
+    }
+
+    store_cli_xoption(xoptions, key.to_string(), stored_value);
+    Ok(())
+}
+
 pub fn run() -> i32 {
     run_with_args_vec_on_large_stack(env::args().skip(1).collect())
 }
@@ -54,6 +132,12 @@ fn run_with_args_vec_inner(arguments: Vec<String>) -> i32 {
     let mut use_environment = true;
     let mut command_warnoptions = Vec::new();
     let mut startup_tracemalloc_limit = None;
+    let mut command_xoptions: Vec<(String, Value)> = Vec::new();
+    let mut isolated = false;
+    let mut dont_write_bytecode = false;
+    let mut dev_mode = false;
+    let mut utf8_mode = None;
+    let mut warn_default_encoding = false;
 
     // Parse a small subset of CPython-style startup flags used by stdlib tests.
     loop {
@@ -67,20 +151,32 @@ fn run_with_args_vec_inner(arguments: Vec<String>) -> i32 {
                     eprintln!("error: -X expects an option");
                     return 2;
                 };
-                if option == "no_debug_ranges" {
-                    traceback_caret_enabled = false;
-                } else if option == "tracemalloc" {
-                    startup_tracemalloc_limit = Some(1);
-                } else if let Some(raw_limit) = option.strip_prefix("tracemalloc=") {
-                    let Ok(limit) = raw_limit.parse::<usize>() else {
-                        eprintln!("error: invalid -X tracemalloc value: {raw_limit}");
-                        return 2;
-                    };
-                    if !(1..=65_535).contains(&limit) {
-                        eprintln!("error: invalid -X tracemalloc value: {raw_limit}");
-                        return 2;
-                    }
-                    startup_tracemalloc_limit = Some(limit);
+                if let Err(err) = parse_x_option(
+                    &option,
+                    &mut traceback_caret_enabled,
+                    &mut startup_tracemalloc_limit,
+                    &mut dev_mode,
+                    &mut utf8_mode,
+                    &mut warn_default_encoding,
+                    &mut command_xoptions,
+                ) {
+                    eprintln!("error: {err}");
+                    return 2;
+                }
+            }
+            _ if flag.starts_with("-X") && flag.len() > 2 => {
+                args.next();
+                if let Err(err) = parse_x_option(
+                    &flag[2..],
+                    &mut traceback_caret_enabled,
+                    &mut startup_tracemalloc_limit,
+                    &mut dev_mode,
+                    &mut utf8_mode,
+                    &mut warn_default_encoding,
+                    &mut command_xoptions,
+                ) {
+                    eprintln!("error: {err}");
+                    return 2;
                 }
             }
             "-W" => {
@@ -98,8 +194,14 @@ fn run_with_args_vec_inner(arguments: Vec<String>) -> i32 {
             // Compatibility no-ops accepted by CPython command-lines used in stdlib tests.
             // We consume them so they are not misparsed as script filenames.
             "-I" | "-u" | "-E" | "-B" => {
-                if flag == "-I" || flag == "-E" {
-                    use_environment = false;
+                match flag.as_str() {
+                    "-I" => {
+                        isolated = true;
+                        use_environment = false;
+                    }
+                    "-E" => use_environment = false,
+                    "-B" => dont_write_bytecode = true,
+                    _ => {}
                 }
                 args.next();
             }
@@ -167,8 +269,15 @@ fn run_with_args_vec_inner(arguments: Vec<String>) -> i32 {
                     &source,
                     command_args,
                     import_site,
+                    use_environment,
+                    isolated,
+                    dont_write_bytecode,
                     traceback_caret_enabled,
+                    dev_mode,
+                    utf8_mode,
+                    warn_default_encoding,
                     warnoptions,
+                    command_xoptions,
                     startup_tracemalloc_limit,
                 ) {
                     Ok(status) => status,
@@ -190,8 +299,15 @@ fn run_with_args_vec_inner(arguments: Vec<String>) -> i32 {
                     &module_name,
                     module_args,
                     import_site,
+                    use_environment,
+                    isolated,
+                    dont_write_bytecode,
                     traceback_caret_enabled,
+                    dev_mode,
+                    utf8_mode,
+                    warn_default_encoding,
                     warnoptions,
+                    command_xoptions,
                     startup_tracemalloc_limit,
                 ) {
                     Ok(status) => status,
@@ -212,8 +328,15 @@ fn run_with_args_vec_inner(arguments: Vec<String>) -> i32 {
                 &path,
                 script_args,
                 import_site,
+                use_environment,
+                isolated,
+                dont_write_bytecode,
                 traceback_caret_enabled,
+                dev_mode,
+                utf8_mode,
+                warn_default_encoding,
                 warnoptions,
+                command_xoptions,
                 startup_tracemalloc_limit,
             ) {
                 Ok(status) => status,
@@ -290,8 +413,15 @@ fn run_file(
     path: &str,
     script_args: Vec<String>,
     import_site: bool,
+    use_environment: bool,
+    isolated: bool,
+    dont_write_bytecode: bool,
     traceback_caret_enabled: bool,
+    dev_mode: bool,
+    utf8_mode: Option<bool>,
+    warn_default_encoding: bool,
     warnoptions: Vec<String>,
+    xoptions: Vec<(String, Value)>,
     startup_tracemalloc_limit: Option<usize>,
 ) -> Result<i32, String> {
     let script_execution_path = {
@@ -311,8 +441,15 @@ fn run_file(
         &mut vm,
         &script_execution_path,
         import_site,
+        use_environment,
+        isolated,
+        dont_write_bytecode,
         traceback_caret_enabled,
+        dev_mode,
+        utf8_mode,
+        warn_default_encoding,
         &warnoptions,
+        &xoptions,
     )?;
     if let Some(limit) = startup_tracemalloc_limit {
         vm.start_tracemalloc(limit);
@@ -323,6 +460,9 @@ fn run_file(
     vm.set_sys_argv(argv);
     // CPython script mode exposes the executed path via __main__.__file__.
     vm.set_global("__file__", Value::Str(script_execution_path.clone()));
+    vm.set_global("__package__", Value::None);
+    vm.set_global("__spec__", Value::None);
+    vm.set_global("__cached__", Value::None);
     if script_execution_path.ends_with(".pyc") {
         let exec_result = vm.execute_pyc_file(&script_execution_path);
         let shutdown_result = vm.run_shutdown_hooks();
@@ -378,12 +518,31 @@ fn run_command(
     source: &str,
     command_args: Vec<String>,
     import_site: bool,
+    use_environment: bool,
+    isolated: bool,
+    dont_write_bytecode: bool,
     traceback_caret_enabled: bool,
+    dev_mode: bool,
+    utf8_mode: Option<bool>,
+    warn_default_encoding: bool,
     warnoptions: Vec<String>,
+    xoptions: Vec<(String, Value)>,
     startup_tracemalloc_limit: Option<usize>,
 ) -> Result<i32, String> {
     let mut vm = new_cli_vm();
-    configure_vm_for_command(&mut vm, import_site, traceback_caret_enabled, &warnoptions)?;
+    configure_vm_for_command(
+        &mut vm,
+        import_site,
+        use_environment,
+        isolated,
+        dont_write_bytecode,
+        traceback_caret_enabled,
+        dev_mode,
+        utf8_mode,
+        warn_default_encoding,
+        &warnoptions,
+        &xoptions,
+    )?;
     if let Some(limit) = startup_tracemalloc_limit {
         vm.start_tracemalloc(limit);
     }
@@ -424,12 +583,31 @@ fn run_module(
     module_name: &str,
     module_args: Vec<String>,
     import_site: bool,
+    use_environment: bool,
+    isolated: bool,
+    dont_write_bytecode: bool,
     traceback_caret_enabled: bool,
+    dev_mode: bool,
+    utf8_mode: Option<bool>,
+    warn_default_encoding: bool,
     warnoptions: Vec<String>,
+    xoptions: Vec<(String, Value)>,
     startup_tracemalloc_limit: Option<usize>,
 ) -> Result<i32, String> {
     let mut vm = new_cli_vm();
-    configure_vm_for_command(&mut vm, import_site, traceback_caret_enabled, &warnoptions)?;
+    configure_vm_for_command(
+        &mut vm,
+        import_site,
+        use_environment,
+        isolated,
+        dont_write_bytecode,
+        traceback_caret_enabled,
+        dev_mode,
+        utf8_mode,
+        warn_default_encoding,
+        &warnoptions,
+        &xoptions,
+    )?;
     if let Some(limit) = startup_tracemalloc_limit {
         vm.start_tracemalloc(limit);
     }
@@ -1200,10 +1378,29 @@ fn configure_vm_for_execution(
     vm: &mut Vm,
     script_path: &str,
     import_site: bool,
+    use_environment: bool,
+    isolated: bool,
+    dont_write_bytecode: bool,
     traceback_caret_enabled: bool,
+    dev_mode: bool,
+    utf8_mode: Option<bool>,
+    warn_default_encoding: bool,
     warnoptions: &[String],
+    xoptions: &[(String, Value)],
 ) -> Result<(), String> {
-    configure_vm_for_command(vm, import_site, traceback_caret_enabled, warnoptions)?;
+    configure_vm_for_command(
+        vm,
+        import_site,
+        use_environment,
+        isolated,
+        dont_write_bytecode,
+        traceback_caret_enabled,
+        dev_mode,
+        utf8_mode,
+        warn_default_encoding,
+        warnoptions,
+        xoptions,
+    )?;
     if let Some(parent) = Path::new(script_path).parent()
         && !parent.as_os_str().is_empty()
     {
@@ -1215,8 +1412,15 @@ fn configure_vm_for_execution(
 fn configure_vm_for_command(
     vm: &mut Vm,
     import_site: bool,
+    use_environment: bool,
+    isolated: bool,
+    dont_write_bytecode: bool,
     traceback_caret_enabled: bool,
+    dev_mode: bool,
+    utf8_mode: Option<bool>,
+    warn_default_encoding: bool,
     warnoptions: &[String],
+    xoptions: &[(String, Value)],
 ) -> Result<(), String> {
     let pythonpath_entries = detect_pythonpath_entries();
     let virtualenv_site_entries = detect_virtualenv_site_packages_entries();
@@ -1225,7 +1429,14 @@ fn configure_vm_for_command(
         vm.add_module_path(path);
     }
     vm.set_sys_no_site_flag(!import_site);
+    vm.set_sys_ignore_environment_flag(!use_environment);
+    vm.set_sys_isolated_flag(isolated);
+    vm.set_sys_dont_write_bytecode_flag(dont_write_bytecode);
+    vm.set_sys_dev_mode_flag(dev_mode);
+    vm.set_sys_utf8_mode_flag(utf8_mode.unwrap_or(false));
+    vm.set_sys_warn_default_encoding_flag(warn_default_encoding);
     vm.set_sys_warnoptions(warnoptions.to_vec());
+    vm.set_sys_xoptions(xoptions.to_vec());
     vm.set_traceback_caret_enabled(traceback_caret_enabled);
     for stdlib_path in &stdlib_paths {
         vm.add_module_path(stdlib_path.clone());

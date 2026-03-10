@@ -13899,6 +13899,55 @@ i = 'literal' % b'x'\n";
 }
 
 #[test]
+fn float_and_complex_accept_cpython_numeric_literals() {
+    let source = r#"f1 = float('-1_000.0')
+f2 = float('-1_000_000.0_0')
+f3 = float('-.5_000')
+c1 = complex('-1_000.0j')
+c2 = complex('-1e-3j')
+float_invalid = False
+complex_invalid = False
+try:
+    float('-_.45')
+except ValueError:
+    float_invalid = True
+try:
+    complex('-1__000.0j')
+except ValueError:
+    complex_invalid = True
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_float_global(&vm, "f1", -1000.0);
+    assert_float_global(&vm, "f2", -1000000.0);
+    assert_float_global(&vm, "f3", -0.5);
+    assert_eq!(vm.get_global("c1"), Some(Value::Complex { real: 0.0, imag: -1000.0 }));
+    assert_eq!(vm.get_global("c2"), Some(Value::Complex { real: 0.0, imag: -0.001 }));
+    assert_eq!(vm.get_global("float_invalid"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("complex_invalid"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn complex_equality_uses_numeric_float_semantics() {
+    let source = r#"eq_from_literal = complex('-1j') == -1j
+eq_from_constructor = -1j == complex('-1j')
+eq_signed_zero = complex(0.0, -1.0) == complex(-0.0, -1.0)
+nan_value = float('nan')
+nan_eq = complex(nan_value, 0.0) == complex(nan_value, 0.0)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("eq_from_literal"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("eq_from_constructor"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("eq_signed_zero"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("nan_eq"), Some(Value::Bool(false)));
+}
+
+#[test]
 fn iter_on_non_iterable_raises_type_error() {
     let source = r#"ok = False
 try:
@@ -14904,6 +14953,26 @@ ok = kind == 'SystemExit' and detail == 'usage: PROG --foo bar 3 t ...\nPROG bar
 }
 
 #[test]
+fn argparse_negative_number_groups_listargs_match_cpython() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-argparse-negative-numbers", move || {
+        let source = r#"import test.test_argparse as mod
+case = mod.TestNegativeNumber('test_successes_many_groups_listargs')
+result = case.defaultTestResult()
+case.run(result)
+ok = len(result.failures) == 0 and len(result.errors) == 0
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
 fn executes_match_case_statement() {
     let source = "value = 2\nmatch value:\n    case 1:\n        out = 'one'\n    case x if x > 1:\n        out = 'many'\n    case _:\n        out = 'other'\n";
     let module = parser::parse_module(source).expect("parse should succeed");

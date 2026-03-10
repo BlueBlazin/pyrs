@@ -15279,10 +15279,7 @@ impl Vm {
         };
         let (left_real, left_imag) = complex_like(left)?;
         let (right_real, right_imag) = complex_like(right)?;
-        Some(
-            left_real.to_bits() == right_real.to_bits()
-                && left_imag.to_bits() == right_imag.to_bits(),
-        )
+        Some(left_real == right_real && left_imag == right_imag)
     }
 
     fn str_subclass_overrides_richcompare(&self, class: &ObjRef) -> bool {

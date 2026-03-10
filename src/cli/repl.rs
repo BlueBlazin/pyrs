@@ -294,7 +294,19 @@ fn build_vm_with_warnoptions(
     startup_tracemalloc_limit: Option<usize>,
 ) -> Result<Vm, String> {
     let mut vm = super::new_cli_vm();
-    super::configure_vm_for_command(&mut vm, import_site, true, warnoptions)?;
+    super::configure_vm_for_command(
+        &mut vm,
+        import_site,
+        true,
+        false,
+        false,
+        true,
+        false,
+        None,
+        false,
+        warnoptions,
+        &[],
+    )?;
     if let Some(limit) = startup_tracemalloc_limit {
         vm.start_tracemalloc(limit);
     }

@@ -6846,21 +6846,14 @@ impl BuiltinFunction {
                     Value::Int(value) => Ok(Value::Float(*value as f64)),
                     Value::Bool(value) => Ok(Value::Float(if *value { 1.0 } else { 0.0 })),
                     Value::Str(value) => {
-                        let trimmed = value.trim();
-                        let parsed = trimmed
-                            .parse::<f64>()
-                            .map_err(|_| RuntimeError::value_error("float() invalid literal"))?;
-                        Ok(Value::Float(parsed))
+                        Ok(Value::Float(parse_float_literal(value)?))
                     }
                     Value::Bytes(obj) => match &*obj.kind() {
                         Object::Bytes(values) => {
                             let text = std::str::from_utf8(values).map_err(|_| {
                                 RuntimeError::value_error("float() invalid literal")
                             })?;
-                            let parsed = text.trim().parse::<f64>().map_err(|_| {
-                                RuntimeError::value_error("float() invalid literal")
-                            })?;
-                            Ok(Value::Float(parsed))
+                            Ok(Value::Float(parse_float_literal(text)?))
                         }
                         _ => Err(RuntimeError::type_error("float() unsupported type")),
                     },
@@ -6869,10 +6862,7 @@ impl BuiltinFunction {
                             let text = std::str::from_utf8(values).map_err(|_| {
                                 RuntimeError::value_error("float() invalid literal")
                             })?;
-                            let parsed = text.trim().parse::<f64>().map_err(|_| {
-                                RuntimeError::value_error("float() invalid literal")
-                            })?;
-                            Ok(Value::Float(parsed))
+                            Ok(Value::Float(parse_float_literal(text)?))
                         }
                         _ => Err(RuntimeError::type_error("float() unsupported type")),
                     },
@@ -9982,35 +9972,144 @@ fn parse_complex_literal(text: &str) -> Result<(f64, f64), RuntimeError> {
         }
 
         let mut split_idx = None;
+        let mut prev = None;
         for (idx, ch) in core.char_indices().skip(1) {
-            if ch == '+' || ch == '-' {
+            if (ch == '+' || ch == '-') && !matches!(prev, Some('e' | 'E')) {
                 split_idx = Some(idx);
             }
+            prev = Some(ch);
         }
         if let Some(idx) = split_idx {
             let (real_part, imag_part) = core.split_at(idx);
-            let real = real_part
-                .trim()
-                .parse::<f64>()
-                .map_err(|_| RuntimeError::value_error("complex() invalid literal"))?;
-            let imag = imag_part
-                .trim()
-                .parse::<f64>()
-                .map_err(|_| RuntimeError::value_error("complex() invalid literal"))?;
+            let real = parse_complex_component_literal(real_part)?;
+            let imag = parse_complex_component_literal(imag_part)?;
             Ok((real, imag))
         } else {
-            let imag = core
-                .trim()
-                .parse::<f64>()
-                .map_err(|_| RuntimeError::value_error("complex() invalid literal"))?;
+            let imag = parse_complex_component_literal(core)?;
             Ok((0.0, imag))
         }
     } else {
-        let real = trimmed
-            .parse::<f64>()
-            .map_err(|_| RuntimeError::value_error("complex() invalid literal"))?;
+        let real = parse_complex_component_literal(trimmed)?;
         Ok((real, 0.0))
     }
+}
+
+fn parse_complex_component_literal(text: &str) -> Result<f64, RuntimeError> {
+    parse_numeric_float_literal(text).map_err(|_| RuntimeError::value_error("complex() invalid literal"))
+}
+
+fn parse_float_literal(text: &str) -> Result<f64, RuntimeError> {
+    parse_numeric_float_literal(text).map_err(|_| RuntimeError::value_error("float() invalid literal"))
+}
+
+fn parse_numeric_float_literal(text: &str) -> Result<f64, ()> {
+    let normalized = normalize_decimal_float_literal(text).ok_or(())?;
+    normalized.parse::<f64>().map_err(|_| ())
+}
+
+fn normalize_decimal_float_literal(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let (sign, rest) = split_numeric_sign(trimmed);
+    if rest.is_empty() {
+        return None;
+    }
+
+    let lower = rest.to_ascii_lowercase();
+    if matches!(lower.as_str(), "inf" | "infinity" | "nan") {
+        let mut normalized = String::new();
+        if let Some(sign) = sign {
+            normalized.push(sign);
+        }
+        normalized.push_str(&lower);
+        return Some(normalized);
+    }
+
+    let mut exp_idx = None;
+    for (idx, ch) in rest.char_indices() {
+        if matches!(ch, 'e' | 'E') {
+            if exp_idx.is_some() {
+                return None;
+            }
+            exp_idx = Some(idx);
+        }
+    }
+    let (mantissa, exponent) = match exp_idx {
+        Some(idx) => (&rest[..idx], Some(&rest[idx + 1..])),
+        None => (rest, None),
+    };
+
+    let mut normalized = String::new();
+    if let Some(sign) = sign {
+        normalized.push(sign);
+    }
+
+    if let Some(dot_idx) = mantissa.find('.') {
+        if mantissa[dot_idx + 1..].contains('.') {
+            return None;
+        }
+        let int_part = normalize_decimal_digit_run(&mantissa[..dot_idx], true)?;
+        let frac_part = normalize_decimal_digit_run(&mantissa[dot_idx + 1..], true)?;
+        if int_part.is_empty() && frac_part.is_empty() {
+            return None;
+        }
+        normalized.push_str(&int_part);
+        normalized.push('.');
+        normalized.push_str(&frac_part);
+    } else {
+        normalized.push_str(&normalize_decimal_digit_run(mantissa, false)?);
+    }
+
+    if let Some(exponent) = exponent {
+        let (exp_sign, exp_digits) = split_numeric_sign(exponent);
+        let exp_digits = normalize_decimal_digit_run(exp_digits, false)?;
+        normalized.push('e');
+        if let Some(exp_sign) = exp_sign {
+            normalized.push(exp_sign);
+        }
+        normalized.push_str(&exp_digits);
+    }
+
+    Some(normalized)
+}
+
+fn split_numeric_sign(text: &str) -> (Option<char>, &str) {
+    match text.chars().next() {
+        Some('+') => (Some('+'), &text[1..]),
+        Some('-') => (Some('-'), &text[1..]),
+        _ => (None, text),
+    }
+}
+
+fn normalize_decimal_digit_run(text: &str, allow_empty: bool) -> Option<String> {
+    if text.is_empty() {
+        return allow_empty.then(String::new);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut saw_digit = false;
+    let mut prev_underscore = false;
+    for ch in text.chars() {
+        if ch == '_' {
+            if !saw_digit || prev_underscore {
+                return None;
+            }
+            prev_underscore = true;
+            continue;
+        }
+        if !ch.is_ascii_digit() {
+            return None;
+        }
+        saw_digit = true;
+        prev_underscore = false;
+        out.push(ch);
+    }
+    if prev_underscore || (!saw_digit && !allow_empty) {
+        return None;
+    }
+    Some(out)
 }
 
 fn dedup_values(values: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {

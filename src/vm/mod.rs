@@ -5351,6 +5351,39 @@ impl Vm {
         self.set_sys_flag_field("no_site", Value::Int(if no_site { 1 } else { 0 }));
     }
 
+    pub fn set_sys_ignore_environment_flag(&mut self, ignore_environment: bool) {
+        self.set_sys_flag_field(
+            "ignore_environment",
+            Value::Int(if ignore_environment { 1 } else { 0 }),
+        );
+    }
+
+    pub fn set_sys_isolated_flag(&mut self, isolated: bool) {
+        self.set_sys_flag_field("isolated", Value::Int(if isolated { 1 } else { 0 }));
+    }
+
+    pub fn set_sys_dont_write_bytecode_flag(&mut self, dont_write_bytecode: bool) {
+        self.set_sys_flag_field(
+            "dont_write_bytecode",
+            Value::Int(if dont_write_bytecode { 1 } else { 0 }),
+        );
+    }
+
+    pub fn set_sys_dev_mode_flag(&mut self, dev_mode: bool) {
+        self.set_sys_flag_field("dev_mode", Value::Bool(dev_mode));
+    }
+
+    pub fn set_sys_utf8_mode_flag(&mut self, utf8_mode: bool) {
+        self.set_sys_flag_field("utf8_mode", Value::Int(if utf8_mode { 1 } else { 0 }));
+    }
+
+    pub fn set_sys_warn_default_encoding_flag(&mut self, warn_default_encoding: bool) {
+        self.set_sys_flag_field(
+            "warn_default_encoding",
+            Value::Int(if warn_default_encoding { 1 } else { 0 }),
+        );
+    }
+
     pub fn set_sys_interactive_flag(&mut self, interactive: bool) {
         self.set_sys_flag_field("interactive", Value::Int(if interactive { 1 } else { 0 }));
     }
@@ -5376,6 +5409,21 @@ impl Vm {
             module_data
                 .globals
                 .insert("warnoptions".to_string(), self.heap.alloc_list(values));
+        }
+    }
+
+    pub fn set_sys_xoptions(&mut self, xoptions: Vec<(String, Value)>) {
+        let Some(sys_module) = self.modules.get("sys").cloned() else {
+            return;
+        };
+        let entries = xoptions
+            .into_iter()
+            .map(|(key, value)| (Value::Str(key), value))
+            .collect::<Vec<_>>();
+        if let Object::Module(module_data) = &mut *sys_module.kind_mut() {
+            module_data
+                .globals
+                .insert("_xoptions".to_string(), self.heap.alloc_dict(entries));
         }
     }
 
