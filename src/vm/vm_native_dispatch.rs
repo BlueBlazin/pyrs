@@ -3649,6 +3649,46 @@ impl Vm {
                 };
                 Ok(NativeCallResult::Value(Value::Bool(matches)))
             }
+            NativeMethodKind::BytesReplace => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(RuntimeError::new(
+                        "replace() expects old, new, optional count",
+                    ));
+                }
+                let old_value = args.remove(0);
+                let old = bytes_like_from_value(old_value.clone()).map_err(|_| {
+                    RuntimeError::type_error(format!(
+                        "a bytes-like object is required, not '{}'",
+                        self.value_type_name_for_error(&old_value)
+                    ))
+                })?;
+                let new_value = args.remove(0);
+                let new = bytes_like_from_value(new_value.clone()).map_err(|_| {
+                    RuntimeError::type_error(format!(
+                        "a bytes-like object is required, not '{}'",
+                        self.value_type_name_for_error(&new_value)
+                    ))
+                })?;
+                let count = if let Some(value) = args.first() {
+                    value_to_int(value.clone())?
+                } else {
+                    -1
+                };
+                let receiver_value = match &*receiver.kind() {
+                    Object::Module(module_data) => module_data
+                        .globals
+                        .get("value")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::type_error("bytes receiver is invalid"))?,
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
+                };
+                let source = bytes_like_from_value(receiver_value.clone())?;
+                let replaced = crate::vm::replace_bytes_subslices(&source, &old, &new, count);
+                Ok(NativeCallResult::Value(match receiver_value {
+                    Value::ByteArray(_) => self.heap.alloc_bytearray(replaced),
+                    _ => self.heap.alloc_bytes(replaced),
+                }))
+            }
             NativeMethodKind::BytesCount => {
                 if !kwargs.is_empty() {
                     return Err(RuntimeError::type_error(

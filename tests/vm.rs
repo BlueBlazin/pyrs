@@ -20492,6 +20492,16 @@ fn source_importlib_uses_python_filefinder_path_hook_closures() {
 }
 
 #[test]
+fn bytes_replace_matches_cpython_empty_pattern_and_bytearray_behavior() {
+    let source = "ok = (b'abc'.replace(b'', b'.') == b'.a.b.c.' and b'abc'.replace(b'', b'.', 2) == b'.a.bc' and b'abc'.replace(b'b', b'XX', 1) == b'aXXc' and b'abc'.replace(b'b', b'', 1) == b'ac' and bytearray(b'abc').replace(b'', b'.') == bytearray(b'.a.b.c.') and bytearray(b'abc').replace(b'b', b'XX', 1) == bytearray(b'aXXc'))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn os_stat_follow_symlinks_keyword_and_lstat_keep_regular_file_mode() {
     let Some(lib_path) = cpython_lib_path() else {
         return;

@@ -3194,6 +3194,7 @@ impl Vm {
             "hex" => NativeMethodKind::BytesHex,
             "startswith" => NativeMethodKind::BytesStartsWith,
             "endswith" => NativeMethodKind::BytesEndsWith,
+            "replace" => NativeMethodKind::BytesReplace,
             "count" => NativeMethodKind::BytesCount,
             "find" => NativeMethodKind::BytesFind,
             "index" => NativeMethodKind::BytesIndex,

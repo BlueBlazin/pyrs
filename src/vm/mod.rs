@@ -8462,6 +8462,57 @@ fn find_bytes_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
+fn replace_bytes_subslices(source: &[u8], old: &[u8], new: &[u8], maxcount: i64) -> Vec<u8> {
+    if maxcount == 0 || source.len() < old.len() {
+        return source.to_vec();
+    }
+    if old.is_empty() {
+        if new.is_empty() {
+            return source.to_vec();
+        }
+        let total_slots = source.len() + 1;
+        let replacements = if maxcount < 0 {
+            total_slots
+        } else {
+            usize::try_from(maxcount)
+                .unwrap_or(usize::MAX)
+                .min(total_slots)
+        };
+        let mut out = Vec::with_capacity(source.len() + new.len() * replacements);
+        let mut remaining = replacements;
+        for &byte in source {
+            if remaining > 0 {
+                out.extend_from_slice(new);
+                remaining -= 1;
+            }
+            out.push(byte);
+        }
+        if remaining > 0 {
+            out.extend_from_slice(new);
+        }
+        return out;
+    }
+
+    let mut remaining = if maxcount < 0 {
+        usize::MAX
+    } else {
+        usize::try_from(maxcount).unwrap_or(usize::MAX)
+    };
+    let mut rest = source;
+    let mut out = Vec::with_capacity(source.len());
+    while remaining > 0 {
+        let Some(index) = find_bytes_subslice(rest, old) else {
+            break;
+        };
+        out.extend_from_slice(&rest[..index]);
+        out.extend_from_slice(new);
+        rest = &rest[index + old.len()..];
+        remaining -= 1;
+    }
+    out.extend_from_slice(rest);
+    out
+}
+
 #[derive(Clone, Copy)]
 enum ReQuantifier {
     One,
