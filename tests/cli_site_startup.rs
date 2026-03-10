@@ -177,6 +177,27 @@ fn cli_script_keeps_live_module_dict_for_dataclass_generated_exec() {
 }
 
 #[test]
+fn cli_matches_cpython_argparse_progname_directory_case() {
+    let Some(stdlib) = cpython_lib_path() else {
+        return;
+    };
+    let root = temp_root("cli_argparse_progname_directory");
+    fs::create_dir_all(&root).expect("create root");
+    let source = "import shutil\nimport test.test_argparse as mod\nshutil.rmtree('packageæ', ignore_errors=True)\ncase = mod.TestProgName('test_directory')\nresult = case.defaultTestResult()\ncase.run(result)\nok = len(result.failures) == 0 and len(result.errors) == 0\nprint(ok)\n";
+    let (code, stdout, stderr) = run_pyrs(
+        &root,
+        &["-S", "-c", source],
+        &[("PYRS_CPYTHON_LIB", stdlib.as_path())],
+    );
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    assert_eq!(
+        stdout.trim(),
+        "True",
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
+#[test]
 fn cli_accepts_cpython_compat_flag_prefixes_before_script_path() {
     let root = temp_root("cli_flag_prefixes");
     let stdlib = root.join("Lib");

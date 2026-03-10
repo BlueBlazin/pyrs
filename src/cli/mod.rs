@@ -22,7 +22,10 @@ const CLI_EXECUTION_STACK_SIZE: usize = 32 * 1024 * 1024;
 const CLI_STACK_SAFE_RECURSION_LIMIT: i64 = 1000;
 
 fn store_cli_xoption(entries: &mut Vec<(String, Value)>, key: String, value: Value) {
-    if let Some(existing) = entries.iter_mut().find(|(existing_key, _)| *existing_key == key) {
+    if let Some(existing) = entries
+        .iter_mut()
+        .find(|(existing_key, _)| *existing_key == key)
+    {
         existing.1 = value;
     } else {
         entries.push((key, value));
@@ -435,6 +438,24 @@ fn run_file(
         };
         std::fs::canonicalize(&absolute).unwrap_or(absolute)
     };
+    if classify_path_entry_target(&script_execution_path) {
+        return run_path_entry(
+            path,
+            script_args,
+            import_site,
+            use_environment,
+            isolated,
+            dont_write_bytecode,
+            traceback_caret_enabled,
+            dev_mode,
+            utf8_mode,
+            warn_default_encoding,
+            warnoptions,
+            xoptions,
+            startup_tracemalloc_limit,
+            script_execution_path,
+        );
+    }
     let script_execution_path = script_execution_path.to_string_lossy().to_string();
     let mut vm = new_cli_vm();
     configure_vm_for_execution(
@@ -495,6 +516,101 @@ fn run_file(
         .map_err(|err| format_compile_error(&script_execution_path, &source, &err))?;
 
     let exec_result = vm.execute(&code);
+    let shutdown_result = vm.run_shutdown_hooks();
+    let (status, stderr_message) = match exec_result {
+        Ok(_) => (0, None),
+        Err(err) => {
+            if let Some(outcome) = system_exit_outcome(&mut vm, &err) {
+                outcome
+            } else {
+                return Err(err.message);
+            }
+        }
+    };
+    shutdown_result.map_err(|err| format!("shutdown error: {}", err.message))?;
+    if let Some(message) = stderr_message {
+        eprintln!("{message}");
+    }
+
+    Ok(status)
+}
+
+fn classify_path_entry_target(path: &Path) -> bool {
+    if path.is_dir() {
+        return true;
+    }
+    if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("zip") {
+        return true;
+    }
+    path.ancestors().any(|ancestor| {
+        ancestor.is_file() && ancestor.extension().and_then(|ext| ext.to_str()) == Some("zip")
+    })
+}
+
+fn run_path_entry(
+    path: &str,
+    script_args: Vec<String>,
+    import_site: bool,
+    use_environment: bool,
+    isolated: bool,
+    dont_write_bytecode: bool,
+    traceback_caret_enabled: bool,
+    dev_mode: bool,
+    utf8_mode: Option<bool>,
+    warn_default_encoding: bool,
+    warnoptions: Vec<String>,
+    xoptions: Vec<(String, Value)>,
+    startup_tracemalloc_limit: Option<usize>,
+    path_entry: PathBuf,
+) -> Result<i32, String> {
+    const RESOLVE_PATH_ENTRY_FILENAME: &str = "<resolve_run_path_entry>";
+    const RESOLVE_PATH_ENTRY_SOURCE: &str = "import importlib.machinery as _pyrs_importlib_machinery\n_pyrs_spec = _pyrs_importlib_machinery.PathFinder.find_spec('__main__', [__pyrs_run_path_entry])\nif _pyrs_spec is None or _pyrs_spec.loader is None:\n    raise ImportError(f\"can't find '__main__' module in {__pyrs_run_path_entry!r}\")\n__spec__ = _pyrs_spec\n__package__ = _pyrs_spec.parent\n__loader__ = _pyrs_spec.loader\n__file__ = _pyrs_spec.origin\n__cached__ = getattr(_pyrs_spec, 'cached', None)\n_pyrs_source = _pyrs_spec.loader.get_source('__main__')\nif _pyrs_source is not None:\n    _pyrs_code = compile(_pyrs_source, __file__, 'exec')\nelse:\n    _pyrs_code = _pyrs_spec.loader.get_code('__main__')\n    if _pyrs_code is None:\n        raise ImportError(f\"can't find '__main__' module in {__pyrs_run_path_entry!r}\")\nexec(_pyrs_code)\n";
+
+    let path_entry = path_entry.to_string_lossy().to_string();
+    let mut vm = new_cli_vm();
+    configure_vm_for_command(
+        &mut vm,
+        import_site,
+        use_environment,
+        isolated,
+        dont_write_bytecode,
+        traceback_caret_enabled,
+        dev_mode,
+        utf8_mode,
+        warn_default_encoding,
+        &warnoptions,
+        &xoptions,
+    )?;
+    vm.add_module_path_front(PathBuf::from(&path_entry));
+    if let Some(limit) = startup_tracemalloc_limit {
+        vm.start_tracemalloc(limit);
+    }
+    let mut argv = Vec::with_capacity(1 + script_args.len());
+    argv.push(path.to_string());
+    argv.extend(script_args);
+    vm.set_sys_argv(argv);
+    vm.set_global("__file__", Value::Str(path_entry.clone()));
+    vm.set_global("__package__", Value::None);
+    vm.set_global("__spec__", Value::None);
+    vm.set_global("__cached__", Value::None);
+    vm.set_global("__pyrs_run_path_entry", Value::Str(path_entry));
+    vm.cache_source_text(RESOLVE_PATH_ENTRY_FILENAME, RESOLVE_PATH_ENTRY_SOURCE);
+
+    let resolve_module = parser::parse_module(RESOLVE_PATH_ENTRY_SOURCE).map_err(|err| {
+        format_syntax_error(RESOLVE_PATH_ENTRY_FILENAME, RESOLVE_PATH_ENTRY_SOURCE, &err)
+    })?;
+    let resolve_code =
+        compiler::compile_module_with_filename(&resolve_module, RESOLVE_PATH_ENTRY_FILENAME)
+            .map_err(|err| {
+                format_compile_error(RESOLVE_PATH_ENTRY_FILENAME, RESOLVE_PATH_ENTRY_SOURCE, &err)
+            })?;
+    vm.register_source_in_linecache(
+        &resolve_code,
+        RESOLVE_PATH_ENTRY_SOURCE,
+        RESOLVE_PATH_ENTRY_FILENAME,
+    );
+
+    let exec_result = vm.execute(&resolve_code);
     let shutdown_result = vm.run_shutdown_hooks();
     let (status, stderr_message) = match exec_result {
         Ok(_) => (0, None),
