@@ -102,13 +102,13 @@ def load_manifest() -> list[BenchmarkSpec]:
             raise SystemExit(f"invalid benchmark entry in {MANIFEST_PATH}: {entry!r}")
         specs.append(
             BenchmarkSpec(
-                id=require_str(entry, "id"),
-                name=require_str(entry, "name"),
-                category=require_str(entry, "category"),
-                description=require_str(entry, "description"),
-                kind=require_str(entry, "kind"),
+                id=require_nonempty_str(entry, "id"),
+                name=require_nonempty_str(entry, "name"),
+                category=require_nonempty_str(entry, "category"),
+                description=require_nonempty_str(entry, "description"),
+                kind=require_nonempty_str(entry, "kind"),
                 disable_site=require_bool(entry, "disable_site"),
-                expected_stdout=require_str(entry, "expected_stdout"),
+                expected_stdout=require_string(entry, "expected_stdout"),
                 inline_code=optional_str(entry, "inline_code"),
                 script=optional_str(entry, "script"),
             )
@@ -116,9 +116,16 @@ def load_manifest() -> list[BenchmarkSpec]:
     return specs
 
 
-def require_str(payload: dict[str, Any], key: str) -> str:
+def require_nonempty_str(payload: dict[str, Any], key: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value:
+        raise SystemExit(f"invalid or missing string field {key!r} in {MANIFEST_PATH}")
+    return value
+
+
+def require_string(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str):
         raise SystemExit(f"invalid or missing string field {key!r} in {MANIFEST_PATH}")
     return value
 
