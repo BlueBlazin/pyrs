@@ -26,7 +26,7 @@ use super::{
     memoryview_layout_1d_from_parts, module_globals_version, pos_value, pow_values, rshift_values,
     runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
     slot_names_from_value, source_path_from_cache_path, value_from_bigint, value_from_object_ref,
-    value_to_int, value_to_optional_index,
+    value_to_int, value_to_optional_index, is_missing_attribute_error,
 };
 use crate::bytecode::Location;
 use crate::runtime::{
@@ -861,7 +861,11 @@ impl Vm {
                 Ok(attr) => attr,
                 Err(load_err) => {
                     if let Some(module) =
-                        self.load_submodule_with_error(&current_module, attr_name)?
+                        self.load_submodule_with_policy(
+                            &current_module,
+                            attr_name,
+                            ImportReturnPolicy::DeferredWhenFramesQueued,
+                        )?
                     {
                         Value::Module(module)
                     } else if !retried_with_canonical
@@ -892,6 +896,44 @@ impl Vm {
             };
             return Ok(attr);
         }
+    }
+
+    fn simple_fromlist_names(&self, fromlist: &Value) -> Option<Vec<String>> {
+        let mut names = Vec::new();
+        match fromlist {
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => {
+                    names.reserve(values.len());
+                    for value in values {
+                        let Value::Str(name) = value else {
+                            return None;
+                        };
+                        if name == "*" {
+                            return None;
+                        }
+                        names.push(name.clone());
+                    }
+                }
+                _ => return None,
+            },
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => {
+                    names.reserve(values.len());
+                    for value in values {
+                        let Value::Str(name) = value else {
+                            return None;
+                        };
+                        if name == "*" {
+                            return None;
+                        }
+                        names.push(name.clone());
+                    }
+                }
+                _ => return None,
+            },
+            _ => return None,
+        }
+        Some(names)
     }
 
     fn defer_dotted_import_until_parent_ready(
@@ -6883,13 +6925,67 @@ impl Vm {
                 if self.defer_dotted_import_until_parent_ready(&resolved_name, caller_idx)? {
                     return Ok(None);
                 }
-                let fromlist = self.pop_value()?;
-                let _ = self.pop_value()?;
+                let fromlist = {
+                    let frame = self.frames.get(caller_idx).ok_or_else(|| {
+                        RuntimeError::new("stack underflow (ImportNameCpython fromlist)")
+                    })?;
+                    frame
+                        .stack
+                        .last()
+                        .cloned()
+                        .ok_or_else(|| {
+                            RuntimeError::new("stack underflow (ImportNameCpython fromlist)")
+                        })?
+                };
                 let module = self.import_module_object_with_policy(
                     &resolved_name,
                     ImportReturnPolicy::DeferredWhenFramesQueued,
                 )?;
-                let result_module = if self.fromlist_requested(&fromlist) {
+                let has_fromlist = self.fromlist_requested(&fromlist);
+                if has_fromlist {
+                    if self.frames.len() > caller_idx.saturating_add(1) {
+                        if let Some(frame) = self.frames.get_mut(caller_idx) {
+                            frame.ip = frame.last_ip;
+                        }
+                        return Ok(None);
+                    }
+                    if let Some(names) = self.simple_fromlist_names(&fromlist) {
+                        for entry_name in names {
+                            let has_attr = match self.load_attr_module(&module, &entry_name) {
+                                Ok(_) => true,
+                                Err(err) if is_missing_attribute_error(&err) => false,
+                                Err(err) => return Err(err),
+                            };
+                            if has_attr {
+                                continue;
+                            }
+                            let frames_before = self.frames.len();
+                            let _ = self.load_submodule_with_policy(
+                                &module,
+                                &entry_name,
+                                ImportReturnPolicy::DeferredWhenFramesQueued,
+                            )?;
+                            if self.frames.len() > frames_before {
+                                if let Some(frame) = self.frames.get_mut(caller_idx) {
+                                    frame.ip = frame.last_ip;
+                                }
+                                return Ok(None);
+                            }
+                        }
+                    } else {
+                        let frames_before = self.frames.len();
+                        self.handle_import_fromlist(&module, fromlist.clone(), false)?;
+                        if self.frames.len() > frames_before {
+                            if let Some(frame) = self.frames.get_mut(caller_idx) {
+                                frame.ip = frame.last_ip;
+                            }
+                            return Ok(None);
+                        }
+                    }
+                }
+                let _ = self.pop_value_from_frame(caller_idx, "ImportNameCpython fromlist")?;
+                let _ = self.pop_value_from_frame(caller_idx, "ImportNameCpython level")?;
+                let result_module = if has_fromlist {
                     module
                 } else {
                     self.module_for_plain_import(&resolved_name, module)
@@ -11440,6 +11536,20 @@ impl Vm {
             return Ok(());
         }
         Err(RuntimeError::new("caller frame missing"))
+    }
+
+    pub(super) fn pop_value_from_frame(
+        &mut self,
+        frame_idx: usize,
+        context: &'static str,
+    ) -> Result<Value, RuntimeError> {
+        let Some(frame) = self.frames.get_mut(frame_idx) else {
+            return Err(RuntimeError::new(format!("{context} frame missing")));
+        };
+        frame
+            .stack
+            .pop()
+            .ok_or_else(|| RuntimeError::new(format!("stack underflow ({context})")))
     }
 
     pub(super) fn get_cell(&self, idx: usize) -> Result<ObjRef, RuntimeError> {

@@ -4896,10 +4896,13 @@ fn codecs_import_prefers_cpython_pure_module_when_lib_path_is_added() {
             let source = r#"import codecs
 origin = getattr(codecs, '__file__', '')
 norm = origin.replace("\\", "/")
+loader_name = getattr(codecs.__loader__, '__name__', type(codecs.__loader__).__name__)
 strict = codecs.lookup_error('strict')
 ok = (
     norm.endswith('/codecs.py')
     and ('/shims/' not in norm)
+    and loader_name == 'SourceFileLoader'
+    and callable(codecs.open)
     and callable(codecs.register_error)
     and callable(codecs.lookup_error)
     and callable(strict)
@@ -4950,6 +4953,42 @@ ok = (
     handle
         .join()
         .expect("codecs pure-registry lookup thread should complete");
+}
+
+#[test]
+fn builtin_codecs_supports_utf8_lookup_after_stdlib_encodings_are_added() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping builtin codecs utf-8 lookup test (CPython Lib path not available)");
+        return;
+    };
+    run_with_large_stack("vm-builtin-codecs-utf8-lookup", move || {
+        let source = format!(
+            "import sys, codecs\nsys.path.insert(0, {lib_path:?})\ninfo = codecs.lookup('utf-8')\nok = (info.name == 'utf-8' and callable(info.encode) and callable(info.decode) and info.incrementaldecoder is not None and info.streamreader is not None and hasattr(codecs, 'BufferedIncrementalDecoder') and hasattr(codecs, 'BufferedIncrementalEncoder'))\n"
+        );
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn builtin_codecs_bom_constants_allow_json_byte_detection() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping builtin codecs BOM test (CPython Lib path not available)");
+        return;
+    };
+    run_with_large_stack("vm-builtin-codecs-bom-json", move || {
+        let source = format!(
+            "import sys, codecs\nsys.path.insert(0, {lib_path:?})\nimport json\npayload = codecs.BOM_UTF32_BE + '{{\"x\": 1}}'.encode('utf-32-be')\nvalue = json.loads(payload)\nok = (value['x'] == 1 and codecs.BOM32_BE == codecs.BOM_UTF16_BE and codecs.BOM64_BE == codecs.BOM_UTF32_BE and codecs.BOM_UTF16 in (codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE) and codecs.BOM_UTF32 in (codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE))\n"
+        );
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -10942,7 +10981,7 @@ fn executes_dotted_import_statement() {
 }
 
 #[test]
-fn executes_import_submodule_attribute() {
+fn package_attribute_access_does_not_auto_import_submodule() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time works")
@@ -10955,14 +10994,16 @@ fn executes_import_submodule_attribute() {
     let module_path = pkg_dir.join("sub.py");
     std::fs::write(&module_path, "value = 19\n").expect("write module");
 
-    let source = "import pkg\nx = pkg.sub.value\n";
+    let source = "\
+import pkg\n\
+ok = not hasattr(pkg, 'sub')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.add_module_path(&temp_dir);
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(Value::Int(19)));
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 
     let _ = std::fs::remove_file(&module_path);
     let _ = std::fs::remove_file(pkg_dir.join("__init__.py"));
@@ -19188,8 +19229,9 @@ fn executes_frozen_importlib_external_helpers() {
     let file = temp_dir.join("demo.py");
     std::fs::write(&file, "value = 1\n").expect("write module");
     let file_literal = file.to_string_lossy().replace('\\', "\\\\");
+    let pyc_literal = format!("{file_literal}c");
     let source = format!(
-        "import _frozen_importlib_external as ext\nparts = ext._path_split('{file_literal}')\njoined = ext._path_join(parts[0], parts[1])\nstat = ext._path_stat('{file_literal}')\nu16 = ext._unpack_uint16(b'\\x01\\x02')\nu32 = ext._unpack_uint32(b'\\x01\\x02\\x03\\x04')\nu64 = ext._unpack_uint64(b'\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00')\npacked = ext._pack_uint32(0x01020304)\npacked_wrap = ext._pack_uint32(-1)\nok = hasattr(ext, 'path_sep') and hasattr(ext, '_LoaderBasics') and parts[1] == 'demo.py' and joined[-7:] == 'demo.py' and stat.st_size >= 0 and u16 == 513 and u32 == 67305985 and u64 == 1 and packed == b'\\x04\\x03\\x02\\x01' and packed_wrap == b'\\xff\\xff\\xff\\xff'\n"
+        "import _frozen_importlib_external as ext\nparts = ext._path_split('{file_literal}')\njoined = ext._path_join(parts[0], parts[1])\nstat = ext._path_stat('{file_literal}')\nsourcefile = ext._get_sourcefile('{pyc_literal}')\nu16 = ext._unpack_uint16(b'\\x01\\x02')\nu32 = ext._unpack_uint32(b'\\x01\\x02\\x03\\x04')\nu64 = ext._unpack_uint64(b'\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00')\npacked = ext._pack_uint32(0x01020304)\npacked_wrap = ext._pack_uint32(-1)\nok = hasattr(ext, 'path_sep') and hasattr(ext, '_LoaderBasics') and parts[1] == 'demo.py' and joined[-7:] == 'demo.py' and stat.st_size >= 0 and sourcefile == '{file_literal}' and u16 == 513 and u32 == 67305985 and u64 == 1 and packed == b'\\x04\\x03\\x02\\x01' and packed_wrap == b'\\xff\\xff\\xff\\xff'\n"
     );
     let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -19224,6 +19266,22 @@ fn importlib_bootstrap_alias_exposes_imp_and_builtin_finder() {
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn importlib_metadata_imports_with_loaderbasics_exec_module_surface() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-importlib-metadata-loaderbasics", move || {
+        let source = "import importlib.abc as abc\nimport importlib.metadata as metadata\nimport importlib._bootstrap_external as ext\nok = (hasattr(ext._LoaderBasics, 'exec_module') and hasattr(ext._LoaderBasics, 'load_module') and abc.InspectLoader.exec_module is ext._LoaderBasics.exec_module and hasattr(metadata, 'Distribution'))\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]

@@ -13921,7 +13921,7 @@ mod tests {
     fn format_repr_escapes_control_characters_and_quotes() {
         let value = Value::Str("line1\nline2\t'quoted'".to_string());
         let repr = format_repr(&value);
-        assert_eq!(repr, "'line1\\nline2\\t\\'quoted\\''");
+        assert_eq!(repr, "\"line1\\nline2\\t'quoted'\"");
     }
 
     #[test]

@@ -4404,12 +4404,23 @@ impl Vm {
         &self,
         metadata: fs::Metadata,
     ) -> Result<Value, RuntimeError> {
+        let platform_os_module = if cfg!(windows) { "nt" } else { "posix" };
         let stat_result_class = self
             .modules
             .get("os")
             .and_then(|module| match &*module.kind() {
                 Object::Module(module_data) => module_data.globals.get("stat_result").cloned(),
                 _ => None,
+            })
+            .or_else(|| {
+                self.modules
+                    .get(platform_os_module)
+                    .and_then(|module| match &*module.kind() {
+                        Object::Module(module_data) => {
+                            module_data.globals.get("stat_result").cloned()
+                        }
+                        _ => None,
+                    })
             })
             .and_then(|value| match value {
                 Value::Class(class) => Some(class),

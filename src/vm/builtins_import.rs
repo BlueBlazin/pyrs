@@ -224,7 +224,7 @@ impl Vm {
         }
     }
 
-    fn handle_import_fromlist(
+    pub(super) fn handle_import_fromlist(
         &mut self,
         module: &ObjRef,
         fromlist: Value,

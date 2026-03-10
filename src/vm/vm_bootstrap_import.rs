@@ -1297,6 +1297,163 @@ import _imp
 import os as _os
 import sys
 
+def _LoaderBasics_is_package(self, fullname):
+    filename = _path_split(self.get_filename(fullname))[1]
+    filename_base = filename.rsplit('.', 1)[0]
+    tail_name = fullname.rpartition('.')[2]
+    return filename_base == '__init__' and tail_name != '__init__'
+
+def _LoaderBasics_create_module(self, spec):
+    return None
+
+def _LoaderBasics_exec_module(self, module):
+    code = self.get_code(module.__name__)
+    if code is None:
+        raise ImportError(
+            f"cannot load module {module.__name__!r} when get_code() returns None"
+        )
+    _bootstrap._call_with_frames_removed(exec, code, module.__dict__)
+
+def _LoaderBasics_load_module(self, fullname):
+    return _bootstrap._load_module_shim(self, fullname)
+
+_LoaderBasics.is_package = _LoaderBasics_is_package
+_LoaderBasics.create_module = _LoaderBasics_create_module
+_LoaderBasics.exec_module = _LoaderBasics_exec_module
+_LoaderBasics.load_module = _LoaderBasics_load_module
+
+class SourceLoader(_LoaderBasics):
+    def path_mtime(self, path):
+        raise OSError
+
+    def path_stats(self, path):
+        return {'mtime': self.path_mtime(path)}
+
+    def _cache_bytecode(self, source_path, cache_path, data):
+        return self.set_data(cache_path, data)
+
+    def set_data(self, path, data):
+        return None
+
+    def get_source(self, fullname):
+        path = self.get_filename(fullname)
+        try:
+            source_bytes = self.get_data(path)
+        except OSError as exc:
+            raise ImportError('source not available through get_data()', name=fullname) from exc
+        return decode_source(source_bytes)
+
+    def source_to_code(self, data, path, *, _optimize=-1):
+        return _bootstrap._call_with_frames_removed(
+            compile, data, path, 'exec', dont_inherit=True, optimize=_optimize
+        )
+
+    def get_code(self, fullname):
+        source_path = self.get_filename(fullname)
+        source_mtime = None
+        source_bytes = None
+        source_hash = None
+        hash_based = False
+        check_source = True
+        try:
+            bytecode_path = cache_from_source(source_path)
+        except NotImplementedError:
+            bytecode_path = None
+        else:
+            try:
+                st = self.path_stats(source_path)
+            except OSError:
+                pass
+            else:
+                source_mtime = int(st['mtime'])
+                try:
+                    data = self.get_data(bytecode_path)
+                except OSError:
+                    pass
+                else:
+                    exc_details = {'name': fullname, 'path': bytecode_path}
+                    try:
+                        flags = _classify_pyc(data, fullname, exc_details)
+                        bytes_data = memoryview(data)[16:]
+                        hash_based = flags & 0b1 != 0
+                        if hash_based:
+                            check_source = flags & 0b10 != 0
+                            if _imp.check_hash_based_pycs != 'never' and (
+                                check_source or _imp.check_hash_based_pycs == 'always'
+                            ):
+                                source_bytes = self.get_data(source_path)
+                                source_hash = _imp.source_hash(
+                                    _imp.pyc_magic_number_token,
+                                    source_bytes,
+                                )
+                                _validate_hash_pyc(data, source_hash, fullname, exc_details)
+                        else:
+                            _validate_timestamp_pyc(
+                                data,
+                                source_mtime,
+                                st['size'],
+                                fullname,
+                                exc_details,
+                            )
+                    except (ImportError, EOFError):
+                        pass
+                    else:
+                        _bootstrap._verbose_message('{} matches {}', bytecode_path, source_path)
+                        return _compile_bytecode(
+                            bytes_data,
+                            name=fullname,
+                            bytecode_path=bytecode_path,
+                            source_path=source_path,
+                        )
+        if source_bytes is None:
+            source_bytes = self.get_data(source_path)
+        code_object = self.source_to_code(source_bytes, source_path)
+        _bootstrap._verbose_message('code object from {}', source_path)
+        if (
+            not sys.dont_write_bytecode
+            and bytecode_path is not None
+            and source_mtime is not None
+        ):
+            if hash_based:
+                if source_hash is None:
+                    source_hash = _imp.source_hash(_imp.pyc_magic_number_token, source_bytes)
+                data = _code_to_hash_pyc(code_object, source_hash, check_source)
+            else:
+                data = _code_to_timestamp_pyc(code_object, source_mtime, len(source_bytes))
+            try:
+                self._cache_bytecode(source_path, bytecode_path, data)
+            except NotImplementedError:
+                pass
+        return code_object
+
+class FileLoader(_LoaderBasics):
+    def __init__(self, fullname, path):
+        self.name = fullname
+        self.path = path
+
+    def __eq__(self, other):
+        return self.__class__ == other.__class__ and self.__dict__ == other.__dict__
+
+    def __hash__(self):
+        return hash(self.name) ^ hash(self.path)
+
+    def load_module(self, fullname):
+        return _LoaderBasics.load_module(self, fullname)
+
+    def get_filename(self, fullname):
+        return self.path
+
+    def get_data(self, path):
+        if isinstance(self, (SourceLoader, ExtensionFileLoader)):
+            with _io.open_code(str(path)) as file:
+                return file.read()
+        with _io.FileIO(path, 'r') as file:
+            return file.read()
+
+    def get_resource_reader(self, module):
+        from importlib.readers import FileReader
+        return FileReader(self)
+
 def _get_supported_file_loaders():
     extension_loaders = []
     if hasattr(_imp, 'create_dynamic'):
@@ -1369,11 +1526,232 @@ def _PathFinder_find_spec(cls, fullname, path=None, target=None):
     return cls._get_spec(fullname, path, target)
 
 PathFinder.find_spec = classmethod(_PathFinder_find_spec)
+
+def _PathFinder_find_distributions(*args, **kwargs):
+    from importlib.metadata import MetadataPathFinder
+    return MetadataPathFinder.find_distributions(*args, **kwargs)
+
+PathFinder.find_distributions = staticmethod(_PathFinder_find_distributions)
+
+def source_from_cache(path):
+    if sys.implementation.cache_tag is None:
+        raise NotImplementedError('sys.implementation.cache_tag is None')
+    path = _os.fspath(path)
+    head, pycache_filename = _path_split(path)
+    found_in_pycache_prefix = False
+    if sys.pycache_prefix is not None:
+        stripped_path = sys.pycache_prefix.rstrip(path_separators)
+        if head.startswith(stripped_path + path_sep):
+            head = head[len(stripped_path):]
+            found_in_pycache_prefix = True
+    if not found_in_pycache_prefix:
+        head, pycache = _path_split(head)
+        if pycache != '__pycache__':
+            raise ValueError('not a PEP 3147/488 path')
+    filename_bits = pycache_filename.split('.')
+    if len(filename_bits) not in (3, 4):
+        raise ValueError('not a PEP 3147/488 path')
+    if len(filename_bits) == 4 and not filename_bits[-2].startswith('opt-'):
+        raise ValueError('not a PEP 488 optimization path')
+    base_filename = filename_bits[0]
+    return _path_join(head, base_filename + '.py')
+
+def _get_sourcefile(bytecode_path):
+    if len(bytecode_path) == 0:
+        return None
+    rest, _, extension = bytecode_path.rpartition('.')
+    if not rest or extension.lower()[-3:-1] != 'py':
+        return bytecode_path
+    try:
+        source_path = source_from_cache(bytecode_path)
+    except (NotImplementedError, ValueError):
+        source_path = bytecode_path[:-1]
+    try:
+        source_stat = _path_stat(source_path)
+    except OSError:
+        return bytecode_path
+    return source_path if (source_stat.st_mode & 0o170000) == 0o100000 else bytecode_path
 "#;
         self.execute_source_module_from_text(
             &module,
             "_frozen_importlib_external",
             "<bootstrap _frozen_importlib_external helpers>",
+            source.to_string(),
+        )
+    }
+
+    pub(super) fn install_codecs_helpers(&mut self) -> Result<(), RuntimeError> {
+        let Some(module) = self.modules.get("codecs").cloned() else {
+            return Ok(());
+        };
+        let source = r#"
+import sys
+
+if sys.byteorder == "little":
+    BOM = BOM_UTF16 = BOM_UTF16_LE
+    BOM_UTF32 = BOM_UTF32_LE
+else:
+    BOM = BOM_UTF16 = BOM_UTF16_BE
+    BOM_UTF32 = BOM_UTF32_BE
+
+BOM32_LE = BOM_UTF16_LE
+BOM32_BE = BOM_UTF16_BE
+BOM64_LE = BOM_UTF32_LE
+BOM64_BE = BOM_UTF32_BE
+
+def _StreamWriter___init__(self, stream, errors='strict'):
+    self.stream = stream
+    self.errors = errors
+
+def _StreamWriter_write(self, object):
+    data, consumed = self.encode(object, self.errors)
+    self.stream.write(data)
+
+def _StreamWriter_writelines(self, lines):
+    self.write(''.join(lines))
+
+def _StreamWriter_reset(self):
+    return None
+
+def _StreamWriter_seek(self, offset, whence=0):
+    self.stream.seek(offset, whence)
+    if whence == 0 and offset == 0:
+        self.reset()
+
+def _StreamWriter___getattr__(self, name):
+    return getattr(self.stream, name)
+
+def _StreamWriter___enter__(self):
+    return self
+
+def _StreamWriter___exit__(self, type, value, tb):
+    self.stream.close()
+
+StreamWriter.__init__ = _StreamWriter___init__
+StreamWriter.write = _StreamWriter_write
+StreamWriter.writelines = _StreamWriter_writelines
+StreamWriter.reset = _StreamWriter_reset
+StreamWriter.seek = _StreamWriter_seek
+StreamWriter.__getattr__ = _StreamWriter___getattr__
+StreamWriter.__enter__ = _StreamWriter___enter__
+StreamWriter.__exit__ = _StreamWriter___exit__
+
+StreamReader.charbuffertype = ''.__class__
+
+def _StreamReader___init__(self, stream, errors='strict'):
+    self.stream = stream
+    self.errors = errors
+    self.bytebuffer = b""
+    self._empty_charbuffer = self.charbuffertype()
+    self.charbuffer = self._empty_charbuffer
+    self.linebuffer = None
+
+def _StreamReader_decode(self, input, errors='strict'):
+    raise NotImplementedError
+
+def _StreamReader_reset(self):
+    self.bytebuffer = b""
+    self.charbuffer = self._empty_charbuffer
+    self.linebuffer = None
+
+def _StreamReader___getattr__(self, name):
+    return getattr(self.stream, name)
+
+StreamReader.__init__ = _StreamReader___init__
+StreamReader.decode = _StreamReader_decode
+StreamReader.reset = _StreamReader_reset
+StreamReader.__getattr__ = _StreamReader___getattr__
+
+class BufferedIncrementalEncoder(IncrementalEncoder):
+    def __init__(self, errors='strict'):
+        IncrementalEncoder.__init__(self, errors)
+        self.buffer = ""
+
+    def _buffer_encode(self, input, errors, final):
+        raise NotImplementedError
+
+    def encode(self, input, final=False):
+        data = self.buffer + input
+        result, consumed = self._buffer_encode(data, self.errors, final)
+        self.buffer = data[consumed:]
+        return result
+
+    def reset(self):
+        IncrementalEncoder.reset(self)
+        self.buffer = ""
+
+    def getstate(self):
+        return self.buffer or 0
+
+    def setstate(self, state):
+        self.buffer = state or ""
+
+class BufferedIncrementalDecoder(IncrementalDecoder):
+    def __init__(self, errors='strict'):
+        IncrementalDecoder.__init__(self, errors)
+        self.buffer = b""
+
+    def _buffer_decode(self, input, errors, final):
+        raise NotImplementedError
+
+    def decode(self, input, final=False):
+        data = self.buffer + input
+        result, consumed = self._buffer_decode(data, self.errors, final)
+        self.buffer = data[consumed:]
+        return result
+
+    def reset(self):
+        IncrementalDecoder.reset(self)
+        self.buffer = b""
+
+    def getstate(self):
+        return (self.buffer, 0)
+
+    def setstate(self, state):
+        self.buffer = state[0]
+
+_builtin_getincrementalencoder = getincrementalencoder
+_builtin_getincrementaldecoder = getincrementaldecoder
+
+def getencoder(encoding):
+    return lookup(encoding).encode
+
+def getdecoder(encoding):
+    return lookup(encoding).decode
+
+def getincrementalencoder(encoding):
+    try:
+        return lookup(encoding).incrementalencoder
+    except ModuleNotFoundError as exc:
+        if getattr(exc, "name", None) != "encodings":
+            raise
+        return _builtin_getincrementalencoder(encoding)
+
+def getincrementaldecoder(encoding):
+    try:
+        return lookup(encoding).incrementaldecoder
+    except ModuleNotFoundError as exc:
+        if getattr(exc, "name", None) != "encodings":
+            raise
+        return _builtin_getincrementaldecoder(encoding)
+
+def getreader(encoding):
+    return lookup(encoding).streamreader
+
+def getwriter(encoding):
+    return lookup(encoding).streamwriter
+
+strict_errors = lookup_error("strict")
+ignore_errors = lookup_error("ignore")
+replace_errors = lookup_error("replace")
+xmlcharrefreplace_errors = lookup_error("xmlcharrefreplace")
+backslashreplace_errors = lookup_error("backslashreplace")
+namereplace_errors = lookup_error("namereplace")
+"#;
+        self.execute_source_module_from_text(
+            &module,
+            "codecs",
+            "<bootstrap codecs helpers>",
             source.to_string(),
         )
     }
@@ -3596,6 +3974,18 @@ PathFinder.find_spec = classmethod(_PathFinder_find_spec)
             ],
             vec![
                 ("BOM_UTF8", self.heap.alloc_bytes(vec![0xEF, 0xBB, 0xBF])),
+                ("BOM_LE", self.heap.alloc_bytes(vec![0xFF, 0xFE])),
+                ("BOM_BE", self.heap.alloc_bytes(vec![0xFE, 0xFF])),
+                ("BOM_UTF16_LE", self.heap.alloc_bytes(vec![0xFF, 0xFE])),
+                ("BOM_UTF16_BE", self.heap.alloc_bytes(vec![0xFE, 0xFF])),
+                (
+                    "BOM_UTF32_LE",
+                    self.heap.alloc_bytes(vec![0xFF, 0xFE, 0x00, 0x00]),
+                ),
+                (
+                    "BOM_UTF32_BE",
+                    self.heap.alloc_bytes(vec![0x00, 0x00, 0xFE, 0xFF]),
+                ),
                 ("Codec", codec_class),
                 ("CodecInfo", codec_info_class),
                 ("IncrementalDecoder", incremental_decoder_class),
@@ -3605,6 +3995,8 @@ PathFinder.find_spec = classmethod(_PathFinder_find_spec)
                 ("__pyrs_codec_error_registry__", codec_error_registry),
             ],
         );
+        self.install_codecs_helpers()
+            .expect("bootstrap codecs helpers should install");
         self.install_module_alias_from_existing("_codecs", "codecs");
         self.install_builtin_module(
             "unicodedata",
@@ -10213,10 +10605,13 @@ PathFinder.find_spec = classmethod(_PathFinder_find_spec)
         let Some(module) = self.modules.get(module_name) else {
             return false;
         };
-        if Self::module_loader_name(module).as_deref() == Some(BUILTIN_MODULE_LOADER) {
+        if Self::module_is_local_shim(module) {
             return true;
         }
-        Self::module_is_local_shim(module)
+        !matches!(
+            Self::module_loader_name(module).as_deref(),
+            Some(SOURCE_FILE_LOADER | SOURCELESS_FILE_LOADER | NAMESPACE_LOADER)
+        )
     }
 
     pub(super) fn local_shim_root() -> Option<PathBuf> {
@@ -11795,10 +12190,11 @@ PathFinder.find_spec = classmethod(_PathFinder_find_spec)
         self.find_module_source(name).map(|info| info.path)
     }
 
-    pub(super) fn load_submodule_with_error(
+    pub(super) fn load_submodule_with_policy(
         &mut self,
         parent: &ObjRef,
         attr_name: &str,
+        return_policy: ImportReturnPolicy,
     ) -> Result<Option<ObjRef>, RuntimeError> {
         let parent_name = match &*parent.kind() {
             Object::Module(module) => module.name.clone(),
@@ -11847,22 +12243,12 @@ PathFinder.find_spec = classmethod(_PathFinder_find_spec)
             return Ok(Some(module));
         }
         if self.find_module_file(&full_name).is_some() {
-            // `from package import child` exposes the child module immediately,
-            // so returning a deferred placeholder leaks partially initialized
-            // submodules like `email.policy` to user code.
-            let module =
-                self.import_module_object_with_policy(&full_name, ImportReturnPolicy::Synchronous)?;
+            let module = self.import_module_object_with_policy(&full_name, return_policy)?;
             let module = self.canonical_imported_module_for_name(&full_name, module);
             self.upsert_module_global(parent, attr_name, Value::Module(module.clone()));
             return Ok(Some(module));
         }
         Ok(None)
-    }
-
-    pub(super) fn load_submodule(&mut self, parent: &ObjRef, attr_name: &str) -> Option<ObjRef> {
-        self.load_submodule_with_error(parent, attr_name)
-            .ok()
-            .flatten()
     }
 
     pub(super) fn ensure_module(&mut self, name: &str) -> ObjRef {
@@ -11899,7 +12285,14 @@ PathFinder.find_spec = classmethod(_PathFinder_find_spec)
         let origin_value = origin
             .map(|path| Value::Str(path.to_string_lossy().to_string()))
             .unwrap_or(Value::None);
-        let frozen_info = bootstrap_frozen_module_info(name);
+        let frozen_info = if matches!(
+            loader_name,
+            Some(SOURCE_FILE_LOADER | SOURCELESS_FILE_LOADER | NAMESPACE_LOADER | EXTENSION_FILE_LOADER)
+        ) {
+            None
+        } else {
+            bootstrap_frozen_module_info(name)
+        };
         let cached_value = if frozen_info.is_some() {
             Value::None
         } else {
@@ -13019,6 +13412,7 @@ PathFinder.find_spec = classmethod(_PathFinder_find_spec)
             "re" | "re._compiler" | "re._constants" | "re._parser" | "re._casefix"
         );
         let is_collections_stack = matches!(name, "collections" | "collections.abc");
+        let is_codecs_stack = name == "codecs";
         let is_decimal_stack = name == "decimal";
         let is_pathlib_stack = name == "pathlib";
         let is_functools_stack = name == "functools";
@@ -13028,6 +13422,7 @@ PathFinder.find_spec = classmethod(_PathFinder_find_spec)
             && !is_pickle_stack
             && !is_re_stack
             && !is_collections_stack
+            && !is_codecs_stack
             && !is_decimal_stack
             && !is_pathlib_stack
             && !is_functools_stack
@@ -13176,6 +13571,29 @@ PathFinder.find_spec = classmethod(_PathFinder_find_spec)
                 module_data
                     .globals
                     .insert("_local".to_string(), local_class);
+            }
+        }
+        if name == "json.scanner"
+            && let Object::Module(module_data) = &mut *module.kind_mut()
+        {
+            let should_rebind_make_scanner = matches!(
+                (
+                    module_data.globals.get("make_scanner"),
+                    module_data.globals.get("py_make_scanner"),
+                ),
+                (Some(make_scanner), Some(py_make_scanner))
+                    if make_scanner == py_make_scanner
+                        && !matches!(
+                            make_scanner,
+                            Value::Builtin(BuiltinFunction::JsonScannerMakeScanner)
+                                | Value::Builtin(BuiltinFunction::JsonScannerPyMakeScanner)
+                        )
+            );
+            if should_rebind_make_scanner {
+                module_data.globals.insert(
+                    "make_scanner".to_string(),
+                    Value::Builtin(BuiltinFunction::JsonScannerPyMakeScanner),
+                );
             }
         }
     }

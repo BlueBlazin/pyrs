@@ -9645,9 +9645,6 @@ impl Vm {
         }) {
             return Ok(attr);
         }
-        if module_is_package && let Some(submodule) = self.load_submodule(module, attr_name) {
-            return Ok(Value::Module(submodule));
-        }
         if super::env_var_present_cached("PYRS_TRACE_NUMPY_DTYPE_RESOLVE")
             && module_name == "numpy.dtypes"
         {

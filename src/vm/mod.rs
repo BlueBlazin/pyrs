@@ -12683,10 +12683,21 @@ fn collect_noop_symbols_from_value(
                 Object::Dict(entries) => entries,
                 _ => return,
             };
-            for (idx, (key, value)) in entries.iter().enumerate() {
-                collect_noop_symbols_from_value(&format!("{path}{{key:{idx}}}"), key, out, visited);
+            let mut keyed_entries: Vec<(String, &Value, &Value)> = entries
+                .iter()
+                .enumerate()
+                .map(|(idx, (key, value))| (noop_inventory_dict_fragment(key, idx), key, value))
+                .collect();
+            keyed_entries.sort_by(|(left, _, _), (right, _, _)| left.cmp(right));
+            for (key_fragment, key, value) in keyed_entries {
                 collect_noop_symbols_from_value(
-                    &format!("{path}{{value:{idx}}}"),
+                    &format!("{path}{{key:{key_fragment}}}"),
+                    key,
+                    out,
+                    visited,
+                );
+                collect_noop_symbols_from_value(
+                    &format!("{path}{{value:{key_fragment}}}"),
                     value,
                     out,
                     visited,
@@ -12706,6 +12717,13 @@ fn collect_noop_symbols_from_value(
             }
         }
         _ => {}
+    }
+}
+
+fn noop_inventory_dict_fragment(key: &Value, idx: usize) -> String {
+    match key {
+        Value::Str(text) => format!("{text:?}"),
+        _ => idx.to_string(),
     }
 }
 
