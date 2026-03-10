@@ -20,6 +20,7 @@ the audit because they were not authoritative.
 ## Core Runtime and Validation
 
 - `docs/CPYTHON_COMPAT_BENCHMARK.md`: full CPython `Lib/test` benchmark runner, artifact layout, and command patterns.
+- `docs/PUBLIC_MICROBENCHMARKS.md`: website-facing microbenchmark suite, runner contract, and artifact layout.
 - `docs/CPYTHON_COMPAT_PRIORITIES.md`: benchmark-derived execution order based on the checked-in compatibility artifact.
 - `docs/BUILTIN_PARITY.md`: builtin parity gate contract tied to `scripts/check_builtin_parity.py` and `perf/builtin_parity_report.json`.
 - `docs/DEVELOPER_TOOLING.md`: local tooling and validation commands that exist in this repo.

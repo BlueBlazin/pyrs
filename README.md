@@ -217,6 +217,7 @@ cargo test
 - Website/docs source: [`website/`](website/)
 - Audited docs index: [`docs/README.md`](docs/README.md)
 - CPython benchmark runner: [`docs/CPYTHON_COMPAT_BENCHMARK.md`](docs/CPYTHON_COMPAT_BENCHMARK.md)
+- Public microbench suite: [`docs/PUBLIC_MICROBENCHMARKS.md`](docs/PUBLIC_MICROBENCHMARKS.md)
 - Extension capability matrix: [`docs/EXTENSION_CAPABILITY_MATRIX.md`](docs/EXTENSION_CAPABILITY_MATRIX.md)
 - NumPy bring-up probe: [`docs/NUMPY_BRINGUP_GATE.md`](docs/NUMPY_BRINGUP_GATE.md)
 

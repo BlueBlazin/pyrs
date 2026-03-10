@@ -1,0 +1,106 @@
+{
+  "schema_version": "v1",
+  "suite": "public_micro",
+  "benchmarks": [
+    {
+      "id": "startup_pass",
+      "name": "Startup: pass",
+      "category": "startup",
+      "description": "Interpreter startup with `-c 'pass'`.",
+      "kind": "inline",
+      "disable_site": false,
+      "inline_code": "pass",
+      "expected_stdout": ""
+    },
+    {
+      "id": "startup_nosite",
+      "name": "Startup: no site",
+      "category": "startup",
+      "description": "Interpreter startup with `-S -c 'pass'`.",
+      "kind": "inline",
+      "disable_site": true,
+      "inline_code": "pass",
+      "expected_stdout": ""
+    },
+    {
+      "id": "function_call",
+      "name": "Function call",
+      "category": "dispatch",
+      "description": "Repeated direct Python function calls.",
+      "kind": "script",
+      "disable_site": true,
+      "script": "workloads/function_call.py",
+      "expected_stdout": "2000000"
+    },
+    {
+      "id": "method_call",
+      "name": "Method call",
+      "category": "dispatch",
+      "description": "Repeated bound method dispatch on a Python object.",
+      "kind": "script",
+      "disable_site": true,
+      "script": "workloads/method_call.py",
+      "expected_stdout": "1500000"
+    },
+    {
+      "id": "attr_read",
+      "name": "Attribute read",
+      "category": "dispatch",
+      "description": "Repeated instance attribute reads from a Python object.",
+      "kind": "script",
+      "disable_site": true,
+      "script": "workloads/attr_read.py",
+      "expected_stdout": "35000000"
+    },
+    {
+      "id": "int_loop",
+      "name": "Integer loop",
+      "category": "core",
+      "description": "Integer accumulation in a tight Python loop.",
+      "kind": "script",
+      "disable_site": true,
+      "script": "workloads/int_loop.py",
+      "expected_stdout": "4499998500000"
+    },
+    {
+      "id": "list_build_iterate",
+      "name": "List build + iterate",
+      "category": "collections",
+      "description": "List append growth followed by sequential iteration.",
+      "kind": "script",
+      "disable_site": true,
+      "script": "workloads/list_build_iterate.py",
+      "expected_stdout": "79999800000"
+    },
+    {
+      "id": "dict_get_set",
+      "name": "Dict get/set",
+      "category": "collections",
+      "description": "Dictionary population followed by indexed lookups.",
+      "kind": "script",
+      "disable_site": true,
+      "script": "workloads/dict_get_set.py",
+      "expected_stdout": "19999900000"
+    },
+    {
+      "id": "json_loads_dumps",
+      "name": "JSON loads + dumps",
+      "category": "stdlib",
+      "description": "Repeated stdlib JSON decode and encode of a small object.",
+      "kind": "script",
+      "disable_site": true,
+      "script": "workloads/json_loads_dumps.py",
+      "expected_stdout": "2700000:200000"
+    },
+    {
+      "id": "regex_match",
+      "name": "Regex match",
+      "category": "stdlib",
+      "description": "Repeated compiled regular-expression matches.",
+      "kind": "script",
+      "disable_site": true,
+      "script": "workloads/regex_match.py",
+      "expected_stdout": "500000"
+    }
+  ]
+}
