@@ -2080,6 +2080,40 @@ fn compile_only_ast_covers_binop_compare_and_slice_shapes() {
 }
 
 #[test]
+fn compile_only_ast_constant_nodes_expose_kind_for_unparse() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-ast-constant-kind-unparse", move || {
+        let source = "import ast\nnode = ast.parse(\"f('hello')\").body[0].value.args[0]\nok = (hasattr(node, 'kind') and node.kind is None and ast.unparse(node) == \"'hello'\")\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        let value = vm.execute(&code).expect("execution should succeed");
+        assert_eq!(value, Value::None);
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn ast_parse_implicitly_concatenates_adjacent_string_literals() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-ast-adjacent-string-concat", move || {
+        let source = "import ast\nnode = ast.parse(\"msg = _('a' 'b')\").body[0].value.args[0]\nok = isinstance(node, ast.Constant) and node.value == 'ab' and node.kind is None and ast.unparse(node) == \"'ab'\"\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        let value = vm.execute(&code).expect("execution should succeed");
+        assert_eq!(value, Value::None);
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn compile_only_ast_honors_core_ast_hierarchy() {
     let source = "import _ast\nnode = compile('x = f()', '<ast>', 'exec', _ast.PyCF_ONLY_AST)\nstmt = node.body[0]\nexpr = stmt.value\nok = isinstance(node, _ast.mod) and isinstance(node, _ast.AST) and isinstance(stmt, _ast.stmt) and isinstance(expr, _ast.expr) and isinstance(expr.func, _ast.Name) and isinstance(expr.func.ctx, _ast.expr_context) and isinstance(expr.func.ctx, _ast.Load)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -13949,8 +13983,20 @@ except ValueError:
     assert_float_global(&vm, "f1", -1000.0);
     assert_float_global(&vm, "f2", -1000000.0);
     assert_float_global(&vm, "f3", -0.5);
-    assert_eq!(vm.get_global("c1"), Some(Value::Complex { real: 0.0, imag: -1000.0 }));
-    assert_eq!(vm.get_global("c2"), Some(Value::Complex { real: 0.0, imag: -0.001 }));
+    assert_eq!(
+        vm.get_global("c1"),
+        Some(Value::Complex {
+            real: 0.0,
+            imag: -1000.0
+        })
+    );
+    assert_eq!(
+        vm.get_global("c2"),
+        Some(Value::Complex {
+            real: 0.0,
+            imag: -0.001
+        })
+    );
     assert_eq!(vm.get_global("float_invalid"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("complex_invalid"), Some(Value::Bool(true)));
 }
@@ -13970,7 +14016,10 @@ nan_eq = complex(nan_value, 0.0) == complex(nan_value, 0.0)
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("eq_from_literal"), Some(Value::Bool(true)));
-    assert_eq!(vm.get_global("eq_from_constructor"), Some(Value::Bool(true)));
+    assert_eq!(
+        vm.get_global("eq_from_constructor"),
+        Some(Value::Bool(true))
+    );
     assert_eq!(vm.get_global("eq_signed_zero"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("eq_zero_imag_int"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("eq_zero_imag_float"), Some(Value::Bool(true)));
@@ -14948,6 +14997,32 @@ ok = isinstance(name, str) and name.endswith('Cargo.toml') and text == '[package
 }
 
 #[test]
+fn mock_patch_overrides_builtins_open_lookup() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-mock-patch-builtins-open", move || {
+        let source = r#"from unittest import mock
+seen = []
+class Dummy:
+    pass
+def fake(*args, **kwargs):
+    seen.append((args, kwargs))
+    return Dummy()
+with mock.patch('builtins.open', fake):
+    opened = open('foo', 'r')
+ok = (len(seen) == 1 and seen[0][0] == ('foo', 'r') and opened.__class__.__name__ == 'Dummy')
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn argparse_custom_usage_without_prog_placeholder_raises_wrapped_error() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
@@ -15011,6 +15086,27 @@ fn argparse_type_callable_matches_cpython() {
     run_with_large_stack("vm-argparse-type-callable", move || {
         let source = r#"import test.test_argparse as mod
 case = mod.TestTypeCallable('test_successes_many_groups_listargs')
+result = case.defaultTestResult()
+case.run(result)
+ok = len(result.failures) == 0 and len(result.errors) == 0
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn argparse_exit_on_error_os_error_matches_cpython() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-argparse-exit-on-error-os-error", move || {
+        let source = r#"import test.test_argparse as mod
+case = mod.TestExitOnError('test_os_error')
 result = case.defaultTestResult()
 case.run(result)
 ok = len(result.failures) == 0 and len(result.errors) == 0
@@ -22270,6 +22366,32 @@ ok = (
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn subprocess_run_accepts_pathlike_program_argument() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-subprocess-pathlike-program", move || {
+        let source = r#"import pathlib
+import subprocess
+
+cp = subprocess.run(
+    [pathlib.Path('/bin/echo'), 'ok'],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+)
+ok = cp.returncode == 0 and cp.stdout.strip() == 'ok' and cp.stderr == ''
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]

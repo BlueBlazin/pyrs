@@ -13,7 +13,7 @@ use super::{
     value_to_sequence_items,
 };
 #[cfg(unix)]
-use super::{collect_env_entries, collect_process_argv, is_missing_attribute_error};
+use super::{collect_env_entries, is_missing_attribute_error};
 use crate::unicode::canonical_codepoint_for_internal_char;
 #[cfg(unix)]
 use std::ffi::{CStr, CString};
@@ -2764,12 +2764,12 @@ impl Vm {
         }
         #[cfg(unix)]
         {
-            let argv = collect_process_argv(&args[0])?;
+            let argv = self.subprocess_argv_from_value(args[0].clone())?;
             if argv.is_empty() {
                 return Err(RuntimeError::new("fork_exec() argv must be non-empty"));
             }
 
-            let executable_list = collect_process_argv(&args[1])?;
+            let executable_list = self.subprocess_argv_from_value(args[1].clone())?;
             let executable = executable_list
                 .first()
                 .cloned()

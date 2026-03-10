@@ -9622,7 +9622,6 @@ impl Vm {
         module: &ObjRef,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
-        const MODULE_INITIALIZING_FLAG: &str = "__pyrs_module_initializing__";
         const FRAME_PROXY_FLAG: &str = "__pyrs_frame_proxy__";
         let is_frame_proxy = match &*module.kind() {
             Object::Module(module_data) => module_data
@@ -9634,29 +9633,9 @@ impl Vm {
         if is_frame_proxy {
             self.refresh_frame_proxy_cache_if_active(module);
         }
-        let module_is_initializing = match &*module.kind() {
-            Object::Module(module_data) => module_data
-                .globals
-                .get(MODULE_INITIALIZING_FLAG)
-                .is_some_and(|value| matches!(value, Value::Bool(true))),
-            _ => false,
-        };
-        let active_frame_module_dict = if module_is_initializing {
-            if self
-                .frames
-                .last()
-                .is_some_and(|frame| frame.is_module && frame.module.id() == module.id())
-            {
-                Some(self.ensure_frame_module_locals_dict(self.frames.len().saturating_sub(1)))
-            } else {
-                self.frames
-                    .iter()
-                    .rposition(|frame| frame.is_module && frame.module.id() == module.id())
-                    .map(|frame_index| self.ensure_frame_module_locals_dict(frame_index))
-            }
-        } else {
-            None
-        };
+        let active_frame_module_dict = self
+            .active_module_frame_index(module)
+            .map(|frame_index| self.ensure_frame_module_locals_dict(frame_index));
         let (module_name, attr, module_getattr, module_is_package) = match &*module.kind() {
             Object::Module(module_data) => {
                 let attr_key = Value::Str(attr_name.to_string());

@@ -16,14 +16,13 @@ use super::{
     Value, Vm, Write, add_values, bigint_from_bytes, bytes_like_from_value,
     call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, compare_ge, compare_gt,
     compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
-    ensure_hashable,
-    dict_set_value_checked, div_values, floor_div_values, format_float_hex, format_repr,
-    format_value, frame_cell_value, invert_value, is_missing_attribute_error, is_os_error_family,
-    is_runtime_type_name_marker, is_truthy, matmul_values, mod_values_runtime, mul_values,
-    neg_value, or_values, ordering_from_cmp_value, parse_hex_float_literal, parser, pos_value,
-    round_float_with_ndigits, runtime_error_matches_exception, sub_values, value_from_bigint,
-    value_from_object_ref, value_to_bigint, value_to_f64, value_to_int, weakref_target_id,
-    weakref_target_object, with_bytes_like_source, xor_values,
+    dict_set_value_checked, div_values, ensure_hashable, floor_div_values, format_float_hex,
+    format_repr, format_value, frame_cell_value, invert_value, is_missing_attribute_error,
+    is_os_error_family, is_runtime_type_name_marker, is_truthy, matmul_values, mod_values_runtime,
+    mul_values, neg_value, or_values, ordering_from_cmp_value, parse_hex_float_literal, parser,
+    pos_value, round_float_with_ndigits, runtime_error_matches_exception, sub_values,
+    value_from_bigint, value_from_object_ref, value_to_bigint, value_to_f64, value_to_int,
+    weakref_target_id, weakref_target_object, with_bytes_like_source, xor_values,
 };
 use crate::ast::{
     AssignTarget, AugOp as AstAugOp, BinaryOp as AstBinaryOp, BoolOp as AstBoolOp, CallArg,
@@ -40,6 +39,7 @@ use crate::runtime::{
     runtime_get_int_max_str_digits, runtime_set_int_max_str_digits, value_lookup_hash,
 };
 use crate::unicode::internal_char_from_codepoint;
+use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -81,6 +81,39 @@ impl Default for NumericFormatSpec {
 impl Vm {
     const RE_RUNTIME_TYPE_READY_ATTR: &str = "__pyrs_re_runtime_type_ready__";
 
+    fn os_error_string_from_attrs(
+        &self,
+        attrs: &HashMap<String, Value>,
+        fallback_message: Option<&str>,
+    ) -> Option<String> {
+        let errno = attrs.get("errno").and_then(|value| match value {
+            Value::Int(errno) => Some(*errno),
+            _ => None,
+        });
+        let strerror = attrs
+            .get("strerror")
+            .and_then(|value| match value {
+                Value::Str(text) => Some(text.clone()),
+                _ => None,
+            })
+            .or_else(|| fallback_message.map(ToOwned::to_owned))?;
+        let filename = attrs.get("filename").and_then(|value| match value {
+            Value::Str(path) => Some(path.clone()),
+            _ => None,
+        });
+        if let Some(filename) = filename {
+            let rendered = format_repr(&Value::Str(filename));
+            return Some(match errno {
+                Some(errno) => format!("[Errno {errno}] {strerror}: {rendered}"),
+                None => format!("{strerror}: {rendered}"),
+            });
+        }
+        Some(match errno {
+            Some(errno) => format!("[Errno {errno}] {strerror}"),
+            None => strerror,
+        })
+    }
+
     fn exception_str_value(&self, exception: &ExceptionObject) -> String {
         if exception.name == "KeyError" {
             let keyerror_from_args = {
@@ -100,6 +133,14 @@ impl Vm {
                 }
             };
             if let Some(rendered) = keyerror_from_args {
+                return rendered;
+            }
+        }
+        if is_os_error_family(exception.name.as_str()) {
+            let attrs = exception.attrs.borrow();
+            if let Some(rendered) =
+                self.os_error_string_from_attrs(&attrs, exception.message.as_deref())
+            {
                 return rendered;
             }
         }
@@ -3202,7 +3243,8 @@ impl Vm {
             .value_to_marshal_object(&value)
             .map_err(Self::marshal_dump_runtime_error)
             .and_then(|object| {
-                marshal_dump_object(&object).map_err(|err| Self::marshal_dump_runtime_error(err.message))
+                marshal_dump_object(&object)
+                    .map_err(|err| Self::marshal_dump_runtime_error(err.message))
             })?;
         Ok(self.heap.alloc_bytes(encoded))
     }
@@ -5982,9 +6024,10 @@ impl Vm {
                 HashMap::new(),
             )? {
                 InternalCallOutcome::Value(value) => Ok(Some(value)),
-                InternalCallOutcome::CallerExceptionHandled => Err(
-                    self.runtime_error_from_active_exception("exception attribute lookup failed"),
-                ),
+                InternalCallOutcome::CallerExceptionHandled => {
+                    Err(self
+                        .runtime_error_from_active_exception("exception attribute lookup failed"))
+                }
             };
         }
         let (getter, setter, deleter) = self.descriptor_hooks(&attr)?;
@@ -6003,9 +6046,9 @@ impl Vm {
             HashMap::new(),
         )? {
             InternalCallOutcome::Value(value) => Ok(Some(value)),
-            InternalCallOutcome::CallerExceptionHandled => Err(
-                self.runtime_error_from_active_exception("exception attribute lookup failed"),
-            ),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("exception attribute lookup failed"))
+            }
         }
     }
 
@@ -6031,10 +6074,7 @@ impl Vm {
         }
         let receiver = Value::Exception(Box::new(exception.clone()));
         let outcome = match attr {
-            Value::Function(_)
-            | Value::Builtin(_)
-            | Value::BoundMethod(_)
-            | Value::Instance(_)
+            Value::Function(_) | Value::Builtin(_) | Value::BoundMethod(_) | Value::Instance(_)
                 if self.is_callable_value(&attr) =>
             {
                 self.call_internal(attr, vec![receiver], HashMap::new())?
@@ -6065,16 +6105,13 @@ impl Vm {
             return Ok(value);
         }
         match name {
-            "__reduce_ex__" | "__reduce__" => {
-                Ok(self.alloc_reduce_ex_bound_method(Value::Exception(Box::new(
-                    exception.clone(),
-                ))))
-            }
+            "__reduce_ex__" | "__reduce__" => Ok(
+                self.alloc_reduce_ex_bound_method(Value::Exception(Box::new(exception.clone())))
+            ),
             "with_traceback" => {
-                let wrapper = match self
-                    .heap
-                    .alloc_module(ModuleObject::new("__exception_with_traceback__".to_string()))
-                {
+                let wrapper = match self.heap.alloc_module(ModuleObject::new(
+                    "__exception_with_traceback__".to_string(),
+                )) {
                     Value::Module(obj) => obj,
                     _ => unreachable!(),
                 };
@@ -6084,10 +6121,8 @@ impl Vm {
                         Value::Exception(Box::new(exception.clone())),
                     );
                 }
-                Ok(self.alloc_native_bound_method(
-                    NativeMethodKind::ExceptionWithTraceback,
-                    wrapper,
-                ))
+                Ok(self
+                    .alloc_native_bound_method(NativeMethodKind::ExceptionWithTraceback, wrapper))
             }
             "add_note" => {
                 let wrapper = match self
@@ -6103,10 +6138,7 @@ impl Vm {
                         Value::Exception(Box::new(exception.clone())),
                     );
                 }
-                Ok(self.alloc_native_bound_method(
-                    NativeMethodKind::ExceptionAddNote,
-                    wrapper,
-                ))
+                Ok(self.alloc_native_bound_method(NativeMethodKind::ExceptionAddNote, wrapper))
             }
             "__notes__" => exception
                 .attrs
@@ -6297,8 +6329,23 @@ impl Vm {
             RuntimeError::new(format!("compile() missing _ast.{} support", class_name))
         })?;
         let mut instance = InstanceObject::new(class_ref);
+        let mut provided = HashSet::new();
         for (name, value) in attrs {
+            provided.insert(name.to_string());
             instance.attrs.insert(name.to_string(), value);
+        }
+        if let Object::Class(class_data) = &*instance.class.kind()
+            && let Some(Value::Tuple(fields_obj)) = class_data.attrs.get("_fields")
+            && let Object::Tuple(fields) = &*fields_obj.kind()
+        {
+            for field in fields {
+                let Value::Str(name) = field else {
+                    continue;
+                };
+                if !provided.contains(name) {
+                    instance.attrs.insert(name.clone(), Value::None);
+                }
+            }
         }
         if let Some((lineno, column)) = location {
             let col_offset = column.saturating_sub(1) as i64;

@@ -25,6 +25,37 @@ pub(super) struct IoOpenPath {
 }
 
 impl Vm {
+    fn open_os_error(&self, path: &std::path::Path, err: std::io::Error) -> RuntimeError {
+        let exception_name = match err.kind() {
+            std::io::ErrorKind::NotFound => "FileNotFoundError",
+            std::io::ErrorKind::PermissionDenied => "PermissionError",
+            std::io::ErrorKind::AlreadyExists => "FileExistsError",
+            _ => "OSError",
+        };
+        let mut strerror = err
+            .raw_os_error()
+            .map(|errno| std::io::Error::from_raw_os_error(errno).to_string())
+            .unwrap_or_else(|| err.to_string());
+        if let Some(idx) = strerror.rfind(" (os error ")
+            && strerror.ends_with(')')
+        {
+            strerror.truncate(idx);
+        }
+        let exception = ExceptionObject::new(exception_name, Some(strerror.clone()));
+        {
+            let mut attrs = exception.attrs.borrow_mut();
+            if let Some(errno) = err.raw_os_error() {
+                attrs.insert("errno".to_string(), Value::Int(errno as i64));
+            }
+            attrs.insert("strerror".to_string(), Value::Str(strerror));
+            attrs.insert(
+                "filename".to_string(),
+                Value::Str(path.to_string_lossy().to_string()),
+            );
+        }
+        RuntimeError::from_exception(exception)
+    }
+
     pub(super) fn builtin_io_open(
         &mut self,
         mut args: Vec<Value>,
@@ -416,7 +447,7 @@ impl Vm {
                     }
                     let file = options
                         .open(&open_path.path)
-                        .map_err(|err| RuntimeError::new(format!("open() failed: {err}")))?;
+                        .map_err(|err| self.open_os_error(&open_path.path, err))?;
                     (self.alloc_open_fd(file), open_path.opener_arg)
                 }
             }
@@ -1908,9 +1939,7 @@ impl Vm {
         instance_data
             .attrs
             .insert("closefd".to_string(), Value::Bool(closefd));
-        instance_data
-            .attrs
-            .insert("name".to_string(), name);
+        instance_data.attrs.insert("name".to_string(), name);
         let encoding_value = if binary {
             encoding.map(Value::Str).unwrap_or(Value::None)
         } else {

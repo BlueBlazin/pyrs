@@ -21,12 +21,12 @@ use super::{
     builtin_exception_parent, class_attr_lookup, class_attr_lookup_direct, decode_call_counts,
     deref_name, dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked,
     exception_message_from_call_args, format_repr, format_value, is_comprehension_code,
-    is_import_error_family, is_os_error_family, is_truthy, lshift_values, memoryview_bounds,
-    memoryview_element_offset, memoryview_encode_element, memoryview_format_for_view,
-    memoryview_layout_1d_from_parts, module_globals_version, pos_value, pow_values, rshift_values,
-    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
-    slot_names_from_value, source_path_from_cache_path, value_from_bigint, value_from_object_ref,
-    value_to_int, value_to_optional_index, is_missing_attribute_error,
+    is_import_error_family, is_missing_attribute_error, is_os_error_family, is_truthy,
+    lshift_values, memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
+    memoryview_format_for_view, memoryview_layout_1d_from_parts, module_globals_version, pos_value,
+    pow_values, rshift_values, runtime_error_matches_exception, slice_bounds_for_step_one,
+    slice_indices, slot_names_from_value, source_path_from_cache_path, value_from_bigint,
+    value_from_object_ref, value_to_int, value_to_optional_index,
 };
 use crate::bytecode::Location;
 use crate::runtime::{
@@ -860,13 +860,11 @@ impl Vm {
             let attr = match self.load_attr_module(&current_module, attr_name) {
                 Ok(attr) => attr,
                 Err(load_err) => {
-                    if let Some(module) =
-                        self.load_submodule_with_policy(
-                            &current_module,
-                            attr_name,
-                            ImportReturnPolicy::DeferredWhenFramesQueued,
-                        )?
-                    {
+                    if let Some(module) = self.load_submodule_with_policy(
+                        &current_module,
+                        attr_name,
+                        ImportReturnPolicy::DeferredWhenFramesQueued,
+                    )? {
                         Value::Module(module)
                     } else if !retried_with_canonical
                         && load_err.message.contains("has no attribute")
@@ -6833,13 +6831,9 @@ impl Vm {
                     let frame = self.frames.get(caller_idx).ok_or_else(|| {
                         RuntimeError::new("stack underflow (ImportNameCpython fromlist)")
                     })?;
-                    frame
-                        .stack
-                        .last()
-                        .cloned()
-                        .ok_or_else(|| {
-                            RuntimeError::new("stack underflow (ImportNameCpython fromlist)")
-                        })?
+                    frame.stack.last().cloned().ok_or_else(|| {
+                        RuntimeError::new("stack underflow (ImportNameCpython fromlist)")
+                    })?
                 };
                 let module = self.import_module_object_with_policy(
                     &resolved_name,
@@ -11747,6 +11741,20 @@ impl Vm {
         dict
     }
 
+    pub(super) fn active_module_frame_index(&self, module: &ObjRef) -> Option<usize> {
+        if self
+            .frames
+            .last()
+            .is_some_and(|frame| frame.is_module && frame.module.id() == module.id())
+        {
+            Some(self.frames.len().saturating_sub(1))
+        } else {
+            self.frames
+                .iter()
+                .rposition(|frame| frame.is_module && frame.module.id() == module.id())
+        }
+    }
+
     fn module_namespace_key_name(&mut self, key: &Value) -> Option<String> {
         match key {
             Value::Str(name) => Some(name.clone()),
@@ -11977,7 +11985,9 @@ impl Vm {
         let slot_value = value.clone();
         let mut version = None;
         let mut namespace_dict = None;
+        let mut is_builtins_module = false;
         if let Object::Module(module_data) = &mut *module.kind_mut() {
+            is_builtins_module = module_data.name == "builtins";
             if let Some(existing) = module_data.globals.get_mut(name) {
                 *existing = value;
             } else {
@@ -11989,6 +11999,10 @@ impl Vm {
         }
         if let Some(dict) = namespace_dict {
             dict_set_value(&dict, Value::Str(name.to_string()), slot_value.clone());
+        }
+        if is_builtins_module {
+            self.builtins.insert(name.to_string(), slot_value.clone());
+            self.touch_builtins_version();
         }
         self.sync_module_frame_fast_local(module.id(), name, Some(slot_value));
         if let Some(version) = version {
@@ -12049,7 +12063,9 @@ impl Vm {
         let mut removed = false;
         let mut version = None;
         let mut namespace_dict = None;
+        let mut is_builtins_module = false;
         if let Object::Module(module_data) = &mut *module.kind_mut() {
+            is_builtins_module = module_data.name == "builtins";
             removed = module_data.globals.remove(name).is_some();
             if removed {
                 namespace_dict = module_data.dict.clone();
@@ -12060,6 +12076,10 @@ impl Vm {
         if removed {
             if let Some(dict) = namespace_dict {
                 let _ = dict_remove_value(&dict, &Value::Str(name.to_string()));
+            }
+            if is_builtins_module {
+                self.builtins.remove(name);
+                self.touch_builtins_version();
             }
             self.sync_module_frame_fast_local(module.id(), name, None);
             if let Some(version) = version {

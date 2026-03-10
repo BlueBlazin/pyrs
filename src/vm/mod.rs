@@ -7036,16 +7036,6 @@ fn value_to_sequence_items(value: &Value) -> Result<Vec<Value>, RuntimeError> {
 }
 
 #[cfg(unix)]
-fn collect_process_argv(value: &Value) -> Result<Vec<String>, RuntimeError> {
-    let items = value_to_sequence_items(value)?;
-    let mut argv = Vec::with_capacity(items.len());
-    for item in &items {
-        argv.push(value_to_process_text(item)?);
-    }
-    Ok(argv)
-}
-
-#[cfg(unix)]
 fn collect_env_entries(value: &Value) -> Result<Vec<(String, String)>, RuntimeError> {
     let items = value_to_sequence_items(value)?;
     let mut out = Vec::with_capacity(items.len());
@@ -10011,9 +10001,7 @@ fn sre_record_end_state(
     end: usize,
     marks: &SreMarkState,
 ) {
-    results
-        .entry(end)
-        .or_insert_with(|| marks.snapshot_slots());
+    results.entry(end).or_insert_with(|| marks.snapshot_slots());
 }
 
 fn sre_collect_program_end_states<T: SreText>(
@@ -10134,7 +10122,8 @@ fn sre_collect_program_end_states<T: SreText>(
                 let Some(current) = text.char_at(cursor) else {
                     return;
                 };
-                let Some(matched) = sre_class_matches(code, class_start, class_end, opcode, current)
+                let Some(matched) =
+                    sre_class_matches(code, class_start, class_end, opcode, current)
                 else {
                     return;
                 };
@@ -10293,9 +10282,9 @@ fn sre_collect_program_end_states<T: SreText>(
                     let mut advanced = false;
                     for (rep_pos, rep_marks) in current_states {
                         marks.restore_slots(&rep_marks);
-                        for (next_pos, next_marks) in
-                            sre_repeat_unit_states(code, unit_start, until_pc, text, rep_pos, marks, depth)
-                        {
+                        for (next_pos, next_marks) in sre_repeat_unit_states(
+                            code, unit_start, until_pc, text, rep_pos, marks, depth,
+                        ) {
                             if next_pos == rep_pos {
                                 stop_after_current_repetition = true;
                             } else {

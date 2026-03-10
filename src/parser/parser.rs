@@ -1881,6 +1881,9 @@ impl Parser {
         let start = pos;
         let mut pos = pos;
         let mut pieces: Vec<Expr> = Vec::new();
+        let mut saw_plain_string = false;
+        let mut saw_bytes = false;
+        let mut saw_fstring = false;
         while matches!(
             self.token_at(pos).kind,
             TokenKind::String | TokenKind::Bytes | TokenKind::FString | TokenKind::TemplateString
@@ -1888,10 +1891,17 @@ impl Parser {
             let token = self.token_at(pos).clone();
             let piece = match token.kind {
                 TokenKind::String => {
+                    saw_plain_string = true;
                     self.make_expr(pos, ExprKind::Constant(Constant::Str(token.lexeme)))
                 }
-                TokenKind::Bytes => self.make_bytes_literal_expr(pos, token.lexeme),
-                TokenKind::FString => self.parse_fstring_literal(pos, &token.lexeme)?,
+                TokenKind::Bytes => {
+                    saw_bytes = true;
+                    self.make_bytes_literal_expr(pos, token.lexeme)
+                }
+                TokenKind::FString => {
+                    saw_fstring = true;
+                    self.parse_fstring_literal(pos, &token.lexeme)?
+                }
                 TokenKind::TemplateString => {
                     self.parse_template_literal_expr(pos, &token.lexeme)?
                 }
@@ -1911,6 +1921,9 @@ impl Parser {
                 pos,
                 "cannot mix t-string literals with string or bytes literals",
             ));
+        }
+        if saw_bytes && (saw_plain_string || saw_fstring) {
+            return Err(self.error_at(pos, "cannot mix bytes and nonbytes literals"));
         }
         if saw_template {
             let mut merged = TemplateLiteralParts {
@@ -1949,6 +1962,36 @@ impl Parser {
                 ),
                 pos,
             ));
+        }
+        if saw_plain_string && !saw_fstring && !saw_bytes {
+            let mut merged = String::new();
+            for piece in pieces {
+                let ExprKind::Constant(Constant::Str(fragment)) = piece.node else {
+                    unreachable!();
+                };
+                merged.push_str(&fragment);
+            }
+            return Ok((
+                self.make_expr(start, ExprKind::Constant(Constant::Str(merged))),
+                pos,
+            ));
+        }
+        if saw_bytes && !saw_plain_string && !saw_fstring {
+            let mut merged = String::new();
+            for piece in pieces {
+                let ExprKind::Call { args, .. } = piece.node else {
+                    unreachable!();
+                };
+                let [CallArg::Positional(value), CallArg::Positional(_encoding)] = args.as_slice()
+                else {
+                    unreachable!();
+                };
+                let ExprKind::Constant(Constant::Str(fragment)) = &value.node else {
+                    unreachable!();
+                };
+                merged.push_str(fragment);
+            }
+            return Ok((self.make_bytes_literal_expr(start, merged), pos));
         }
         let mut iter = pieces.into_iter();
         let mut expr = iter
