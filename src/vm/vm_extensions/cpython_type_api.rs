@@ -1704,6 +1704,164 @@ fn cpython_resolve_type_base_from_arg(
     }
 }
 
+unsafe fn cpython_clone_type_bases_tuple(bases: *mut c_void) -> Result<*mut c_void, String> {
+    if bases.is_null() || cpython_is_type_object_ptr(bases) {
+        return Ok(std::ptr::null_mut());
+    }
+    let raw_len = unsafe { PyTuple_Size(bases) };
+    if raw_len < 0 {
+        return Err("bases must be a type or tuple of types".to_string());
+    }
+    if raw_len == 0 {
+        return Ok(std::ptr::null_mut());
+    }
+    let bases_tuple = unsafe { PyTuple_New(raw_len) };
+    if bases_tuple.is_null() {
+        return Err("failed to allocate bases tuple".to_string());
+    }
+    for index in 0..(raw_len as usize) {
+        let raw_item = unsafe { PyTuple_GetItem(bases, index as isize) };
+        if raw_item.is_null() {
+            unsafe { Py_DecRef(bases_tuple) };
+            return Err("bases contains a null entry".to_string());
+        }
+        if !cpython_is_type_object_ptr(raw_item) {
+            unsafe { Py_DecRef(bases_tuple) };
+            return Err("bases must be types".to_string());
+        }
+        unsafe { Py_XIncRef(raw_item) };
+        if unsafe { PyTuple_SetItem(bases_tuple, index as isize, raw_item) } != 0 {
+            unsafe { Py_DecRef(bases_tuple) };
+            return Err("failed to populate bases tuple".to_string());
+        }
+    }
+    Ok(bases_tuple)
+}
+
+unsafe fn cpython_type_base_ptrs_from_type_object(
+    ty: *mut CpythonTypeObject,
+) -> Result<Vec<*mut CpythonTypeObject>, String> {
+    if ty.is_null() {
+        return Ok(Vec::new());
+    }
+    let tp_bases = unsafe { (*ty).tp_bases };
+    if !tp_bases.is_null() {
+        let raw_len = unsafe { PyTuple_Size(tp_bases) };
+        if raw_len < 0 {
+            return Err("type bases must be a tuple".to_string());
+        }
+        let mut base_ptrs = Vec::with_capacity(raw_len.max(0) as usize);
+        for index in 0..(raw_len as usize) {
+            let raw_item = unsafe { PyTuple_GetItem(tp_bases, index as isize) };
+            if raw_item.is_null() {
+                return Err("type bases contains a null entry".to_string());
+            }
+            if !cpython_is_type_object_ptr(raw_item) {
+                return Err("type bases must be types".to_string());
+            }
+            base_ptrs.push(raw_item.cast::<CpythonTypeObject>());
+        }
+        if !base_ptrs.is_empty() {
+            return Ok(base_ptrs);
+        }
+    }
+    let tp_base = unsafe { (*ty).tp_base };
+    if tp_base.is_null() {
+        Ok(Vec::new())
+    } else {
+        Ok(vec![tp_base])
+    }
+}
+
+unsafe fn cpython_build_ready_type_mro(
+    ty: *mut CpythonTypeObject,
+) -> Result<*mut c_void, String> {
+    let base_ptrs = unsafe { cpython_type_base_ptrs_from_type_object(ty) }?;
+    let mut linearized = vec![ty.cast::<c_void>()];
+    if base_ptrs.is_empty() {
+        let mro_tuple = unsafe { PyTuple_New(1) };
+        if mro_tuple.is_null() {
+            return Err("failed to allocate MRO tuple".to_string());
+        }
+        let type_obj = ty.cast::<c_void>();
+        unsafe { Py_XIncRef(type_obj) };
+        if unsafe { PyTuple_SetItem(mro_tuple, 0, type_obj) } != 0 {
+            unsafe { Py_DecRef(mro_tuple) };
+            return Err("failed to populate MRO tuple".to_string());
+        }
+        return Ok(mro_tuple);
+    }
+
+    let mut seqs: Vec<Vec<*mut c_void>> = Vec::with_capacity(base_ptrs.len() + 1);
+    for &base in &base_ptrs {
+        if unsafe { (*base).tp_mro }.is_null() && unsafe { PyType_Ready(base.cast::<c_void>()) } != 0
+        {
+            return Err("failed to ready base type MRO".to_string());
+        }
+        let base_mro = unsafe { (*base).tp_mro };
+        if base_mro.is_null() {
+            return Err("base type is missing tp_mro".to_string());
+        }
+        let base_mro_len = unsafe { PyTuple_Size(base_mro) };
+        if base_mro_len < 0 {
+            return Err("base type MRO is not a tuple".to_string());
+        }
+        let mut sequence = Vec::with_capacity(base_mro_len as usize);
+        for index in 0..(base_mro_len as usize) {
+            let entry = unsafe { PyTuple_GetItem(base_mro, index as isize) };
+            if entry.is_null() {
+                return Err("base type MRO contains a null entry".to_string());
+            }
+            sequence.push(entry);
+        }
+        seqs.push(sequence);
+    }
+    seqs.push(base_ptrs.iter().map(|base| (*base).cast::<c_void>()).collect());
+
+    loop {
+        seqs.retain(|sequence| !sequence.is_empty());
+        if seqs.is_empty() {
+            break;
+        }
+        let mut candidate = None;
+        'outer: for sequence in &seqs {
+            let head = sequence[0];
+            if seqs
+                .iter()
+                .any(|other| other.iter().skip(1).any(|entry| *entry == head))
+            {
+                continue 'outer;
+            }
+            candidate = Some(head);
+            break;
+        }
+        let Some(candidate) = candidate else {
+            return Err(
+                "Cannot create a consistent method resolution order (MRO) for bases".to_string(),
+            );
+        };
+        linearized.push(candidate);
+        for sequence in &mut seqs {
+            if sequence.first().copied() == Some(candidate) {
+                sequence.remove(0);
+            }
+        }
+    }
+
+    let mro_tuple = unsafe { PyTuple_New(linearized.len() as isize) };
+    if mro_tuple.is_null() {
+        return Err("failed to allocate MRO tuple".to_string());
+    }
+    for (index, entry) in linearized.into_iter().enumerate() {
+        unsafe { Py_XIncRef(entry) };
+        if unsafe { PyTuple_SetItem(mro_tuple, index as isize, entry) } != 0 {
+            unsafe { Py_DecRef(mro_tuple) };
+            return Err("failed to populate MRO tuple".to_string());
+        }
+    }
+    Ok(mro_tuple)
+}
+
 fn cpython_split_type_name(full_name: &str) -> (String, String) {
     if let Some((module_name, qualname)) = full_name.rsplit_once('.')
         && !module_name.is_empty()
@@ -2610,6 +2768,24 @@ fn cpython_type_from_spec_impl(
         type_value.tp_itemsize = spec.itemsize as isize;
     }
     type_value.tp_base = base;
+    // New heap types must not inherit the base type's topology/cache pointers.
+    type_value.tp_bases = std::ptr::null_mut();
+    type_value.tp_mro = std::ptr::null_mut();
+    type_value.tp_cache = std::ptr::null_mut();
+    type_value.tp_subclasses = std::ptr::null_mut();
+    type_value.tp_weaklist = std::ptr::null_mut();
+    type_value.tp_version_tag = 0;
+    type_value.tp_watched = 0;
+    type_value.tp_versions_used = 0;
+    match unsafe { cpython_clone_type_bases_tuple(bases) } {
+        Ok(tp_bases) => {
+            type_value.tp_bases = tp_bases;
+        }
+        Err(err) => {
+            cpython_set_typed_error(unsafe { PyExc_TypeError }, err);
+            return std::ptr::null_mut();
+        }
+    }
     type_value.tp_dict = std::ptr::null_mut();
     type_value.tp_flags |= PY_TPFLAGS_HEAPTYPE | PY_TPFLAGS_BASETYPE;
     type_value.tp_flags |= spec.flags as usize;
@@ -3854,6 +4030,12 @@ pub unsafe extern "C" fn PyType_Ready(ty: *mut c_void) -> i32 {
             (*ty).ob_type = (&raw mut PyType_Type).cast();
         }
         if (*ty).tp_base.is_null()
+            && let Ok(base_ptrs) = cpython_type_base_ptrs_from_type_object(ty)
+            && let Some(first_base) = base_ptrs.first()
+        {
+            (*ty).tp_base = *first_base;
+        }
+        if (*ty).tp_base.is_null()
             && ty != (&raw mut PyBaseObject_Type)
             && ty != (&raw mut PyType_Type)
         {
@@ -3934,42 +4116,15 @@ pub unsafe extern "C" fn PyType_Ready(ty: *mut c_void) -> i32 {
             (*ty).tp_bases = bases_tuple;
         }
         if (*ty).tp_mro.is_null() {
-            let type_obj = ty.cast::<c_void>();
-            let mut base_entries: Vec<*mut c_void> = Vec::new();
-            if !base.is_null() {
-                let base_mro = (*base).tp_mro;
-                if !base_mro.is_null() {
-                    let base_mro_len = PyTuple_Size(base_mro).max(0) as usize;
-                    if base_mro_len > 0 {
-                        for index in 0..base_mro_len {
-                            let entry = PyTuple_GetItem(base_mro, index as isize);
-                            if !entry.is_null() {
-                                base_entries.push(entry);
-                            }
-                        }
-                    }
+            match cpython_build_ready_type_mro(ty) {
+                Ok(mro_tuple) => {
+                    (*ty).tp_mro = mro_tuple;
                 }
-                if base_entries.is_empty() {
-                    base_entries.push(base.cast::<c_void>());
-                }
-            }
-            let mro_tuple = PyTuple_New((1 + base_entries.len()) as isize);
-            if mro_tuple.is_null() {
-                return -1;
-            }
-            Py_XIncRef(type_obj);
-            if PyTuple_SetItem(mro_tuple, 0, type_obj) != 0 {
-                Py_DecRef(mro_tuple);
-                return -1;
-            }
-            for (index, entry) in base_entries.into_iter().enumerate() {
-                Py_XIncRef(entry);
-                if PyTuple_SetItem(mro_tuple, (index + 1) as isize, entry) != 0 {
-                    Py_DecRef(mro_tuple);
+                Err(err) => {
+                    cpython_set_typed_error(PyExc_TypeError, err);
                     return -1;
                 }
             }
-            (*ty).tp_mro = mro_tuple;
         }
         if cpython_type_populate_method_descriptors(ty) != 0 {
             return -1;

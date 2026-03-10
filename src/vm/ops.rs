@@ -1058,6 +1058,10 @@ pub(super) fn neg_value(value: Value) -> Result<Value, RuntimeError> {
         Value::BigInt(value) => Ok(bigint_to_value(value.negated())),
         Value::Bool(value) => Ok(Value::Int(if value { -1 } else { 0 })),
         Value::Float(value) => Ok(Value::Float(-value)),
+        Value::Complex { real, imag } => Ok(Value::Complex {
+            real: -real,
+            imag: -imag,
+        }),
         _ => Err(RuntimeError::new("unsupported operand type for -")),
     }
 }
@@ -1068,6 +1072,7 @@ pub(super) fn pos_value(value: Value) -> Result<Value, RuntimeError> {
         Value::BigInt(value) => Ok(bigint_to_value(*value)),
         Value::Bool(value) => Ok(Value::Int(if value { 1 } else { 0 })),
         Value::Float(value) => Ok(Value::Float(value)),
+        Value::Complex { real, imag } => Ok(Value::Complex { real, imag }),
         _ => Err(RuntimeError::type_error("unsupported operand type for +")),
     }
 }

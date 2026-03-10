@@ -1743,6 +1743,16 @@ fn executes_unary_plus_assignment() {
 }
 
 #[test]
+fn executes_unary_complex_literals() {
+    let source = "neg = -1j\npos = +1j\nok = (\n    type(neg).__name__ == 'complex'\n    and type(pos).__name__ == 'complex'\n    and neg.real == 0.0 and neg.imag == -1.0\n    and pos.real == 0.0 and pos.imag == 1.0\n)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn unary_operators_fall_back_to_special_methods() {
     let source = "class Sentinel:\n    def __neg__(self):\n        return 41\n    def __pos__(self):\n        return 42\n    def __invert__(self):\n        return 43\ns = Sentinel()\nok = (-s == 41 and +s == 42 and ~s == 43)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -18663,6 +18673,43 @@ fn executes_c_decimal_binary_ops_without_crash() {
     handle
         .join()
         .expect("c-decimal-binary-ops thread should complete");
+}
+
+#[test]
+fn executes_c_decimal_signaldict_mapping_methods() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping C decimal SignalDict test (CPython Lib path not available)");
+        return;
+    };
+    let dynload_path = PathBuf::from(
+        "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/lib-dynload",
+    );
+    if !dynload_path
+        .join("_decimal.cpython-314-darwin.so")
+        .is_file()
+    {
+        eprintln!("skipping C decimal SignalDict test (lib-dynload path not available)");
+        return;
+    }
+    let handle = std::thread::Builder::new()
+        .name("c-decimal-signaldict".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = format!(
+                "import sys\nsys.path.insert(0, '{lib_path}')\nsys.path.insert(0, '{dynload_path}')\nimport _decimal\nflags = _decimal.getcontext().flags\nmro = [cls.__name__ for cls in type(flags).mro()]\nok = hasattr(flags, 'keys') and 'MutableMapping' in mro and len(tuple(flags.keys())) > 0\n",
+                lib_path = lib_path.to_string_lossy().replace('\\', "\\\\"),
+                dynload_path = dynload_path.to_string_lossy().replace('\\', "\\\\")
+            );
+            let module = parser::parse_module(&source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn c-decimal-signaldict thread");
+    handle
+        .join()
+        .expect("c-decimal-signaldict thread should complete");
 }
 
 #[test]

@@ -3839,9 +3839,33 @@ fn initialize_cpython_compat_type_objects() {
         PyDict_Type.tp_flags |= PY_TPFLAGS_BASETYPE | PY_TPFLAGS_DICT_SUBCLASS | PY_TPFLAGS_READY;
         PyNone_Type.tp_flags |= PY_TPFLAGS_READY;
 
+        // Iterable builtin container/view types must expose tp_iter so native
+        // extension code can enter the same runtime iterator path that Python
+        // code uses instead of jumping through a null slot.
+        let generic_get_iter = PyObject_GetIter as *mut c_void;
+        let iterable_types: &mut [*mut CpythonTypeObject] = &mut [
+            std::ptr::addr_of_mut!(PyByteArray_Type),
+            std::ptr::addr_of_mut!(PyBytes_Type),
+            std::ptr::addr_of_mut!(PyDictItems_Type),
+            std::ptr::addr_of_mut!(PyDictKeys_Type),
+            std::ptr::addr_of_mut!(PyDictProxy_Type),
+            std::ptr::addr_of_mut!(PyDictValues_Type),
+            std::ptr::addr_of_mut!(PyDict_Type),
+            std::ptr::addr_of_mut!(PyFrozenSet_Type),
+            std::ptr::addr_of_mut!(PyList_Type),
+            std::ptr::addr_of_mut!(PyMemoryView_Type),
+            std::ptr::addr_of_mut!(PyRange_Type),
+            std::ptr::addr_of_mut!(PySet_Type),
+            std::ptr::addr_of_mut!(PyTuple_Type),
+            std::ptr::addr_of_mut!(PyUnicode_Type),
+        ];
+        for ty in iterable_types {
+            (**ty).tp_iter = generic_get_iter;
+        }
+
         // Iterator-like builtin types must expose tp_iter/tp_iternext so native
         // extension code (including Cython-generated loops) can drive iteration
-        // through slots without falling back to Python-level wrappers.
+        // directly through slots.
         let iter_self = PyObject_SelfIter as *mut c_void;
         let iter_next = PyIter_Next as *mut c_void;
         let iterator_types: &mut [*mut CpythonTypeObject] = &mut [
@@ -3854,6 +3878,7 @@ fn initialize_cpython_compat_type_objects() {
             std::ptr::addr_of_mut!(PyDictRevIterItem_Type),
             std::ptr::addr_of_mut!(PyDictRevIterKey_Type),
             std::ptr::addr_of_mut!(PyDictRevIterValue_Type),
+            std::ptr::addr_of_mut!(PyEnum_Type),
             std::ptr::addr_of_mut!(PyFilter_Type),
             std::ptr::addr_of_mut!(PyGen_Type),
             std::ptr::addr_of_mut!(PyListIter_Type),
@@ -4736,6 +4761,20 @@ impl ModuleCapiContext {
             // Without this, objects that survive across active C-API contexts can end up with a
             // dangling `ob_type` pointer once the owning context frees heap-type allocations.
             self.pin_owned_child_pointer_for_vm(vm, head_ref.ob_type);
+            if cpython_is_type_object_ptr(raw.cast()) {
+                let type_ptr = raw.cast::<CpythonTypeObject>();
+                self.pin_owned_child_pointer_for_vm(vm, (*type_ptr).tp_base.cast::<c_void>());
+                self.pin_owned_child_pointer_for_vm(vm, (*type_ptr).tp_dict);
+                self.pin_owned_child_pointer_for_vm(vm, (*type_ptr).tp_bases);
+                self.pin_owned_child_pointer_for_vm(vm, (*type_ptr).tp_mro);
+                if !(*type_ptr).tp_bases.is_null() {
+                    self.pin_container_children_for_vm(vm, (*type_ptr).tp_bases.cast());
+                }
+                if !(*type_ptr).tp_mro.is_null() {
+                    self.pin_container_children_for_vm(vm, (*type_ptr).tp_mro.cast());
+                }
+                return;
+            }
             if head_ref.ob_type == std::ptr::addr_of_mut!(PyTuple_Type).cast() {
                 let len = (*raw.cast::<CpythonVarObjectHead>()).ob_size.max(0) as usize;
                 let items_ptr = cpython_tuple_items_ptr(raw.cast());
@@ -5783,6 +5822,7 @@ impl ModuleCapiContext {
                             class_data.attrs.clone(),
                             class_data.metaclass.clone(),
                             class_data.bases.clone(),
+                            class_data.mro.clone(),
                         )),
                         _ => None,
                     },
@@ -5848,6 +5888,21 @@ impl ModuleCapiContext {
                 ob_type = class_ptr;
             }
         }
+        let runtime_class_mro = class_state.as_ref().map(
+            |(class_obj, _, _, _, _, class_mro)| {
+                if class_mro
+                    .first()
+                    .is_some_and(|entry| entry.id() == class_obj.id())
+                {
+                    class_mro.clone()
+                } else {
+                    let mut mro = vec![class_obj.clone()];
+                    mro.extend(class_mro.iter().cloned());
+                    mro
+                }
+            },
+        );
+        let has_class_state = class_state.is_some();
         let mut already_registered = false;
         let raw = if let Some((capsule_refcount, pointer, name, context, cpython_destructor)) =
             capsule_state
@@ -6230,8 +6285,14 @@ impl ModuleCapiContext {
             already_registered = true;
             self.sync_module_compat_from_value(raw_module, module_obj, refcount);
             raw_module.cast::<CpythonCompatObject>()
-        } else if let Some((class_obj, class_name, class_attrs, class_metaclass, class_bases)) =
-            class_state
+        } else if let Some((
+            class_obj,
+            class_name,
+            class_attrs,
+            class_metaclass,
+            class_bases,
+            _class_mro,
+        )) = class_state
         {
             // SAFETY: allocate storage for CPython type-compatible header.
             let raw_type = unsafe { malloc(std::mem::size_of::<CpythonTypeObject>()) }
@@ -6275,6 +6336,20 @@ impl ModuleCapiContext {
                     (!ptr.is_null()).then_some(ptr.cast::<CpythonTypeObject>())
                 })
                 .unwrap_or_else(|| std::ptr::addr_of_mut!(PyBaseObject_Type));
+            let tp_bases_ptr = if self.vm.is_null() || class_bases.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                let bases_value = unsafe {
+                    (&mut *self.vm).heap.alloc_tuple(
+                        class_bases
+                            .iter()
+                            .cloned()
+                            .map(Value::Class)
+                            .collect::<Vec<_>>(),
+                    )
+                };
+                self.alloc_cpython_ptr_for_value(bases_value)
+            };
             let needs_native_base_inheritance = class_bases.iter().any(|base| {
                 Self::cpython_proxy_raw_ptr_from_value(&Value::Class(base.clone())).is_some()
             });
@@ -6403,7 +6478,7 @@ impl ModuleCapiContext {
                     },
                     tp_free: std::ptr::null_mut(),
                     tp_is_gc: std::ptr::null_mut(),
-                    tp_bases: std::ptr::null_mut(),
+                    tp_bases: tp_bases_ptr,
                     tp_mro: std::ptr::null_mut(),
                     tp_cache: std::ptr::null_mut(),
                     tp_subclasses: std::ptr::null_mut(),
@@ -6525,6 +6600,26 @@ impl ModuleCapiContext {
         }
         if !already_registered {
             self.register_owned_compat_allocation(handle, raw);
+        }
+        if has_class_state
+            && !self.vm.is_null()
+            && let Some(runtime_mro) = runtime_class_mro
+        {
+            let raw_type = raw.cast::<CpythonTypeObject>();
+            let needs_mro = unsafe { (*raw_type).tp_mro.is_null() };
+            if needs_mro {
+                let mro_value = unsafe {
+                    (&mut *self.vm)
+                        .heap
+                        .alloc_tuple(runtime_mro.into_iter().map(Value::Class).collect::<Vec<_>>())
+                };
+                let mro_ptr = self.alloc_cpython_ptr_for_value(mro_value);
+                if !mro_ptr.is_null() {
+                    unsafe {
+                        (*raw_type).tp_mro = mro_ptr;
+                    }
+                }
+            }
         }
         raw.cast()
     }
@@ -7519,17 +7614,6 @@ impl ModuleCapiContext {
         } else {
             (CPY_PROXY_CLASS_NAME.to_string(), None)
         };
-        let proxy_base_value = if is_type_object {
-            // SAFETY: `object` is a candidate type object in this branch.
-            let tp_base = unsafe { (*object.cast::<CpythonTypeObject>()).tp_base };
-            if tp_base.is_null() || tp_base.cast::<c_void>() == object {
-                None
-            } else {
-                self.cpython_value_from_ptr_or_proxy(tp_base.cast::<c_void>())
-            }
-        } else {
-            None
-        };
         let proxy_metaclass_value = if is_type_object {
             let metatype_ptr = object_type.cast::<c_void>();
             if metatype_ptr.is_null() || metatype_ptr == object {
@@ -7542,11 +7626,44 @@ impl ModuleCapiContext {
         };
         // SAFETY: VM pointer is valid for the C-API context lifetime.
         let vm = unsafe { &mut *self.vm };
+        let mut proxy_base_values = Vec::new();
+        if is_type_object {
+            // Prefer tp_bases so heap types that inherit multiple bases
+            // surface the same runtime MRO as CPython.
+            let (tp_bases, tp_base) = unsafe {
+                let ty = object.cast::<CpythonTypeObject>();
+                ((*ty).tp_bases, (*ty).tp_base)
+            };
+            if !tp_bases.is_null() {
+                let raw_len = unsafe { PyTuple_Size(tp_bases) };
+                if raw_len > 0 {
+                    for index in 0..(raw_len as usize) {
+                        let raw_item = unsafe { PyTuple_GetItem(tp_bases, index as isize) };
+                        if raw_item.is_null() {
+                            continue;
+                        }
+                        let base_value = self.cpython_value_from_ptr_or_proxy(raw_item);
+                        if let Some(base_value) = base_value {
+                            proxy_base_values.push(base_value);
+                        }
+                    }
+                }
+            }
+            if proxy_base_values.is_empty()
+                && !tp_base.is_null()
+                && tp_base.cast::<c_void>() != object
+                && let Some(base_value) = self.cpython_value_from_ptr_or_proxy(tp_base.cast::<c_void>())
+            {
+                proxy_base_values.push(base_value);
+            }
+        }
         let mut proxy_bases = Vec::new();
-        if let Some(base_value) = proxy_base_value
-            && let Ok(base_class) = vm.class_from_base_value(base_value)
-        {
-            proxy_bases.push(base_class);
+        for base_value in proxy_base_values {
+            if let Ok(base_class) = vm.class_from_base_value(base_value)
+                && !proxy_bases.iter().any(|existing: &ObjRef| existing.id() == base_class.id())
+            {
+                proxy_bases.push(base_class);
+            }
         }
         let proxy_metaclass =
             proxy_metaclass_value.and_then(|value| vm.class_from_base_value(value).ok());
