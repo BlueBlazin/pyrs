@@ -2373,7 +2373,7 @@ impl Vm {
                             | Value::Exception(_)
                             | Value::ExceptionType(_)
                     ) {
-                    Value::None
+                    self.load_runtime_value_doc_attr(&value)?
                 } else if attr_name == "__class__" {
                     self.load_dunder_class_attr(&value)?
                 } else {
@@ -2592,105 +2592,9 @@ impl Vm {
                                 self.heap.alloc_bound_method(bound)
                             }
                         }
-                        Value::Exception(exception) => match attr_name.as_str() {
-                            "__reduce_ex__" | "__reduce__" => self
-                                .alloc_reduce_ex_bound_method(Value::Exception(exception.clone())),
-                            "with_traceback" => {
-                                let wrapper = match self.heap.alloc_module(ModuleObject::new(
-                                    "__exception_with_traceback__".to_string(),
-                                )) {
-                                    Value::Module(obj) => obj,
-                                    _ => unreachable!(),
-                                };
-                                if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
-                                    module_data.globals.insert(
-                                        "exception".to_string(),
-                                        Value::Exception(exception.clone()),
-                                    );
-                                }
-                                self.alloc_native_bound_method(
-                                    NativeMethodKind::ExceptionWithTraceback,
-                                    wrapper,
-                                )
-                            }
-                            "add_note" => {
-                                let wrapper = match self.heap.alloc_module(ModuleObject::new(
-                                    "__exception_add_note__".to_string(),
-                                )) {
-                                    Value::Module(obj) => obj,
-                                    _ => unreachable!(),
-                                };
-                                if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
-                                    module_data.globals.insert(
-                                        "exception".to_string(),
-                                        Value::Exception(exception.clone()),
-                                    );
-                                }
-                                self.alloc_native_bound_method(
-                                    NativeMethodKind::ExceptionAddNote,
-                                    wrapper,
-                                )
-                            }
-                            "__class__" => Value::ExceptionType(exception.name.clone()),
-                            "__notes__" => exception
-                                .attrs
-                                .borrow()
-                                .get("__notes__")
-                                .cloned()
-                                .ok_or_else(|| {
-                                    RuntimeError::attribute_error(format!(
-                                        "'{}' object has no attribute '__notes__'",
-                                        exception.name
-                                    ))
-                                })?,
-                            "__cause__" => exception
-                                .cause
-                                .as_ref()
-                                .map(|cause| Value::Exception(Box::new((**cause).clone())))
-                                .unwrap_or(Value::None),
-                            "__context__" => exception
-                                .context
-                                .as_ref()
-                                .map(|context| Value::Exception(Box::new((**context).clone())))
-                                .unwrap_or(Value::None),
-                            "__traceback__" => {
-                                if let Some(cached) =
-                                    exception.attrs.borrow().get("__traceback__").cloned()
-                                {
-                                    cached
-                                } else {
-                                    let traceback = self
-                                        .traceback_value_from_frames(&exception.traceback_frames);
-                                    exception
-                                        .attrs
-                                        .borrow_mut()
-                                        .insert("__traceback__".to_string(), traceback.clone());
-                                    traceback
-                                }
-                            }
-                            "__suppress_context__" => Value::Bool(exception.suppress_context),
-                            "exceptions" => {
-                                let members = exception
-                                    .exceptions
-                                    .iter()
-                                    .cloned()
-                                    .map(|member| Value::Exception(Box::new(member)))
-                                    .collect::<Vec<_>>();
-                                self.heap.alloc_tuple(members)
-                            }
-                            _ => {
-                                if let Some(value) =
-                                    exception.attrs.borrow().get(&attr_name).cloned()
-                                {
-                                    value
-                                } else {
-                                    return Err(RuntimeError::attribute_error(format!(
-                                        "exception has no attribute '{}'",
-                                        attr_name
-                                    )));
-                                }
-                            }
-                        },
+                        Value::Exception(exception) => {
+                            self.load_attr_exception_value(&exception, &attr_name)?
+                        }
                         Value::ExceptionType(name) => {
                             self.load_attr_exception_type(&name, &attr_name)?
                         }
@@ -14515,6 +14419,16 @@ impl Vm {
         }
         let type_value = BuiltinFunction::Type.call(&self.heap, vec![value.clone()])?;
         Ok(self.normalize_runtime_type_value(type_value))
+    }
+
+    fn load_runtime_value_doc_attr(&mut self, value: &Value) -> Result<Value, RuntimeError> {
+        let Value::Class(class) = self.load_dunder_class_attr(value)? else {
+            return Ok(Value::None);
+        };
+        match self.load_attr_class(&class, "__doc__")? {
+            AttrAccessOutcome::Value(doc) => Ok(doc),
+            AttrAccessOutcome::ExceptionHandled => Ok(Value::None),
+        }
     }
 
     pub(super) fn property_descriptor_parts(

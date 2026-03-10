@@ -24,6 +24,28 @@ use super::{
     cpython_type_name_for_object_ptr, cpython_value_debug_tag, cpython_value_from_ptr,
     cpython_value_from_ptr_or_proxy, value_to_int, with_active_cpython_context_mut,
 };
+use super::super::TUPLE_BACKING_STORAGE_ATTR;
+
+fn cpython_structseq_field_names(
+    fields: *mut super::CpythonStructSequenceField,
+) -> Result<Vec<Option<String>>, String> {
+    let field_count = cpython_structseq_count_fields(fields)?;
+    let mut names = Vec::with_capacity(field_count);
+    let mut cursor = fields;
+    for _ in 0..field_count {
+        // SAFETY: `cursor` points into the validated structseq field table.
+        let name_ptr = unsafe { (*cursor).name };
+        let name = unsafe { c_name_to_string(name_ptr) }?;
+        if name == "unnamed field" {
+            names.push(None);
+        } else {
+            names.push(Some(name));
+        }
+        // SAFETY: `cursor` advances across the validated field table.
+        cursor = unsafe { cursor.add(1) };
+    }
+    Ok(names)
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyFloat_AsDouble(object: *mut c_void) -> f64 {
@@ -746,6 +768,13 @@ pub unsafe extern "C" fn PyStructSequence_NewType(desc: *mut c_void) -> *mut c_v
             return std::ptr::null_mut();
         }
     };
+    let field_names = match cpython_structseq_field_names(desc_ref.fields) {
+        Ok(names) => names,
+        Err(err) => {
+            cpython_set_typed_error(unsafe { PyExc_SystemError }, err);
+            return std::ptr::null_mut();
+        }
+    };
     let visible_count = if desc_ref.n_in_sequence < 0 {
         field_count
     } else {
@@ -778,11 +807,27 @@ pub unsafe extern "C" fn PyStructSequence_NewType(desc: *mut c_void) -> *mut c_v
             type_ptr as usize,
             CpythonStructSeqTypeInfo {
                 field_count,
-                _visible_count: visible_count,
+                visible_count,
+                qualified_name: type_name.clone(),
+                field_names: field_names.clone(),
                 _name: owned_name,
             },
         );
     }
+    let _ = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return;
+        }
+        // SAFETY: VM pointer is valid for the active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let class_ref = vm.ensure_extension_structseq_class(
+            type_ptr as usize,
+            &type_name,
+            &field_names,
+            visible_count,
+        );
+        context.cache_cpython_ptr_value(type_ptr.cast(), &Value::Class(class_ref));
+    });
     type_ptr.cast()
 }
 
@@ -795,16 +840,54 @@ pub unsafe extern "C" fn PyStructSequence_New(type_obj: *mut c_void) -> *mut c_v
         );
         return std::ptr::null_mut();
     }
-    let field_count = cpython_structseq_registry()
+    let info = cpython_structseq_registry()
         .lock()
         .ok()
-        .and_then(|registry| {
-            registry
-                .get(&(type_obj as usize))
-                .map(|entry| entry.field_count)
-        })
-        .unwrap_or(0);
-    unsafe { PyTuple_New(field_count as isize) }
+        .and_then(|registry| registry.get(&(type_obj as usize)).cloned());
+    let Some(info) = info else {
+        return unsafe { PyTuple_New(0) };
+    };
+    let value = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return None;
+        }
+        // SAFETY: VM pointer is valid for the active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let class_ref = vm.ensure_extension_structseq_class(
+            type_obj as usize,
+            &info.qualified_name,
+            &info.field_names,
+            info.visible_count,
+        );
+        let instance = match vm
+            .heap
+            .alloc_instance(crate::runtime::InstanceObject::new(class_ref))
+        {
+            Value::Instance(instance) => instance,
+            _ => unreachable!(),
+        };
+        let initial_items = vec![Value::None; info.field_count];
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data.attrs.insert(
+                TUPLE_BACKING_STORAGE_ATTR.to_string(),
+                vm.heap.alloc_tuple(initial_items),
+            );
+            for field_name in &info.field_names {
+                if let Some(field_name) = field_name {
+                    instance_data.attrs.insert(field_name.clone(), Value::None);
+                }
+            }
+        }
+        Some(context.alloc_cpython_ptr_for_value(Value::Instance(instance)))
+    });
+    match value {
+        Ok(Some(ptr)) => ptr,
+        Ok(None) => unsafe { PyTuple_New(info.field_count as isize) },
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -820,7 +903,85 @@ pub unsafe extern "C" fn PyStructSequence_SetItem(
         );
         return;
     }
-    let _ = unsafe { PyTuple_SetItem(object, index, value) };
+    let handled = with_active_cpython_context_mut(|context| {
+        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            return false;
+        };
+        let Value::Instance(instance) = object_value else {
+            return false;
+        };
+        let item_value = match context.cpython_value_from_stolen_ptr(value) {
+            Some(value) => value,
+            None => {
+                context.set_error("PyStructSequence_SetItem received unknown item pointer");
+                return true;
+            }
+        };
+        let tuple_len = match &*instance.kind() {
+            Object::Instance(instance_data) => match instance_data.attrs.get(TUPLE_BACKING_STORAGE_ATTR)
+            {
+                Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
+                    Object::Tuple(values) => values.len(),
+                    _ => {
+                        context.set_error("PyStructSequence_SetItem encountered invalid tuple storage");
+                        return true;
+                    }
+                },
+                _ => {
+                    context.set_error("PyStructSequence_SetItem expected structseq instance");
+                    return true;
+                }
+            },
+            _ => {
+                context.set_error("PyStructSequence_SetItem expected structseq instance");
+                return true;
+            }
+        };
+        let idx = if index < 0 {
+            tuple_len as isize + index
+        } else {
+            index
+        };
+        if idx < 0 || idx as usize >= tuple_len {
+            context.set_error("PyStructSequence_SetItem index out of range");
+            return true;
+        }
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            let field_name = match &*instance_data.class.kind() {
+                Object::Class(class_data) => match class_data.attrs.get("__pyrs_structseq_field_names__")
+                {
+                    Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
+                        Object::Tuple(values) => values.get(idx as usize).cloned(),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            };
+            let Some(Value::Tuple(tuple_obj)) =
+                instance_data.attrs.get(TUPLE_BACKING_STORAGE_ATTR).cloned()
+            else {
+                context.set_error("PyStructSequence_SetItem expected structseq tuple storage");
+                return true;
+            };
+            let Object::Tuple(values) = &mut *tuple_obj.kind_mut() else {
+                context.set_error("PyStructSequence_SetItem encountered invalid tuple storage");
+                return true;
+            };
+            values[idx as usize] = item_value.clone();
+            if let Some(Value::Str(field_name)) = field_name {
+                instance_data.attrs.insert(field_name, item_value);
+            }
+        }
+        true
+    });
+    match handled {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = unsafe { PyTuple_SetItem(object, index, value) };
+        }
+        Err(err) => cpython_set_error(err),
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -835,7 +996,42 @@ pub unsafe extern "C" fn PyStructSequence_GetItem(
         );
         return std::ptr::null_mut();
     }
-    unsafe { PyTuple_GetItem(object, index) }
+    with_active_cpython_context_mut(|context| {
+        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            return unsafe { PyTuple_GetItem(object, index) };
+        };
+        let Value::Instance(instance) = object_value else {
+            return unsafe { PyTuple_GetItem(object, index) };
+        };
+        let tuple_value = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data
+                .attrs
+                .get(TUPLE_BACKING_STORAGE_ATTR)
+                .cloned(),
+            _ => None,
+        };
+        let Some(Value::Tuple(tuple_obj)) = tuple_value else {
+            return unsafe { PyTuple_GetItem(object, index) };
+        };
+        let Object::Tuple(values) = &*tuple_obj.kind() else {
+            context.set_error("PyStructSequence_GetItem encountered invalid tuple storage");
+            return std::ptr::null_mut();
+        };
+        let idx = if index < 0 {
+            values.len() as isize + index
+        } else {
+            index
+        };
+        if idx < 0 || idx as usize >= values.len() {
+            context.set_error("PyStructSequence_GetItem index out of range");
+            return std::ptr::null_mut();
+        }
+        context.alloc_cpython_ptr_for_value(values[idx as usize].clone())
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]

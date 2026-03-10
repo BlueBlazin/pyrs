@@ -1069,10 +1069,28 @@ impl Vm {
                 | BuiltinFunction::Str
                 | BuiltinFunction::Bytes
                 | BuiltinFunction::ByteArray
+                | BuiltinFunction::Map
+                | BuiltinFunction::Zip
+                | BuiltinFunction::Filter
+                | BuiltinFunction::Enumerate
+                | BuiltinFunction::GeneratorType
         ) {
             entries.push((
                 Value::Str("__iter__".to_string()),
                 Value::Builtin(BuiltinFunction::Iter),
+            ));
+        }
+        if matches!(
+            builtin,
+            BuiltinFunction::Map
+                | BuiltinFunction::Zip
+                | BuiltinFunction::Filter
+                | BuiltinFunction::Enumerate
+                | BuiltinFunction::GeneratorType
+        ) {
+            entries.push((
+                Value::Str("__next__".to_string()),
+                Value::Builtin(BuiltinFunction::Next),
             ));
         }
         if matches!(builtin, BuiltinFunction::List | BuiltinFunction::Tuple) {
@@ -1571,6 +1589,27 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::List),
                 NativeMethodKind::ListInit,
             )),
+            "__init__" if builtin == BuiltinFunction::CollectionsDefaultDict => Ok(
+                self.alloc_native_unbound_method(
+                    "__defaultdict_unbound_method__",
+                    Value::Builtin(BuiltinFunction::CollectionsDefaultDict),
+                    NativeMethodKind::DefaultDictInit,
+                ),
+            ),
+            "__init__" if builtin == BuiltinFunction::CollectionsOrderedDict => Ok(
+                self.alloc_native_unbound_method(
+                    "__ordereddict_unbound_method__",
+                    Value::Builtin(BuiltinFunction::CollectionsOrderedDict),
+                    NativeMethodKind::DictInit,
+                ),
+            ),
+            "__missing__" if builtin == BuiltinFunction::CollectionsDefaultDict => Ok(
+                self.alloc_native_unbound_method(
+                    "__defaultdict_missing_unbound_method__",
+                    Value::Builtin(BuiltinFunction::CollectionsDefaultDict),
+                    NativeMethodKind::DefaultDictMissing,
+                ),
+            ),
             "__init__" if builtin == BuiltinFunction::Dict => Ok(self.alloc_native_unbound_method(
                 "__dict_unbound_method__",
                 Value::Builtin(BuiltinFunction::Dict),
@@ -1808,9 +1847,26 @@ impl Vm {
                         | BuiltinFunction::Str
                         | BuiltinFunction::Bytes
                         | BuiltinFunction::ByteArray
+                        | BuiltinFunction::Map
+                        | BuiltinFunction::Zip
+                        | BuiltinFunction::Filter
+                        | BuiltinFunction::Enumerate
+                        | BuiltinFunction::GeneratorType
                 ) =>
             {
                 Ok(Value::Builtin(BuiltinFunction::Iter))
+            }
+            "__next__"
+                if matches!(
+                    builtin,
+                    BuiltinFunction::Map
+                        | BuiltinFunction::Zip
+                        | BuiltinFunction::Filter
+                        | BuiltinFunction::Enumerate
+                        | BuiltinFunction::GeneratorType
+                ) =>
+            {
+                Ok(Value::Builtin(BuiltinFunction::Next))
             }
             "maketrans" if builtin == BuiltinFunction::Bytes => Ok(self
                 .alloc_builtin_unbound_method(
@@ -2279,6 +2335,21 @@ impl Vm {
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::StrUpper, receiver))
             }
+            "strip" if builtin == BuiltinFunction::Str => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::StrStrip, receiver))
+            }
             "join" if builtin == BuiltinFunction::Str => {
                 let receiver = match self
                     .heap
@@ -2479,6 +2550,20 @@ impl Vm {
                     NativeMethodKind::ListInit,
                 ));
             }
+            if self.class_has_builtin_defaultdict_base(class) {
+                return Some(self.alloc_native_unbound_method(
+                    "__defaultdict_unbound_method__",
+                    Value::Builtin(BuiltinFunction::CollectionsDefaultDict),
+                    NativeMethodKind::DefaultDictInit,
+                ));
+            }
+            if self.class_has_builtin_ordereddict_base(class) {
+                return Some(self.alloc_native_unbound_method(
+                    "__ordereddict_unbound_method__",
+                    Value::Builtin(BuiltinFunction::CollectionsOrderedDict),
+                    NativeMethodKind::DictInit,
+                ));
+            }
             if self.class_has_builtin_dict_base(class) {
                 return Some(self.alloc_native_unbound_method(
                     "__dict_unbound_method__",
@@ -2486,6 +2571,13 @@ impl Vm {
                     NativeMethodKind::DictInit,
                 ));
             }
+        }
+        if attr_name == "__missing__" && self.class_has_builtin_defaultdict_base(class) {
+            return Some(self.alloc_native_unbound_method(
+                "__defaultdict_missing_unbound_method__",
+                Value::Builtin(BuiltinFunction::CollectionsDefaultDict),
+                NativeMethodKind::DefaultDictMissing,
+            ));
         }
         if attr_name == "__new__" {
             let class_name = match &*class.kind() {
@@ -3632,6 +3724,15 @@ impl Vm {
         }
         if attr_name == "__reversed__" {
             return Ok(self.alloc_native_bound_method(NativeMethodKind::DictDunderReversed, dict));
+        }
+        if attr_name == "__init__" && self.defaultdict_factories.contains_key(&dict.id()) {
+            return Ok(self.alloc_native_bound_method(NativeMethodKind::DefaultDictInit, dict));
+        }
+        if attr_name == "__missing__" && self.defaultdict_factories.contains_key(&dict.id()) {
+            return Ok(self.alloc_native_bound_method(
+                NativeMethodKind::DefaultDictMissing,
+                dict,
+            ));
         }
         if attr_name == "__reduce_ex__" || attr_name == "__reduce__" {
             return Ok(self.alloc_reduce_ex_bound_method(Value::Dict(dict)));
@@ -5999,6 +6100,8 @@ impl Vm {
                 || self.class_has_builtin_float_base(&class)
                 || self.class_has_builtin_complex_base(&class)
                 || self.class_has_builtin_dict_base(&class)
+                || self.class_has_builtin_defaultdict_base(&class)
+                || self.class_has_builtin_ordereddict_base(&class)
                 || self.class_has_builtin_set_base(&class)
                 || self.class_has_builtin_frozenset_base(&class)
                 || self.class_has_builtin_property_base(&class))
@@ -6284,6 +6387,40 @@ impl Vm {
                         .insert(COMPLEX_BACKING_STORAGE_ATTR.to_string(), complex_value);
                 } else {
                     return Err(RuntimeError::new("complex instance construction failed"));
+                }
+            } else if self.class_has_builtin_defaultdict_base(&class) {
+                let dict_value =
+                    self.call_builtin(BuiltinFunction::CollectionsDefaultDict, args, kwargs)?;
+                let Value::Dict(_) = dict_value else {
+                    return Err(RuntimeError::new(
+                        "defaultdict constructor returned non-dict",
+                    ));
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(DICT_BACKING_STORAGE_ATTR.to_string(), dict_value);
+                } else {
+                    return Err(RuntimeError::new(
+                        "defaultdict instance construction failed",
+                    ));
+                }
+            } else if self.class_has_builtin_ordereddict_base(&class) {
+                let dict_value =
+                    self.call_builtin(BuiltinFunction::CollectionsOrderedDict, args, kwargs)?;
+                let Value::Dict(_) = dict_value else {
+                    return Err(RuntimeError::new(
+                        "OrderedDict constructor returned non-dict",
+                    ));
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert(DICT_BACKING_STORAGE_ATTR.to_string(), dict_value);
+                } else {
+                    return Err(RuntimeError::new(
+                        "OrderedDict instance construction failed",
+                    ));
                 }
             } else if self.class_has_builtin_dict_base(&class) {
                 let dict_value = self.call_builtin(BuiltinFunction::Dict, args, kwargs)?;
@@ -7535,7 +7672,7 @@ impl Vm {
             .is_some()
     }
 
-    fn lookup_instance_class_attr_owner_and_value(
+    pub(super) fn lookup_instance_class_attr_owner_and_value(
         &mut self,
         class_ref: &ObjRef,
         attr_name: &str,
@@ -7642,6 +7779,70 @@ impl Vm {
                 }
                 _ => false,
             })
+    }
+
+    pub(super) fn ensure_extension_structseq_class(
+        &mut self,
+        type_ptr: usize,
+        qualified_name: &str,
+        field_names: &[Option<String>],
+        visible_count: usize,
+    ) -> ObjRef {
+        if let Some(class_ref) = self.extension_structseq_classes.get(&type_ptr).cloned() {
+            return class_ref;
+        }
+
+        let (module_name, class_name) = match qualified_name.rsplit_once('.') {
+            Some((module_name, class_name)) => (module_name.to_string(), class_name.to_string()),
+            None => ("builtins".to_string(), qualified_name.to_string()),
+        };
+
+        let mut bases = Vec::new();
+        if let Some(Value::Class(tuple_class)) = self.builtins.get("tuple") {
+            bases.push(tuple_class.clone());
+        }
+        let class_ref = match self
+            .heap
+            .alloc_class(ClassObject::new(class_name.clone(), bases))
+        {
+            Value::Class(class_ref) => class_ref,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str(module_name));
+            class_data
+                .attrs
+                .insert("__pyrs_tuple_backed_type__".to_string(), Value::Bool(true));
+            class_data.attrs.insert(
+                "__pyrs_structseq_field_names__".to_string(),
+                self.heap.alloc_tuple(
+                    field_names
+                        .iter()
+                        .map(|name| {
+                            name.as_ref()
+                                .map(|name| Value::Str(name.clone()))
+                                .unwrap_or(Value::None)
+                        })
+                        .collect(),
+                ),
+            );
+            class_data
+                .attrs
+                .insert("n_fields".to_string(), Value::Int(field_names.len() as i64));
+            class_data.attrs.insert(
+                "n_sequence_fields".to_string(),
+                Value::Int(visible_count as i64),
+            );
+            class_data.attrs.insert(
+                "n_unnamed_fields".to_string(),
+                Value::Int(field_names.len().saturating_sub(visible_count) as i64),
+            );
+        }
+        self.extension_structseq_classes
+            .insert(type_ptr, class_ref.clone());
+        class_ref
     }
 
     pub(super) fn class_has_builtin_str_base(&self, class: &ObjRef) -> bool {
@@ -9182,6 +9383,19 @@ impl Vm {
                     )));
                 }
             }
+            if attr_name == "__init__" && self.class_has_builtin_defaultdict_base(class) {
+                let defaultdict_init_receiver = match &receiver_value {
+                    Value::Dict(dict) => Some(dict.clone()),
+                    Value::Instance(instance) => Some(instance.clone()),
+                    _ => None,
+                };
+                if let Some(defaultdict_init_receiver) = defaultdict_init_receiver {
+                    return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                        NativeMethodKind::DefaultDictInit,
+                        defaultdict_init_receiver,
+                    )));
+                }
+            }
             if attr_name == "__init__" && self.class_has_builtin_dict_base(class) {
                 let dict_init_receiver = match &receiver_value {
                     Value::Dict(dict) => Some(dict.clone()),
@@ -9194,6 +9408,26 @@ impl Vm {
                         dict_init_receiver,
                     )));
                 }
+            }
+            if attr_name == "__missing__" && self.class_has_builtin_defaultdict_base(class) {
+                let defaultdict_missing_receiver = match &receiver_value {
+                    Value::Dict(dict) => Some(dict.clone()),
+                    Value::Instance(instance) => Some(instance.clone()),
+                    _ => None,
+                };
+                if let Some(defaultdict_missing_receiver) = defaultdict_missing_receiver {
+                    return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                        NativeMethodKind::DefaultDictMissing,
+                        defaultdict_missing_receiver,
+                    )));
+                }
+            }
+            if let Value::Instance(instance) = &receiver_value
+                && self.class_has_builtin_str_base(class)
+                && let Some(backing_str) = self.instance_backing_str(instance)
+                && let Ok(method) = self.load_attr_str_method(backing_str, attr_name)
+            {
+                return Ok(AttrAccessOutcome::Value(method));
             }
             let class_attr = class_attr_lookup_direct(&class, attr_name)
                 .or_else(|| self.load_cpython_proxy_attr(&class, attr_name));

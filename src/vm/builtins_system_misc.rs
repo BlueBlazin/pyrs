@@ -8,6 +8,8 @@ use super::{
     unix_time_now_duration, uuid_hash_mix_bytes, uuid_random_bytes,
     uuid_timestamp_100ns_since_gregorian, value_from_bigint, value_to_f64, value_to_int,
 };
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use std::rc::Rc;
 
 const DATETIME_MIN_YEAR: i64 = 1;
@@ -1856,7 +1858,9 @@ impl Vm {
         let local_seconds = days_from_civil(local.year as i64, local.month, local.day)
             .checked_mul(DATETIME_SECONDS_PER_DAY)
             .and_then(|days| {
-                days.checked_add(local.hour as i64 * 3600 + local.minute as i64 * 60 + local.second as i64)
+                days.checked_add(
+                    local.hour as i64 * 3600 + local.minute as i64 * 60 + local.second as i64,
+                )
             })
             .ok_or_else(|| RuntimeError::overflow_error("date value out of range"))?;
         let utc_seconds = local_seconds
@@ -5073,6 +5077,51 @@ impl Vm {
         }
     }
 
+    fn socket_instance_family(instance: &ObjRef) -> Result<i32, RuntimeError> {
+        match Self::instance_attr_get(instance, "_family") {
+            Some(Value::Int(family)) => Ok(family as i32),
+            _ => Err(RuntimeError::new("socket family is not initialized")),
+        }
+    }
+
+    #[cfg(unix)]
+    fn socket_bind_unix_path(&mut self, fd: i32, address: Value) -> Result<(), RuntimeError> {
+        let (path, _) = self.path_arg_to_pathbuf_and_type(address)?;
+        let path_bytes = path.as_os_str().as_bytes();
+        let path_offset = std::mem::offset_of!(libc::sockaddr_un, sun_path);
+        let mut sockaddr = unsafe { std::mem::zeroed::<libc::sockaddr_un>() };
+        sockaddr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+        if path_bytes.len() >= sockaddr.sun_path.len() {
+            return Err(RuntimeError::new("AF_UNIX path is too long"));
+        }
+        for (dst, src) in sockaddr.sun_path.iter_mut().zip(path_bytes.iter().copied()) {
+            *dst = src as libc::c_char;
+        }
+        #[cfg(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "tvos",
+            target_os = "watchos",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        ))]
+        {
+            sockaddr.sun_len = (path_offset + path_bytes.len() + 1) as u8;
+        }
+        let addr_len = (path_offset + path_bytes.len() + 1) as libc::socklen_t;
+        // SAFETY: the sockaddr pointer and computed length describe a valid initialized AF_UNIX
+        // address, and fd is an open socket descriptor owned by the socket object.
+        let status =
+            unsafe { libc::bind(fd, &sockaddr as *const _ as *const libc::sockaddr, addr_len) };
+        if status < 0 {
+            let err = std::io::Error::last_os_error();
+            return Err(Self::os_error_from_io("bind failed", err));
+        }
+        Ok(())
+    }
+
     pub(super) fn builtin_socket_socketpair(
         &mut self,
         mut args: Vec<Value>,
@@ -5496,6 +5545,36 @@ impl Vm {
         Self::instance_attr_set(&instance, "_fd", Value::Int(fd))?;
         Self::instance_attr_set(&instance, "_closed", Value::Bool(fd < 0))?;
         Ok(Value::None)
+    }
+
+    pub(super) fn builtin_socket_object_bind(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("socket.bind() expects one address argument"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "socket.bind")?;
+        let address = args.remove(0);
+        let fd = Self::socket_instance_fd(&instance)?;
+        let family = Self::socket_instance_family(&instance)?;
+        #[cfg(unix)]
+        {
+            if family == libc::AF_UNIX {
+                self.socket_bind_unix_path(fd, address)?;
+                return Ok(Value::None);
+            }
+            let _ = address;
+            return Err(RuntimeError::new("bind() address family is unsupported"));
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (fd, family, address);
+            Err(RuntimeError::new(
+                "bind() is not supported on this platform",
+            ))
+        }
     }
 
     pub(super) fn builtin_socket_object_setblocking(

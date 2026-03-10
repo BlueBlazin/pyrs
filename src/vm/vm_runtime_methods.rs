@@ -526,16 +526,47 @@ impl Vm {
             );
         }
         if let Value::Instance(instance) = &value {
+            let receiver_value = Value::Instance(instance.clone());
             if let Some(values) = self.namedtuple_instance_values(instance) {
                 return self.getitem_value(self.heap.alloc_tuple(values), index);
             }
             if let Some(backing_list) = self.instance_backing_list(instance) {
+                if let Some(getitem) =
+                    self.lookup_bound_special_method(&receiver_value, "__getitem__")?
+                {
+                    return match self.call_internal(getitem, vec![index], HashMap::new())? {
+                        InternalCallOutcome::Value(value) => Ok(value),
+                        InternalCallOutcome::CallerExceptionHandled => Err(
+                            self.runtime_error_from_active_exception("subscript lookup failed"),
+                        ),
+                    };
+                }
                 return self.getitem_value(Value::List(backing_list), index);
             }
             if let Some(backing_tuple) = self.instance_backing_tuple(instance) {
+                if let Some(getitem) =
+                    self.lookup_bound_special_method(&receiver_value, "__getitem__")?
+                {
+                    return match self.call_internal(getitem, vec![index], HashMap::new())? {
+                        InternalCallOutcome::Value(value) => Ok(value),
+                        InternalCallOutcome::CallerExceptionHandled => Err(
+                            self.runtime_error_from_active_exception("subscript lookup failed"),
+                        ),
+                    };
+                }
                 return self.getitem_value(Value::Tuple(backing_tuple), index);
             }
             if let Some(backing_str) = self.instance_backing_str(instance) {
+                if let Some(getitem) =
+                    self.lookup_bound_special_method(&receiver_value, "__getitem__")?
+                {
+                    return match self.call_internal(getitem, vec![index], HashMap::new())? {
+                        InternalCallOutcome::Value(value) => Ok(value),
+                        InternalCallOutcome::CallerExceptionHandled => Err(
+                            self.runtime_error_from_active_exception("subscript lookup failed"),
+                        ),
+                    };
+                }
                 return self.getitem_value(Value::Str(backing_str), index);
             }
             if let Some(backing_dict) = self.instance_backing_dict(instance) {
@@ -546,7 +577,6 @@ impl Vm {
                     },
                     _ => false,
                 };
-                let receiver_value = Value::Instance(instance.clone());
                 if is_exact_builtin_dict {
                     return self.getitem_value(Value::Dict(backing_dict), index);
                 }
@@ -4060,14 +4090,23 @@ impl Vm {
             Value::Class(class) => Some(class.clone()),
             _ => None,
         });
+        let explicit_bases = match (module, name) {
+            ("collections", "Counter" | "OrderedDict" | "defaultdict") => {
+                vec![self.synthetic_builtin_class("dict")]
+            }
+            _ => Vec::new(),
+        };
         let default_meta = self.default_type_metaclass();
         if let Object::Class(class_data) = &mut *class.kind_mut() {
             if class_data.bases.is_empty()
                 && name != "object"
                 && name != "type"
-                && let Some(base) = object_base
             {
-                class_data.bases.push(base);
+                if !explicit_bases.is_empty() {
+                    class_data.bases.extend(explicit_bases);
+                } else if let Some(base) = object_base {
+                    class_data.bases.push(base);
+                }
             }
             if class_data.metaclass.is_none() {
                 class_data.metaclass = default_meta;
@@ -4295,16 +4334,16 @@ impl Vm {
                 Ok(self.synthetic_builtin_class("partial"))
             }
             Value::Builtin(BuiltinFunction::CollectionsCounter) => {
-                Ok(self.synthetic_builtin_class("Counter"))
+                Ok(self.synthetic_runtime_type_class("collections", "Counter"))
             }
             Value::Builtin(BuiltinFunction::CollectionsDeque) => {
-                Ok(self.synthetic_builtin_class("deque"))
+                Ok(self.synthetic_runtime_type_class("collections", "deque"))
             }
             Value::Builtin(BuiltinFunction::CollectionsDefaultDict) => {
-                Ok(self.synthetic_builtin_class("defaultdict"))
+                Ok(self.synthetic_runtime_type_class("collections", "defaultdict"))
             }
             Value::Builtin(BuiltinFunction::CollectionsOrderedDict) => {
-                Ok(self.synthetic_builtin_class("OrderedDict"))
+                Ok(self.synthetic_runtime_type_class("collections", "OrderedDict"))
             }
             other => {
                 if self.trace_flags.class_base {

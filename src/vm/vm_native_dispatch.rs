@@ -645,6 +645,7 @@ impl Vm {
                 NativeMethodKind::FunctoolsPartialCall
                     | NativeMethodKind::ExtensionFunctionCall(_)
                     | NativeMethodKind::DictInit
+                    | NativeMethodKind::DefaultDictInit
                     | NativeMethodKind::DictUpdateMethod
                     | NativeMethodKind::IntToBytes
                     | NativeMethodKind::StrFormat
@@ -1100,6 +1101,79 @@ impl Vm {
                         Ok(NativeCallResult::PropagatedException)
                     }
                 }
+            }
+            NativeMethodKind::DefaultDictInit => {
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => receiver.clone(),
+                    Object::Instance(instance_data)
+                        if self.class_has_builtin_defaultdict_base(&instance_data.class) =>
+                    {
+                        if let Some(backing_dict) = self.instance_backing_dict(&receiver) {
+                            backing_dict
+                        } else {
+                            let dict_value = match self.heap.alloc_dict(Vec::new()) {
+                                Value::Dict(obj) => obj,
+                                _ => unreachable!(),
+                            };
+                            if let Object::Instance(instance_data) = &mut *receiver.kind_mut() {
+                                instance_data.attrs.insert(
+                                    DICT_BACKING_STORAGE_ATTR.to_string(),
+                                    Value::Dict(dict_value.clone()),
+                                );
+                            }
+                            dict_value
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "defaultdict.__init__() receiver must be defaultdict",
+                        ));
+                    }
+                };
+                self.initialize_defaultdict_storage(dict_receiver, args, kwargs)?;
+                Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::DefaultDictMissing => {
+                if !kwargs.is_empty() || args.len() != 1 {
+                    return Err(RuntimeError::new(
+                        "defaultdict.__missing__() expects one argument",
+                    ));
+                }
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => receiver.clone(),
+                    Object::Instance(instance_data)
+                        if self.class_has_builtin_defaultdict_base(&instance_data.class) =>
+                    {
+                        self.instance_backing_dict(&receiver).ok_or_else(|| {
+                            RuntimeError::new(
+                                "defaultdict.__missing__() receiver must be defaultdict",
+                            )
+                        })?
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "defaultdict.__missing__() receiver must be defaultdict",
+                        ));
+                    }
+                };
+                let key = args.pop().expect("checked len");
+                let default_factory = self
+                    .defaultdict_factories
+                    .get(&dict_receiver.id())
+                    .cloned()
+                    .unwrap_or(Value::None);
+                if matches!(default_factory, Value::None) {
+                    return Err(RuntimeError::key_error(format_value(&key)));
+                }
+                let value = match self.call_internal(default_factory, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self
+                            .runtime_error_from_active_exception("defaultdict factory failed"));
+                    }
+                };
+                dict_set_value_checked(&dict_receiver, key, value.clone())?;
+                Ok(NativeCallResult::Value(value))
             }
             NativeMethodKind::DictClear => {
                 if !kwargs.is_empty() {
@@ -5805,17 +5879,40 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::Str(stripped)))
             }
             NativeMethodKind::StrStrip => {
-                if args.len() > 1 {
-                    return Err(RuntimeError::new("strip() expects at most one argument"));
-                }
-                let text = match &*receiver.kind() {
-                    Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
-                    },
+                let (text, chars_arg) = match &*receiver.kind() {
+                    Object::Module(module_data) => {
+                        if let Some(Value::Str(value)) = module_data.globals.get("value") {
+                            if args.len() > 1 {
+                                return Err(RuntimeError::new(
+                                    "strip() expects at most one argument",
+                                ));
+                            }
+                            (value.clone(), args.first())
+                        } else if matches!(
+                            module_data.globals.get("owner"),
+                            Some(Value::Builtin(BuiltinFunction::Str))
+                        ) {
+                            if args.is_empty() || args.len() > 2 {
+                                return Err(RuntimeError::new(
+                                    "strip() descriptor requires a str argument",
+                                ));
+                            }
+                            let receiver_arg = args.remove(0);
+                            let text = match receiver_arg {
+                                Value::Str(value) => value,
+                                Value::Instance(instance) => self
+                                    .instance_backing_str(&instance)
+                                    .ok_or_else(|| RuntimeError::type_error("str receiver is invalid"))?,
+                                _ => return Err(RuntimeError::type_error("str receiver is invalid")),
+                            };
+                            (text, args.first())
+                        } else {
+                            return Err(RuntimeError::type_error("str receiver is invalid"));
+                        }
+                    }
                     _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
-                let stripped = match args.first() {
+                let stripped = match chars_arg {
                     None | Some(Value::None) => text.trim().to_string(),
                     Some(Value::Str(chars)) => {
                         if chars.is_empty() {
@@ -13196,6 +13293,9 @@ impl Vm {
             BuiltinFunction::OsStat => self.builtin_os_stat(args, kwargs),
             BuiltinFunction::OsLStat => self.builtin_os_lstat(args, kwargs),
             BuiltinFunction::OsMkdir => self.builtin_os_mkdir(args, kwargs),
+            BuiltinFunction::OsUmask => self.builtin_os_umask(args, kwargs),
+            BuiltinFunction::OsRename => self.builtin_os_rename(args, kwargs),
+            BuiltinFunction::OsStrError => self.builtin_os_strerror(args, kwargs),
             BuiltinFunction::OsChmod => self.builtin_os_chmod(args, kwargs),
             BuiltinFunction::OsRmdir => self.builtin_os_rmdir(args, kwargs),
             BuiltinFunction::OsUTime => self.builtin_os_utime(args, kwargs),
@@ -14429,6 +14529,7 @@ impl Vm {
             BuiltinFunction::SocketHtoNs => self.builtin_socket_htons(args, kwargs),
             BuiltinFunction::SocketHtoNl => self.builtin_socket_htonl(args, kwargs),
             BuiltinFunction::SocketObjectInit => self.builtin_socket_object_init(args, kwargs),
+            BuiltinFunction::SocketObjectBind => self.builtin_socket_object_bind(args, kwargs),
             BuiltinFunction::SocketObjectSetBlocking => {
                 self.builtin_socket_object_setblocking(args, kwargs)
             }

@@ -1,7 +1,8 @@
 use super::{
     BoundMethod, BuiltinFunction, ClassObject, DEQUE_BACKING_STORAGE_ATTR, HashMap, InstanceObject,
     InternalCallOutcome, IteratorKind, IteratorObject, MAPPING_PROXY_STORAGE_ATTR, ModuleObject,
-    NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values, and_values,
+    NativeCallResult, NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values,
+    and_values,
     binary_operator, bytes_like_from_value, class_attr_lookup, class_name_for_instance, compare_ge,
     compare_gt, compare_le, compare_lt, dict_remove_value, dict_set_value_checked, ensure_hashable,
     format_repr, is_missing_attribute_error, is_truthy, lshift_values, pow_values, rshift_values,
@@ -3289,10 +3290,29 @@ impl Vm {
 
     pub(super) fn builtin_collections_defaultdict(
         &mut self,
-        mut args: Vec<Value>,
+        args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() > 2 {
+        if args.len() > 2 {
+            return Err(RuntimeError::new(
+                "defaultdict() expects optional default_factory and optional iterable",
+            ));
+        }
+        let dict = match self.heap.alloc_dict(Vec::new()) {
+            Value::Dict(obj) => obj,
+            _ => unreachable!(),
+        };
+        self.initialize_defaultdict_storage(dict.clone(), args, kwargs)?;
+        Ok(Value::Dict(dict))
+    }
+
+    pub(super) fn initialize_defaultdict_storage(
+        &mut self,
+        dict: ObjRef,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<(), RuntimeError> {
+        if args.len() > 2 {
             return Err(RuntimeError::new(
                 "defaultdict() expects optional default_factory and optional iterable",
             ));
@@ -3305,41 +3325,13 @@ impl Vm {
         if !matches!(default_factory, Value::None) && !self.is_callable_value(&default_factory) {
             return Err(RuntimeError::new("default_factory must be callable"));
         }
-        let dict = match self.heap.alloc_dict(Vec::new()) {
-            Value::Dict(obj) => obj,
-            _ => unreachable!(),
-        };
-        if let Some(source) = args.into_iter().next() {
-            match source {
-                Value::Dict(obj) => {
-                    if let Object::Dict(entries) = &*obj.kind() {
-                        for (key, value) in entries {
-                            dict_set_value_checked(&dict, key.clone(), value.clone())?;
-                        }
-                    }
-                }
-                Value::List(obj) => {
-                    if let Object::List(items) = &*obj.kind() {
-                        for item in items {
-                            if let Value::Tuple(tuple_obj) = item
-                                && let Object::Tuple(parts) = &*tuple_obj.kind()
-                                && parts.len() == 2
-                            {
-                                dict_set_value_checked(&dict, parts[0].clone(), parts[1].clone())?;
-                                continue;
-                            }
-                            return Err(RuntimeError::new(
-                                "defaultdict() iterable items must be key/value pairs",
-                            ));
-                        }
-                    }
-                }
-                _ => return Err(RuntimeError::new("defaultdict() unsupported initializer")),
-            }
-        }
         self.defaultdict_factories
             .insert(dict.id(), default_factory);
-        Ok(Value::Dict(dict))
+        match self.call_native_method(NativeMethodKind::DictUpdateMethod, dict, args, kwargs)? {
+            NativeCallResult::Value(_) => Ok(()),
+            NativeCallResult::PropagatedException => Err(self
+                .runtime_error_from_active_exception("defaultdict() update failed")),
+        }
     }
 
     pub(super) fn builtin_collections_ordereddict(
@@ -4842,12 +4834,10 @@ impl Vm {
         let Some(Value::Class(class_ref)) = args.first() else {
             return Ok(Value::Bool(false));
         };
-        if let Some(abstract_methods) =
-            self.optional_internal_getattr_value(
-                Value::Class(class_ref.clone()),
-                "__abstractmethods__",
-            )?
-            && self.truthy_from_value(&abstract_methods)?
+        if let Some(abstract_methods) = self.optional_internal_getattr_value(
+            Value::Class(class_ref.clone()),
+            "__abstractmethods__",
+        )? && self.truthy_from_value(&abstract_methods)?
         {
             return Ok(Value::Bool(true));
         }

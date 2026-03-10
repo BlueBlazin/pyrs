@@ -16,6 +16,7 @@ use super::{
     Value, Vm, Write, add_values, bigint_from_bytes, bytes_like_from_value,
     call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, compare_ge, compare_gt,
     compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
+    ensure_hashable,
     dict_set_value_checked, div_values, floor_div_values, format_float_hex, format_repr,
     format_value, frame_cell_value, invert_value, is_missing_attribute_error, is_os_error_family,
     is_runtime_type_name_marker, is_truthy, matmul_values, mod_values, mul_values, neg_value,
@@ -5726,6 +5727,9 @@ impl Vm {
         let object = object.unwrap_or_else(|| Value::Str(String::new()));
         if encoding.is_none() && errors.is_none() {
             if let Value::Exception(exception) = &object {
+                if let Some(rendered) = self.exception_str_override(exception)? {
+                    return Ok(Value::Str(rendered));
+                }
                 return Ok(Value::Str(self.exception_str_value(exception)));
             }
             let is_proxy = Self::cpython_proxy_raw_ptr_from_value(&object).is_some();
@@ -5942,6 +5946,214 @@ impl Vm {
                     Ok(out)
                 }
             },
+        }
+    }
+
+    fn exception_explicit_class(&self, exception: &ExceptionObject) -> Option<ObjRef> {
+        match exception.attrs.borrow().get("__class__") {
+            Some(Value::Class(class_ref)) => Some(class_ref.clone()),
+            _ => None,
+        }
+    }
+
+    fn load_attr_exception_data_descriptor(
+        &mut self,
+        exception: &ExceptionObject,
+        attr_name: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Some(class_ref) = self.exception_explicit_class(exception) else {
+            return Ok(None);
+        };
+        let Some((_owner, attr)) =
+            self.lookup_instance_class_attr_owner_and_value(&class_ref, attr_name)
+        else {
+            return Ok(None);
+        };
+        if let Value::Instance(descriptor_instance) = &attr
+            && let Some((fget, _fset, _fdel, _doc, _explicit_name)) =
+                self.property_descriptor_parts(descriptor_instance)
+        {
+            if matches!(fget, Value::None) {
+                return Err(RuntimeError::attribute_error("unreadable attribute"));
+            }
+            return match self.call_internal_preserving_caller(
+                fget,
+                vec![Value::Exception(Box::new(exception.clone()))],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(value) => Ok(Some(value)),
+                InternalCallOutcome::CallerExceptionHandled => Err(
+                    self.runtime_error_from_active_exception("exception attribute lookup failed"),
+                ),
+            };
+        }
+        let (getter, setter, deleter) = self.descriptor_hooks(&attr)?;
+        if setter.is_none() && deleter.is_none() {
+            return Ok(None);
+        }
+        let Some(getter) = getter else {
+            return Ok(Some(attr));
+        };
+        match self.call_internal_preserving_caller(
+            getter,
+            vec![
+                Value::Exception(Box::new(exception.clone())),
+                Value::Class(class_ref),
+            ],
+            HashMap::new(),
+        )? {
+            InternalCallOutcome::Value(value) => Ok(Some(value)),
+            InternalCallOutcome::CallerExceptionHandled => Err(
+                self.runtime_error_from_active_exception("exception attribute lookup failed"),
+            ),
+        }
+    }
+
+    fn exception_str_override(
+        &mut self,
+        exception: &ExceptionObject,
+    ) -> Result<Option<String>, RuntimeError> {
+        let Some(class_ref) = self.exception_explicit_class(exception) else {
+            return Ok(None);
+        };
+        let Some((owner, attr)) =
+            self.lookup_instance_class_attr_owner_and_value(&class_ref, "__str__")
+        else {
+            return Ok(None);
+        };
+        let owner_kind = owner.kind();
+        let owner_name = match &*owner_kind {
+            Object::Class(class_data) => class_data.name.clone(),
+            _ => return Ok(None),
+        };
+        if owner_name == "BaseException" {
+            return Ok(None);
+        }
+        let receiver = Value::Exception(Box::new(exception.clone()));
+        let outcome = match attr {
+            Value::Function(_)
+            | Value::Builtin(_)
+            | Value::BoundMethod(_)
+            | Value::Instance(_)
+                if self.is_callable_value(&attr) =>
+            {
+                self.call_internal(attr, vec![receiver], HashMap::new())?
+            }
+            _ => return Ok(None),
+        };
+        match outcome {
+            InternalCallOutcome::Value(Value::Str(text)) => Ok(Some(text)),
+            InternalCallOutcome::Value(_) => Err(RuntimeError::new("__str__ returned non-string")),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("str() failed"))
+            }
+        }
+    }
+
+    pub(super) fn load_attr_exception_value(
+        &mut self,
+        exception: &ExceptionObject,
+        name: &str,
+    ) -> Result<Value, RuntimeError> {
+        if name == "__class__" {
+            return Ok(self
+                .exception_explicit_class(exception)
+                .map(Value::Class)
+                .unwrap_or_else(|| Value::ExceptionType(exception.name.clone())));
+        }
+        if let Some(value) = self.load_attr_exception_data_descriptor(exception, name)? {
+            return Ok(value);
+        }
+        match name {
+            "__reduce_ex__" | "__reduce__" => {
+                Ok(self.alloc_reduce_ex_bound_method(Value::Exception(Box::new(
+                    exception.clone(),
+                ))))
+            }
+            "with_traceback" => {
+                let wrapper = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__exception_with_traceback__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+                    module_data.globals.insert(
+                        "exception".to_string(),
+                        Value::Exception(Box::new(exception.clone())),
+                    );
+                }
+                Ok(self.alloc_native_bound_method(
+                    NativeMethodKind::ExceptionWithTraceback,
+                    wrapper,
+                ))
+            }
+            "add_note" => {
+                let wrapper = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__exception_add_note__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+                    module_data.globals.insert(
+                        "exception".to_string(),
+                        Value::Exception(Box::new(exception.clone())),
+                    );
+                }
+                Ok(self.alloc_native_bound_method(
+                    NativeMethodKind::ExceptionAddNote,
+                    wrapper,
+                ))
+            }
+            "__notes__" => exception
+                .attrs
+                .borrow()
+                .get("__notes__")
+                .cloned()
+                .ok_or_else(|| {
+                    RuntimeError::attribute_error(format!(
+                        "'{}' object has no attribute '__notes__'",
+                        exception.name
+                    ))
+                }),
+            "__cause__" => Ok(exception
+                .cause
+                .as_ref()
+                .map(|cause| Value::Exception(Box::new((**cause).clone())))
+                .unwrap_or(Value::None)),
+            "__context__" => Ok(exception
+                .context
+                .as_ref()
+                .map(|context| Value::Exception(Box::new((**context).clone())))
+                .unwrap_or(Value::None)),
+            "__traceback__" => {
+                if let Some(cached) = exception.attrs.borrow().get("__traceback__").cloned() {
+                    Ok(cached)
+                } else {
+                    let traceback = self.traceback_value_from_frames(&exception.traceback_frames);
+                    exception
+                        .attrs
+                        .borrow_mut()
+                        .insert("__traceback__".to_string(), traceback.clone());
+                    Ok(traceback)
+                }
+            }
+            "__suppress_context__" => Ok(Value::Bool(exception.suppress_context)),
+            "exceptions" => {
+                let members = exception
+                    .exceptions
+                    .iter()
+                    .cloned()
+                    .map(|member| Value::Exception(Box::new(member)))
+                    .collect::<Vec<_>>();
+                Ok(self.heap.alloc_tuple(members))
+            }
+            _ => exception.attrs.borrow().get(name).cloned().ok_or_else(|| {
+                RuntimeError::attribute_error(format!("exception has no attribute '{}'", name))
+            }),
         }
     }
 
@@ -8326,6 +8538,12 @@ impl Vm {
             return class.clone();
         }
         let class = self.alloc_synthetic_class("NoneType");
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.attrs.insert(
+                "__doc__".to_string(),
+                Value::Str("The type of the None singleton.".to_string()),
+            );
+        }
         if let Some(module) = self.modules.get("builtins").cloned()
             && let Object::Module(module_data) = &mut *module.kind_mut()
         {
@@ -13792,6 +14010,20 @@ impl Vm {
             }
             return Ok(false);
         }
+        if let Value::Set(obj) | Value::FrozenSet(obj) = &container {
+            let values = match &*obj.kind() {
+                Object::Set(values) | Object::FrozenSet(values) => values.to_vec(),
+                _ => return Err(RuntimeError::type_error("unsupported operand type for in")),
+            };
+            ensure_hashable(&needle)?;
+            for item in values {
+                let equals = self.compare_eq_runtime(item, needle.clone())?;
+                if self.truthy_from_value(&equals)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
         if let Value::Dict(dict) = &container {
             return self.dict_contains_key_checked_runtime(dict, &needle);
         }
@@ -13818,6 +14050,38 @@ impl Vm {
         {
             for item in values {
                 let equals = self.compare_eq_runtime(item.clone(), needle.clone())?;
+                if self.truthy_from_value(&equals)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+        if let Value::Instance(instance) = &container
+            && let Some(backing_set) = self.instance_backing_set(instance)
+        {
+            let values = match &*backing_set.kind() {
+                Object::Set(values) => values.to_vec(),
+                _ => return Err(RuntimeError::type_error("unsupported operand type for in")),
+            };
+            ensure_hashable(&needle)?;
+            for item in values {
+                let equals = self.compare_eq_runtime(item, needle.clone())?;
+                if self.truthy_from_value(&equals)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+        if let Value::Instance(instance) = &container
+            && let Some(backing_frozenset) = self.instance_backing_frozenset(instance)
+        {
+            let values = match &*backing_frozenset.kind() {
+                Object::FrozenSet(values) => values.to_vec(),
+                _ => return Err(RuntimeError::type_error("unsupported operand type for in")),
+            };
+            ensure_hashable(&needle)?;
+            for item in values {
+                let equals = self.compare_eq_runtime(item, needle.clone())?;
                 if self.truthy_from_value(&equals)? {
                     return Ok(true);
                 }
@@ -14954,11 +15218,37 @@ impl Vm {
         )
     }
 
+    fn str_subclass_overrides_richcompare(&self, class: &ObjRef) -> bool {
+        for entry in self.class_mro_entries(class) {
+            let entry_kind = entry.kind();
+            let Object::Class(class_data) = &*entry_kind else {
+                continue;
+            };
+            if class_data.name == "str" {
+                return false;
+            }
+            if class_data.attrs.contains_key("__eq__") || class_data.attrs.contains_key("__ne__") {
+                return true;
+            }
+        }
+        false
+    }
+
     pub(super) fn compare_eq_via_str_backing(&self, left: &Value, right: &Value) -> Option<bool> {
         let str_like = |value: &Value| -> Option<String> {
             match value {
                 Value::Str(text) => Some(text.clone()),
-                Value::Instance(instance) => self.instance_backing_str(instance),
+                Value::Instance(instance) => {
+                    let backing = self.instance_backing_str(instance)?;
+                    let instance_kind = instance.kind();
+                    let Object::Instance(instance_data) = &*instance_kind else {
+                        return None;
+                    };
+                    if self.str_subclass_overrides_richcompare(&instance_data.class) {
+                        return None;
+                    }
+                    Some(backing)
+                }
                 _ => None,
             }
         };
@@ -18544,90 +18834,7 @@ functions outside a stub module should always be followed by an implementation t
                     name
                 ))),
             },
-            Value::Exception(exception) => match name.as_str() {
-                "__reduce_ex__" | "__reduce__" => {
-                    Ok(self.alloc_reduce_ex_bound_method(Value::Exception(exception.clone())))
-                }
-                "with_traceback" => {
-                    let wrapper = match self.heap.alloc_module(ModuleObject::new(
-                        "__exception_with_traceback__".to_string(),
-                    )) {
-                        Value::Module(obj) => obj,
-                        _ => unreachable!(),
-                    };
-                    if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
-                        module_data
-                            .globals
-                            .insert("exception".to_string(), Value::Exception(exception.clone()));
-                    }
-                    Ok(self.alloc_native_bound_method(
-                        NativeMethodKind::ExceptionWithTraceback,
-                        wrapper,
-                    ))
-                }
-                "add_note" => {
-                    let wrapper = match self
-                        .heap
-                        .alloc_module(ModuleObject::new("__exception_add_note__".to_string()))
-                    {
-                        Value::Module(obj) => obj,
-                        _ => unreachable!(),
-                    };
-                    if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
-                        module_data
-                            .globals
-                            .insert("exception".to_string(), Value::Exception(exception.clone()));
-                    }
-                    Ok(self.alloc_native_bound_method(NativeMethodKind::ExceptionAddNote, wrapper))
-                }
-                "__notes__" => exception
-                    .attrs
-                    .borrow()
-                    .get("__notes__")
-                    .cloned()
-                    .ok_or_else(|| {
-                        RuntimeError::attribute_error(format!(
-                            "'{}' object has no attribute '__notes__'",
-                            exception.name
-                        ))
-                    }),
-                "__cause__" => Ok(exception
-                    .cause
-                    .as_ref()
-                    .map(|cause| Value::Exception(Box::new((**cause).clone())))
-                    .unwrap_or(Value::None)),
-                "__context__" => Ok(exception
-                    .context
-                    .as_ref()
-                    .map(|context| Value::Exception(Box::new((**context).clone())))
-                    .unwrap_or(Value::None)),
-                "__traceback__" => {
-                    if let Some(cached) = exception.attrs.borrow().get("__traceback__").cloned() {
-                        Ok(cached)
-                    } else {
-                        let traceback =
-                            self.traceback_value_from_frames(&exception.traceback_frames);
-                        exception
-                            .attrs
-                            .borrow_mut()
-                            .insert("__traceback__".to_string(), traceback.clone());
-                        Ok(traceback)
-                    }
-                }
-                "__suppress_context__" => Ok(Value::Bool(exception.suppress_context)),
-                "exceptions" => {
-                    let members = exception
-                        .exceptions
-                        .iter()
-                        .cloned()
-                        .map(|member| Value::Exception(Box::new(member)))
-                        .collect::<Vec<_>>();
-                    Ok(self.heap.alloc_tuple(members))
-                }
-                _ => exception.attrs.borrow().get(&name).cloned().ok_or_else(|| {
-                    RuntimeError::attribute_error(format!("exception has no attribute '{}'", name))
-                }),
-            },
+            Value::Exception(exception) => self.load_attr_exception_value(&exception, &name),
         };
 
         match looked_up {

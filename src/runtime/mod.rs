@@ -539,6 +539,8 @@ pub enum NativeMethodKind {
     DictMoveToEnd,
     DictCopy,
     DictInit,
+    DefaultDictInit,
+    DefaultDictMissing,
     ContextVarGetMethod,
     ContextVarSetMethod,
     ContextVarResetMethod,
@@ -5375,6 +5377,9 @@ pub enum BuiltinFunction {
     OsStat,
     OsLStat,
     OsMkdir,
+    OsUmask,
+    OsRename,
+    OsStrError,
     OsChmod,
     OsRmdir,
     OsUTime,
@@ -6133,6 +6138,7 @@ pub enum BuiltinFunction {
     SocketHtoNs,
     SocketHtoNl,
     SocketObjectInit,
+    SocketObjectBind,
     SocketObjectSetBlocking,
     SocketObjectRecv,
     SocketObjectSend,
@@ -9135,6 +9141,9 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::OsStat
             | BuiltinFunction::OsLStat
             | BuiltinFunction::OsMkdir
+            | BuiltinFunction::OsUmask
+            | BuiltinFunction::OsRename
+            | BuiltinFunction::OsStrError
             | BuiltinFunction::OsChmod
             | BuiltinFunction::OsRmdir
             | BuiltinFunction::OsUTime
@@ -9597,6 +9606,7 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::SocketHtoNs
             | BuiltinFunction::SocketHtoNl
             | BuiltinFunction::SocketObjectInit
+            | BuiltinFunction::SocketObjectBind
             | BuiltinFunction::SocketObjectSetBlocking
             | BuiltinFunction::SocketObjectRecv
             | BuiltinFunction::SocketObjectSend
@@ -11859,6 +11869,12 @@ pub fn format_value(value: &Value) -> String {
                         }
                         NativeMethodKind::DictCopy => "<bound method dict.copy>".to_string(),
                         NativeMethodKind::DictInit => "<bound method dict.__init__>".to_string(),
+                        NativeMethodKind::DefaultDictInit => {
+                            "<bound method defaultdict.__init__>".to_string()
+                        }
+                        NativeMethodKind::DefaultDictMissing => {
+                            "<bound method defaultdict.__missing__>".to_string()
+                        }
                         NativeMethodKind::ContextVarGetMethod => {
                             "<bound method ContextVar.get>".to_string()
                         }

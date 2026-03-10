@@ -16,6 +16,8 @@ use super::{collect_env_entries, collect_process_argv, is_missing_attribute_erro
 use super::seconds_to_system_time;
 use crate::unicode::canonical_codepoint_for_internal_char;
 #[cfg(unix)]
+use std::ffi::{CStr, CString};
+#[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -1616,6 +1618,60 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_os_umask(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("umask() expects one mask argument"));
+        }
+        let mask = value_to_int(args.remove(0))?;
+        #[cfg(unix)]
+        {
+            let mask =
+                u32::try_from(mask).map_err(|_| RuntimeError::new("umask() mask out of range"))?;
+            // SAFETY: libc::umask mutates only process umask state and accepts any mode_t mask.
+            let previous = unsafe { libc::umask(mask as libc::mode_t) };
+            Ok(Value::Int(previous as i64))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = mask;
+            Err(RuntimeError::new(
+                "umask() is not supported on this platform",
+            ))
+        }
+    }
+
+    pub(super) fn builtin_os_rename(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("rename() expects src and dst"));
+        }
+        let (src, _) = self.path_arg_to_pathbuf_and_type(args[0].clone())?;
+        let (dst, _) = self.path_arg_to_pathbuf_and_type(args[1].clone())?;
+        fs::rename(src, dst).map_err(|err| Self::os_error_from_io("rename failed", err))?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_os_strerror(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("strerror() expects one errno argument"));
+        }
+        let errno = value_to_int(args.remove(0))?;
+        let errno =
+            i32::try_from(errno).map_err(|_| RuntimeError::new("strerror() errno out of range"))?;
+        Ok(Value::Str(std::io::Error::from_raw_os_error(errno).to_string()))
+    }
+
     pub(super) fn builtin_os_chmod(
         &mut self,
         mut args: Vec<Value>,
@@ -1878,15 +1934,18 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new("os.ScandirIterator missing"))?;
 
         let mut rows = Vec::new();
-        let entries =
-            fs::read_dir(&path).map_err(|err| Self::os_error_from_io("scandir failed", err))?;
+        let path_buf = PathBuf::from(&path);
+        let entries = fs::read_dir(&path_buf)
+            .map_err(|err| Self::os_error_from_io_path("scandir failed", &path_buf, err))?;
         for entry in entries {
-            let entry = entry.map_err(|err| Self::os_error_from_io("scandir failed", err))?;
+            let entry = entry
+                .map_err(|err| Self::os_error_from_io_path("scandir failed", &path_buf, err))?;
+            let entry_path = entry.path();
             let file_type = entry
                 .file_type()
-                .map_err(|err| Self::os_error_from_io("scandir failed", err))?;
+                .map_err(|err| Self::os_error_from_io_path("scandir failed", &entry_path, err))?;
             let name = entry.file_name().to_string_lossy().to_string();
-            let full_path = entry.path().to_string_lossy().to_string();
+            let full_path = entry_path.to_string_lossy().to_string();
             let direntry = self.alloc_instance_for_class(&direntry_class);
             if let Object::Instance(instance_data) = &mut *direntry.kind_mut() {
                 instance_data
@@ -2399,8 +2458,32 @@ impl Vm {
             return Err(RuntimeError::new("fspath() expects one argument"));
         }
         let value = args[0].clone();
-        match value {
+        match &value {
             Value::Str(_) | Value::Bytes(_) => Ok(value),
+            Value::Instance(instance) => {
+                if let Some(path) = self.instance_backing_str(instance) {
+                    return Ok(Value::Str(path));
+                }
+                if let Some(Value::Bytes(bytes)) = self.instance_backing_bytes_like(instance) {
+                    return Ok(Value::Bytes(bytes));
+                }
+                let Some(fspath) = self.lookup_bound_special_method(&value, "__fspath__")? else {
+                    return Err(RuntimeError::new(
+                        "TypeError: expected str, bytes or os.PathLike object",
+                    ));
+                };
+                match self.call_internal(fspath, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(path) => match path {
+                        Value::Str(_) | Value::Bytes(_) => Ok(path),
+                        _ => Err(RuntimeError::new(
+                            "TypeError: __fspath__() must return str or bytes",
+                        )),
+                    },
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        Err(self.runtime_error_from_active_exception("__fspath__() failed"))
+                    }
+                }
+            }
             _ => {
                 let Some(fspath) = self.lookup_bound_special_method(&value, "__fspath__")? else {
                     return Err(RuntimeError::new(
@@ -4199,6 +4282,62 @@ impl Vm {
         Ok(out)
     }
 
+    #[cfg(unix)]
+    fn pwd_string_field(ptr: *const libc::c_char) -> String {
+        if ptr.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(ptr) }
+                .to_string_lossy()
+                .into_owned()
+        }
+    }
+
+    #[cfg(unix)]
+    fn pwd_entry_from_libc(
+        &self,
+        entry: &libc::passwd,
+    ) -> (String, String, i64, i64, String, String, String) {
+        (
+            Self::pwd_string_field(entry.pw_name),
+            Self::pwd_string_field(entry.pw_passwd),
+            i64::from(entry.pw_uid),
+            i64::from(entry.pw_gid),
+            Self::pwd_string_field(entry.pw_gecos),
+            Self::pwd_string_field(entry.pw_dir),
+            Self::pwd_string_field(entry.pw_shell),
+        )
+    }
+
+    #[cfg(unix)]
+    fn pwd_lookup_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<(String, String, i64, i64, String, String, String)>, RuntimeError> {
+        let c_name = CString::new(name)
+            .map_err(|_| RuntimeError::value_error("embedded null character"))?;
+        let entry = unsafe { libc::getpwnam(c_name.as_ptr()) };
+        if entry.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(self.pwd_entry_from_libc(unsafe { &*entry })))
+    }
+
+    #[cfg(unix)]
+    fn pwd_lookup_by_uid(
+        &self,
+        uid: i64,
+    ) -> Option<(String, String, i64, i64, String, String, String)> {
+        let Ok(raw_uid) = u32::try_from(uid) else {
+            return None;
+        };
+        let entry = unsafe { libc::getpwuid(raw_uid) };
+        if entry.is_null() {
+            return None;
+        }
+        Some(self.pwd_entry_from_libc(unsafe { &*entry }))
+    }
+
     fn pwd_struct_from_tuple(
         &mut self,
         class: &ObjRef,
@@ -4287,6 +4426,10 @@ impl Vm {
         let class = self
             .pwd_struct_passwd_class()
             .ok_or_else(|| RuntimeError::new("pwd.struct_passwd missing"))?;
+        #[cfg(unix)]
+        if let Some(entry) = self.pwd_lookup_by_name(name)? {
+            return self.pwd_struct_from_tuple(&class, entry);
+        }
         for entry in self.pwd_entries()? {
             if entry.0 == *name {
                 return self.pwd_struct_from_tuple(&class, entry);
@@ -4326,6 +4469,10 @@ impl Vm {
         let class = self
             .pwd_struct_passwd_class()
             .ok_or_else(|| RuntimeError::new("pwd.struct_passwd missing"))?;
+        #[cfg(unix)]
+        if let Some(entry) = self.pwd_lookup_by_uid(uid) {
+            return self.pwd_struct_from_tuple(&class, entry);
+        }
         for entry in self.pwd_entries()? {
             if entry.2 == uid {
                 return self.pwd_struct_from_tuple(&class, entry);

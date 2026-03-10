@@ -3019,6 +3019,81 @@ pub fn compile_expression_with_filename(
     Ok(compiler.finish_expression())
 }
 
+fn compile_clean_docstring(doc: &str) -> String {
+    let mut expanded = String::with_capacity(doc.len());
+    let mut column = 0usize;
+    for ch in doc.chars() {
+        match ch {
+            '\t' => {
+                let spaces = 8 - (column % 8);
+                for _ in 0..spaces {
+                    expanded.push(' ');
+                }
+                column += spaces;
+            }
+            '\n' => {
+                expanded.push('\n');
+                column = 0;
+            }
+            _ => {
+                expanded.push(ch);
+                column += 1;
+            }
+        }
+    }
+
+    let mut lines = expanded
+        .split('\n')
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    let mut margin = usize::MAX;
+    for line in lines.iter().skip(1) {
+        let content_len = line.trim_start_matches(' ').len();
+        if content_len == 0 {
+            continue;
+        }
+        let indent = line.len().saturating_sub(content_len);
+        margin = margin.min(indent);
+    }
+    if margin == usize::MAX {
+        margin = 0;
+    }
+    if let Some(first) = lines.first_mut() {
+        *first = first.trim_start_matches(' ').to_string();
+    }
+    if margin > 0 {
+        for line in lines.iter_mut().skip(1) {
+            let leading_spaces = line.len().saturating_sub(line.trim_start_matches(' ').len());
+            let strip = leading_spaces.min(margin);
+            *line = line[strip..].to_string();
+        }
+    }
+    lines.join("\n")
+}
+
+fn promote_docstring_constant(code: &mut CodeObject, doc_const_index: u32) {
+    if doc_const_index == 0 {
+        return;
+    }
+    let doc_const_index = doc_const_index as usize;
+    code.constants.swap(0, doc_const_index);
+    for instruction in &mut code.instructions {
+        if instruction.opcode != Opcode::LoadConst {
+            continue;
+        }
+        let Some(arg) = instruction.arg else {
+            continue;
+        };
+        instruction.arg = Some(if arg == 0 {
+            doc_const_index as u32
+        } else if arg as usize == doc_const_index {
+            0
+        } else {
+            arg
+        });
+    }
+}
+
 /// Stateful code generator over one scope/code-object emission pass.
 struct Compiler {
     code: CodeObject,
@@ -3093,10 +3168,24 @@ impl Compiler {
         // CPython 3.14 defaults to lazy annotation semantics. Keep `__future__`
         // validation for syntax/error parity, but compile annotations in deferred form.
         self.future_annotations = true;
+        let mut body_start = 0usize;
         if body_has_ann_assign(&module.body) {
             self.init_annotations()?;
         }
-        for stmt in &module.body {
+        if let Some(Stmt {
+            node:
+                StmtKind::Expr(Expr {
+                    node: ExprKind::Constant(Constant::Str(doc)),
+                    ..
+                }),
+            ..
+        }) = module.body.first()
+        {
+            self.emit_const(Value::Str(compile_clean_docstring(doc)));
+            self.emit_store_name_scoped("__doc__")?;
+            body_start = 1;
+        }
+        for stmt in module.body.iter().skip(body_start) {
             self.compile_stmt(stmt)?;
         }
         Ok(())
@@ -4177,6 +4266,24 @@ impl Compiler {
         compiler.code.kwarg = kwarg
             .as_ref()
             .map(|param| compiler.mangled_name(&param.name));
+        let mut body_start = 0usize;
+        let mut doc_const_index = None;
+        if let Some(Stmt {
+            node:
+                StmtKind::Expr(Expr {
+                    node: ExprKind::Constant(Constant::Str(doc)),
+                    ..
+                }),
+            ..
+        }) = body.first()
+        {
+            doc_const_index = Some(
+                compiler
+                    .code
+                    .add_const(Value::Str(compile_clean_docstring(doc))),
+            );
+            body_start = 1;
+        }
         let has_yield = body_has_yield(body);
         compiler.code.is_generator = has_yield || is_async;
         compiler.code.is_coroutine = is_async && !has_yield;
@@ -4184,10 +4291,14 @@ impl Compiler {
         if body_has_ann_assign(body) {
             compiler.init_annotations()?;
         }
-        for stmt in body {
+        for stmt in body.iter().skip(body_start) {
             compiler.compile_stmt(stmt)?;
         }
-        Ok(compiler.finish())
+        let mut code = compiler.finish();
+        if let Some(doc_const_index) = doc_const_index {
+            promote_docstring_constant(&mut code, doc_const_index);
+        }
+        Ok(code)
     }
 
     fn emit_function_with_defaults(
@@ -4616,7 +4727,7 @@ impl Compiler {
             ..
         }) = body.first()
         {
-            compiler.emit_const(Value::Str(doc.clone()));
+            compiler.emit_const(Value::Str(compile_clean_docstring(doc)));
             compiler.emit_store_name_scoped("__doc__")?;
             body_start = 1;
         }

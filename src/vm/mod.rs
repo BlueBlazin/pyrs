@@ -29,7 +29,7 @@ mod wasm_libc_shim;
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{CString, OsString, c_void};
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -1252,6 +1252,7 @@ pub struct Vm {
     extension_pinned_capsule_names: HashMap<usize, CString>,
     extension_cpython_ptr_values: HashMap<usize, Value>,
     extension_cpython_ptr_by_object_id: HashMap<u64, usize>,
+    extension_structseq_classes: HashMap<usize, ObjRef>,
     capi_object_registry: CapiObjectRegistry,
     extension_module_def_registry: HashMap<u64, usize>,
     extension_module_state_registry: HashMap<u64, ExtensionModuleStateEntry>,
@@ -1558,6 +1559,7 @@ impl Vm {
             extension_pinned_capsule_names: HashMap::new(),
             extension_cpython_ptr_values: HashMap::new(),
             extension_cpython_ptr_by_object_id: HashMap::new(),
+            extension_structseq_classes: HashMap::new(),
             capi_object_registry: CapiObjectRegistry::default(),
             extension_module_def_registry: HashMap::new(),
             extension_module_state_registry: HashMap::new(),
@@ -9932,6 +9934,10 @@ impl SreMarkState {
         self.slots.get(index).copied().flatten()
     }
 
+    fn snapshot_slots(&self) -> Vec<Option<usize>> {
+        self.slots.clone()
+    }
+
     fn set(&mut self, index: usize, value: Option<usize>) {
         if index >= self.slots.len() {
             let old_len = self.slots.len();
@@ -9947,6 +9953,457 @@ impl SreMarkState {
         self.undo.push(SreMarkUndo::Set { index, old });
         self.slots[index] = value;
     }
+
+    fn restore_slots(&mut self, snapshot: &[Option<usize>]) {
+        self.slots.clear();
+        self.slots.extend_from_slice(snapshot);
+        self.undo.clear();
+    }
+}
+
+fn sre_record_end_state(
+    results: &mut BTreeMap<usize, Vec<Option<usize>>>,
+    end: usize,
+    marks: &SreMarkState,
+) {
+    results
+        .entry(end)
+        .or_insert_with(|| marks.snapshot_slots());
+}
+
+fn sre_collect_program_end_states<T: SreText>(
+    code: &[i64],
+    pc_start: usize,
+    pc_limit: usize,
+    text: &T,
+    pos: usize,
+    marks: &mut SreMarkState,
+    depth: usize,
+    results: &mut BTreeMap<usize, Vec<Option<usize>>>,
+) {
+    if depth > 512 {
+        return;
+    }
+    let mut pc = pc_start;
+    let mut cursor = pos;
+    while pc < pc_limit {
+        let Some(&opcode) = code.get(pc) else {
+            return;
+        };
+        match opcode {
+            SRE_OP_SUCCESS => {
+                sre_record_end_state(results, cursor, marks);
+                return;
+            }
+            SRE_OP_FAILURE => return,
+            // These opcodes terminate the repeated unit in REPEAT/MAX_UNTIL and
+            // REPEAT/MIN_UNTIL programs.
+            SRE_OP_MAX_UNTIL | SRE_OP_MIN_UNTIL => {
+                sre_record_end_state(results, cursor, marks);
+                return;
+            }
+            SRE_OP_INFO => {
+                let Some(skip) = sre_read_usize(code, pc + 1) else {
+                    return;
+                };
+                pc = pc + 1 + skip;
+            }
+            SRE_OP_AT => {
+                let Some(&at) = code.get(pc + 1) else {
+                    return;
+                };
+                if !sre_at_matches(at, text, cursor) {
+                    return;
+                }
+                pc += 2;
+            }
+            SRE_OP_LITERAL
+            | SRE_OP_LITERAL_IGNORE
+            | SRE_OP_LITERAL_LOC_IGNORE
+            | SRE_OP_LITERAL_UNI_IGNORE => {
+                let Some(expected) = sre_read_u32(code, pc + 1).and_then(char::from_u32) else {
+                    return;
+                };
+                let Some(current) = text.char_at(cursor) else {
+                    return;
+                };
+                let matched = matches!(
+                    opcode,
+                    SRE_OP_LITERAL_IGNORE | SRE_OP_LITERAL_LOC_IGNORE | SRE_OP_LITERAL_UNI_IGNORE
+                )
+                .then(|| sre_char_equal_ignore_case(current, expected))
+                .unwrap_or(current == expected);
+                if !matched {
+                    return;
+                }
+                cursor += 1;
+                pc += 2;
+            }
+            SRE_OP_NOT_LITERAL
+            | SRE_OP_NOT_LITERAL_IGNORE
+            | SRE_OP_NOT_LITERAL_LOC_IGNORE
+            | SRE_OP_NOT_LITERAL_UNI_IGNORE => {
+                let Some(expected) = sre_read_u32(code, pc + 1).and_then(char::from_u32) else {
+                    return;
+                };
+                let Some(current) = text.char_at(cursor) else {
+                    return;
+                };
+                let equal = matches!(
+                    opcode,
+                    SRE_OP_NOT_LITERAL_IGNORE
+                        | SRE_OP_NOT_LITERAL_LOC_IGNORE
+                        | SRE_OP_NOT_LITERAL_UNI_IGNORE
+                )
+                .then(|| sre_char_equal_ignore_case(current, expected))
+                .unwrap_or(current == expected);
+                if equal {
+                    return;
+                }
+                cursor += 1;
+                pc += 2;
+            }
+            SRE_OP_ANY => {
+                let Some(current) = text.char_at(cursor) else {
+                    return;
+                };
+                if current == '\n' {
+                    return;
+                }
+                cursor += 1;
+                pc += 1;
+            }
+            SRE_OP_ANY_ALL => {
+                if text.char_at(cursor).is_none() {
+                    return;
+                }
+                cursor += 1;
+                pc += 1;
+            }
+            SRE_OP_IN | SRE_OP_IN_IGNORE | SRE_OP_IN_LOC_IGNORE | SRE_OP_IN_UNI_IGNORE => {
+                let Some(skip) = sre_read_usize(code, pc + 1) else {
+                    return;
+                };
+                let class_start = pc + 2;
+                let class_end = pc + 1 + skip;
+                let Some(current) = text.char_at(cursor) else {
+                    return;
+                };
+                let Some(matched) = sre_class_matches(code, class_start, class_end, opcode, current)
+                else {
+                    return;
+                };
+                if !matched {
+                    return;
+                }
+                cursor += 1;
+                pc = class_end;
+            }
+            SRE_OP_MARK => {
+                let Some(mark_index) = sre_read_usize(code, pc + 1) else {
+                    return;
+                };
+                marks.set(mark_index, Some(cursor));
+                pc += 2;
+            }
+            SRE_OP_GROUPREF
+            | SRE_OP_GROUPREF_IGNORE
+            | SRE_OP_GROUPREF_LOC_IGNORE
+            | SRE_OP_GROUPREF_UNI_IGNORE => {
+                let Some(group) = sre_read_usize(code, pc + 1) else {
+                    return;
+                };
+                let ignore_case = matches!(
+                    opcode,
+                    SRE_OP_GROUPREF_IGNORE
+                        | SRE_OP_GROUPREF_LOC_IGNORE
+                        | SRE_OP_GROUPREF_UNI_IGNORE
+                );
+                let Some(next) = sre_groupref_matches(text, cursor, marks, group, ignore_case)
+                else {
+                    return;
+                };
+                cursor = next;
+                pc += 2;
+            }
+            SRE_OP_BRANCH => {
+                let base_snapshot = marks.snapshot_slots();
+                let mut branch = pc + 1;
+                loop {
+                    let Some(skip) = sre_read_usize(code, branch) else {
+                        marks.restore_slots(&base_snapshot);
+                        return;
+                    };
+                    if skip == 0 {
+                        marks.restore_slots(&base_snapshot);
+                        return;
+                    }
+                    marks.restore_slots(&base_snapshot);
+                    sre_collect_program_end_states(
+                        code,
+                        branch + 1,
+                        pc_limit,
+                        text,
+                        cursor,
+                        marks,
+                        depth + 1,
+                        results,
+                    );
+                    branch += skip;
+                    if branch >= pc_limit {
+                        marks.restore_slots(&base_snapshot);
+                        return;
+                    }
+                }
+            }
+            SRE_OP_JUMP => {
+                let Some(skip) = sre_read_usize(code, pc + 1) else {
+                    return;
+                };
+                pc = pc + 1 + skip;
+            }
+            SRE_OP_ASSERT | SRE_OP_ASSERT_NOT => {
+                let Some(skip) = sre_read_usize(code, pc + 1) else {
+                    return;
+                };
+                let Some(back) = sre_read_usize(code, pc + 2) else {
+                    return;
+                };
+                let sub_start = pc + 3;
+                let sub_limit = pc + 1 + skip;
+                let Some(assert_pos) = cursor.checked_sub(back) else {
+                    return;
+                };
+                let base_snapshot = marks.snapshot_slots();
+                let mut sub_results = BTreeMap::new();
+                sre_collect_program_end_states(
+                    code,
+                    sub_start,
+                    sub_limit,
+                    text,
+                    assert_pos,
+                    marks,
+                    depth + 1,
+                    &mut sub_results,
+                );
+                match opcode {
+                    SRE_OP_ASSERT => {
+                        if sub_results.is_empty() {
+                            marks.restore_slots(&base_snapshot);
+                            return;
+                        }
+                        for sub_marks in sub_results.values() {
+                            marks.restore_slots(sub_marks);
+                            sre_collect_program_end_states(
+                                code,
+                                sub_limit,
+                                pc_limit,
+                                text,
+                                cursor,
+                                marks,
+                                depth + 1,
+                                results,
+                            );
+                        }
+                        marks.restore_slots(&base_snapshot);
+                        return;
+                    }
+                    SRE_OP_ASSERT_NOT => {
+                        marks.restore_slots(&base_snapshot);
+                        if !sub_results.is_empty() {
+                            return;
+                        }
+                        pc = sub_limit;
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            SRE_OP_REPEAT => {
+                let Some(skip) = sre_read_usize(code, pc + 1) else {
+                    return;
+                };
+                let Some(min_count) = sre_read_usize(code, pc + 2) else {
+                    return;
+                };
+                let Some(max_count_raw) = sre_read_usize(code, pc + 3) else {
+                    return;
+                };
+                let unit_start = pc + 4;
+                let until_pc = pc + 1 + skip;
+                let Some(&until_opcode) = code.get(until_pc) else {
+                    return;
+                };
+                if !matches!(until_opcode, SRE_OP_MAX_UNTIL | SRE_OP_MIN_UNTIL) {
+                    return;
+                }
+                let next_pc = until_pc + 1;
+                let hard_max =
+                    max_count_raw.min(text.len().saturating_sub(cursor).saturating_add(1));
+                let base_snapshot = marks.snapshot_slots();
+                let mut states = vec![vec![(cursor, base_snapshot.clone())]];
+                let mut stop_after_current_repetition = false;
+                for _ in 0..hard_max {
+                    let current_states = states.last().cloned().unwrap_or_default();
+                    let mut next_states = Vec::new();
+                    let mut advanced = false;
+                    for (rep_pos, rep_marks) in current_states {
+                        marks.restore_slots(&rep_marks);
+                        for (next_pos, next_marks) in
+                            sre_repeat_unit_states(code, unit_start, until_pc, text, rep_pos, marks, depth)
+                        {
+                            if next_pos == rep_pos {
+                                stop_after_current_repetition = true;
+                            } else {
+                                advanced = true;
+                            }
+                            next_states.push((next_pos, next_marks));
+                        }
+                    }
+                    if next_states.is_empty() {
+                        break;
+                    }
+                    states.push(next_states);
+                    if !advanced || stop_after_current_repetition {
+                        break;
+                    }
+                }
+                if min_count > states.len().saturating_sub(1) {
+                    marks.restore_slots(&base_snapshot);
+                    return;
+                }
+                if until_opcode == SRE_OP_MAX_UNTIL {
+                    for reps in (min_count..states.len()).rev() {
+                        for (candidate_pos, candidate_marks) in states[reps].iter().rev() {
+                            marks.restore_slots(candidate_marks);
+                            sre_collect_program_end_states(
+                                code,
+                                next_pc,
+                                pc_limit,
+                                text,
+                                *candidate_pos,
+                                marks,
+                                depth + 1,
+                                results,
+                            );
+                        }
+                    }
+                } else {
+                    for repetition_states in states.iter().skip(min_count) {
+                        for (candidate_pos, candidate_marks) in repetition_states {
+                            marks.restore_slots(candidate_marks);
+                            sre_collect_program_end_states(
+                                code,
+                                next_pc,
+                                pc_limit,
+                                text,
+                                *candidate_pos,
+                                marks,
+                                depth + 1,
+                                results,
+                            );
+                        }
+                    }
+                }
+                marks.restore_slots(&base_snapshot);
+                return;
+            }
+            SRE_OP_REPEAT_ONE | SRE_OP_MIN_REPEAT_ONE => {
+                let Some(skip) = sre_read_usize(code, pc + 1) else {
+                    return;
+                };
+                let Some(min_count) = sre_read_usize(code, pc + 2) else {
+                    return;
+                };
+                let Some(max_count_raw) = sre_read_usize(code, pc + 3) else {
+                    return;
+                };
+                let unit_start = pc + 4;
+                let next_pc = pc + 1 + skip;
+                let hard_max = max_count_raw.min(text.len().saturating_sub(cursor));
+                let base_snapshot = marks.snapshot_slots();
+                let mut states = Vec::with_capacity(hard_max.saturating_add(1));
+                states.push((cursor, base_snapshot.clone()));
+                let mut rep_pos = cursor;
+                for _ in 0..hard_max {
+                    let repeat_snapshot = marks.snapshot_slots();
+                    let Some(next_pos) =
+                        sre_run_program(code, unit_start, next_pc, text, rep_pos, marks, depth + 1)
+                    else {
+                        marks.restore_slots(&repeat_snapshot);
+                        break;
+                    };
+                    if next_pos == rep_pos {
+                        marks.restore_slots(&repeat_snapshot);
+                        break;
+                    }
+                    rep_pos = next_pos;
+                    states.push((rep_pos, marks.snapshot_slots()));
+                }
+                if min_count > states.len().saturating_sub(1) {
+                    marks.restore_slots(&base_snapshot);
+                    return;
+                }
+                if opcode == SRE_OP_REPEAT_ONE {
+                    for reps in (min_count..states.len()).rev() {
+                        let (candidate_pos, candidate_marks) = &states[reps];
+                        marks.restore_slots(candidate_marks);
+                        sre_collect_program_end_states(
+                            code,
+                            next_pc,
+                            pc_limit,
+                            text,
+                            *candidate_pos,
+                            marks,
+                            depth + 1,
+                            results,
+                        );
+                    }
+                } else {
+                    for (candidate_pos, candidate_marks) in states.iter().skip(min_count) {
+                        marks.restore_slots(candidate_marks);
+                        sre_collect_program_end_states(
+                            code,
+                            next_pc,
+                            pc_limit,
+                            text,
+                            *candidate_pos,
+                            marks,
+                            depth + 1,
+                            results,
+                        );
+                    }
+                }
+                marks.restore_slots(&base_snapshot);
+                return;
+            }
+            _ => return,
+        }
+    }
+}
+
+fn sre_repeat_unit_states<T: SreText>(
+    code: &[i64],
+    unit_start: usize,
+    until_pc: usize,
+    text: &T,
+    start_pos: usize,
+    marks: &mut SreMarkState,
+    depth: usize,
+) -> Vec<(usize, Vec<Option<usize>>)> {
+    let base_snapshot = marks.snapshot_slots();
+    let mut results = BTreeMap::new();
+    sre_collect_program_end_states(
+        code,
+        unit_start,
+        until_pc + 1,
+        text,
+        start_pos,
+        marks,
+        depth + 1,
+        &mut results,
+    );
+    marks.restore_slots(&base_snapshot);
+    results.into_iter().collect()
 }
 
 fn sre_run_program<T: SreText>(
@@ -10144,70 +10601,74 @@ fn sre_run_program<T: SreText>(
                 let next_pc = until_pc + 1;
                 let hard_max =
                     max_count_raw.min(text.len().saturating_sub(cursor).saturating_add(1));
-                let mut states = Vec::with_capacity(hard_max.saturating_add(1));
-                let base_checkpoint = marks.checkpoint();
-                states.push((cursor, base_checkpoint));
-                let mut rep_pos = cursor;
+                let base_snapshot = marks.snapshot_slots();
+                let mut states = vec![vec![(cursor, base_snapshot.clone())]];
+                let mut stop_after_current_repetition = false;
                 for _ in 0..hard_max {
-                    let repeat_checkpoint = marks.checkpoint();
-                    let Some(next_pos) = sre_run_program(
-                        code,
-                        unit_start,
-                        until_pc + 1,
-                        text,
-                        rep_pos,
-                        marks,
-                        depth + 1,
-                    ) else {
-                        marks.restore(repeat_checkpoint);
-                        break;
-                    };
-                    let next_checkpoint = marks.checkpoint();
-                    states.push((next_pos, next_checkpoint));
-                    if next_pos == rep_pos {
+                    let current_states = states.last().cloned().unwrap_or_default();
+                    let mut next_states = Vec::new();
+                    let mut advanced = false;
+                    for (rep_pos, rep_marks) in current_states {
+                        marks.restore_slots(&rep_marks);
+                        for (next_pos, next_marks) in sre_repeat_unit_states(
+                            code, unit_start, until_pc, text, rep_pos, marks, depth,
+                        ) {
+                            if next_pos == rep_pos {
+                                stop_after_current_repetition = true;
+                            } else {
+                                advanced = true;
+                            }
+                            next_states.push((next_pos, next_marks));
+                        }
+                    }
+                    if next_states.is_empty() {
                         break;
                     }
-                    rep_pos = next_pos;
+                    states.push(next_states);
+                    if !advanced || stop_after_current_repetition {
+                        break;
+                    }
                 }
                 if min_count > states.len().saturating_sub(1) {
-                    marks.restore(base_checkpoint);
+                    marks.restore_slots(&base_snapshot);
                     return None;
                 }
                 if until_opcode == SRE_OP_MAX_UNTIL {
                     for reps in (min_count..states.len()).rev() {
-                        let (candidate_pos, candidate_checkpoint) = states[reps];
-                        marks.restore(candidate_checkpoint);
-                        if let Some(result) = sre_run_program(
-                            code,
-                            next_pc,
-                            pc_limit,
-                            text,
-                            candidate_pos,
-                            marks,
-                            depth + 1,
-                        ) {
-                            return Some(result);
+                        for (candidate_pos, candidate_marks) in states[reps].iter().rev() {
+                            marks.restore_slots(candidate_marks);
+                            if let Some(result) = sre_run_program(
+                                code,
+                                next_pc,
+                                pc_limit,
+                                text,
+                                *candidate_pos,
+                                marks,
+                                depth + 1,
+                            ) {
+                                return Some(result);
+                            }
                         }
-                        marks.restore(candidate_checkpoint);
                     }
                 } else {
-                    for (candidate_pos, candidate_checkpoint) in states.iter().skip(min_count) {
-                        marks.restore(*candidate_checkpoint);
-                        if let Some(result) = sre_run_program(
-                            code,
-                            next_pc,
-                            pc_limit,
-                            text,
-                            *candidate_pos,
-                            marks,
-                            depth + 1,
-                        ) {
-                            return Some(result);
+                    for repetition_states in states.iter().skip(min_count) {
+                        for (candidate_pos, candidate_marks) in repetition_states {
+                            marks.restore_slots(candidate_marks);
+                            if let Some(result) = sre_run_program(
+                                code,
+                                next_pc,
+                                pc_limit,
+                                text,
+                                *candidate_pos,
+                                marks,
+                                depth + 1,
+                            ) {
+                                return Some(result);
+                            }
                         }
-                        marks.restore(*candidate_checkpoint);
                     }
                 }
-                marks.restore(base_checkpoint);
+                marks.restore_slots(&base_snapshot);
                 return None;
             }
             SRE_OP_REPEAT_ONE | SRE_OP_MIN_REPEAT_ONE => {

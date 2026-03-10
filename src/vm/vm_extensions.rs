@@ -425,14 +425,13 @@ use self::cpython_thread_runtime::{
     cpython_get_or_init_constant_ptr, cpython_get_or_init_wide_storage,
     cpython_gil_acquire_for_current_thread, cpython_gil_current_thread_holds,
     cpython_gil_release_for_current_thread, cpython_gilstate_visible_thread_state_ptr,
-    cpython_heap_type_registry,
-    cpython_init_thread_state_compat, cpython_interpreter_state_allocations,
-    cpython_is_interned_unicode_ptr, cpython_is_known_interpreter_state_ptr,
-    cpython_is_known_thread_state_ptr, cpython_lookup_interned_unicode_ptr,
-    cpython_lookup_interned_unicode_text, cpython_main_interpreter_state_ptr,
-    cpython_main_thread_state_ptr, cpython_mark_pending_interrupt,
-    cpython_mark_thread_runtime_initialized, cpython_pending_calls, cpython_read_sys_path_string,
-    cpython_read_sys_string, cpython_register_interned_unicode,
+    cpython_heap_type_registry, cpython_init_thread_state_compat,
+    cpython_interpreter_state_allocations, cpython_is_interned_unicode_ptr,
+    cpython_is_known_interpreter_state_ptr, cpython_is_known_thread_state_ptr,
+    cpython_lookup_interned_unicode_ptr, cpython_lookup_interned_unicode_text,
+    cpython_main_interpreter_state_ptr, cpython_main_thread_state_ptr,
+    cpython_mark_pending_interrupt, cpython_mark_thread_runtime_initialized, cpython_pending_calls,
+    cpython_read_sys_path_string, cpython_read_sys_string, cpython_register_interned_unicode,
     cpython_set_current_thread_state_ptr, cpython_set_wide_storage, cpython_store_argv_wide,
     cpython_structseq_registry, cpython_take_pending_interrupt_signum,
     cpython_thread_lock_registry, cpython_thread_runtime_initialized,
@@ -4015,9 +4014,12 @@ struct CpythonThreadTss {
     key: usize,
 }
 
+#[derive(Clone)]
 struct CpythonStructSeqTypeInfo {
     field_count: usize,
-    _visible_count: usize,
+    visible_count: usize,
+    qualified_name: String,
+    field_names: Vec<Option<String>>,
     _name: CString,
 }
 
@@ -6882,7 +6884,7 @@ impl ModuleCapiContext {
         self.alloc_cpython_ptr_for_handle(handle)
     }
 
-    fn cache_cpython_ptr_value(&mut self, ptr: *mut c_void, value: &Value) {
+    pub(super) fn cache_cpython_ptr_value(&mut self, ptr: *mut c_void, value: &Value) {
         if ptr.is_null() || self.cpython_objects_by_ptr.contains_key(&(ptr as usize)) {
             return;
         }
@@ -12072,19 +12074,18 @@ impl ModuleCapiContext {
         let mut object = {
             // SAFETY: VM pointer is valid for the context lifetime.
             let vm = unsafe { &mut *self.vm };
-            vm.import_module_value_sync(module_name)
-                .map_err(|_| {
-                    if trace_capsule_import {
-                        eprintln!(
-                            "[capsule-import] import-fail module={} requested={}",
-                            module_name, requested_name
-                        );
-                    }
-                    format!(
-                        "PyCapsule_Import could not import module \"{}\"",
-                        module_name
-                    )
-                })?
+            vm.import_module_value_sync(module_name).map_err(|_| {
+                if trace_capsule_import {
+                    eprintln!(
+                        "[capsule-import] import-fail module={} requested={}",
+                        module_name, requested_name
+                    );
+                }
+                format!(
+                    "PyCapsule_Import could not import module \"{}\"",
+                    module_name
+                )
+            })?
         };
         for part in parts {
             object = {

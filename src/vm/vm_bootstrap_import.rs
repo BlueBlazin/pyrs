@@ -2308,6 +2308,9 @@ namereplace_errors = lookup_error("namereplace")
                 ("fstat", BuiltinFunction::OsStat),
                 ("lstat", BuiltinFunction::OsLStat),
                 ("mkdir", BuiltinFunction::OsMkdir),
+                ("umask", BuiltinFunction::OsUmask),
+                ("rename", BuiltinFunction::OsRename),
+                ("strerror", BuiltinFunction::OsStrError),
                 ("chmod", BuiltinFunction::OsChmod),
                 ("rmdir", BuiltinFunction::OsRmdir),
                 ("utime", BuiltinFunction::OsUTime),
@@ -2523,6 +2526,9 @@ namereplace_errors = lookup_error("namereplace")
                 ("stat", BuiltinFunction::OsStat),
                 ("lstat", BuiltinFunction::OsLStat),
                 ("mkdir", BuiltinFunction::OsMkdir),
+                ("umask", BuiltinFunction::OsUmask),
+                ("rename", BuiltinFunction::OsRename),
+                ("strerror", BuiltinFunction::OsStrError),
                 ("chmod", BuiltinFunction::OsChmod),
                 ("rmdir", BuiltinFunction::OsRmdir),
                 ("unlink", BuiltinFunction::OsRemove),
@@ -5851,6 +5857,17 @@ namereplace_errors = lookup_error("namereplace")
         let frame_type_class = self
             .heap
             .alloc_class(ClassObject::new("frame".to_string(), Vec::new()));
+        let none_type_class = self
+            .heap
+            .alloc_class(ClassObject::new("NoneType".to_string(), Vec::new()));
+        if let Value::Class(class_obj) = &none_type_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data.attrs.insert(
+                "__doc__".to_string(),
+                Value::Str("The type of the None singleton.".to_string()),
+            );
+        }
         self.install_builtin_module(
             "types",
             &[
@@ -5869,11 +5886,7 @@ namereplace_errors = lookup_error("namereplace")
                 ("BuiltinFunctionType", builtin_function_type_class.clone()),
                 ("BuiltinMethodType", builtin_function_type_class),
                 ("CodeType", code_type_class),
-                (
-                    "NoneType",
-                    self.heap
-                        .alloc_class(ClassObject::new("NoneType".to_string(), Vec::new())),
-                ),
+                ("NoneType", none_type_class),
                 ("EllipsisType", self.heap.ellipsis_type()),
                 (
                     "NotImplementedType",
@@ -9980,6 +9993,10 @@ namereplace_errors = lookup_error("namereplace")
             class_data.attrs.insert(
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::SocketObjectInit),
+            );
+            class_data.attrs.insert(
+                "bind".to_string(),
+                Value::Builtin(BuiltinFunction::SocketObjectBind),
             );
             class_data.attrs.insert(
                 "setblocking".to_string(),

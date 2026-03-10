@@ -6,11 +6,11 @@ use pyrs::{
     runtime::{BuiltinFunction, Object, Value},
     vm::Vm,
 };
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn list_values(value: Option<Value>) -> Option<Vec<Value>> {
     value.and_then(|val| val.as_list())
@@ -220,6 +220,69 @@ fn run_numpy_failure_subprocess(source: &str) -> Option<(i32, String, String)> {
         String::from_utf8_lossy(&output.stdout).to_string(),
         String::from_utf8_lossy(&output.stderr).to_string(),
     ))
+}
+
+fn capture_child_output(child: &mut Child) -> (String, String) {
+    let mut stdout_buf = Vec::new();
+    let mut stderr_buf = Vec::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        let _ = stdout.read_to_end(&mut stdout_buf);
+    }
+    if let Some(mut stderr) = child.stderr.take() {
+        let _ = stderr.read_to_end(&mut stderr_buf);
+    }
+    (
+        String::from_utf8_lossy(&stdout_buf).to_string(),
+        String::from_utf8_lossy(&stderr_buf).to_string(),
+    )
+}
+
+fn run_pyrs_subprocess_with_timeout(
+    source: &str,
+    timeout: Duration,
+) -> Result<(String, String), String> {
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return Err("pyrs binary not found".to_string());
+    };
+    let mut command = Command::new(pyrs_bin);
+    if let Some(lib_path) = cpython_lib_path() {
+        command.env("PYRS_CPYTHON_LIB", lib_path);
+    }
+    command
+        .arg("-c")
+        .arg(source)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("failed to spawn pyrs subprocess: {err}"))?;
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let (stdout, stderr) = capture_child_output(&mut child);
+                if status.success() {
+                    return Ok((stdout, stderr));
+                }
+                return Err(format!(
+                    "pyrs subprocess failed with status {status}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+                ));
+            }
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let (stdout, stderr) = capture_child_output(&mut child);
+                    return Err(format!(
+                        "pyrs subprocess timed out after {}s\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                        timeout.as_secs(),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => return Err(format!("failed to poll pyrs subprocess: {err}")),
+        }
+    }
 }
 
 fn run_numpy_failure_stdin_subprocess(source: &str) -> Option<(i32, String, String)> {
@@ -5467,6 +5530,119 @@ ok = caught
 }
 
 #[test]
+fn pathlib_writablepath_docstrings_match_concrete_path_methods() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pathlib writablepath docstring test (CPython Lib path not available)");
+        return;
+    };
+    run_with_large_stack("pathlib_writablepath_docstrings_match_concrete_path_methods", move || {
+        let source = r#"import pathlib
+import pathlib.types
+ok = pathlib.Path.symlink_to.__doc__ == pathlib.types._WritablePath.symlink_to.__doc__
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn os_umask_roundtrips_in_subprocess() {
+    if !cfg!(unix) {
+        eprintln!("skipping os.umask subprocess regression on non-unix host");
+        return;
+    }
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let source = "import os\nold = os.umask(0o022)\nrestored = os.umask(old)\nprint(hasattr(os, 'umask') and isinstance(old, int) and restored == 0o022)\n";
+    let output = Command::new(pyrs_bin)
+        .env("PYRS_CPYTHON_LIB", &lib_path)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn os.umask probe");
+    assert!(
+        output.status.success(),
+        "os.umask probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.lines().last().unwrap_or_default().trim(), "True");
+}
+
+#[test]
+fn os_rename_moves_files_through_pure_stdlib_surface() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let temp_dir = unique_temp_dir("pyrs_os_rename");
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let src = temp_dir.join("source.txt");
+    let dst = temp_dir.join("dest.txt");
+    std::fs::write(&src, b"payload").expect("write src file");
+    let src_literal = src.to_string_lossy().replace('\\', "\\\\");
+    let dst_literal = dst.to_string_lossy().replace('\\', "\\\\");
+    let source = format!("import os\nos.rename('{src_literal}', '{dst_literal}')\nok = True\n");
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    assert!(!src.exists(), "source path should be moved away");
+    assert!(dst.is_file(), "destination path should exist after rename");
+    assert_eq!(
+        std::fs::read(&dst).expect("read destination"),
+        b"payload",
+        "destination should preserve file contents"
+    );
+    let _ = std::fs::remove_file(dst);
+    let _ = std::fs::remove_dir(temp_dir);
+}
+
+#[test]
+fn os_strerror_returns_message_string_through_pure_stdlib_surface() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = "import os\nmsg = os.strerror(2)\nok = isinstance(msg, str) and len(msg) > 0\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn collections_abc_iterator_recognizes_builtin_map_and_generator_types() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack(
+        "collections_abc_iterator_recognizes_builtin_map_and_generator_types",
+        move || {
+            let source = "import collections.abc\nm = map(lambda x: x, [1])\ng = (x for x in [1])\ne = enumerate([1])\nok = (\n    isinstance(m, collections.abc.Iterator)\n    and isinstance(g, collections.abc.Iterator)\n    and isinstance(e, collections.abc.Iterator)\n    and hasattr(type(m), '__iter__') and hasattr(type(m), '__next__')\n    and hasattr(type(g), '__iter__') and hasattr(type(g), '__next__')\n)\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        },
+    );
+}
+
+#[test]
 fn types_import_prefers_cpython_pure_module_when_lib_path_is_added() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pure-types import preference test (CPython Lib path not available)");
@@ -7191,6 +7367,39 @@ ok = (a == 'x  ' and b == 'x___')
 }
 
 #[test]
+fn str_subclass_super_lower_resolves_builtin_base_method() {
+    let source = "class Folded(str):\n    def via_super(self):\n        return super().lower()\nvalue = Folded('NaMe')\nok = (value.via_super() == 'name')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn str_subclass_set_membership_respects_custom_eq() {
+    let source = "class Folded(str):\n    def __eq__(self, other):\n        return self.lower() == other.lower()\nclass_has_eq = ('__eq__' in Folded.__dict__)\na = Folded('Requires-Dist')\nb = Folded('REQUIRES-DIST')\ndirect = (a.__eq__(b) is True)\noperator = (a == b)\nitems = {a}\nmember = (b in items)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("class_has_eq"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("direct"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("operator"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("member"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn tuple_subclass_subscript_prefers_custom_dunder_getitem() {
+    let source = "class EntryPoints(tuple):\n    def __getitem__(self, name):\n        return ('custom', name)\nentries = EntryPoints(('main', 'other'))\nok = (entries['main'] == ('custom', 'main'))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn re_module_exposes_sre_surface_and_basic_match_works() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping re module surface test (CPython Lib path not available)");
@@ -8820,6 +9029,7 @@ ok = (
 fn builtin_unbound_method_descriptors_cover_core_c_method_cases() {
     let source = r#"ok = ("abcd".index("c") == 2)
 ok = ok and (str.index("abcd", "c") == 2)
+ok = ok and (list(map(str.strip, ["  a  ", " b "])) == ["a", "b"])
 ok = ok and ([1, 2, 3].__len__() == 3)
 ok = ok and (list.__len__([1, 2, 3]) == 3)
 ok = ok and hasattr([1, 2, 3], "__getitem__")
@@ -12830,6 +13040,23 @@ print(json.dumps(result, ensure_ascii=False, sort_keys=True))
 }
 
 #[test]
+fn doctest_example_regex_finds_json_doc_examples_without_hanging() {
+    let source = r#"import doctest, json
+spans = [list(m.span()) for m in doctest.DocTestParser._EXAMPLE_RE.finditer(json.__doc__)]
+ok = len(spans) == 32 and spans[0] == [392, 412] and spans[-1] == [2472, 2566]
+print(ok)
+"#;
+    let (stdout, stderr) = run_pyrs_subprocess_with_timeout(source, Duration::from_secs(10))
+        .expect("doctest regex probe should finish");
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(
+        last_line, "True",
+        "unexpected doctest regex probe output:\nstdout:\n{}\nstderr:\n{}",
+        stdout, stderr
+    );
+}
+
+#[test]
 fn mro_entries_non_tuple_contract_error_is_typed() {
     let source = r#"ok = False
 class Base:
@@ -14143,6 +14370,22 @@ fn re_match_supports_optional_groups_and_alternation() {
 }
 
 #[test]
+fn re_match_backtracks_optional_greedy_prefix_group_before_tail() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("re_match_backtracks_optional_greedy_prefix_group_before_tail", move || {
+        let source = "import glob\nimport re\npat = re.compile(glob.translate('**/*/fileB', recursive=True, include_hidden=True))\nroot = '/tmp/root/'\nm1 = pat.match(root + 'dirB/fileB', len(root))\nm2 = pat.match(root + 'dirA/linkC/fileB', len(root))\nok = (\n    m1 is not None and m1.group(0) == 'dirB/fileB'\n    and m2 is not None and m2.group(0) == 'dirA/linkC/fileB'\n)\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn re_logging_percent_style_validation_pattern_matches_default_formatter() {
     let source = "import re\npat = re.compile(r'%\\(\\w+\\)[#0+ -]*(\\*|\\d+)?(\\.(\\*|\\d+))?[diouxefgcrsa%]', re.I)\nm = pat.search('%(message)s')\nok = (m is not None and m.group(0) == '%(message)s')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -14320,6 +14563,21 @@ fn os_module_exposes_fspath_from_posix_builtin_surface() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let last_line = stdout.lines().last().unwrap_or_default().trim();
     assert_eq!(last_line, "True");
+}
+
+#[test]
+fn pwd_getpwuid_resolves_current_unix_user() {
+    #[cfg(not(unix))]
+    {
+        return;
+    }
+
+    let source = "import os\nimport pwd\nentry = pwd.getpwuid(os.getuid())\nok = (entry.pw_uid == os.getuid() and isinstance(entry.pw_name, str) and isinstance(entry.pw_dir, str) and isinstance(entry.pw_shell, str))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -18058,7 +18316,7 @@ fn os_scandir_permission_denied_uses_permissionerror() {
         .expect("remove permissions");
 
     let source = format!(
-        "import os\nname = ''\ntry:\n    list(os.scandir({path:?}))\nexcept Exception as exc:\n    name = type(exc).__name__\n",
+        "import os\nname = ''\nfilename = None\ntry:\n    list(os.scandir({path:?}))\nexcept Exception as exc:\n    name = type(exc).__name__\n    filename = getattr(exc, 'filename', None)\n",
         path = temp_dir.to_string_lossy().to_string(),
     );
     let module = parser::parse_module(&source).expect("parse should succeed");
@@ -18066,6 +18324,10 @@ fn os_scandir_permission_denied_uses_permissionerror() {
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("name"), Some(Value::Str("PermissionError".to_string())));
+    assert_eq!(
+        vm.get_global("filename"),
+        Some(Value::Str(temp_dir.to_string_lossy().to_string()))
+    );
 
     std::fs::set_permissions(&temp_dir, std::fs::Permissions::from_mode(0o700))
         .expect("restore permissions");
@@ -18222,6 +18484,16 @@ fn executes_itertools_batched_builtin() {
 #[test]
 fn executes_collections_defaultdict_factory_on_getitem() {
     let source = "from collections import defaultdict\nd = defaultdict(list)\nd['k'].append(1)\nok = d['k'] == [1]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn collections_defaultdict_subclass_inherits_dict_mro_and_init_surface() {
+    let source = "import collections\nclass FreezableDefaultDict(collections.defaultdict):\n    pass\nmro = FreezableDefaultDict.__mro__\nd = FreezableDefaultDict(list)\nd['k'].append(1)\nok = (mro[1].__name__ == 'defaultdict' and mro[2] is dict and issubclass(FreezableDefaultDict, dict) and d.default_factory is list and d['k'] == [1])\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -18675,6 +18947,38 @@ fn executes_socketpair_send_recv_roundtrip() {
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn socket_bind_supports_unix_paths_for_pathlib_is_socket() {
+    if !cfg!(unix) {
+        eprintln!("skipping unix socket bind regression on non-unix host");
+        return;
+    }
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping unix socket bind regression (CPython Lib path not available)");
+        return;
+    };
+    let temp_dir = unique_temp_dir("pyrs_socket_bind_pathlib");
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let socket_path = temp_dir.join("sock");
+    let socket_path_literal = socket_path.to_string_lossy().replace('\\', "\\\\");
+    run_with_large_stack(
+        "socket_bind_supports_unix_paths_for_pathlib_is_socket",
+        move || {
+            let source = format!(
+                "import _socket\nimport pathlib\np = pathlib.Path('{socket_path_literal}')\ns = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)\ntry:\n    s.bind(str(p))\n    ok = p.is_socket()\nfinally:\n    s.close()\n"
+            );
+            let module = parser::parse_module(&source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+            let _ = std::fs::remove_file(socket_path);
+            let _ = std::fs::remove_dir(temp_dir);
+        },
+    );
 }
 
 #[test]
@@ -19275,6 +19579,54 @@ fn importlib_metadata_imports_with_loaderbasics_exec_module_surface() {
     };
     run_with_large_stack("vm-importlib-metadata-loaderbasics", move || {
         let source = "import importlib.abc as abc\nimport importlib.metadata as metadata\nimport importlib._bootstrap_external as ext\nok = (hasattr(ext._LoaderBasics, 'exec_module') and hasattr(ext._LoaderBasics, 'load_module') and abc.InspectLoader.exec_module is ext._LoaderBasics.exec_module and hasattr(metadata, 'Distribution'))\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn importlib_metadata_as_json_reads_distinfo_fixture() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-importlib-metadata-as-json", move || {
+        let source = "import importlib.metadata as metadata\nfrom test.test_importlib.metadata.test_api import APITests\nt = APITests('test_as_json')\nt.setUp()\ntry:\n    md = metadata.metadata('distinfo-pkg').json\n    ok = (md['name'] == 'distinfo-pkg' and md['keywords'] == ['sample', 'package'] and len(md['requires_dist']) == 2)\nfinally:\n    t.doCleanups()\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn importlib_metadata_as_json_handles_uppercase_metadata_headers() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-importlib-metadata-as-json-odd-case", move || {
+        let source = "import importlib.metadata as metadata\nfrom test.test_importlib.metadata.test_api import APITests\nt = APITests('test_as_json_odd_case')\nt.setUp()\ntry:\n    t.make_uppercase()\n    md = metadata.metadata('distinfo-pkg').json\n    ok = (md['keywords'] == ['SAMPLE', 'PACKAGE'] and len(md['requires_dist']) == 2)\nfinally:\n    t.doCleanups()\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn importlib_metadata_package_not_found_error_mentions_metadata() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-importlib-metadata-package-not-found", move || {
+        let source = "from importlib.metadata import Distribution, PackageNotFoundError\nok = False\ntry:\n    Distribution.from_name('does-not-exist')\nexcept PackageNotFoundError as exc:\n    ok = ('metadata' in str(exc) and exc.name == 'does-not-exist')\n";
         let module = parser::parse_module(source).expect("parse should succeed");
         let code = compiler::compile_module(&module).expect("compile should succeed");
         let mut vm = Vm::new();
@@ -22478,12 +22830,20 @@ ok = (seen_environ is None and seen_getenv is None and missing is None)
 #[test]
 fn os_fspath_supports_str_bytes_and_pathlike() {
     let source = r#"import os
+class FancyStr(str):
+    pass
+
+class FancyBytes(bytes):
+    pass
+
 class PathLike:
     def __fspath__(self):
         return b"/tmp/path"
 ok = (
     os.fspath("name.txt") == "name.txt"
     and os.fspath(b"name.bin") == b"name.bin"
+    and os.fspath(FancyStr("name.txt")) == "name.txt"
+    and os.fspath(FancyBytes(b"name.bin")) == b"name.bin"
     and os.fspath(PathLike()) == b"/tmp/path"
 )
 "#;
@@ -22492,6 +22852,39 @@ ok = (
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn grp_structseq_exposes_named_fields_on_unix_hosts() {
+    if !cfg!(unix) {
+        eprintln!("skipping grp structseq field test (unix-only)");
+        return;
+    }
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping grp structseq field test (CPython Lib path not available)");
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path.insert(0, {lib_path:?})\nimport grp\nentry = grp.getgrall()[0]\nok = (hasattr(entry, 'gr_name') and entry.gr_name == entry[0] and entry.gr_gid == entry[2])\nprint(ok)\n"
+    );
+    let output = Command::new(pyrs_bin)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn grp structseq probe");
+    assert!(
+        output.status.success(),
+        "grp structseq probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(last_line, "True");
 }
 
 #[test]
@@ -22799,6 +23192,39 @@ ok = (doc == "alpha\n    beta" and isinstance(none_doc, str) and "None" in none_
 }
 
 #[test]
+fn compile_clean_docstrings_match_cpython_for_module_class_and_function() {
+    let source = r#""\n\talpha\n\t    beta\n"
+class C:
+    "\n\talpha\n\t    beta\n"
+def sample():
+    "\n\talpha\n\t    beta\n"
+ok = (
+    __doc__ == "\nalpha\n    beta\n"
+    and C.__doc__ == "\nalpha\n    beta\n"
+    and sample.__doc__ == "\nalpha\n    beta\n"
+    and sample.__code__.co_consts[0] == "\nalpha\n    beta\n"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn none_type_docstring_matches_cpython_shape() {
+    let source = r#"doc = "The type of the None singleton."
+ok = (None.__doc__ == doc and type(None).__doc__ == doc)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exceptions_accept_keyword_attributes() {
     let source = r#"err = ImportError("boom", name="pkg.mod", path="/tmp/pkg/mod.py")
 missing = ModuleNotFoundError("missing", name="pkg.missing")
@@ -23096,6 +23522,34 @@ except ModuleNotFoundError as exc:
         and exc.path is None
         and isinstance(exc.msg, str)
         and "__pyrs_missing_module__" in exc.msg
+    )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn raised_exception_subclass_property_and_str_override_builtin_exception_slots() {
+    let source = r#"class MissingMeta(ModuleNotFoundError):
+    @property
+    def name(self):
+        return self.args[0]
+
+    def __str__(self):
+        return f"meta:{self.name}"
+
+ok = False
+try:
+    raise MissingMeta("payload")
+except MissingMeta as exc:
+    ok = (
+        exc.name == "payload"
+        and str(exc) == "meta:payload"
+        and MissingMeta.__dict__["name"].__get__(exc, MissingMeta) == "payload"
+        and MissingMeta.__dict__["__str__"](exc) == "meta:payload"
     )
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
