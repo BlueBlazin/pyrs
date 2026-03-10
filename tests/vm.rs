@@ -12681,6 +12681,32 @@ fn imports_package_from_cached_pyc_without_source_file() {
 }
 
 #[test]
+fn py_compile_uses_importlib_file_loader_constructors() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let temp_dir = unique_temp_dir("pyrs_py_compile_loader");
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let source_path = temp_dir.join("demo.py");
+    std::fs::write(&source_path, "value = 42\n").expect("write source");
+
+    run_with_large_stack("vm-py-compile-loaders", move || {
+        let source = format!(
+            "import py_compile\nimport importlib.machinery as machinery\npath = {path:?}\npyc = py_compile.compile(path, doraise=True)\nsource_loader = machinery.SourceFileLoader('demo', path)\nbytecode_loader = machinery.SourcelessFileLoader('demo', pyc)\nns = {{}}\nexec(bytecode_loader.get_code('demo'), ns)\nok = (source_loader.name == 'demo' and source_loader.path == path and source_loader.__class__.__mro__[1].__name__ == 'FileLoader' and bytecode_loader.get_source('demo') is None and ns['value'] == 42)\n",
+            path = source_path,
+        );
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+
+    let _ = std::fs::remove_dir_all(temp_dir);
+}
+
+#[test]
 fn pkgutil_native_supports_basic_resource_reads_without_shims() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -13934,6 +13960,8 @@ fn complex_equality_uses_numeric_float_semantics() {
     let source = r#"eq_from_literal = complex('-1j') == -1j
 eq_from_constructor = -1j == complex('-1j')
 eq_signed_zero = complex(0.0, -1.0) == complex(-0.0, -1.0)
+eq_zero_imag_int = complex('42') == 42
+eq_zero_imag_float = complex('42') == 42.0
 nan_value = float('nan')
 nan_eq = complex(nan_value, 0.0) == complex(nan_value, 0.0)
 "#;
@@ -13944,6 +13972,8 @@ nan_eq = complex(nan_value, 0.0) == complex(nan_value, 0.0)
     assert_eq!(vm.get_global("eq_from_literal"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("eq_from_constructor"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("eq_signed_zero"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("eq_zero_imag_int"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("eq_zero_imag_float"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("nan_eq"), Some(Value::Bool(false)));
 }
 
@@ -14960,6 +14990,27 @@ fn argparse_negative_number_groups_listargs_match_cpython() {
     run_with_large_stack("vm-argparse-negative-numbers", move || {
         let source = r#"import test.test_argparse as mod
 case = mod.TestNegativeNumber('test_successes_many_groups_listargs')
+result = case.defaultTestResult()
+case.run(result)
+ok = len(result.failures) == 0 and len(result.errors) == 0
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn argparse_type_callable_matches_cpython() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-argparse-type-callable", move || {
+        let source = r#"import test.test_argparse as mod
+case = mod.TestTypeCallable('test_successes_many_groups_listargs')
 result = case.defaultTestResult()
 case.run(result)
 ok = len(result.failures) == 0 and len(result.errors) == 0
@@ -19851,7 +19902,7 @@ fn executes_frozen_importlib_external_helpers() {
     let file_literal = file.to_string_lossy().replace('\\', "\\\\");
     let pyc_literal = format!("{file_literal}c");
     let source = format!(
-        "import _frozen_importlib_external as ext\nparts = ext._path_split('{file_literal}')\njoined = ext._path_join(parts[0], parts[1])\nstat = ext._path_stat('{file_literal}')\nsourcefile = ext._get_sourcefile('{pyc_literal}')\nu16 = ext._unpack_uint16(b'\\x01\\x02')\nu32 = ext._unpack_uint32(b'\\x01\\x02\\x03\\x04')\nu64 = ext._unpack_uint64(b'\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00')\npacked = ext._pack_uint32(0x01020304)\npacked_wrap = ext._pack_uint32(-1)\nok = hasattr(ext, 'path_sep') and hasattr(ext, '_LoaderBasics') and parts[1] == 'demo.py' and joined[-7:] == 'demo.py' and stat.st_size >= 0 and sourcefile == '{file_literal}' and u16 == 513 and u32 == 67305985 and u64 == 1 and packed == b'\\x04\\x03\\x02\\x01' and packed_wrap == b'\\xff\\xff\\xff\\xff'\n"
+        "import _imp\nimport _frozen_importlib_external as ext\nparts = ext._path_split('{file_literal}')\njoined = ext._path_join(parts[0], parts[1])\nstat = ext._path_stat('{file_literal}')\nsourcefile = ext._get_sourcefile('{pyc_literal}')\nu16 = ext._unpack_uint16(b'\\x01\\x02')\nu32 = ext._unpack_uint32(b'\\x01\\x02\\x03\\x04')\nu64 = ext._unpack_uint64(b'\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00')\npacked = ext._pack_uint32(0x01020304)\npacked_wrap = ext._pack_uint32(-1)\nmagic = _imp.pyc_magic_number_token\nok = hasattr(ext, 'path_sep') and hasattr(ext, '_LoaderBasics') and parts[1] == 'demo.py' and joined[-7:] == 'demo.py' and stat.st_size >= 0 and sourcefile == '{file_literal}' and u16 == 513 and u32 == 67305985 and u64 == 1 and packed == b'\\x04\\x03\\x02\\x01' and packed_wrap == b'\\xff\\xff\\xff\\xff' and magic == 0x0A0D0E2B\n"
     );
     let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

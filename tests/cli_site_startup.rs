@@ -195,7 +195,6 @@ fn cli_matches_cpython_argparse_progname_script_case() {
     assert_eq!(stdout.trim(), "True", "stdout:\n{stdout}\nstderr:\n{stderr}");
 }
 
-#[test]
 fn cli_script_sets_sys_argv_without_executable_prefix() {
     let root = temp_root("cli_sys_argv_script");
     let stdlib = root.join("Lib");

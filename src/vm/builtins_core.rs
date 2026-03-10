@@ -15273,7 +15273,19 @@ impl Vm {
         let complex_like = |value: &Value| -> Option<(f64, f64)> {
             match value {
                 Value::Complex { real, imag } => Some((*real, *imag)),
-                Value::Instance(instance) => self.instance_backing_complex(instance),
+                Value::Float(number) => Some((*number, 0.0)),
+                Value::Int(number) => Some((*number as f64, 0.0)),
+                Value::Bool(flag) => Some((if *flag { 1.0 } else { 0.0 }, 0.0)),
+                Value::Instance(instance) => {
+                    if let Some(backing) = self.instance_backing_int(instance) {
+                        let backing = super::value_to_int(backing).ok()? as f64;
+                        return Some((backing, 0.0));
+                    }
+                    if let Some(backing) = self.instance_backing_float(instance) {
+                        return Some((backing, 0.0));
+                    }
+                    self.instance_backing_complex(instance)
+                }
                 _ => None,
             }
         };

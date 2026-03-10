@@ -1609,6 +1609,108 @@ class FileLoader(_LoaderBasics):
         from importlib.readers import FileReader
         return FileReader(self)
 
+def _calc_mode(path):
+    try:
+        mode = _path_stat(path).st_mode
+    except OSError:
+        mode = 0o666
+    mode |= 0o200
+    return mode
+
+def _write_atomic(path, data, mode=0o666):
+    path_tmp = f'{path}.{id(path)}'
+    fd = _os.open(path_tmp, _os.O_EXCL | _os.O_CREAT | _os.O_WRONLY, mode & 0o666)
+    try:
+        with _io.open(fd, 'wb') as file:
+            file.write(data)
+        _os.replace(path_tmp, path)
+    except OSError:
+        try:
+            _os.unlink(path_tmp)
+        except OSError:
+            pass
+        raise
+
+class SourceFileLoader(FileLoader, SourceLoader):
+    def path_stats(self, path):
+        st = _path_stat(path)
+        return {'mtime': st.st_mtime, 'size': st.st_size}
+
+    def _cache_bytecode(self, source_path, bytecode_path, data):
+        return self.set_data(bytecode_path, data)
+
+    def set_data(self, path, data, *, _mode=0o666):
+        parent, filename = _path_split(path)
+        path_parts = []
+        while parent and not _path_isdir(parent):
+            parent, part = _path_split(parent)
+            path_parts.append(part)
+        for part in reversed(path_parts):
+            parent = _path_join(parent, part)
+            try:
+                _os.mkdir(parent)
+            except FileExistsError:
+                continue
+            except OSError as exc:
+                _bootstrap._verbose_message('could not create {!r}: {!r}', parent, exc)
+                return
+        try:
+            _write_atomic(path, data, _mode)
+            _bootstrap._verbose_message('created {!r}', path)
+        except OSError as exc:
+            _bootstrap._verbose_message('could not create {!r}: {!r}', path, exc)
+
+class SourcelessFileLoader(FileLoader, _LoaderBasics):
+    def get_code(self, fullname):
+        path = self.get_filename(fullname)
+        data = self.get_data(path)
+        exc_details = {
+            'name': fullname,
+            'path': path,
+        }
+        _classify_pyc(data, fullname, exc_details)
+        return _compile_bytecode(
+            memoryview(data)[16:],
+            name=fullname,
+            bytecode_path=path,
+        )
+
+    def get_source(self, fullname):
+        return None
+
+class ExtensionFileLoader(FileLoader, _LoaderBasics):
+    def __init__(self, name, path):
+        self.name = name
+        self.path = path
+
+    def __eq__(self, other):
+        return self.__class__ == other.__class__ and self.__dict__ == other.__dict__
+
+    def __hash__(self):
+        return hash(self.name) ^ hash(self.path)
+
+    def create_module(self, spec):
+        module = _bootstrap._call_with_frames_removed(_imp.create_dynamic, spec)
+        _bootstrap._verbose_message('extension module {!r} loaded from {!r}', spec.name, self.path)
+        return module
+
+    def exec_module(self, module):
+        _bootstrap._call_with_frames_removed(_imp.exec_dynamic, module)
+        _bootstrap._verbose_message('extension module {!r} executed from {!r}', self.name, self.path)
+
+    def is_package(self, fullname):
+        file_name = _path_split(self.path)[1]
+        return any(file_name == '__init__' + suffix for suffix in EXTENSION_SUFFIXES)
+
+    def get_code(self, fullname):
+        return None
+
+    def get_source(self, fullname):
+        return None
+
+    def get_filename(self, fullname):
+        return self.path
+
 def _get_supported_file_loaders():
     extension_loaders = []
     if hasattr(_imp, 'create_dynamic'):
@@ -6599,7 +6701,8 @@ namereplace_errors = lookup_error("namereplace")
                 ),
             ],
             vec![
-                ("pyc_magic_number_token", Value::Int(3600)),
+                // CPython 3.14 magic token used for .pyc headers.
+                ("pyc_magic_number_token", Value::Int(0x0A0D0E2B)),
                 ("check_hash_based_pycs", Value::Str("default".to_string())),
             ],
         );

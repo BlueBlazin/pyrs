@@ -1,11 +1,11 @@
 use super::{
-    BUILTIN_MODULE_LOADER, HashMap, ImportReturnPolicy, ModuleObject, NAMESPACE_LOADER,
-    OPCODE_METADATA, ObjRef, Object, OpcodeMetadata, PathBuf, Rc, RuntimeError,
+    BUILTIN_MODULE_LOADER, BigInt, BuiltinFunction, HashMap, ImportReturnPolicy, ModuleObject,
+    NAMESPACE_LOADER, OPCODE_METADATA, ObjRef, Object, OpcodeMetadata, PathBuf, Rc, RuntimeError,
     SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, Value, Vm, bytes_like_from_value,
     cache_path_from_source_path, cache_path_from_source_path_with_optimization,
     class_attr_lookup, compiler, dict_get_value, fs, is_truthy, opcode_flags_contains, parser,
-    source_path_from_cache_path, InternalCallOutcome,
-    split_relative_import_name, value_to_int, value_to_path,
+    source_path_from_cache_path, InternalCallOutcome, split_relative_import_name, value_to_bigint,
+    value_to_int, value_to_path,
 };
 use crate::runtime::{
     BOOTSTRAP_FROZEN_MODULES, bootstrap_frozen_module_info, is_bootstrap_builtin_module,
@@ -1843,7 +1843,7 @@ impl Vm {
     }
 
     pub(super) fn builtin_frozen_importlib_external_pack_uint32(
-        &self,
+        &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -1852,7 +1852,11 @@ impl Vm {
                 "_pack_uint32() expects one integer argument",
             ));
         }
-        let value = value_to_int(args[0].clone())?;
+        let coerced = self.call_builtin(BuiltinFunction::Int, vec![args[0].clone()], HashMap::new())?;
+        let masked = value_to_bigint(coerced)?.bitand(&BigInt::from_u64(u32::MAX as u64));
+        let value = masked
+            .to_i64()
+            .ok_or_else(|| RuntimeError::overflow_error("integer overflow"))?;
         Ok(self.heap.alloc_bytes((value as u32).to_le_bytes().to_vec()))
     }
 
