@@ -6323,6 +6323,118 @@ impl Vm {
         }
     }
 
+    fn class_is_ast_node(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class).iter().any(|entry| match &*entry.kind() {
+            Object::Class(class_data) => {
+                class_data.name == "AST"
+                    && matches!(
+                        class_data.attrs.get("__module__"),
+                        Some(Value::Str(module_name)) if module_name == "_ast"
+                    )
+            }
+            _ => false,
+        })
+    }
+
+    fn ast_constructor_field_names(&self, class: &ObjRef) -> Vec<String> {
+        match class_attr_lookup(class, "_fields") {
+            Some(Value::Tuple(fields_obj)) => match &*fields_obj.kind() {
+                Object::Tuple(fields) => fields
+                    .iter()
+                    .filter_map(|field| match field {
+                        Value::Str(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        }
+    }
+
+    fn bind_ast_constructor_fields(
+        &mut self,
+        instance: &ObjRef,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<(), RuntimeError> {
+        let (class, class_name) = match &*instance.kind() {
+            Object::Instance(instance_data) => {
+                let class_name = match &*instance_data.class.kind() {
+                    Object::Class(class_data) => class_data.name.clone(),
+                    _ => "AST".to_string(),
+                };
+                (instance_data.class.clone(), class_name)
+            }
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "AST.__init__() expects an AST instance receiver",
+                ));
+            }
+        };
+
+        let fields = self.ast_constructor_field_names(&class);
+        if args.len() > fields.len() {
+            return Err(RuntimeError::type_error(format!(
+                "{} constructor takes at most {} positional argument{}",
+                class_name,
+                fields.len(),
+                if fields.len() == 1 { "" } else { "s" }
+            )));
+        }
+
+        let field_defaults = match &*class.kind() {
+            Object::Class(class_data) => fields
+                .iter()
+                .filter_map(|field| {
+                    class_data
+                        .attrs
+                        .get(field)
+                        .cloned()
+                        .map(|value| (field.clone(), value))
+                })
+                .collect::<HashMap<_, _>>(),
+            _ => HashMap::new(),
+        };
+
+        let mut remaining_fields = fields.iter().cloned().collect::<HashSet<_>>();
+        let mut assignments = Vec::new();
+        for (index, value) in args.into_iter().enumerate() {
+            let field_name = fields[index].clone();
+            remaining_fields.remove(&field_name);
+            assignments.push((field_name, value));
+        }
+        for (key, value) in kwargs {
+            if fields.iter().any(|field_name| field_name == &key) && !remaining_fields.remove(&key)
+            {
+                return Err(RuntimeError::type_error(format!(
+                    "{class_name} got multiple values for argument '{key}'"
+                )));
+            }
+            assignments.push((key, value));
+        }
+        for field_name in remaining_fields {
+            if let Some(default_value) = field_defaults.get(&field_name).cloned() {
+                assignments.push((field_name, default_value));
+            } else if field_name == "ctx" {
+                assignments.push((field_name, self.build_ast_context_node("Load")?));
+            } else if field_name == "kind" {
+                assignments.push((field_name, Value::None));
+            }
+        }
+
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            for (name, value) in assignments {
+                instance_data.attrs.insert(name, value);
+            }
+            Ok(())
+        } else {
+            Err(RuntimeError::type_error(
+                "AST.__init__() expects an AST instance receiver",
+            ))
+        }
+    }
+
     fn build_ast_node(
         &mut self,
         class_name: &str,
@@ -10969,10 +11081,27 @@ impl Vm {
     }
 
     pub(super) fn builtin_object_init(
-        &self,
+        &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        let ast_instance = args.first().and_then(|value| match value {
+            Value::Instance(instance) => match &*instance.kind() {
+                Object::Instance(instance_data) if self.class_is_ast_node(&instance_data.class) => {
+                    Some(instance.clone())
+                }
+                _ => None,
+            },
+            _ => None,
+        });
+        if let Some(instance) = ast_instance {
+            let init_args = args.into_iter().skip(1).collect::<Vec<_>>();
+            // Bootstrap `_ast` classes currently route through `object.__init__`.
+            // Mirror CPython's generated ast_type_init semantics here so direct
+            // construction and `super().__init__()` on AST subclasses bind fields.
+            self.bind_ast_constructor_fields(&instance, init_args, kwargs)?;
+            return Ok(Value::None);
+        }
         // `object.__init__` is exposed as a plain builtin in this VM, so
         // super() calls can reach it without an implicit `self` bind.
         if !kwargs.is_empty() || args.is_empty() {

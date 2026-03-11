@@ -19347,6 +19347,58 @@ fn c_decimal_context_attr_lookup_and_copy_work() {
 }
 
 #[test]
+fn ast_constructor_fields_bind_and_default_ctx() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping AST constructor test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("ast-constructor-fields".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = format!(
+                "import sys\nsys.path.insert(0, '{lib_path}')\nimport ast\nconst = ast.Constant(1)\nname = ast.Name('x')\nmodule = ast.Module([], [])\nok = (const.value == 1 and const.kind is None and name.id == 'x' and type(name.ctx) is ast.Load and module.body == [] and module.type_ignores == [])\n",
+                lib_path = lib_path.to_string_lossy().replace('\\', "\\\\"),
+            );
+            let module = parser::parse_module(&source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn ast-constructor-fields thread");
+    handle
+        .join()
+        .expect("ast-constructor-fields thread should complete");
+}
+
+#[test]
+fn test_test_ast_module_imports() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping test.test_ast import test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("test-test-ast-import".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = format!(
+                "import sys\nsys.path.insert(0, '{lib_path}')\nimport test.test_ast.test_ast\nok = True\n",
+                lib_path = lib_path.to_string_lossy().replace('\\', "\\\\"),
+            );
+            let module = parser::parse_module(&source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn test-test-ast-import thread");
+    handle
+        .join()
+        .expect("test-test-ast-import thread should complete");
+}
+
+#[test]
 fn keyerror_and_indexerror_are_lookuperror_subclasses() {
     let source = "ok1 = issubclass(KeyError, LookupError)\nok2 = issubclass(IndexError, LookupError)\ncaught = False\ntry:\n    {}['missing']\nexcept LookupError:\n    caught = True\nok = ok1 and ok2 and caught\n";
     let module = parser::parse_module(source).expect("parse should succeed");
