@@ -27,6 +27,21 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             return std::ptr::null_mut();
         }
     };
+    if name == "__class__"
+        && let Ok(Some(class_ptr)) = with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                return None;
+            }
+            let object_value = context.cpython_value_from_ptr_or_proxy(object)?;
+            // SAFETY: active C-API context owns a valid VM pointer for this call.
+            let vm = unsafe { &mut *context.vm };
+            let resolved = vm.load_dunder_class_attr(&object_value).ok()?;
+            let ptr = context.alloc_cpython_ptr_for_value(resolved);
+            (!ptr.is_null()).then_some(ptr)
+        })
+    {
+        return class_ptr;
+    }
     let trace_reduce_attr =
         cpython_trace_numpy_reduce_enabled() && cpython_is_reduce_probe_name(&name);
     let trace_attr_max = name == "max" && cpython_trace_flag_enabled("PYRS_TRACE_ATTR_MAX");
@@ -198,7 +213,9 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     || tp_getattro == PyObject_GenericGetAttr as *mut c_void;
                 // For mapped runtime values, route through pyrs generic getattr so descriptor
                 // protocol semantics on runtime objects stay authoritative.
-                if is_generic_getattro && context.cpython_value_from_ptr(object).is_some() {
+                if is_generic_getattro
+                    && context.cpython_value_from_ptr_or_proxy(object).is_some()
+                {
                     return None;
                 }
                 if trace_getattr_slots {
@@ -361,7 +378,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             return result;
         }
     }
-    let object_value = match cpython_value_from_ptr(object) {
+    let object_value = match cpython_value_from_ptr_or_proxy(object) {
         Ok(value) => value,
         Err(err) => {
             if let Ok(Some(attr_ptr)) = with_active_cpython_context_mut(|context| {
@@ -617,6 +634,25 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void) -> *mut c_void {
+    if let Ok(Some(class_ptr)) = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return None;
+        }
+        let Value::Str(attr_name) = context.cpython_value_from_ptr_or_proxy(name)? else {
+            return None;
+        };
+        if attr_name != "__class__" {
+            return None;
+        }
+        let object_value = context.cpython_value_from_ptr_or_proxy(object)?;
+        // SAFETY: active C-API context owns a valid VM pointer for this call.
+        let vm = unsafe { &mut *context.vm };
+        let resolved = vm.load_dunder_class_attr(&object_value).ok()?;
+        let ptr = context.alloc_cpython_ptr_for_value(resolved);
+        (!ptr.is_null()).then_some(ptr)
+    }) {
+        return class_ptr;
+    }
     let trace_attr_max = cpython_trace_flag_enabled("PYRS_TRACE_ATTR_MAX")
         && with_active_cpython_context_mut(|context| {
             matches!(
@@ -1020,9 +1056,47 @@ pub unsafe extern "C" fn PyObject_GenericGetAttr(
     object: *mut c_void,
     name: *mut c_void,
 ) -> *mut c_void {
+    if object.is_null() || name.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    if let Ok(Some(class_ptr)) = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return None;
+        }
+        let Value::Str(attr_name) = context.cpython_value_from_ptr_or_proxy(name)? else {
+            return None;
+        };
+        if attr_name != "__class__" {
+            return None;
+        }
+        let object_value = context.cpython_value_from_ptr_or_proxy(object)?;
+        // SAFETY: active C-API context owns a valid VM pointer for this call.
+        let vm = unsafe { &mut *context.vm };
+        let resolved = vm.load_dunder_class_attr(&object_value).ok()?;
+        let ptr = context.alloc_cpython_ptr_for_value(resolved);
+        (!ptr.is_null()).then_some(ptr)
+    }) {
+        return class_ptr;
+    }
+    let type_like_object = with_active_cpython_context_mut(|context| {
+        super::cpython_is_type_object_ptr(object)
+            || matches!(context.cpython_value_from_ptr_or_proxy(object), Some(Value::Class(_)))
+    })
+    .unwrap_or_else(|_| super::cpython_is_type_object_ptr(object));
+    if type_like_object {
+        // Type objects need `type_getattro` semantics so metaclass methods like
+        // `ABCMeta.register` remain visible when extension code delegates to
+        // `PyObject_GenericGetAttr`.
+        return unsafe { super::cpython_type_tp_getattro(object, name) };
+    }
+
     enum GenericLookup {
         Value(*mut c_void),
-        Missing { type_name: String, attr_name: String },
+        Missing {
+            type_name: String,
+            attr_name: String,
+        },
         Fallback,
     }
 
@@ -1036,12 +1110,13 @@ pub unsafe extern "C" fn PyObject_GenericGetAttr(
         {
             return GenericLookup::Fallback;
         }
-        let attr_name = context
-            .cpython_value_from_ptr_or_proxy(name)
-            .and_then(|value| match value {
-                Value::Str(text) => Some(text),
-                _ => None,
-            });
+        let attr_name =
+            context
+                .cpython_value_from_ptr_or_proxy(name)
+                .and_then(|value| match value {
+                    Value::Str(text) => Some(text),
+                    _ => None,
+                });
         let Some(attr_name) = attr_name else {
             return GenericLookup::Fallback;
         };

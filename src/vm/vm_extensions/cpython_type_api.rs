@@ -741,23 +741,22 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
         }
         return attr_ptr;
     }
+    // SAFETY: `object` follows type slot dispatch contract.
+    let metatype = unsafe {
+        object
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<c_void>())
+            .unwrap_or(std::ptr::null_mut())
+    };
     // Type attribute lookup also consults metatype attributes/descriptors.
-    if let Ok(Some(attr_ptr)) = with_active_cpython_context_mut(|context| {
-        // SAFETY: `object` follows type slot dispatch contract.
-        let metatype = unsafe {
-            object
-                .cast::<CpythonObjectHead>()
-                .as_ref()
-                .map(|head| head.ob_type.cast::<c_void>())
-                .unwrap_or(std::ptr::null_mut())
-        };
-        if metatype.is_null() {
-            return None;
-        }
-        context
-            .lookup_type_attr_via_tp_dict(metatype, &attr_name)
-            .or_else(|| context.lookup_type_attr_via_runtime_mro(metatype, &attr_name))
-    }) && !attr_ptr.is_null()
+    if !metatype.is_null()
+        && let Ok(Some(attr_ptr)) = with_active_cpython_context_mut(|context| {
+            context
+                .lookup_type_attr_via_tp_dict(metatype, &attr_name)
+                .or_else(|| context.lookup_type_attr_via_runtime_mro(metatype, &attr_name))
+        })
+        && !attr_ptr.is_null()
     {
         if trace_prepare {
             let tag = cpython_value_from_ptr(attr_ptr)
@@ -773,6 +772,27 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
                 "[cpy-type-getattr] metatype-hit object={:p} attr={} ptr={:p}",
                 object, attr_name, attr_ptr
             );
+        }
+        if let Ok(Some(bound_ptr)) = with_active_cpython_context_mut(|context| {
+            context.bind_generic_descriptor_attr_ptr(attr_ptr, object, metatype, false)
+        }) && !bound_ptr.is_null()
+        {
+            if trace_type_getattr {
+                eprintln!(
+                    "[cpy-type-getattr] metatype-generic-bound-hit object={:p} attr={} ptr={:p}",
+                    object, attr_name, bound_ptr
+                );
+            }
+            if trace_prepare {
+                let tag = cpython_value_from_ptr(bound_ptr)
+                    .map(|value| cpython_value_debug_tag(&value))
+                    .unwrap_or_else(|_| "<unresolved>".to_string());
+                eprintln!(
+                    "[type-prepare] metatype-generic-bound-hit object={:p} ptr={:p} value={}",
+                    object, bound_ptr, tag
+                );
+            }
+            return bound_ptr;
         }
         // Bind metaclass descriptors against the original class object so
         // methods like ABCMeta.register receive `cls` correctly.
@@ -837,11 +857,12 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
         if metaclass_ptr.is_null() {
             return None;
         }
-        context
+        let attr_ptr = context
             .lookup_type_attr_via_tp_dict(metaclass_ptr, &attr_name)
-            .or_else(|| context.lookup_type_attr_via_runtime_mro(metaclass_ptr, &attr_name))
+            .or_else(|| context.lookup_type_attr_via_runtime_mro(metaclass_ptr, &attr_name))?;
+        Some((metaclass_ptr, attr_ptr))
     });
-    if let Ok(Some(attr_ptr)) = runtime_metaclass_lookup
+    if let Ok(Some((metaclass_ptr, attr_ptr))) = runtime_metaclass_lookup
         && !attr_ptr.is_null()
     {
         if trace_prepare {
@@ -858,6 +879,27 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
                 "[cpy-type-getattr] runtime-metaclass-hit object={:p} attr={} ptr={:p}",
                 object, attr_name, attr_ptr
             );
+        }
+        if let Ok(Some(bound_ptr)) = with_active_cpython_context_mut(|context| {
+            context.bind_generic_descriptor_attr_ptr(attr_ptr, object, metaclass_ptr, false)
+        }) && !bound_ptr.is_null()
+        {
+            if trace_type_getattr {
+                eprintln!(
+                    "[cpy-type-getattr] runtime-metaclass-generic-bound-hit object={:p} attr={} ptr={:p}",
+                    object, attr_name, bound_ptr
+                );
+            }
+            if trace_prepare {
+                let tag = cpython_value_from_ptr(bound_ptr)
+                    .map(|value| cpython_value_debug_tag(&value))
+                    .unwrap_or_else(|_| "<unresolved>".to_string());
+                eprintln!(
+                    "[type-prepare] runtime-metaclass-generic-bound-hit object={:p} ptr={:p} value={}",
+                    object, bound_ptr, tag
+                );
+            }
+            return bound_ptr;
         }
         if let Ok(Some(bound_ptr)) = with_active_cpython_context_mut(|context| {
             if context.vm.is_null() {
@@ -1738,6 +1780,74 @@ unsafe fn cpython_clone_type_bases_tuple(bases: *mut c_void) -> Result<*mut c_vo
     Ok(bases_tuple)
 }
 
+unsafe fn cpython_type_base_ptrs_from_arg(
+    bases: *mut c_void,
+) -> Result<Vec<*mut CpythonTypeObject>, String> {
+    if bases.is_null() {
+        return Ok(Vec::new());
+    }
+    if cpython_is_type_object_ptr(bases) {
+        return Ok(vec![bases.cast::<CpythonTypeObject>()]);
+    }
+    let raw_len = unsafe { PyTuple_Size(bases) };
+    if raw_len < 0 {
+        return Err("bases must be a type or tuple of types".to_string());
+    }
+    let mut base_ptrs = Vec::with_capacity(raw_len as usize);
+    for index in 0..(raw_len as usize) {
+        let raw_item = unsafe { PyTuple_GetItem(bases, index as isize) };
+        if raw_item.is_null() {
+            return Err("bases contains a null entry".to_string());
+        }
+        if !cpython_is_type_object_ptr(raw_item) {
+            return Err("bases must be types".to_string());
+        }
+        base_ptrs.push(raw_item.cast::<CpythonTypeObject>());
+    }
+    Ok(base_ptrs)
+}
+
+unsafe fn cpython_select_type_metaclass(
+    explicit_metaclass: *mut c_void,
+    bases: *mut c_void,
+) -> Result<*mut c_void, String> {
+    let default_metaclass = std::ptr::addr_of_mut!(PyType_Type).cast::<c_void>();
+    let mut winner = if explicit_metaclass.is_null() {
+        std::ptr::null_mut()
+    } else {
+        explicit_metaclass
+    };
+    let base_ptrs = unsafe { cpython_type_base_ptrs_from_arg(bases) }?;
+    for base in base_ptrs {
+        let base_metaclass = unsafe {
+            if (*base).ob_type.is_null() {
+                default_metaclass
+            } else {
+                (*base).ob_type.cast::<c_void>()
+            }
+        };
+        if winner.is_null() || winner == base_metaclass {
+            winner = base_metaclass;
+            continue;
+        }
+        if unsafe { PyType_IsSubtype(winner, base_metaclass) } != 0 {
+            continue;
+        }
+        if unsafe { PyType_IsSubtype(base_metaclass, winner) } != 0 {
+            winner = base_metaclass;
+            continue;
+        }
+        return Err(
+            "metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases".to_string(),
+        );
+    }
+    if winner.is_null() {
+        Ok(default_metaclass)
+    } else {
+        Ok(winner)
+    }
+}
+
 unsafe fn cpython_type_base_ptrs_from_type_object(
     ty: *mut CpythonTypeObject,
 ) -> Result<Vec<*mut CpythonTypeObject>, String> {
@@ -1773,9 +1883,7 @@ unsafe fn cpython_type_base_ptrs_from_type_object(
     }
 }
 
-unsafe fn cpython_build_ready_type_mro(
-    ty: *mut CpythonTypeObject,
-) -> Result<*mut c_void, String> {
+unsafe fn cpython_build_ready_type_mro(ty: *mut CpythonTypeObject) -> Result<*mut c_void, String> {
     let base_ptrs = unsafe { cpython_type_base_ptrs_from_type_object(ty) }?;
     let mut linearized = vec![ty.cast::<c_void>()];
     if base_ptrs.is_empty() {
@@ -1794,7 +1902,8 @@ unsafe fn cpython_build_ready_type_mro(
 
     let mut seqs: Vec<Vec<*mut c_void>> = Vec::with_capacity(base_ptrs.len() + 1);
     for &base in &base_ptrs {
-        if unsafe { (*base).tp_mro }.is_null() && unsafe { PyType_Ready(base.cast::<c_void>()) } != 0
+        if unsafe { (*base).tp_mro }.is_null()
+            && unsafe { PyType_Ready(base.cast::<c_void>()) } != 0
         {
             return Err("failed to ready base type MRO".to_string());
         }
@@ -1816,7 +1925,12 @@ unsafe fn cpython_build_ready_type_mro(
         }
         seqs.push(sequence);
     }
-    seqs.push(base_ptrs.iter().map(|base| (*base).cast::<c_void>()).collect());
+    seqs.push(
+        base_ptrs
+            .iter()
+            .map(|base| (*base).cast::<c_void>())
+            .collect(),
+    );
 
     loop {
         seqs.retain(|sequence| !sequence.is_empty());
@@ -2687,9 +2801,21 @@ fn cpython_type_from_spec_impl(
         }
     };
     let metaclass_ptr = if metaclass.is_null() {
-        std::ptr::addr_of_mut!(PyType_Type).cast::<c_void>()
+        match unsafe { cpython_select_type_metaclass(std::ptr::null_mut(), bases) } {
+            Ok(metaclass_ptr) => metaclass_ptr,
+            Err(err) => {
+                cpython_set_typed_error(unsafe { PyExc_TypeError }, err);
+                return std::ptr::null_mut();
+            }
+        }
     } else if cpython_is_type_object_ptr(metaclass) {
-        metaclass
+        match unsafe { cpython_select_type_metaclass(metaclass, bases) } {
+            Ok(metaclass_ptr) => metaclass_ptr,
+            Err(err) => {
+                cpython_set_typed_error(unsafe { PyExc_TypeError }, err);
+                return std::ptr::null_mut();
+            }
+        }
     } else {
         cpython_set_typed_error(
             unsafe { PyExc_TypeError },

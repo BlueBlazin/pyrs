@@ -386,7 +386,8 @@ use self::cpython_slot_runtime::{
     PY_RUNTIME_MAPPING_METHODS, cpython_call_method_for_capi, cpython_call_object,
     cpython_codec_error_name_optional, cpython_codec_name_or_default,
     cpython_mapping_ass_subscript_slot, cpython_mapping_subscript_slot, cpython_sequence_item_slot,
-    cpython_structseq_count_fields, cpython_try_binary_number_slot, cpython_try_richcompare_slot,
+    cpython_resolve_inherited_tp_call, cpython_structseq_count_fields,
+    cpython_try_binary_number_slot, cpython_try_richcompare_slot,
     cpython_unicode_decode_with_codec_in_context, cpython_unicode_encode_with_codec_in_context,
     cpython_unicode_text_from_value, cpython_valid_type_ptr,
 };
@@ -7215,11 +7216,7 @@ impl ModuleCapiContext {
         self.cpython_value_from_ptr_or_proxy(object)
     }
 
-    fn rehydrate_vm_cached_compat_value(
-        &mut self,
-        raw: usize,
-        value: Value,
-    ) -> Option<Value> {
+    fn rehydrate_vm_cached_compat_value(&mut self, raw: usize, value: Value) -> Option<Value> {
         let raw_ptr = raw as *mut c_void;
         let handle = self.alloc_object(value);
         self.cpython_objects_by_ptr.insert(raw, handle);
@@ -8914,6 +8911,26 @@ impl ModuleCapiContext {
         if descriptor_ptr.is_null() {
             return None;
         }
+        let bind_runtime_descriptor = |context: &mut Self| {
+            if is_type_object {
+                return None;
+            }
+            let descriptor_value = context.cpython_value_from_borrowed_ptr(descriptor_ptr)?;
+            let getter = cpython_getattr_in_context(context, descriptor_value, "__get__").ok()?;
+            let instance_value = context.cpython_value_from_ptr_or_proxy(object)?;
+            let owner_value = context
+                .cpython_value_from_ptr_or_proxy(object_type)
+                .unwrap_or(Value::None);
+            let bound_value = cpython_call_internal_in_context(
+                context,
+                getter,
+                vec![instance_value, owner_value],
+                HashMap::new(),
+            )
+            .ok()?;
+            let bound_ptr = context.alloc_cpython_ptr_for_value(bound_value);
+            (!bound_ptr.is_null()).then_some(bound_ptr)
+        };
         // SAFETY: caller provides a candidate descriptor pointer.
         let descriptor_type = unsafe {
             descriptor_ptr
@@ -8923,12 +8940,12 @@ impl ModuleCapiContext {
                 .unwrap_or(std::ptr::null_mut())
         };
         if !Self::cpython_slot_table_ptr_is_valid(descriptor_type) {
-            return None;
+            return bind_runtime_descriptor(self);
         }
         // SAFETY: descriptor type layout validated above.
         let descriptor_get = unsafe { (*descriptor_type).tp_descr_get };
         if descriptor_get.is_null() {
-            return None;
+            return bind_runtime_descriptor(self);
         }
         let descriptor_get: unsafe extern "C" fn(
             *mut c_void,
@@ -8951,7 +8968,7 @@ impl ModuleCapiContext {
         if unsafe { !PyErr_Occurred().is_null() } {
             return Some(std::ptr::null_mut());
         }
-        None
+        bind_runtime_descriptor(self)
     }
 
     fn lookup_type_attr_via_tp_dict(
@@ -8971,11 +8988,14 @@ impl ModuleCapiContext {
                 .unwrap_or(std::ptr::null_mut())
         };
         let expected_type = std::ptr::addr_of_mut!(PyType_Type).cast::<c_void>();
+        let mapped_object_value = self.cpython_value_from_ptr(object);
+        let is_runtime_class_object = matches!(mapped_object_value, Some(Value::Class(_)));
         // Use object-level type-object detection (not type-flag checks on `ob_type` alone):
         // instances have `ob_type` pointing at a type object, but are not type objects.
         let is_type_object = cpython_is_type_object_ptr(object)
             || self.is_known_type_ptr(object)
-            || Self::is_probable_type_object_ptr(object);
+            || Self::is_probable_type_object_ptr(object)
+            || is_runtime_class_object;
         let trace_type_attr =
             attr_name == "type" && super::env_var_present_cached("PYRS_TRACE_PROXY_TYPE_ATTR");
         let trace_attr_max =
@@ -10469,9 +10489,9 @@ impl ModuleCapiContext {
                 return None;
             }
         }
-        // SAFETY: `type_ptr` is derived from object header and validated non-null.
-        let tp_call_raw = unsafe { (*type_ptr).tp_call };
-        if tp_call_raw.is_null() {
+        let Some((tp_call_raw, tp_call_owner)) =
+            (unsafe { cpython_resolve_inherited_tp_call(type_ptr) })
+        else {
             if trace_calls {
                 eprintln!(
                     "[cpy-call] skip native callable={:p} type={:p} reason=null-tp_call (PyType_Type={:p} tp_call={:p})",
@@ -10482,7 +10502,7 @@ impl ModuleCapiContext {
                 );
             }
             return None;
-        }
+        };
         if tp_call_raw == PyVectorcall_Call as *mut c_void {
             self.set_error(
                 "native tp_call resolved to PyVectorcall_Call without vectorcall target",
@@ -10512,12 +10532,17 @@ impl ModuleCapiContext {
             let type_name = unsafe {
                 c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
             };
+            let owner_name = unsafe {
+                c_name_to_string((*tp_call_owner).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+            };
             eprintln!(
-                "[cpy-call] native callable={:p} type={:p}({}) tp_call={:p} args={} kwargs={}",
+                "[cpy-call] native callable={:p} type={:p}({}) tp_call={:p} owner={:p}({}) args={} kwargs={}",
                 callable,
                 type_ptr,
                 type_name,
                 tp_call_raw,
+                tp_call_owner,
+                owner_name,
                 args.len(),
                 kwargs.len()
             );

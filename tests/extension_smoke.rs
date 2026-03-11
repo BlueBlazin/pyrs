@@ -3093,6 +3093,73 @@ PyInit_cpython_api_batch13_probe(void) {
 }
 
 #[test]
+fn cpython_getattr_string_binds_runtime_property_descriptors() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping runtime property getattr smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping runtime property getattr smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_runtime_property_getattr");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("runtime_property_getattr_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+read_max(PyObject *self, PyObject *arg) {
+    return PyObject_GetAttrString(arg, "max");
+}
+
+static PyMethodDef module_methods[] = {
+    {"read_max", read_max, METH_O, "Read max via PyObject_GetAttrString"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "runtime_property_getattr_probe",
+    "runtime property getattr probe module",
+    -1,
+    module_methods,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_runtime_property_getattr_probe(void) {
+    return PyModule_Create(&module_def);
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "runtime_property_getattr_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("runtime property getattr probe should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import runtime_property_getattr_probe as probe\nclass Holder:\n    @property\n    def max(self):\n        return 42\nvalue = probe.read_max(Holder())\nassert type(value).__name__ == 'int'\nassert value == 42",
+    )
+    .expect("runtime property getattr probe import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn cpython_compat_object_buffer_abi_batch14_apis_work() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping cpython api batch14 smoke (pyrs binary not found)");
@@ -8463,6 +8530,113 @@ PyInit_cpython_api_batch54_probe(void) {
         "import cpython_api_batch54_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)",
     )
     .expect("cpython api batch54 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn cpython_type_from_module_and_spec_inherits_base_metaclass() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping metaclass inheritance smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping metaclass inheritance smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_type_from_spec_metaclass");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("type_from_spec_metaclass.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyType_Slot native_abc_child_slots[] = {
+    {Py_tp_token, Py_TP_USE_SPEC},
+    {0, 0}
+};
+
+static PyType_Spec native_abc_child_spec = {
+    "type_from_spec_metaclass.NativeABCChild",
+    128,
+    0,
+    0,
+    native_abc_child_slots
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "type_from_spec_metaclass",
+    0,
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_type_from_spec_metaclass(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *abc = PyImport_ImportModule("abc");
+    if (!abc) {
+        Py_DECREF(module);
+        return 0;
+    }
+
+    PyObject *abc_base = PyObject_GetAttrString(abc, "ABC");
+    Py_DECREF(abc);
+    if (!abc_base) {
+        Py_DECREF(module);
+        return 0;
+    }
+
+    PyObject *bases = PyTuple_Pack(1, abc_base);
+    Py_DECREF(abc_base);
+    if (!bases) {
+        Py_DECREF(module);
+        return 0;
+    }
+
+    PyObject *type_obj = PyType_FromModuleAndSpec(module, &native_abc_child_spec, bases);
+    Py_DECREF(bases);
+    if (!type_obj) {
+        Py_DECREF(module);
+        return 0;
+    }
+
+    if (PyModule_AddObject(module, "NativeABCChild", type_obj) != 0) {
+        Py_DECREF(type_obj);
+        Py_DECREF(module);
+        return 0;
+    }
+
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path =
+        temp_root.join(importable_module_library_filename("type_from_spec_metaclass"));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("metaclass inheritance extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import type_from_spec_metaclass as m\nassert type(m.NativeABCChild).__name__ == 'ABCMeta'\nassert hasattr(m.NativeABCChild, 'register')\ninst = m.NativeABCChild()\nassert type(inst) is m.NativeABCChild",
+    )
+    .expect("type-from-spec metaclass inheritance should match CPython");
 
     let _ = fs::remove_file(library_path);
     let _ = fs::remove_file(source_path);

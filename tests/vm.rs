@@ -12830,7 +12830,7 @@ fn imports_module_from_cached_pyc_without_source_file() {
     let target = pycache.join("mod.cpython-314.pyc");
     std::fs::copy(&pyc_path, &target).expect("copy pyc");
 
-    let source = "import mod\nx = mod.value\nloader = mod.__loader__\nloader_ok = (loader.__class__.__name__ == 'SourcelessFileLoader' and loader.__class__.__module__ == 'importlib.machinery')\n";
+    let source = "import mod\nx = mod.value\nloader = mod.__loader__\nloader_ok = (loader.__class__.__name__ == 'SourcelessFileLoader' and loader.__class__.__module__ == '_frozen_importlib_external')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -12863,7 +12863,7 @@ fn imports_package_from_cached_pyc_without_source_file() {
     let target = pycache.join("__init__.cpython-314.pyc");
     std::fs::copy(&pyc_path, &target).expect("copy pyc");
 
-    let source = "import pkg\nx = pkg.value\nloader = pkg.__loader__\nloader_ok = (loader.__class__.__name__ == 'SourcelessFileLoader' and loader.__class__.__module__ == 'importlib.machinery')\n";
+    let source = "import pkg\nx = pkg.value\nloader = pkg.__loader__\nloader_ok = (loader.__class__.__name__ == 'SourcelessFileLoader' and loader.__class__.__module__ == '_frozen_importlib_external')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

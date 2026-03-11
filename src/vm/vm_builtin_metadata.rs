@@ -7160,13 +7160,7 @@ impl Vm {
                 .get("__hash__")
                 .cloned()
                 .unwrap_or(Value::None)
-        } else if is_cpython_proxy_class
-            && let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name)
-        {
-            proxy_attr
         } else if let Some(attr) = class_attr_lookup(class, attr_name) {
-            attr
-        } else if let Some(attr) = proxy_base_attr {
             attr
         } else if attr_name == "__name__" || attr_name == "__qualname__" {
             let name = canonical_type_info
@@ -7203,6 +7197,12 @@ impl Vm {
                 BuiltinFunction::TypePrepare,
                 class.clone(),
             )));
+        } else if is_cpython_proxy_class
+            && let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name)
+        {
+            proxy_attr
+        } else if let Some(attr) = proxy_base_attr {
+            attr
         } else if attr_name == "__module__" {
             canonical_type_info
                 .map(|info| Value::Str(info.module.to_string()))

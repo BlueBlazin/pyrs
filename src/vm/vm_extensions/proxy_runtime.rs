@@ -16,7 +16,8 @@ use super::{
     PyNumber_Positive, PyNumber_Subtract, PyNumber_TrueDivide, PyObject_CallObject,
     PyObject_GetAttrString, PyObject_GetItem, PyObject_IsTrue, PyObject_Repr, PyObject_RichCompare,
     PyObject_RichCompareBool, PyObject_SetItem, PyObject_Size, PyObject_Str, RuntimeError, Value,
-    Vm, c_name_to_string, cpython_is_type_object_ptr, cpython_resolve_vectorcall,
+    Vm, c_name_to_string, cpython_is_type_object_ptr, cpython_resolve_inherited_tp_call,
+    cpython_resolve_vectorcall,
     cpython_type_tp_getattro, cpython_valid_type_ptr, cpython_value_debug_tag,
     is_cpython_proxy_class,
 };
@@ -75,8 +76,7 @@ impl Vm {
         if !cpython_valid_type_ptr(type_ptr) {
             return false;
         }
-        // SAFETY: `type_ptr` was validated by `cpython_valid_type_ptr`.
-        if unsafe { !(*type_ptr).tp_call.is_null() } {
+        if unsafe { cpython_resolve_inherited_tp_call(type_ptr).is_some() } {
             return true;
         }
         // SAFETY: only inspects vectorcall metadata on candidate CPython object.

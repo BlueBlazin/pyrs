@@ -15,7 +15,8 @@ use super::{
     cpython_codec_error_name_optional, cpython_codec_module_in_context,
     cpython_codec_name_or_default, cpython_getattr_in_context, cpython_lookup_interned_unicode_ptr,
     cpython_new_bytes_ptr, cpython_new_ptr_for_value, cpython_register_interned_unicode,
-    cpython_resolve_vectorcall, cpython_set_error, cpython_set_typed_error,
+    cpython_resolve_inherited_tp_call, cpython_resolve_vectorcall, cpython_set_error,
+    cpython_set_typed_error,
     cpython_stable_utf8_ptr, cpython_string_to_wide_units,
     cpython_unicode_decode_with_codec_in_context, cpython_unicode_encode_with_codec_in_context,
     cpython_unicode_text_from_value, cpython_value_debug_tag, cpython_value_from_ptr,
@@ -3119,9 +3120,7 @@ pub unsafe extern "C" fn PyCallable_Check(object: *mut c_void) -> i32 {
             if type_ptr.is_null() {
                 return false;
             }
-            // SAFETY: type pointer is valid for call-slot metadata inspection.
-            let has_tp_call = unsafe { !(*type_ptr).tp_call.is_null() };
-            if has_tp_call {
+            if unsafe { cpython_resolve_inherited_tp_call(type_ptr).is_some() } {
                 return true;
             }
             // SAFETY: vectorcall resolver only inspects callable layout metadata.

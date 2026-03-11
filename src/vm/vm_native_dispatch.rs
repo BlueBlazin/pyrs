@@ -6845,6 +6845,11 @@ impl Vm {
                             Object::Class(class_data) if class_data.name == "member_descriptor"
                         )
                 );
+                if let Some(proxy_value) =
+                    self.load_cpython_proxy_attr_for_value(&obj, &descriptor_name)
+                {
+                    return Ok(NativeCallResult::Value(proxy_value));
+                }
                 if !self.value_is_instance_of(&obj, &descriptor_owner)? {
                     let owner_name = match &descriptor_owner {
                         Value::Builtin(builtin) => self.builtin_type_name(*builtin).to_string(),

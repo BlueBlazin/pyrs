@@ -1220,7 +1220,9 @@ ModuleSpec.has_location = property(_ModuleSpec_get_has_location, _ModuleSpec_set
         };
         let has_import_helpers = if let Object::Module(module_data) = &*module.kind() {
             module_data.globals.contains_key("_gcd_import")
-                && module_data.globals.contains_key("_call_with_frames_removed")
+                && module_data
+                    .globals
+                    .contains_key("_call_with_frames_removed")
                 && module_data.globals.contains_key("_load_module_shim")
                 && module_data.globals.contains_key("_load_unlocked")
         } else {
@@ -12954,8 +12956,8 @@ namereplace_errors = lookup_error("namereplace")
 
     pub(super) fn loader_class_from_modules(&self, class_name: &str) -> Option<ObjRef> {
         for module_name in [
-            "importlib.machinery",
             "_frozen_importlib_external",
+            "importlib.machinery",
             "_frozen_importlib",
         ] {
             let Some(module) = self.modules.get(module_name) else {

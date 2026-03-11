@@ -43,6 +43,23 @@ pub(super) fn cpython_valid_type_ptr(type_ptr: *mut CpythonTypeObject) -> bool {
     addr >= MIN_VALID_PTR && addr % std::mem::align_of::<CpythonTypeObject>() == 0
 }
 
+pub(super) unsafe fn cpython_resolve_inherited_tp_call(
+    mut type_ptr: *mut CpythonTypeObject,
+) -> Option<(*mut c_void, *mut CpythonTypeObject)> {
+    let mut depth = 0usize;
+    while cpython_valid_type_ptr(type_ptr) && depth < 256 {
+        // SAFETY: `type_ptr` shape is validated at loop entry.
+        let tp_call = unsafe { (*type_ptr).tp_call };
+        if !tp_call.is_null() {
+            return Some((tp_call, type_ptr));
+        }
+        // SAFETY: `type_ptr` shape is validated at loop entry.
+        type_ptr = unsafe { (*type_ptr).tp_base };
+        depth += 1;
+    }
+    None
+}
+
 unsafe fn cpython_number_binop_slot(
     type_ptr: *mut CpythonTypeObject,
     slot_offset: usize,

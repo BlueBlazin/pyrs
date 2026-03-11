@@ -5723,9 +5723,6 @@ impl Vm {
                 return;
             };
             if let Object::Module(module_data) = &mut *module.kind_mut() {
-                module_data
-                    .globals
-                    .insert("__name__".to_string(), Value::Str(alias_name.to_string()));
                 module_data.globals.insert(
                     "__package__".to_string(),
                     Value::Str("importlib".to_string()),
@@ -5832,10 +5829,7 @@ impl Vm {
                 ("meth_o", BuiltinFunction::NoOp),
                 ("call_in_temporary_c_thread", BuiltinFunction::NoOp),
                 ("join_temporary_c_thread", BuiltinFunction::NoOp),
-                (
-                    "getargs_keywords",
-                    BuiltinFunction::TestCapiGetargsKeywords,
-                ),
+                ("getargs_keywords", BuiltinFunction::TestCapiGetargsKeywords),
                 (
                     "getargs_keyword_only",
                     BuiltinFunction::TestCapiGetargsKeywordOnly,
