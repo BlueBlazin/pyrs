@@ -19273,6 +19273,80 @@ fn executes_c_decimal_signaldict_mapping_methods() {
 }
 
 #[test]
+fn c_decimal_signaldict_iteration_yields_signal_classes() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping C decimal SignalDict iteration test (CPython Lib path not available)");
+        return;
+    };
+    let dynload_path = PathBuf::from(
+        "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/lib-dynload",
+    );
+    if !dynload_path
+        .join("_decimal.cpython-314-darwin.so")
+        .is_file()
+    {
+        eprintln!("skipping C decimal SignalDict iteration test (lib-dynload path not available)");
+        return;
+    }
+    let handle = std::thread::Builder::new()
+        .name("c-decimal-signaldict-iteration".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = format!(
+                "import sys\nsys.path.insert(0, '{lib_path}')\nsys.path.insert(0, '{dynload_path}')\nimport _decimal\nflags = _decimal.getcontext().flags\nexpected = ('InvalidOperation', 'FloatOperation', 'DivisionByZero', 'Overflow', 'Underflow', 'Subnormal', 'Inexact', 'Rounded', 'Clamped')\nkey_names = tuple(cls.__name__ for cls in flags.keys())\niter_names = tuple(cls.__name__ for cls in flags)\nfirst_name = next(iter(flags)).__name__\nok = (key_names == expected and iter_names == expected and first_name == 'InvalidOperation')\n",
+                lib_path = lib_path.to_string_lossy().replace('\\', "\\\\"),
+                dynload_path = dynload_path.to_string_lossy().replace('\\', "\\\\")
+            );
+            let module = parser::parse_module(&source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn c-decimal-signaldict-iteration thread");
+    handle
+        .join()
+        .expect("c-decimal-signaldict-iteration thread should complete");
+}
+
+#[test]
+fn c_decimal_context_attr_lookup_and_copy_work() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping C decimal Context attr test (CPython Lib path not available)");
+        return;
+    };
+    let dynload_path = PathBuf::from(
+        "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/lib-dynload",
+    );
+    if !dynload_path
+        .join("_decimal.cpython-314-darwin.so")
+        .is_file()
+    {
+        eprintln!("skipping C decimal Context attr test (lib-dynload path not available)");
+        return;
+    }
+    let handle = std::thread::Builder::new()
+        .name("c-decimal-context-attr".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = format!(
+                "import sys\nsys.path.insert(0, '{lib_path}')\nsys.path.insert(0, '{dynload_path}')\nfrom test.support.import_helper import import_fresh_module\nC = import_fresh_module('decimal', fresh=['_decimal'])\nctx = C.getcontext()\ncopy_attr = ctx.copy\ncopy_ctx = copy_attr()\nsignal_names = tuple(cls.__name__ for cls in copy_ctx.flags.keys())\nok = (ctx.prec == 28 and callable(copy_attr) and type(copy_ctx) is C.Context and copy_ctx.prec == 28 and signal_names[:2] == ('InvalidOperation', 'FloatOperation'))\n",
+                lib_path = lib_path.to_string_lossy().replace('\\', "\\\\"),
+                dynload_path = dynload_path.to_string_lossy().replace('\\', "\\\\")
+            );
+            let module = parser::parse_module(&source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn c-decimal-context-attr thread");
+    handle
+        .join()
+        .expect("c-decimal-context-attr thread should complete");
+}
+
+#[test]
 fn keyerror_and_indexerror_are_lookuperror_subclasses() {
     let source = "ok1 = issubclass(KeyError, LookupError)\nok2 = issubclass(IndexError, LookupError)\ncaught = False\ntry:\n    {}['missing']\nexcept LookupError:\n    caught = True\nok = ok1 and ok2 and caught\n";
     let module = parser::parse_module(source).expect("parse should succeed");

@@ -4736,14 +4736,8 @@ impl ModuleCapiContext {
             .cpython_objects_by_ptr
             .get(&(child_ptr as usize))
             .copied()
-            && let Some(value) = self.object_value(handle)
         {
-            vm.extension_cpython_ptr_values
-                .insert(child_ptr as usize, value.clone());
-            if let Some(object_id) = Self::identity_object_id(&value) {
-                vm.extension_cpython_ptr_by_object_id
-                    .insert(object_id, child_ptr as usize);
-            }
+            self.persist_escaped_ptr_value(vm, handle, child_ptr as usize);
         }
     }
 
@@ -5888,8 +5882,9 @@ impl ModuleCapiContext {
                 ob_type = class_ptr;
             }
         }
-        let runtime_class_mro = class_state.as_ref().map(
-            |(class_obj, _, _, _, _, class_mro)| {
+        let runtime_class_mro = class_state
+            .as_ref()
+            .map(|(class_obj, _, _, _, _, class_mro)| {
                 if class_mro
                     .first()
                     .is_some_and(|entry| entry.id() == class_obj.id())
@@ -5900,8 +5895,7 @@ impl ModuleCapiContext {
                     mro.extend(class_mro.iter().cloned());
                     mro
                 }
-            },
-        );
+            });
         let has_class_state = class_state.is_some();
         let mut already_registered = false;
         let raw = if let Some((capsule_refcount, pointer, name, context, cpython_destructor)) =
@@ -6609,9 +6603,12 @@ impl ModuleCapiContext {
             let needs_mro = unsafe { (*raw_type).tp_mro.is_null() };
             if needs_mro {
                 let mro_value = unsafe {
-                    (&mut *self.vm)
-                        .heap
-                        .alloc_tuple(runtime_mro.into_iter().map(Value::Class).collect::<Vec<_>>())
+                    (&mut *self.vm).heap.alloc_tuple(
+                        runtime_mro
+                            .into_iter()
+                            .map(Value::Class)
+                            .collect::<Vec<_>>(),
+                    )
                 };
                 let mro_ptr = self.alloc_cpython_ptr_for_value(mro_value);
                 if !mro_ptr.is_null() {
@@ -7123,20 +7120,9 @@ impl ModuleCapiContext {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             let vm = unsafe { &mut *self.vm };
             if let Some(value) = vm.extension_cpython_ptr_values.get(&raw).cloned() {
-                if super::env_var_present_cached("PYRS_TRACE_METHOD_MAP_SOURCE")
-                    && matches!(value, Value::BoundMethod(_))
-                {
-                    let type_name = cpython_type_name_for_object_ptr(object);
-                    eprintln!(
-                        "[method-map] source=vm-cache ptr={:p} type={} value={}",
-                        object,
-                        type_name,
-                        cpython_value_debug_tag(&value)
-                    );
-                }
-                if Self::value_requires_external_mapping_stale_check(&value)
-                    && self.external_proxy_mapping_is_stale(&value, object)
-                {
+                let is_stale = Self::value_requires_external_mapping_stale_check(&value)
+                    && self.external_proxy_mapping_is_stale(&value, object);
+                if is_stale {
                     if super::env_var_present_cached("PYRS_TRACE_CPY_PROXY_PTRS") {
                         eprintln!(
                             "[cpy-proxy] stale vm-cache reset object_ptr={:p} value_tag={}",
@@ -7154,7 +7140,22 @@ impl ModuleCapiContext {
                         vm.extension_cpython_ptr_by_object_id.remove(&object_id);
                     }
                 } else {
-                    return Some(value);
+                    if super::env_var_present_cached("PYRS_TRACE_METHOD_MAP_SOURCE")
+                        && matches!(value, Value::BoundMethod(_))
+                    {
+                        let type_name = cpython_type_name_for_object_ptr(object);
+                        eprintln!(
+                            "[method-map] source=vm-cache ptr={:p} type={} value={}",
+                            object,
+                            type_name,
+                            cpython_value_debug_tag(&value)
+                        );
+                    }
+                    return if self.owns_cpython_allocation_ptr(object) {
+                        self.rehydrate_vm_cached_compat_value(raw, value)
+                    } else {
+                        Some(value)
+                    };
                 }
             }
         }
@@ -7212,6 +7213,30 @@ impl ModuleCapiContext {
         // to avoid use-after-free when the originating C-API context is dropped.
         self.pin_owned_cpython_allocation_for_vm(object);
         self.cpython_value_from_ptr_or_proxy(object)
+    }
+
+    fn rehydrate_vm_cached_compat_value(
+        &mut self,
+        raw: usize,
+        value: Value,
+    ) -> Option<Value> {
+        let raw_ptr = raw as *mut c_void;
+        let handle = self.alloc_object(value);
+        self.cpython_objects_by_ptr.insert(raw, handle);
+        self.cpython_ptr_by_handle.insert(handle, raw_ptr);
+        if self.cpython_handle_requires_storage_sync(handle) {
+            self.sync_value_from_cpython_storage(handle, raw_ptr);
+        }
+        let updated = self.object_value(handle)?;
+        if !self.vm.is_null() {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.extension_cpython_ptr_values.insert(raw, updated.clone());
+            if let Some(object_id) = Self::identity_object_id(&updated) {
+                vm.extension_cpython_ptr_by_object_id.insert(object_id, raw);
+            }
+        }
+        Some(updated)
     }
 
     fn refresh_external_proxy_instance_type(
@@ -7652,7 +7677,8 @@ impl ModuleCapiContext {
             if proxy_base_values.is_empty()
                 && !tp_base.is_null()
                 && tp_base.cast::<c_void>() != object
-                && let Some(base_value) = self.cpython_value_from_ptr_or_proxy(tp_base.cast::<c_void>())
+                && let Some(base_value) =
+                    self.cpython_value_from_ptr_or_proxy(tp_base.cast::<c_void>())
             {
                 proxy_base_values.push(base_value);
             }
@@ -7660,7 +7686,9 @@ impl ModuleCapiContext {
         let mut proxy_bases = Vec::new();
         for base_value in proxy_base_values {
             if let Ok(base_class) = vm.class_from_base_value(base_value)
-                && !proxy_bases.iter().any(|existing: &ObjRef| existing.id() == base_class.id())
+                && !proxy_bases
+                    .iter()
+                    .any(|existing: &ObjRef| existing.id() == base_class.id())
             {
                 proxy_bases.push(base_class);
             }
@@ -10617,7 +10645,10 @@ impl ModuleCapiContext {
         self.objects.get(&handle)
     }
 
-    fn persist_escaped_ptr_value(&self, vm: &mut Vm, handle: PyrsObjectHandle, raw_ptr: usize) {
+    fn persist_escaped_ptr_value(&mut self, vm: &mut Vm, handle: PyrsObjectHandle, raw_ptr: usize) {
+        if self.cpython_handle_requires_storage_sync(handle) {
+            self.sync_value_from_cpython_storage(handle, raw_ptr as *mut c_void);
+        }
         let Some(slot) = self.objects.get(&handle) else {
             return;
         };

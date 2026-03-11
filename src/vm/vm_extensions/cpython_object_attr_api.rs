@@ -1020,7 +1020,75 @@ pub unsafe extern "C" fn PyObject_GenericGetAttr(
     object: *mut c_void,
     name: *mut c_void,
 ) -> *mut c_void {
-    unsafe { PyObject_GetAttr(object, name) }
+    enum GenericLookup {
+        Value(*mut c_void),
+        Missing { type_name: String, attr_name: String },
+        Fallback,
+    }
+
+    let lookup = with_active_cpython_context_mut(|context| {
+        const MIN_VALID_PTR: usize = super::MIN_VALID_PTR_THRESHOLD;
+        if object.is_null() || name.is_null() {
+            return GenericLookup::Fallback;
+        }
+        if (object as usize) < MIN_VALID_PTR
+            || (object as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
+        {
+            return GenericLookup::Fallback;
+        }
+        let attr_name = context
+            .cpython_value_from_ptr_or_proxy(name)
+            .and_then(|value| match value {
+                Value::Str(text) => Some(text),
+                _ => None,
+            });
+        let Some(attr_name) = attr_name else {
+            return GenericLookup::Fallback;
+        };
+        // SAFETY: best-effort object/type header probe for generic external lookup.
+        let type_ptr = unsafe {
+            object
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if type_ptr.is_null()
+            || (type_ptr as usize) < MIN_VALID_PTR
+            || (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0
+        {
+            return GenericLookup::Fallback;
+        }
+        if let Some(result) = context.lookup_type_attr_via_tp_dict(object, &attr_name) {
+            return GenericLookup::Value(result);
+        }
+        // External custom tp_getattro implementations can delegate here. Do not
+        // bounce back through PyObject_GetAttr, or we recurse into the same slot again.
+        let type_name = cpython_type_name_for_object_ptr(object);
+        GenericLookup::Missing {
+            type_name,
+            attr_name,
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        GenericLookup::Value(std::ptr::null_mut())
+    });
+
+    match lookup {
+        GenericLookup::Value(value) => value,
+        GenericLookup::Missing {
+            type_name,
+            attr_name,
+        } => {
+            cpython_set_typed_error(
+                unsafe { PyExc_AttributeError },
+                format!("'{type_name}' object has no attribute '{attr_name}'"),
+            );
+            std::ptr::null_mut()
+        }
+        GenericLookup::Fallback => unsafe { PyObject_GetAttr(object, name) },
+    }
 }
 
 #[unsafe(no_mangle)]
