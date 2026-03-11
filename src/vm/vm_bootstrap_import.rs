@@ -15,7 +15,7 @@ use super::{
     PURE_STDLIB_UUID_MODULES, PURE_STDLIB_WEAKREF_MODULES, Path, PathBuf, Rc, RuntimeError,
     SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGKILL, SIGNAL_SIGTERM,
     SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm,
-    cached_module_path, compiler, cpython, dict_get_value, dict_remove_value, dict_set_value,
+    cached_module_path, compiler, dict_get_value, dict_remove_value, dict_set_value,
     matches_finder_kind, parse_uuid_like_string, parser, source_path_from_cache_path,
 };
 use crate::extensions::{
@@ -11818,17 +11818,10 @@ namereplace_errors = lookup_error("namereplace")
                 let bytes = std::fs::read(&source_info.path).map_err(|err| {
                     RuntimeError::new(format!("failed to read module '{name}': {err}"))
                 })?;
-                let pyc_result = cpython::load_pyc(&bytes)
-                    .map_err(|err| RuntimeError::new(format!("pyc load error: {}", err.message)))
-                    .and_then(|pyc| {
-                        cpython::translate_code(&pyc, &mut self.heap).map_err(|err| {
-                            RuntimeError::new(format!("pyc translate error: {}", err.message))
-                        })
-                    });
+                let pyc_result = self.decode_marshaled_pyc_code(&bytes);
                 match pyc_result {
                     Ok(code) => {
                         self.mark_module_initializing(module);
-                        let code = Rc::new(code);
                         let cells = self.build_cells(&code, Vec::new());
                         let mut frame = Frame::new(code, module.clone(), true, false, cells, None);
                         frame.discard_result = true;

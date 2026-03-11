@@ -65,6 +65,7 @@ use self::stdlib::zlib::{ZlibCompressObjectState, ZlibDecompressObjectState};
 use crate::CPYTHON_STDLIB_VERSION;
 use crate::bytecode::cpython;
 use crate::bytecode::metadata::OpcodeMetadata;
+use crate::bytecode::pyc::parse_pyc_header;
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
 use crate::extensions::{
@@ -4250,9 +4251,7 @@ impl Vm {
     }
 
     pub fn execute_pyc_bytes(&mut self, bytes: &[u8]) -> Result<Value, RuntimeError> {
-        let pyc = cpython::load_pyc(bytes).map_err(|err| RuntimeError::new(err.message))?;
-        let code = cpython::translate_code(&pyc, &mut self.heap)
-            .map_err(|err| RuntimeError::new(err.message))?;
+        let code = self.decode_marshaled_pyc_code(bytes)?;
         self.execute(&code)
     }
 
@@ -4260,6 +4259,20 @@ impl Vm {
         let bytes = std::fs::read(path)
             .map_err(|err| RuntimeError::new(format!("failed to read {path}: {err}")))?;
         self.execute_pyc_bytes(&bytes)
+    }
+
+    fn decode_marshaled_pyc_code(&mut self, bytes: &[u8]) -> Result<Rc<CodeObject>, RuntimeError> {
+        let (_header, offset) =
+            parse_pyc_header(bytes).map_err(|err| RuntimeError::new(err.message))?;
+        let object = cpython::marshal_load_object(&bytes[offset..], true)
+            .map_err(|err| RuntimeError::new(err.message))?;
+        let value = self
+            .marshal_object_to_value(&object)
+            .map_err(RuntimeError::new)?;
+        match value {
+            Value::Code(code) => Ok(code),
+            _ => Err(RuntimeError::new("pyc did not contain a code object")),
+        }
     }
 
     fn detect_cpython_stdlib_root(&self) -> Option<PathBuf> {
