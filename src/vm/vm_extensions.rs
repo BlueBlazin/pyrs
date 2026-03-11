@@ -7152,7 +7152,9 @@ impl ModuleCapiContext {
                             cpython_value_debug_tag(&value)
                         );
                     }
-                    return if self.owns_cpython_allocation_ptr(object) {
+                    let needs_rehydrate = self.owns_cpython_allocation_ptr(object)
+                        && self.value_requires_owned_compat_rehydration(&value);
+                    return if needs_rehydrate {
                         self.rehydrate_vm_cached_compat_value(raw, value)
                     } else {
                         Some(value)
@@ -7234,6 +7236,19 @@ impl ModuleCapiContext {
             }
         }
         Some(updated)
+    }
+
+    fn value_requires_owned_compat_rehydration(&self, value: &Value) -> bool {
+        match value {
+            Value::Tuple(_)
+            | Value::List(_)
+            | Value::ByteArray(_)
+            | Value::Str(_)
+            | Value::Module(_)
+            | Value::Exception(_) => true,
+            Value::Instance(_) => self.value_is_exception_instance_like(value),
+            _ => false,
+        }
     }
 
     fn refresh_external_proxy_instance_type(
