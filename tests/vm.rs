@@ -10194,6 +10194,23 @@ ok = (
 }
 
 #[test]
+fn class_init_kwargs_preserve_callsite_keyword_order() {
+    let source = r#"
+class Recorder:
+    def __init__(self, **kwargs):
+        self.seen = list(kwargs.items())
+
+obj = Recorder(foo=42, bar="spam")
+ok = (obj.seen == [("foo", 42), ("bar", "spam")])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn startup_honors_virtual_env_prefix_for_site_packages() {
     let Some(pyrs_bin) = pyrs_binary_path() else {
         eprintln!("skipping virtualenv site-packages startup test (pyrs binary not found)");
@@ -15062,6 +15079,22 @@ fn argparse_parse_args_accepts_explicit_positional_list() {
     };
     run_with_large_stack("vm-argparse-stdlib", move || {
         let source = "import argparse\np = argparse.ArgumentParser()\np.add_argument('x')\nns = p.parse_args(['hello'])\nok = (ns.x == 'hello')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn argparse_namespace_repr_preserves_keyword_order() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    run_with_large_stack("vm-argparse-namespace-repr-order", move || {
+        let source = "import argparse\nns = argparse.Namespace(foo=42, bar='spam')\nok = (repr(ns) == \"Namespace(foo=42, bar='spam')\" and list(vars(ns).items()) == [('foo', 42), ('bar', 'spam')])\n";
         let module = parser::parse_module(source).expect("parse should succeed");
         let code = compiler::compile_module(&module).expect("compile should succeed");
         let mut vm = Vm::new();

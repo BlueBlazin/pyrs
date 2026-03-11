@@ -6189,11 +6189,12 @@ impl Vm {
                                         .get(caller_idx)
                                         .map(|frame| frame.ip)
                                         .unwrap_or(0);
-                                    let call_result = self.call_native_method(
+                                    let call_result = self.call_native_method_with_kwarg_order(
                                         native.kind,
                                         method_data.receiver.clone(),
                                         args,
                                         kwargs,
+                                        kwargs_order_opt,
                                     );
                                     self.finalize_native_opcode_call(
                                         caller_depth,
@@ -6386,11 +6387,12 @@ impl Vm {
                                         .get(caller_idx)
                                         .map(|frame| frame.ip)
                                         .unwrap_or(0);
-                                    let call_result = self.call_native_method(
+                                    let call_result = self.call_native_method_with_kwarg_order(
                                         native.kind,
                                         method_data.receiver.clone(),
                                         args,
                                         kwargs,
+                                        kwargs_order_opt,
                                     );
                                     self.finalize_native_opcode_call(
                                         caller_depth,
@@ -6549,11 +6551,12 @@ impl Vm {
                                         .get(caller_idx)
                                         .map(|frame| frame.ip)
                                         .unwrap_or(0);
-                                    let call_result = self.call_native_method(
+                                    let call_result = self.call_native_method_with_kwarg_order(
                                         native.kind,
                                         method_data.receiver.clone(),
                                         args,
                                         kwargs,
+                                        kwargs_order_opt,
                                     );
                                     self.finalize_native_opcode_call(
                                         caller_depth,
@@ -6711,11 +6714,17 @@ impl Vm {
                                     .get(caller_idx)
                                     .map(|frame| frame.ip)
                                     .unwrap_or(0);
-                                let call_result = self.call_native_method(
+                                let kwargs_order_opt = if kwargs_order.is_empty() {
+                                    None
+                                } else {
+                                    Some(kwargs_order.clone())
+                                };
+                                let call_result = self.call_native_method_with_kwarg_order(
                                     native.kind,
                                     method_data.receiver.clone(),
                                     args,
                                     kwargs,
+                                    kwargs_order_opt,
                                 );
                                 self.finalize_native_opcode_call(
                                     caller_depth,
@@ -7074,11 +7083,17 @@ impl Vm {
                                     .get(caller_idx)
                                     .map(|frame| frame.ip)
                                     .unwrap_or(0);
-                                let call_result = self.call_native_method(
+                                let kwargs_order_opt = if kwargs_order.is_empty() {
+                                    None
+                                } else {
+                                    Some(kwargs_order.clone())
+                                };
+                                let call_result = self.call_native_method_with_kwarg_order(
                                     native.kind,
                                     method_data.receiver.clone(),
                                     args,
                                     kwargs,
+                                    kwargs_order_opt,
                                 );
                                 self.finalize_native_opcode_call(
                                     caller_depth,

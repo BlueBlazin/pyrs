@@ -599,8 +599,19 @@ impl Vm {
         &mut self,
         kind: NativeMethodKind,
         receiver: ObjRef,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<NativeCallResult, RuntimeError> {
+        self.call_native_method_with_kwarg_order(kind, receiver, args, kwargs, None)
+    }
+
+    pub(super) fn call_native_method_with_kwarg_order(
+        &mut self,
+        kind: NativeMethodKind,
+        receiver: ObjRef,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
     ) -> Result<NativeCallResult, RuntimeError> {
         let depth = CALL_NATIVE_METHOD_DEPTH.with(|depth| {
             let next = depth.get().saturating_add(1);
@@ -733,7 +744,8 @@ impl Vm {
                     call_args.push(self.bound_method_reduce_receiver_value(&receiver)?);
                 }
                 call_args.extend(args);
-                let value = self.call_builtin(builtin, call_args, kwargs)?;
+                let value =
+                    self.call_builtin_with_kwarg_order(builtin, call_args, kwargs, kwargs_order)?;
                 Ok(NativeCallResult::Value(value))
             }
             NativeMethodKind::ExtensionFunctionCall(function_id) => {
@@ -5955,7 +5967,9 @@ impl Vm {
                                     })?
                                 }
                                 _ => {
-                                    return Err(RuntimeError::type_error("str receiver is invalid"));
+                                    return Err(RuntimeError::type_error(
+                                        "str receiver is invalid",
+                                    ));
                                 }
                             };
                             (text, args.first())
@@ -8535,8 +8549,7 @@ impl Vm {
             &target,
             Value::Module(module)
                 if matches!(&*module.kind(), Object::Module(module_data) if module_data.name == "__array__")
-        )
-        {
+        ) {
             return Ok(Some(self.heap.alloc_iterator(IteratorObject {
                 kind: IteratorKind::CpythonSequence { target },
                 index: 0,
@@ -8565,8 +8578,7 @@ impl Vm {
             &target,
             Value::Module(module)
                 if matches!(&*module.kind(), Object::Module(module_data) if module_data.name == "__array__")
-        )
-        {
+        ) {
             let length = value_to_int(self.call_builtin(
                 BuiltinFunction::Len,
                 vec![target.clone()],
@@ -12355,9 +12367,8 @@ impl Vm {
                         {
                             let mut iter = iterator_ref.kind_mut();
                             if let Object::Iterator(state) = &mut *iter
-                                && let IteratorKind::ReversedCpythonSequence {
-                                    next_index, ..
-                                } = &mut state.kind
+                                && let IteratorKind::ReversedCpythonSequence { next_index, .. } =
+                                    &mut state.kind
                             {
                                 *next_index = index.saturating_sub(1);
                                 state.index = state.index.saturating_add(1);
@@ -12375,9 +12386,8 @@ impl Vm {
                             unsafe { PyErr_Clear() };
                             let mut iter = iterator_ref.kind_mut();
                             if let Object::Iterator(state) = &mut *iter
-                                && let IteratorKind::ReversedCpythonSequence {
-                                    next_index, ..
-                                } = &mut state.kind
+                                && let IteratorKind::ReversedCpythonSequence { next_index, .. } =
+                                    &mut state.kind
                             {
                                 *next_index = -1;
                             }

@@ -9360,6 +9360,15 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        self.builtin_type_call_with_kwarg_order(args, kwargs, None)
+    }
+
+    pub(super) fn builtin_type_call_with_kwarg_order(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
+    ) -> Result<Value, RuntimeError> {
         let Some((receiver, call_args)) = args.split_first() else {
             return Err(RuntimeError::type_error(
                 "type.__call__() requires a type object",
@@ -9371,7 +9380,12 @@ impl Vm {
             ));
         };
         self.suppress_metaclass_dispatch_depth += 1;
-        let outcome = self.call_internal(Value::Class(class.clone()), call_args.to_vec(), kwargs);
+        let outcome = self.call_internal_with_kwarg_order(
+            Value::Class(class.clone()),
+            call_args.to_vec(),
+            kwargs,
+            kwargs_order,
+        );
         self.suppress_metaclass_dispatch_depth =
             self.suppress_metaclass_dispatch_depth.saturating_sub(1);
         match outcome? {

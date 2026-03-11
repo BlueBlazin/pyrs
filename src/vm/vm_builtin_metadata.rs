@@ -5688,6 +5688,9 @@ impl Vm {
             BuiltinFunction::CollectionsOrderedDict => {
                 self.builtin_collections_ordereddict_with_order(args, kwargs, kwargs_order)
             }
+            BuiltinFunction::TypeCall => {
+                self.builtin_type_call_with_kwarg_order(args, kwargs, kwargs_order)
+            }
             BuiltinFunction::SimpleNamespaceInit => {
                 self.builtin_types_simplenamespace_init_with_order(args, kwargs, kwargs_order)
             }
@@ -5780,11 +5783,12 @@ impl Vm {
                 ))
             }
             BoundMethodDispatchKind::Native(native_kind) => {
-                let native_call = self.call_native_method(
+                let native_call = self.call_native_method_with_kwarg_order(
                     native_kind,
                     method_data.receiver.clone(),
                     args,
                     kwargs,
+                    kwargs_order,
                 );
                 match native_call {
                     Ok(NativeCallResult::Value(result)) => Ok(InternalCallDispatch::Return(
@@ -8286,9 +8290,7 @@ impl Vm {
             return None;
         };
         match instance_data.attrs.get(ARRAY_BACKING_STORAGE_ATTR) {
-            Some(Value::Module(module))
-                if matches!(&*module.kind(), Object::Module(module_data) if module_data.name == "__array__") =>
-            {
+            Some(Value::Module(module)) if matches!(&*module.kind(), Object::Module(module_data) if module_data.name == "__array__") => {
                 Some(module.clone())
             }
             _ => None,
