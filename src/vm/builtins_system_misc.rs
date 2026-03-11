@@ -65,6 +65,53 @@ fn days_in_month(year: i64, month: u32) -> Option<u32> {
     })
 }
 
+fn testcapi_unexpected_keyword_error(name: &str) -> RuntimeError {
+    RuntimeError::type_error(format!(
+        "this function got an unexpected keyword argument '{}'",
+        name
+    ))
+}
+
+fn testcapi_missing_required_argument_error(name: &str, position: usize) -> RuntimeError {
+    RuntimeError::type_error(format!(
+        "function missing required argument '{}' (pos {})",
+        name, position
+    ))
+}
+
+fn testcapi_sequence_values(value: Value) -> Option<Vec<Value>> {
+    match value {
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => Some(values.clone()),
+            _ => None,
+        },
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => Some(values.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn testcapi_fixed_arity_sequence(
+    value: Value,
+    expected_len: usize,
+    function_name: &str,
+    argument_name: &str,
+) -> Result<Vec<Value>, RuntimeError> {
+    let values = testcapi_sequence_values(value).ok_or_else(|| {
+        RuntimeError::type_error(format!(
+            "{function_name}() argument '{argument_name}' must be a sequence of length {expected_len}"
+        ))
+    })?;
+    if values.len() != expected_len {
+        return Err(RuntimeError::type_error(format!(
+            "{function_name}() argument '{argument_name}' must be a sequence of length {expected_len}"
+        )));
+    }
+    Ok(values)
+}
+
 impl Vm {
     fn uuid_node_from_host(&self) -> i64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -6797,6 +6844,194 @@ impl Vm {
                 Err(self.runtime_error_from_active_exception("exception_print() failed"))
             }
         }
+    }
+
+    pub(super) fn builtin_testcapi_getargs_keywords(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 5 {
+            return Err(RuntimeError::type_error(format!(
+                "function takes at most 5 arguments ({} given)",
+                args.len()
+            )));
+        }
+
+        let arg1 = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = kwargs.remove("arg1") {
+            value
+        } else {
+            return Err(testcapi_missing_required_argument_error("arg1", 1));
+        };
+        let arg2 = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = kwargs.remove("arg2") {
+            value
+        } else {
+            return Err(testcapi_missing_required_argument_error("arg2", 2));
+        };
+        let arg3 = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("arg3")
+        };
+        let arg4 = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("arg4")
+        };
+        let arg5 = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("arg5")
+        };
+        if let Some(unexpected) = kwargs.keys().next().cloned() {
+            return Err(testcapi_unexpected_keyword_error(&unexpected));
+        }
+
+        let arg1_values = testcapi_fixed_arity_sequence(arg1, 2, "getargs_keywords", "arg1")?;
+        let first = value_to_int(arg1_values[0].clone())?;
+        let second = value_to_int(arg1_values[1].clone())?;
+        let third = value_to_int(arg2)?;
+
+        let (fourth, fifth, sixth) = if let Some(value) = arg3 {
+            let outer = testcapi_fixed_arity_sequence(value, 2, "getargs_keywords", "arg3")?;
+            let first_outer = value_to_int(outer[0].clone())?;
+            let inner = testcapi_fixed_arity_sequence(
+                outer[1].clone(),
+                2,
+                "getargs_keywords",
+                "arg3",
+            )?;
+            (
+                first_outer,
+                value_to_int(inner[0].clone())?,
+                value_to_int(inner[1].clone())?,
+            )
+        } else {
+            (-1, -1, -1)
+        };
+
+        let (seventh, eighth, ninth) = if let Some(value) = arg4 {
+            let values = testcapi_fixed_arity_sequence(value, 3, "getargs_keywords", "arg4")?;
+            (
+                value_to_int(values[0].clone())?,
+                value_to_int(values[1].clone())?,
+                value_to_int(values[2].clone())?,
+            )
+        } else {
+            (-1, -1, -1)
+        };
+
+        let tenth = if let Some(value) = arg5 {
+            value_to_int(value)?
+        } else {
+            -1
+        };
+
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Int(first),
+            Value::Int(second),
+            Value::Int(third),
+            Value::Int(fourth),
+            Value::Int(fifth),
+            Value::Int(sixth),
+            Value::Int(seventh),
+            Value::Int(eighth),
+            Value::Int(ninth),
+            Value::Int(tenth),
+        ]))
+    }
+
+    pub(super) fn builtin_testcapi_getargs_keyword_only(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 2 {
+            let total = args.len().saturating_add(kwargs.len());
+            if total > 3 {
+                return Err(RuntimeError::type_error(format!(
+                    "function takes at most 3 arguments ({} given)",
+                    total
+                )));
+            }
+            return Err(RuntimeError::type_error(format!(
+                "function takes at most 2 positional arguments ({} given)",
+                args.len()
+            )));
+        }
+
+        let required = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = kwargs.remove("required") {
+            value
+        } else {
+            return Err(testcapi_missing_required_argument_error("required", 1));
+        };
+        let optional = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("optional").unwrap_or(Value::Int(-1))
+        };
+        let keyword_only = kwargs.remove("keyword_only").unwrap_or(Value::Int(-1));
+        if let Some(unexpected) = kwargs.keys().next().cloned() {
+            return Err(testcapi_unexpected_keyword_error(&unexpected));
+        }
+
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Int(value_to_int(required)?),
+            Value::Int(value_to_int(optional)?),
+            Value::Int(value_to_int(keyword_only)?),
+        ]))
+    }
+
+    pub(super) fn builtin_testcapi_getargs_positional_only_and_keywords(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "function takes at least 1 positional argument (0 given)",
+            ));
+        }
+        if args.len().saturating_add(kwargs.len()) > 3 {
+            return Err(RuntimeError::type_error(format!(
+                "function takes at most 3 arguments ({} given)",
+                args.len().saturating_add(kwargs.len())
+            )));
+        }
+        if let Some(unexpected) = kwargs
+            .keys()
+            .find(|name| name.as_str() != "keyword")
+            .cloned()
+        {
+            return Err(testcapi_unexpected_keyword_error(&unexpected));
+        }
+
+        let required = value_to_int(args.remove(0))?;
+        let optional = if !args.is_empty() {
+            value_to_int(args.remove(0))?
+        } else {
+            -1
+        };
+        let keyword = if !args.is_empty() {
+            value_to_int(args.remove(0))?
+        } else {
+            match kwargs.remove("keyword") {
+                Some(value) => value_to_int(value)?,
+                None => -1,
+            }
+        };
+
+        Ok(self.heap.alloc_tuple(vec![
+            Value::Int(required),
+            Value::Int(optional),
+            Value::Int(keyword),
+        ]))
     }
 
     pub(super) fn builtin_testcapi_config_get(

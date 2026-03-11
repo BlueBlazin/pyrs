@@ -25028,6 +25028,36 @@ fn test_test_ctypes_support_imports() {
 }
 
 #[test]
+fn test_test_capi_getargs_imports_and_keyword_helpers_work() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping _testcapi getargs gate (CPython Lib not found)");
+        return;
+    };
+    let source = r#"import test.test_capi.test_getargs
+from _testcapi import (
+    getargs_keywords,
+    getargs_keyword_only,
+    getargs_positional_only_and_keywords,
+)
+ok = (
+    getargs_keywords((1, 2), 3, (4, (5, 6)), (7, 8, 9), 10)
+        == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+    and getargs_keyword_only(1, 2, keyword_only=3) == (1, 2, 3)
+    and getargs_positional_only_and_keywords(1, 2, keyword=3) == (1, 2, 3)
+)
+"#
+    .to_string();
+    run_with_large_stack("vm-test-capi-getargs", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn stringprep_import_uses_unicodedata_ucd_3_2_0_surface() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping stringprep import gate (CPython Lib not found)");

@@ -5832,6 +5832,18 @@ impl Vm {
                 ("meth_o", BuiltinFunction::NoOp),
                 ("call_in_temporary_c_thread", BuiltinFunction::NoOp),
                 ("join_temporary_c_thread", BuiltinFunction::NoOp),
+                (
+                    "getargs_keywords",
+                    BuiltinFunction::TestCapiGetargsKeywords,
+                ),
+                (
+                    "getargs_keyword_only",
+                    BuiltinFunction::TestCapiGetargsKeywordOnly,
+                ),
+                (
+                    "getargs_positional_only_and_keywords",
+                    BuiltinFunction::TestCapiGetargsPositionalOnlyAndKeywords,
+                ),
                 ("exception_print", BuiltinFunction::TestCapiExceptionPrint),
                 ("config_get", BuiltinFunction::TestCapiConfigGet),
                 (
@@ -5842,7 +5854,21 @@ impl Vm {
             vec![
                 ("INT_MAX", Value::Int(i32::MAX as i64)),
                 ("INT_MIN", Value::Int(i32::MIN as i64)),
+                ("UCHAR_MAX", Value::Int(u8::MAX as i64)),
+                ("USHRT_MAX", Value::Int(u16::MAX as i64)),
                 ("UINT_MAX", Value::Int(u32::MAX as i64)),
+                (
+                    "ULONG_MAX",
+                    if (libc::c_ulong::MAX as u128) <= (i64::MAX as u128) {
+                        Value::Int(libc::c_ulong::MAX as i64)
+                    } else {
+                        Value::BigInt(Box::new(BigInt::from_u64(libc::c_ulong::MAX as u64)))
+                    },
+                ),
+                ("LONG_MAX", Value::Int(libc::c_long::MAX as i64)),
+                ("LONG_MIN", Value::Int(libc::c_long::MIN as i64)),
+                ("SHRT_MAX", Value::Int(libc::c_short::MAX as i64)),
+                ("SHRT_MIN", Value::Int(libc::c_short::MIN as i64)),
                 ("LLONG_MAX", Value::Int(i64::MAX)),
                 ("LLONG_MIN", Value::Int(i64::MIN)),
                 (
@@ -5851,6 +5877,10 @@ impl Vm {
                 ),
                 ("PY_SSIZE_T_MAX", Value::Int(i64::MAX)),
                 ("PY_SSIZE_T_MIN", Value::Int(i64::MIN)),
+                ("FLT_MIN", Value::Float(f32::MIN_POSITIVE as f64)),
+                ("FLT_MAX", Value::Float(f32::MAX as f64)),
+                ("DBL_MIN", Value::Float(f64::MIN_POSITIVE)),
+                ("DBL_MAX", Value::Float(f64::MAX)),
                 ("MethInstance", Value::Class(meth_instance_class)),
                 ("MethClass", Value::Class(meth_class_class)),
                 ("MethStatic", Value::Class(meth_static_class)),

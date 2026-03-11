@@ -6093,6 +6093,9 @@ pub enum BuiltinFunction {
     AsyncGeneratorType,
     EnumConvert,
     TypeAnnotationsGet,
+    TestCapiGetargsKeywords,
+    TestCapiGetargsKeywordOnly,
+    TestCapiGetargsPositionalOnlyAndKeywords,
     TestCapiExceptionPrint,
     TestCapiConfigGet,
     TestCapiPyObjectVectorcall,
@@ -9648,6 +9651,9 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::TypesCoroutine
             | BuiltinFunction::EnumConvert
             | BuiltinFunction::TypeAnnotationsGet
+            | BuiltinFunction::TestCapiGetargsKeywords
+            | BuiltinFunction::TestCapiGetargsKeywordOnly
+            | BuiltinFunction::TestCapiGetargsPositionalOnlyAndKeywords
             | BuiltinFunction::TestCapiExceptionPrint
             | BuiltinFunction::TestCapiConfigGet
             | BuiltinFunction::TestCapiPyObjectVectorcall

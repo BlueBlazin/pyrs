@@ -14267,6 +14267,15 @@ impl Vm {
             BuiltinFunction::TypesNewClass => self.builtin_types_new_class(args, kwargs),
             BuiltinFunction::EnumConvert => self.builtin_enum_convert(args, kwargs),
             BuiltinFunction::TypeAnnotationsGet => self.builtin_type_annotations_get(args, kwargs),
+            BuiltinFunction::TestCapiGetargsKeywords => {
+                self.builtin_testcapi_getargs_keywords(args, kwargs)
+            }
+            BuiltinFunction::TestCapiGetargsKeywordOnly => {
+                self.builtin_testcapi_getargs_keyword_only(args, kwargs)
+            }
+            BuiltinFunction::TestCapiGetargsPositionalOnlyAndKeywords => {
+                self.builtin_testcapi_getargs_positional_only_and_keywords(args, kwargs)
+            }
             BuiltinFunction::TestCapiExceptionPrint => {
                 self.builtin_testcapi_exception_print(args, kwargs)
             }
