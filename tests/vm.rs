@@ -15209,24 +15209,28 @@ fn argparse_custom_usage_without_prog_placeholder_raises_wrapped_error() {
         return;
     };
     run_with_large_stack("vm-argparse-custom-usage", move || {
-        let source = r#"from test.test_argparse import ArgumentParserError, ErrorRaisingArgumentParser
-parser = ErrorRaisingArgumentParser(prog='PROG')
-parser.add_argument('--foo', action='store_true')
-parser.add_argument('bar', type=float)
-subparsers = parser.add_subparsers(required=False, help='command help')
-parser3 = subparsers.add_parser('3', description='3 description', usage='PROG --foo bar 3 t ...')
-parser3.add_argument('t', type=int, help='t help')
-parser3.add_argument('u', nargs='...', help='u help')
+        let source = r#"import os
+from test.support import force_color
+from test.test_argparse import ArgumentParserError, ErrorRaisingArgumentParser
+os.environ['COLUMNS'] = '80'
 kind = None
 detail = None
-try:
-    parser.parse_args('0.5 3'.split())
-except ArgumentParserError as exc:
-    kind = exc.args[0]
-    detail = exc.args[2]
-except Exception as exc:
-    kind = type(exc).__name__
-    detail = str(exc)
+with force_color(False):
+    parser = ErrorRaisingArgumentParser(prog='PROG')
+    parser.add_argument('--foo', action='store_true')
+    parser.add_argument('bar', type=float)
+    subparsers = parser.add_subparsers(required=False, help='command help')
+    parser3 = subparsers.add_parser('3', description='3 description', usage='PROG --foo bar 3 t ...')
+    parser3.add_argument('t', type=int, help='t help')
+    parser3.add_argument('u', nargs='...', help='u help')
+    try:
+        parser.parse_args('0.5 3'.split())
+    except ArgumentParserError as exc:
+        kind = exc.args[0]
+        detail = exc.args[2]
+    except Exception as exc:
+        kind = type(exc).__name__
+        detail = str(exc)
 ok = kind == 'SystemExit' and detail == 'usage: PROG --foo bar 3 t ...\nPROG bar 3: error: the following arguments are required: t\n'
 "#;
         let module = parser::parse_module(source).expect("parse should succeed");
