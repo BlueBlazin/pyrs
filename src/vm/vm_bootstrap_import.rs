@@ -5617,224 +5617,7 @@ namereplace_errors = lookup_error("namereplace")
         );
         // Do not shadow CPython's pure-Python dataclasses implementation with a partial
         // built-in shim; we import from Lib/dataclasses.py for correctness.
-        let deque_class = match self
-            .heap
-            .alloc_class(ClassObject::new("deque".to_string(), Vec::new()))
-        {
-            Value::Class(obj) => obj,
-            _ => unreachable!(),
-        };
-        if let Object::Class(class_data) = &mut *deque_class.kind_mut() {
-            class_data.attrs.insert(
-                "__module__".to_string(),
-                Value::Str("collections".to_string()),
-            );
-            class_data.attrs.insert(
-                "__init__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsDequeInit),
-            );
-            class_data.attrs.insert(
-                "append".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsDequeAppend),
-            );
-            class_data.attrs.insert(
-                "appendleft".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsDequeAppendLeft),
-            );
-            class_data.attrs.insert(
-                "pop".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsDequePop),
-            );
-            class_data.attrs.insert(
-                "popleft".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsDequePopleft),
-            );
-            class_data.attrs.insert(
-                "clear".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsDequeClear),
-            );
-            class_data.attrs.insert(
-                "extend".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsDequeExtend),
-            );
-            class_data.attrs.insert(
-                "extendleft".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsDequeExtendLeft),
-            );
-            class_data.attrs.insert(
-                "__len__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsDequeLen),
-            );
-            class_data.attrs.insert(
-                "__iter__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsDequeIter),
-            );
-            let generic_alias_class = self.ensure_generic_alias_class();
-            let descriptor = match self
-                .heap
-                .alloc_module(ModuleObject::new("__classmethod__".to_string()))
-            {
-                Value::Module(module) => module,
-                _ => unreachable!(),
-            };
-            if let Object::Module(module_data) = &mut *descriptor.kind_mut() {
-                module_data
-                    .globals
-                    .insert("__func__".to_string(), Value::Class(generic_alias_class));
-            }
-            class_data
-                .attrs
-                .insert("__class_getitem__".to_string(), Value::Module(descriptor));
-        }
-        let chain_map_class = match self
-            .heap
-            .alloc_class(ClassObject::new("ChainMap".to_string(), Vec::new()))
-        {
-            Value::Class(obj) => obj,
-            _ => unreachable!(),
-        };
-        if let Object::Class(class_data) = &mut *chain_map_class.kind_mut() {
-            class_data.attrs.insert(
-                "__module__".to_string(),
-                Value::Str("collections".to_string()),
-            );
-            class_data.attrs.insert(
-                "__init__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsChainMapInit),
-            );
-            class_data.attrs.insert(
-                "new_child".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsChainMapNewChild),
-            );
-            class_data.attrs.insert(
-                "__repr__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsChainMapRepr),
-            );
-            class_data.attrs.insert(
-                "items".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsChainMapItems),
-            );
-            class_data.attrs.insert(
-                "get".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsChainMapGet),
-            );
-            class_data.attrs.insert(
-                "__getitem__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsChainMapGetItem),
-            );
-            class_data.attrs.insert(
-                "__setitem__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsChainMapSetItem),
-            );
-            class_data.attrs.insert(
-                "__delitem__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsChainMapDelItem),
-            );
-        }
-        let user_dict_class = match self
-            .heap
-            .alloc_class(ClassObject::new("UserDict".to_string(), Vec::new()))
-        {
-            Value::Class(obj) => obj,
-            _ => unreachable!(),
-        };
-        if let Object::Class(class_data) = &mut *user_dict_class.kind_mut() {
-            class_data.attrs.insert(
-                "__module__".to_string(),
-                Value::Str("collections".to_string()),
-            );
-            class_data.attrs.insert(
-                "__repr__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsUserDictTypeRepr),
-            );
-            class_data.attrs.insert(
-                "__str__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsUserDictTypeRepr),
-            );
-        }
-        let user_list_bases = self
-            .modules
-            .get("builtins")
-            .and_then(|module| match &*module.kind() {
-                Object::Module(module_data) => module_data.globals.get("list").cloned(),
-                _ => None,
-            })
-            .and_then(|value| match value {
-                Value::Class(class_obj) => Some(vec![class_obj]),
-                _ => None,
-            })
-            .unwrap_or_else(|| {
-                match self
-                    .heap
-                    .alloc_class(ClassObject::new("list".to_string(), Vec::new()))
-                {
-                    Value::Class(class_obj) => vec![class_obj],
-                    _ => Vec::new(),
-                }
-            });
-        let user_list_class = match self
-            .heap
-            .alloc_class(ClassObject::new("UserList".to_string(), user_list_bases))
-        {
-            Value::Class(obj) => obj,
-            _ => unreachable!(),
-        };
-        if let Object::Class(class_data) = &mut *user_list_class.kind_mut() {
-            class_data.attrs.insert(
-                "__module__".to_string(),
-                Value::Str("collections".to_string()),
-            );
-            class_data.attrs.insert(
-                "__repr__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsUserListTypeRepr),
-            );
-            class_data.attrs.insert(
-                "__str__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsUserListTypeRepr),
-            );
-        }
-        let user_string_class = match self
-            .heap
-            .alloc_class(ClassObject::new("UserString".to_string(), Vec::new()))
-        {
-            Value::Class(obj) => obj,
-            _ => unreachable!(),
-        };
-        if let Object::Class(class_data) = &mut *user_string_class.kind_mut() {
-            class_data.attrs.insert(
-                "__module__".to_string(),
-                Value::Str("collections".to_string()),
-            );
-            class_data.attrs.insert(
-                "__repr__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsUserStringTypeRepr),
-            );
-            class_data.attrs.insert(
-                "__str__".to_string(),
-                Value::Builtin(BuiltinFunction::CollectionsUserStringTypeRepr),
-            );
-        }
-        self.install_builtin_module(
-            "collections",
-            &[
-                ("Counter", BuiltinFunction::CollectionsCounter),
-                ("namedtuple", BuiltinFunction::CollectionsNamedTuple),
-                ("defaultdict", BuiltinFunction::CollectionsDefaultDict),
-                ("_count_elements", BuiltinFunction::CollectionsCountElements),
-            ],
-            vec![
-                ("deque", Value::Class(deque_class)),
-                ("ChainMap", Value::Class(chain_map_class)),
-                (
-                    "OrderedDict",
-                    Value::Builtin(BuiltinFunction::CollectionsOrderedDict),
-                ),
-                ("UserDict", Value::Class(user_dict_class)),
-                ("UserList", Value::Class(user_list_class)),
-                ("UserString", Value::Class(user_string_class)),
-            ],
-        );
-        self.install_module_alias_from_existing("_collections", "collections");
+        self.install_collections_fallback_module();
         self.install_builtin_module(
             "collections.abc",
             &[],
@@ -11167,6 +10950,240 @@ namereplace_errors = lookup_error("namereplace")
         self.register_module(alias, alias_module);
     }
 
+    fn install_collections_fallback_module(&mut self) {
+        if self.modules.contains_key("_collections") {
+            return;
+        }
+        if self.modules.contains_key("collections") {
+            self.install_module_alias_from_existing("_collections", "collections");
+            return;
+        }
+
+        let deque_class = match self
+            .heap
+            .alloc_class(ClassObject::new("deque".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *deque_class.kind_mut() {
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("collections".to_string()),
+            );
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeInit),
+            );
+            class_data.attrs.insert(
+                "append".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeAppend),
+            );
+            class_data.attrs.insert(
+                "appendleft".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeAppendLeft),
+            );
+            class_data.attrs.insert(
+                "pop".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequePop),
+            );
+            class_data.attrs.insert(
+                "popleft".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequePopleft),
+            );
+            class_data.attrs.insert(
+                "clear".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeClear),
+            );
+            class_data.attrs.insert(
+                "extend".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeExtend),
+            );
+            class_data.attrs.insert(
+                "extendleft".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeExtendLeft),
+            );
+            class_data.attrs.insert(
+                "__len__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeLen),
+            );
+            class_data.attrs.insert(
+                "__iter__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsDequeIter),
+            );
+            let generic_alias_class = self.ensure_generic_alias_class();
+            let descriptor = match self
+                .heap
+                .alloc_module(ModuleObject::new("__classmethod__".to_string()))
+            {
+                Value::Module(module) => module,
+                _ => unreachable!(),
+            };
+            if let Object::Module(module_data) = &mut *descriptor.kind_mut() {
+                module_data
+                    .globals
+                    .insert("__func__".to_string(), Value::Class(generic_alias_class));
+            }
+            class_data
+                .attrs
+                .insert("__class_getitem__".to_string(), Value::Module(descriptor));
+        }
+
+        let chain_map_class = match self
+            .heap
+            .alloc_class(ClassObject::new("ChainMap".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *chain_map_class.kind_mut() {
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("collections".to_string()),
+            );
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsChainMapInit),
+            );
+            class_data.attrs.insert(
+                "new_child".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsChainMapNewChild),
+            );
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsChainMapRepr),
+            );
+            class_data.attrs.insert(
+                "items".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsChainMapItems),
+            );
+            class_data.attrs.insert(
+                "get".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsChainMapGet),
+            );
+            class_data.attrs.insert(
+                "__getitem__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsChainMapGetItem),
+            );
+            class_data.attrs.insert(
+                "__setitem__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsChainMapSetItem),
+            );
+            class_data.attrs.insert(
+                "__delitem__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsChainMapDelItem),
+            );
+        }
+
+        let user_dict_class = match self
+            .heap
+            .alloc_class(ClassObject::new("UserDict".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *user_dict_class.kind_mut() {
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("collections".to_string()),
+            );
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsUserDictTypeRepr),
+            );
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsUserDictTypeRepr),
+            );
+        }
+
+        let user_list_bases = self
+            .modules
+            .get("builtins")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("list").cloned(),
+                _ => None,
+            })
+            .and_then(|value| match value {
+                Value::Class(class_obj) => Some(vec![class_obj]),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                match self
+                    .heap
+                    .alloc_class(ClassObject::new("list".to_string(), Vec::new()))
+                {
+                    Value::Class(class_obj) => vec![class_obj],
+                    _ => Vec::new(),
+                }
+            });
+        let user_list_class = match self
+            .heap
+            .alloc_class(ClassObject::new("UserList".to_string(), user_list_bases))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *user_list_class.kind_mut() {
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("collections".to_string()),
+            );
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsUserListTypeRepr),
+            );
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsUserListTypeRepr),
+            );
+        }
+
+        let user_string_class = match self
+            .heap
+            .alloc_class(ClassObject::new("UserString".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *user_string_class.kind_mut() {
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("collections".to_string()),
+            );
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsUserStringTypeRepr),
+            );
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Builtin(BuiltinFunction::CollectionsUserStringTypeRepr),
+            );
+        }
+
+        self.install_builtin_module(
+            "collections",
+            &[
+                ("Counter", BuiltinFunction::CollectionsCounter),
+                ("namedtuple", BuiltinFunction::CollectionsNamedTuple),
+                ("defaultdict", BuiltinFunction::CollectionsDefaultDict),
+                ("_count_elements", BuiltinFunction::CollectionsCountElements),
+            ],
+            vec![
+                ("deque", Value::Class(deque_class)),
+                ("ChainMap", Value::Class(chain_map_class)),
+                (
+                    "OrderedDict",
+                    Value::Builtin(BuiltinFunction::CollectionsOrderedDict),
+                ),
+                ("UserDict", Value::Class(user_dict_class)),
+                ("UserList", Value::Class(user_list_class)),
+                ("UserString", Value::Class(user_string_class)),
+            ],
+        );
+        self.install_module_alias_from_existing("_collections", "collections");
+    }
+
     fn install_abc_fallback_module(&mut self) -> Result<(), RuntimeError> {
         if self.modules.contains_key("abc") {
             return Ok(());
@@ -11579,9 +11596,8 @@ namereplace_errors = lookup_error("namereplace")
             // These are pyrs bootstrap fallbacks for pure-Python stdlib modules
             // or aliases and should only be used when no filesystem module is
             // available.
-            "abc" | "sysconfig" | "_sysconfig" | "socket" | "datetime" | "_types" => {
-                Some(BuiltinImportPolicy::FilesystemFallback)
-            }
+            "abc" | "sysconfig" | "_sysconfig" | "socket" | "datetime" | "_types"
+            | "_collections" => Some(BuiltinImportPolicy::FilesystemFallback),
             _ => None,
         }
     }
@@ -11617,6 +11633,10 @@ namereplace_errors = lookup_error("namereplace")
                     self.install_module_alias_from_existing("_types", "types");
                 }
                 Ok(self.modules.contains_key("_types"))
+            }
+            "_collections" => {
+                self.install_collections_fallback_module();
+                Ok(self.modules.contains_key("_collections"))
             }
             "_warnings" => {
                 self.install_warnings_fallback_module();

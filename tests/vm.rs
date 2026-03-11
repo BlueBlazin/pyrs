@@ -24942,6 +24942,39 @@ ok = (
 }
 
 #[test]
+fn collections_accelerator_alias_reimports_after_sys_modules_removal() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping collections accelerator alias import gate (CPython Lib not found)");
+        return;
+    };
+    let source = r#"import sys
+from test.support.import_helper import import_fresh_module
+import _collections
+initial_ok = (_collections.__name__ == "_collections" and hasattr(_collections, "deque"))
+sys.modules.pop("_collections", None)
+import _collections as reloaded
+fresh = import_fresh_module("collections", fresh=["_collections"])
+ok = (
+    initial_ok
+    and reloaded.__name__ == "_collections"
+    and hasattr(reloaded, "defaultdict")
+    and fresh is not None
+    and fresh.__name__ == "collections"
+    and hasattr(fresh, "OrderedDict")
+)
+"#
+    .to_string();
+    run_with_large_stack("vm-collections-fresh-alias", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn stringprep_import_uses_unicodedata_ucd_3_2_0_surface() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping stringprep import gate (CPython Lib not found)");
