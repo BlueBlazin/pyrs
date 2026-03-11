@@ -12147,6 +12147,46 @@ fn importlib_cache_from_source_supports_optimization_kwarg() {
 }
 
 #[test]
+fn importlib_cache_path_helpers_accept_pathlike_inputs() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"
+import importlib.util
+import pathlib
+import py_compile
+import tempfile
+
+cache = importlib.util.cache_from_source(pathlib.PurePath('/tmp/demo.py'))
+src = importlib.util.source_from_cache(
+    pathlib.PurePath('/tmp/__pycache__/demo.cpython-314.pyc')
+)
+
+workdir = pathlib.Path(tempfile.mkdtemp())
+source_path = workdir / 'demo.py'
+source_path.write_text('value = 42\n')
+compiled = py_compile.compile(source_path, doraise=True)
+
+ok = (
+    cache.endswith('/__pycache__/demo.cpython-314.pyc')
+    and src == '/tmp/demo.py'
+    and isinstance(compiled, str)
+    and compiled.endswith('.pyc')
+    and pathlib.Path(compiled).is_file()
+)
+"#;
+    run_with_large_stack("importlib-pathlike-cache-helpers", move || {
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        let value = vm.execute(&code).expect("execution should succeed");
+        assert_eq!(value, Value::None);
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn stat_bootstrap_does_not_export_non_callable_s_ifmt() {
     let source = "import _stat\ns_ifmt = getattr(_stat, 'S_IFMT', None)\nok = (s_ifmt is None) or callable(s_ifmt)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -16396,6 +16436,28 @@ ok = (
     and base.__name__ == "array"
     and issubclass(ArraySubclass, array.array)
     and issubclass(array.array, array.array)
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn array_reverse_and_subclass_iteration_follow_sequence_storage() {
+    let source = r#"import array
+class ArraySubclass(array.array):
+    pass
+base = array.array('b', [1, 2, 3])
+derived = ArraySubclass('b')
+ok = (
+    type(derived).__name__ == 'ArraySubclass'
+    and list(base) == [1, 2, 3]
+    and list(reversed(base)) == [3, 2, 1]
+    and list(derived) == []
+    and list(reversed(derived)) == []
 )
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");

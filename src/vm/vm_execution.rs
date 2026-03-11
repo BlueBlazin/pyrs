@@ -8562,7 +8562,9 @@ impl Vm {
                 ));
             }
             let code_rc = Rc::new(code);
-            if let Some(lines) = self.source_text_cache.get(&frame.filename) {
+            if !self.linecache_registered_sources.contains(&frame.filename)
+                && let Some(lines) = self.source_text_cache.get(&frame.filename)
+            {
                 let source = lines.join("\n");
                 self.register_source_in_linecache(code_rc.as_ref(), &source, &frame.filename);
             }

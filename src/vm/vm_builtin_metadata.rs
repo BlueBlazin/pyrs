@@ -1,8 +1,8 @@
 use std::cell::Cell;
 
 use super::{
-    AttrAccessOutcome, AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, Block, BoundMethod,
-    BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, ClassObject, CodeObject,
+    ARRAY_BACKING_STORAGE_ATTR, AttrAccessOutcome, AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR,
+    Block, BoundMethod, BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, ClassObject, CodeObject,
     DICT_BACKING_STORAGE_ATTR, ExceptionObject, FLOAT_BACKING_STORAGE_ATTR,
     FROZENSET_BACKING_STORAGE_ATTR, Frame, HashMap, INSTANCE_DICT_STORAGE_ATTR,
     INT_BACKING_STORAGE_ATTR, InstanceObject, InternalCallOutcome, IteratorKind,
@@ -6099,6 +6099,7 @@ impl Vm {
                 || self.class_has_builtin_str_base(&class)
                 || self.class_has_builtin_bytes_base(&class)
                 || self.class_has_builtin_bytearray_base(&class)
+                || self.class_has_builtin_array_base(&class)
                 || self.class_has_builtin_int_base(&class)
                 || self.class_has_builtin_float_base(&class)
                 || self.class_has_builtin_complex_base(&class)
@@ -6352,6 +6353,26 @@ impl Vm {
                         .insert(BYTES_BACKING_STORAGE_ATTR.to_string(), bytearray_value);
                 } else {
                     return Err(RuntimeError::new("bytearray instance construction failed"));
+                }
+            } else if self.class_has_builtin_array_base(&class) {
+                let array_value = self.call_builtin(BuiltinFunction::ArrayArray, args, kwargs)?;
+                let Value::Module(array_module) = array_value else {
+                    return Err(RuntimeError::new("array constructor returned non-array"));
+                };
+                let is_array_module = matches!(
+                    &*array_module.kind(),
+                    Object::Module(module_data) if module_data.name == "__array__"
+                );
+                if !is_array_module {
+                    return Err(RuntimeError::new("array constructor returned non-array"));
+                }
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data.attrs.insert(
+                        ARRAY_BACKING_STORAGE_ATTR.to_string(),
+                        Value::Module(array_module),
+                    );
+                } else {
+                    return Err(RuntimeError::new("array instance construction failed"));
                 }
             } else if self.class_has_builtin_int_base(&class) {
                 let int_value = self.builtin_int(args, kwargs)?;
@@ -8260,6 +8281,20 @@ impl Vm {
         }
     }
 
+    pub(super) fn instance_backing_array(&self, instance: &ObjRef) -> Option<ObjRef> {
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return None;
+        };
+        match instance_data.attrs.get(ARRAY_BACKING_STORAGE_ATTR) {
+            Some(Value::Module(module))
+                if matches!(&*module.kind(), Object::Module(module_data) if module_data.name == "__array__") =>
+            {
+                Some(module.clone())
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn instance_backing_int(&self, instance: &ObjRef) -> Option<Value> {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
@@ -8384,6 +8419,7 @@ impl Vm {
                 | TUPLE_BACKING_STORAGE_ATTR
                 | STR_BACKING_STORAGE_ATTR
                 | BYTES_BACKING_STORAGE_ATTR
+                | ARRAY_BACKING_STORAGE_ATTR
                 | INT_BACKING_STORAGE_ATTR
                 | FLOAT_BACKING_STORAGE_ATTR
                 | COMPLEX_BACKING_STORAGE_ATTR
@@ -8763,6 +8799,7 @@ impl Vm {
                                     | TUPLE_BACKING_STORAGE_ATTR
                                     | STR_BACKING_STORAGE_ATTR
                                     | BYTES_BACKING_STORAGE_ATTR
+                                    | ARRAY_BACKING_STORAGE_ATTR
                                     | INT_BACKING_STORAGE_ATTR
                                     | FLOAT_BACKING_STORAGE_ATTR
                                     | COMPLEX_BACKING_STORAGE_ATTR
@@ -8792,6 +8829,7 @@ impl Vm {
                                     | TUPLE_BACKING_STORAGE_ATTR
                                     | STR_BACKING_STORAGE_ATTR
                                     | BYTES_BACKING_STORAGE_ATTR
+                                    | ARRAY_BACKING_STORAGE_ATTR
                                     | INT_BACKING_STORAGE_ATTR
                                     | FLOAT_BACKING_STORAGE_ATTR
                                     | COMPLEX_BACKING_STORAGE_ATTR
@@ -10179,6 +10217,7 @@ impl Vm {
                             | TUPLE_BACKING_STORAGE_ATTR
                             | STR_BACKING_STORAGE_ATTR
                             | BYTES_BACKING_STORAGE_ATTR
+                            | ARRAY_BACKING_STORAGE_ATTR
                             | INT_BACKING_STORAGE_ATTR
                             | FLOAT_BACKING_STORAGE_ATTR
                             | COMPLEX_BACKING_STORAGE_ATTR

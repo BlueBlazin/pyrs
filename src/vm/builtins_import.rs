@@ -1,11 +1,11 @@
 use super::{
-    BUILTIN_MODULE_LOADER, BigInt, BuiltinFunction, HashMap, ImportReturnPolicy, ModuleObject,
-    NAMESPACE_LOADER, OPCODE_METADATA, ObjRef, Object, OpcodeMetadata, PathBuf, Rc, RuntimeError,
-    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, Value, Vm, bytes_like_from_value,
-    cache_path_from_source_path, cache_path_from_source_path_with_optimization,
-    class_attr_lookup, compiler, dict_get_value, fs, is_truthy, opcode_flags_contains, parser,
-    source_path_from_cache_path, InternalCallOutcome, split_relative_import_name, value_to_bigint,
-    value_to_int, value_to_path,
+    BUILTIN_MODULE_LOADER, BigInt, BuiltinFunction, HashMap, ImportReturnPolicy,
+    InternalCallOutcome, ModuleObject, NAMESPACE_LOADER, OPCODE_METADATA, ObjRef, Object,
+    OpcodeMetadata, PathBuf, Rc, RuntimeError, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, Value,
+    Vm, bytes_like_from_value, cache_path_from_source_path,
+    cache_path_from_source_path_with_optimization, class_attr_lookup, compiler, dict_get_value, fs,
+    is_truthy, opcode_flags_contains, parser, source_path_from_cache_path,
+    split_relative_import_name, value_to_bigint, value_to_int,
 };
 use crate::runtime::{
     BOOTSTRAP_FROZEN_MODULES, bootstrap_frozen_module_info, is_bootstrap_builtin_module,
@@ -109,6 +109,22 @@ impl Vm {
             .get(name)
             .cloned()
             .unwrap_or_else(|| Value::ExceptionType(name.to_string()))
+    }
+
+    fn import_path_value_to_string(&mut self, value: Value) -> Result<String, RuntimeError> {
+        let normalized = match value {
+            Value::Str(path) => return Ok(path),
+            Value::Bytes(bytes_obj) => Value::Bytes(bytes_obj),
+            other => self.builtin_os_fspath(vec![other], HashMap::new())?,
+        };
+        match normalized {
+            Value::Str(path) => Ok(path),
+            Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                Object::Bytes(bytes) => Ok(String::from_utf8_lossy(bytes).into_owned()),
+                _ => Err(RuntimeError::type_error("path must be string or bytes")),
+            },
+            _ => Err(RuntimeError::type_error("path must be string or bytes")),
+        }
     }
 
     fn emit_import_warning(&mut self, category: &str, message: &str) -> Result<(), RuntimeError> {
@@ -557,17 +573,21 @@ impl Vm {
             None
         } else if level > 0 {
             let requested_head = name.split('.').next().unwrap_or_default();
-            Some(self.resolve_import_name_from_globals(
-                requested_head,
-                relative_globals
-                    .as_ref()
-                    .expect("relative globals must exist for level > 0"),
-                level as usize,
-            )?)
+            Some(
+                self.resolve_import_name_from_globals(
+                    requested_head,
+                    relative_globals
+                        .as_ref()
+                        .expect("relative globals must exist for level > 0"),
+                    level as usize,
+                )?,
+            )
         } else {
             Some(name.split('.').next().unwrap_or(name.as_str()).to_string())
         };
-        let return_name = plain_return_name.as_deref().unwrap_or(resolved_name.as_str());
+        let return_name = plain_return_name
+            .as_deref()
+            .unwrap_or(resolved_name.as_str());
         if return_name == resolved_name
             && let Some(cached) = self
                 .sys_dict_obj("modules")
@@ -981,7 +1001,7 @@ impl Vm {
                 _ => None,
             };
             if let Some(entry) = first {
-                base_dir = Some(PathBuf::from(value_to_path(&entry)?));
+                base_dir = Some(PathBuf::from(self.import_path_value_to_string(entry)?));
             }
         }
 
@@ -1320,7 +1340,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("path_hook() expects one path argument"));
         }
-        let path = value_to_path(&args.remove(0))?;
+        let path = self.import_path_value_to_string(args.remove(0))?;
         let root = PathBuf::from(path);
         Ok(self.make_file_finder_importer(&root))
     }
@@ -1682,14 +1702,13 @@ impl Vm {
             )? {
                 InternalCallOutcome::Value(value) => Ok(Some(value)),
                 InternalCallOutcome::CallerExceptionHandled => Err(
-                    vm.runtime_error_from_active_exception("spec_from_loader() loader call failed"),
+                    vm.runtime_error_from_active_exception("spec_from_loader() loader call failed")
                 ),
             }
         };
 
         if matches!(origin, Value::None)
-            && let Some(loader_origin) =
-                self.optional_getattr_value(loader.clone(), "_ORIGIN")?
+            && let Some(loader_origin) = self.optional_getattr_value(loader.clone(), "_ORIGIN")?
         {
             origin = loader_origin;
         }
@@ -1705,7 +1724,7 @@ impl Vm {
             && let Some(location_value) =
                 call_loader_method(self, loader.clone(), "get_filename", &name)?
         {
-            let location = value_to_path(&location_value)?;
+            let location = self.import_path_value_to_string(location_value)?;
             let location_path = PathBuf::from(&location);
             if is_package.is_none() {
                 is_package = Some(
@@ -1747,7 +1766,9 @@ impl Vm {
         }
         let origin_path = match &origin {
             Value::Str(path) => Some(PathBuf::from(path)),
-            Value::Bytes(_) => Some(PathBuf::from(value_to_path(&origin)?)),
+            Value::Bytes(_) => Some(PathBuf::from(
+                self.import_path_value_to_string(origin.clone())?,
+            )),
             _ => None,
         };
         let spec = self.build_module_spec_value(
@@ -1782,7 +1803,7 @@ impl Vm {
     }
 
     pub(super) fn builtin_frozen_importlib_external_path_join(
-        &self,
+        &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -1793,20 +1814,20 @@ impl Vm {
         }
         let mut out = PathBuf::new();
         for part in args {
-            out.push(value_to_path(&part)?);
+            out.push(self.import_path_value_to_string(part)?);
         }
         Ok(Value::Str(out.to_string_lossy().to_string()))
     }
 
     pub(super) fn builtin_frozen_importlib_external_path_split(
-        &self,
+        &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("_path_split() expects one path argument"));
         }
-        let path = PathBuf::from(value_to_path(&args[0])?);
+        let path = PathBuf::from(self.import_path_value_to_string(args[0].clone())?);
         let parent = path
             .parent()
             .map(|value| value.to_string_lossy().to_string())
@@ -1852,7 +1873,8 @@ impl Vm {
                 "_pack_uint32() expects one integer argument",
             ));
         }
-        let coerced = self.call_builtin(BuiltinFunction::Int, vec![args[0].clone()], HashMap::new())?;
+        let coerced =
+            self.call_builtin(BuiltinFunction::Int, vec![args[0].clone()], HashMap::new())?;
         let masked = value_to_bigint(coerced)?.bitand(&BigInt::from_u64(u32::MAX as u64));
         let value = masked
             .to_i64()
@@ -2161,7 +2183,7 @@ impl Vm {
     }
 
     pub(super) fn builtin_importlib_source_from_cache(
-        &self,
+        &mut self,
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -2170,16 +2192,13 @@ impl Vm {
                 "source_from_cache() expects one path argument",
             ));
         }
-        let path = match args.remove(0) {
-            Value::Str(path) => path,
-            _ => return Err(RuntimeError::new("path must be string")),
-        };
+        let path = self.import_path_value_to_string(args.remove(0))?;
         let source = source_path_from_cache_path(&path);
         Ok(Value::Str(source))
     }
 
     pub(super) fn builtin_importlib_cache_from_source(
-        &self,
+        &mut self,
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -2242,10 +2261,7 @@ impl Vm {
             });
         }
 
-        let path = match path {
-            Value::Str(path) => path,
-            _ => return Err(RuntimeError::new("path must be string")),
-        };
+        let path = self.import_path_value_to_string(path)?;
         let optimization = match optimization {
             None | Some(Value::None) => String::new(),
             Some(Value::Str(text)) => text,

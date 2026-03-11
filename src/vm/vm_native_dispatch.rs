@@ -8528,6 +8528,20 @@ impl Vm {
         &mut self,
         target: Value,
     ) -> Result<Option<Value>, RuntimeError> {
+        if matches!(
+            &target,
+            Value::Instance(instance) if self.instance_backing_array(instance).is_some()
+        ) || matches!(
+            &target,
+            Value::Module(module)
+                if matches!(&*module.kind(), Object::Module(module_data) if module_data.name == "__array__")
+        )
+        {
+            return Ok(Some(self.heap.alloc_iterator(IteratorObject {
+                kind: IteratorKind::CpythonSequence { target },
+                index: 0,
+            })));
+        }
         let Some(getitem) = self.lookup_bound_special_method(&target, "__getitem__")? else {
             return Ok(None);
         };
@@ -8543,6 +8557,31 @@ impl Vm {
     ) -> Result<Option<Value>, RuntimeError> {
         if matches!(target, Value::Dict(_)) {
             return Ok(None);
+        }
+        if matches!(
+            &target,
+            Value::Instance(instance) if self.instance_backing_array(instance).is_some()
+        ) || matches!(
+            &target,
+            Value::Module(module)
+                if matches!(&*module.kind(), Object::Module(module_data) if module_data.name == "__array__")
+        )
+        {
+            let length = value_to_int(self.call_builtin(
+                BuiltinFunction::Len,
+                vec![target.clone()],
+                HashMap::new(),
+            )?)?;
+            if length < 0 {
+                return Err(RuntimeError::value_error("__len__() should return >= 0"));
+            }
+            return Ok(Some(self.heap.alloc_iterator(IteratorObject {
+                kind: IteratorKind::ReversedCpythonSequence {
+                    target,
+                    next_index: length.saturating_sub(1),
+                },
+                index: 0,
+            })));
         }
         let len_method = self.lookup_bound_special_method(&target, "__len__")?.or(
             if matches!(
@@ -12311,7 +12350,42 @@ impl Vm {
                         }
                     }
                 }
-                Ok(None)
+                match self.getitem_value(target.clone(), index_value) {
+                    Ok(value) => {
+                        {
+                            let mut iter = iterator_ref.kind_mut();
+                            if let Object::Iterator(state) = &mut *iter
+                                && let IteratorKind::ReversedCpythonSequence {
+                                    next_index, ..
+                                } = &mut state.kind
+                            {
+                                *next_index = index.saturating_sub(1);
+                                state.index = state.index.saturating_add(1);
+                            }
+                        }
+                        Ok(Some(value))
+                    }
+                    Err(err) => {
+                        let treat_as_end = runtime_error_matches_exception(&err, "IndexError")
+                            || runtime_error_matches_exception(&err, "StopIteration")
+                            || err.message.contains("index out of range")
+                            || err.message.contains("out of bounds for axis");
+                        if treat_as_end {
+                            self.clear_active_exception();
+                            unsafe { PyErr_Clear() };
+                            let mut iter = iterator_ref.kind_mut();
+                            if let Object::Iterator(state) = &mut *iter
+                                && let IteratorKind::ReversedCpythonSequence {
+                                    next_index, ..
+                                } = &mut state.kind
+                            {
+                                *next_index = -1;
+                            }
+                            return Ok(None);
+                        }
+                        Err(err)
+                    }
+                }
             }
             PendingIteratorStep::CallIter { callable, sentinel } => {
                 let produced = match self.call_internal(callable, Vec::new(), HashMap::new()) {

@@ -530,15 +530,28 @@ impl Vm {
             if let Some(values) = self.namedtuple_instance_values(instance) {
                 return self.getitem_value(self.heap.alloc_tuple(values), index);
             }
+            if let Some(backing_array) = self.instance_backing_array(instance) {
+                if let Some(getitem) =
+                    self.lookup_bound_special_method(&receiver_value, "__getitem__")?
+                {
+                    return match self.call_internal(getitem, vec![index], HashMap::new())? {
+                        InternalCallOutcome::Value(value) => Ok(value),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            Err(self.runtime_error_from_active_exception("subscript lookup failed"))
+                        }
+                    };
+                }
+                return self.getitem_value(Value::Module(backing_array), index);
+            }
             if let Some(backing_list) = self.instance_backing_list(instance) {
                 if let Some(getitem) =
                     self.lookup_bound_special_method(&receiver_value, "__getitem__")?
                 {
                     return match self.call_internal(getitem, vec![index], HashMap::new())? {
                         InternalCallOutcome::Value(value) => Ok(value),
-                        InternalCallOutcome::CallerExceptionHandled => Err(
-                            self.runtime_error_from_active_exception("subscript lookup failed"),
-                        ),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            Err(self.runtime_error_from_active_exception("subscript lookup failed"))
+                        }
                     };
                 }
                 return self.getitem_value(Value::List(backing_list), index);
@@ -549,9 +562,9 @@ impl Vm {
                 {
                     return match self.call_internal(getitem, vec![index], HashMap::new())? {
                         InternalCallOutcome::Value(value) => Ok(value),
-                        InternalCallOutcome::CallerExceptionHandled => Err(
-                            self.runtime_error_from_active_exception("subscript lookup failed"),
-                        ),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            Err(self.runtime_error_from_active_exception("subscript lookup failed"))
+                        }
                     };
                 }
                 return self.getitem_value(Value::Tuple(backing_tuple), index);
@@ -562,9 +575,9 @@ impl Vm {
                 {
                     return match self.call_internal(getitem, vec![index], HashMap::new())? {
                         InternalCallOutcome::Value(value) => Ok(value),
-                        InternalCallOutcome::CallerExceptionHandled => Err(
-                            self.runtime_error_from_active_exception("subscript lookup failed"),
-                        ),
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            Err(self.runtime_error_from_active_exception("subscript lookup failed"))
+                        }
                     };
                 }
                 return self.getitem_value(Value::Str(backing_str), index);
@@ -605,6 +618,13 @@ impl Vm {
                 }
                 return Err(RuntimeError::key_error("key not found"));
             }
+        }
+        if let Value::Module(module) = &value
+            && matches!(&*module.kind(), Object::Module(module_data) if module_data.name == "__array__")
+            && let Object::Module(module_data) = &*module.kind()
+            && let Some(values) = module_data.globals.get("values").cloned()
+        {
+            return self.getitem_value(values, index);
         }
         match index {
             Value::Slice(slice) => {
@@ -4098,10 +4118,7 @@ impl Vm {
         };
         let default_meta = self.default_type_metaclass();
         if let Object::Class(class_data) = &mut *class.kind_mut() {
-            if class_data.bases.is_empty()
-                && name != "object"
-                && name != "type"
-            {
+            if class_data.bases.is_empty() && name != "object" && name != "type" {
                 if !explicit_bases.is_empty() {
                     class_data.bases.extend(explicit_bases);
                 } else if let Some(base) = object_base {

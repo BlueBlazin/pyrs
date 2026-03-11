@@ -1,9 +1,9 @@
 #[cfg(target_arch = "wasm32")]
 use super::wasm_c_float_format::format_float_with_c_pattern;
 use super::{
-    AttrAccessOutcome, AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, BigInt, BoundMethod,
-    BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, ClassBuildOutcome, ClassObject, CodeObject,
-    Command, CompiledCodeMode, DICT_BACKING_STORAGE_ATTR, ExceptionObject,
+    ARRAY_BACKING_STORAGE_ATTR, AttrAccessOutcome, AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR,
+    BigInt, BoundMethod, BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, ClassBuildOutcome,
+    ClassObject, CodeObject, Command, CompiledCodeMode, DICT_BACKING_STORAGE_ATTR, ExceptionObject,
     FLOAT_BACKING_STORAGE_ATTR, FROZENSET_BACKING_STORAGE_ATTR, Frame, GeneratorResumeKind,
     GeneratorResumeOutcome, HashMap, INSTANCE_DICT_STORAGE_ATTR, INT_BACKING_STORAGE_ATTR,
     InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, LIST_BACKING_STORAGE_ATTR,
@@ -3277,6 +3277,9 @@ impl Vm {
             if let Some(backing_str) = self.instance_backing_str(instance) {
                 return Ok(Value::Int(backing_str.chars().count() as i64));
             }
+            if let Some(backing_array) = self.instance_backing_array(instance) {
+                return BuiltinFunction::Len.call(&self.heap, vec![Value::Module(backing_array)]);
+            }
             if let Some(backing_dict) = self.instance_backing_dict(instance)
                 && let Object::Dict(values) = &*backing_dict.kind()
             {
@@ -3712,6 +3715,7 @@ impl Vm {
                                     | TUPLE_BACKING_STORAGE_ATTR
                                     | STR_BACKING_STORAGE_ATTR
                                     | BYTES_BACKING_STORAGE_ATTR
+                                    | ARRAY_BACKING_STORAGE_ATTR
                                     | INT_BACKING_STORAGE_ATTR
                                     | FLOAT_BACKING_STORAGE_ATTR
                                     | COMPLEX_BACKING_STORAGE_ATTR
@@ -10677,6 +10681,26 @@ impl Vm {
             }
             return Ok(Value::Instance(instance));
         }
+        if self.class_has_builtin_array_base(&class_ref) {
+            let array_value = self.call_builtin(BuiltinFunction::ArrayArray, args, kwargs)?;
+            let Value::Module(array_module) = array_value else {
+                return Err(RuntimeError::new("array constructor returned non-array"));
+            };
+            let is_array_module = matches!(
+                &*array_module.kind(),
+                Object::Module(module_data) if module_data.name == "__array__"
+            );
+            if !is_array_module {
+                return Err(RuntimeError::new("array constructor returned non-array"));
+            }
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data.attrs.insert(
+                    ARRAY_BACKING_STORAGE_ATTR.to_string(),
+                    Value::Module(array_module),
+                );
+            }
+            return Ok(Value::Instance(instance));
+        }
         if self.class_has_builtin_dict_base(&class_ref) {
             let dict_value = self.call_builtin(BuiltinFunction::Dict, args, kwargs)?;
             let Value::Dict(_) = dict_value else {
@@ -11353,6 +11377,7 @@ impl Vm {
             || self.class_has_builtin_frozenset_base(class)
             || self.class_has_builtin_bytes_base(class)
             || self.class_has_builtin_bytearray_base(class)
+            || self.class_has_builtin_array_base(class)
             || self.class_has_builtin_complex_base(class)
         {
             return true;

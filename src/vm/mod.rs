@@ -257,6 +257,7 @@ const DEQUE_BACKING_STORAGE_ATTR: &str = "__pyrs_deque_storage__";
 const TUPLE_BACKING_STORAGE_ATTR: &str = "__pyrs_tuple_storage__";
 const STR_BACKING_STORAGE_ATTR: &str = "__pyrs_str_storage__";
 const BYTES_BACKING_STORAGE_ATTR: &str = "__pyrs_bytes_storage__";
+const ARRAY_BACKING_STORAGE_ATTR: &str = "__pyrs_array_storage__";
 const INT_BACKING_STORAGE_ATTR: &str = "__pyrs_int_storage__";
 const FLOAT_BACKING_STORAGE_ATTR: &str = "__pyrs_float_storage__";
 const COMPLEX_BACKING_STORAGE_ATTR: &str = "__pyrs_complex_storage__";
@@ -1174,6 +1175,7 @@ pub struct Vm {
     module_source_positive_cache: HashMap<(PathBuf, String), ModuleSourceInfo>,
     virtual_module_sources: HashMap<String, VirtualModuleSource>,
     source_text_cache: HashMap<String, Vec<String>>,
+    linecache_registered_sources: HashSet<String>,
     compiled_code_metadata: HashMap<usize, CompiledCodeMetadata>,
     import_dir_cache: HashMap<PathBuf, ImportDirCacheEntry>,
     preferred_filesystem_module_cache: HashMap<String, bool>,
@@ -1481,6 +1483,7 @@ impl Vm {
             module_source_positive_cache: HashMap::new(),
             virtual_module_sources: HashMap::new(),
             source_text_cache: HashMap::new(),
+            linecache_registered_sources: HashSet::new(),
             compiled_code_metadata: HashMap::new(),
             import_dir_cache: HashMap::new(),
             preferred_filesystem_module_cache: HashMap::new(),
@@ -3918,6 +3921,7 @@ impl Vm {
             lines.push(line.trim_end_matches('\r').to_string());
         }
         self.source_text_cache.insert(filename.to_string(), lines);
+        self.linecache_registered_sources.remove(filename);
     }
 
     pub fn set_traceback_caret_enabled(&mut self, enabled: bool) {
@@ -3934,11 +3938,19 @@ impl Vm {
         source: &str,
         filename: &str,
     ) {
+        if filename.is_empty() {
+            return;
+        }
+        if self.linecache_registered_sources.contains(filename) {
+            return;
+        }
         if self.import_module("linecache").is_err() {
+            self.linecache_registered_sources.remove(filename);
             self.clear_active_exception();
             return;
         }
         let Some(linecache_module) = self.modules.get("linecache").cloned() else {
+            self.linecache_registered_sources.remove(filename);
             return;
         };
         let register = match self.builtin_getattr(
@@ -3950,6 +3962,7 @@ impl Vm {
         ) {
             Ok(value) => value,
             Err(_) => {
+                self.linecache_registered_sources.remove(filename);
                 self.clear_active_exception();
                 return;
             }
@@ -3960,8 +3973,12 @@ impl Vm {
             Value::Str(filename.to_string()),
         ];
         match self.call_internal_preserving_caller(register, register_args, HashMap::new()) {
-            Ok(InternalCallOutcome::Value(_)) => {}
+            Ok(InternalCallOutcome::Value(_)) => {
+                self.linecache_registered_sources
+                    .insert(filename.to_string());
+            }
             Ok(InternalCallOutcome::CallerExceptionHandled) | Err(_) => {
+                self.linecache_registered_sources.remove(filename);
                 self.clear_active_exception();
             }
         }
@@ -7010,17 +7027,6 @@ fn format_float_hex(value: f64) -> String {
         digits.push('0');
     }
     format!("{sign}0x1.{digits}p{exponent:+}")
-}
-
-fn value_to_path(value: &Value) -> Result<String, RuntimeError> {
-    match value {
-        Value::Str(path) => Ok(path.clone()),
-        Value::Bytes(obj) => match &*obj.kind() {
-            Object::Bytes(bytes) => Ok(String::from_utf8_lossy(bytes).into_owned()),
-            _ => Err(RuntimeError::type_error("path must be string or bytes")),
-        },
-        _ => Err(RuntimeError::type_error("path must be string or bytes")),
-    }
 }
 
 fn value_to_process_text(value: &Value) -> Result<String, RuntimeError> {
