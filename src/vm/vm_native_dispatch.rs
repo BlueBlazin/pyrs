@@ -13527,6 +13527,9 @@ impl Vm {
                 self.builtin_pathlib_path_joinpath(args, kwargs)
             }
             BuiltinFunction::PathlibPathStr => self.builtin_pathlib_path_str(args, kwargs),
+            BuiltinFunction::GrpGetGrAll => self.builtin_grp_getgrall(args, kwargs),
+            BuiltinFunction::GrpGetGrNam => self.builtin_grp_getgrnam(args, kwargs),
+            BuiltinFunction::GrpGetGrGid => self.builtin_grp_getgrgid(args, kwargs),
             BuiltinFunction::PwdGetPwAll => self.builtin_pwd_getpwall(args, kwargs),
             BuiltinFunction::PwdGetPwNam => self.builtin_pwd_getpwnam(args, kwargs),
             BuiltinFunction::PwdGetPwUid => self.builtin_pwd_getpwuid(args, kwargs),

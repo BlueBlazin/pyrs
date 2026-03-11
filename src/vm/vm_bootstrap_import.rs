@@ -10131,6 +10131,18 @@ namereplace_errors = lookup_error("namereplace")
             ],
             vec![("struct_passwd", pwd_struct_passwd_class)],
         );
+        if cfg!(unix) {
+            let grp_struct_group_class = self.alloc_tuple_backed_builtin_class("struct_group");
+            self.install_builtin_module(
+                "grp",
+                &[
+                    ("getgrall", BuiltinFunction::GrpGetGrAll),
+                    ("getgrnam", BuiltinFunction::GrpGetGrNam),
+                    ("getgrgid", BuiltinFunction::GrpGetGrGid),
+                ],
+                vec![("struct_group", grp_struct_group_class)],
+            );
+        }
         self.install_builtin_module(
             "_locale",
             &[

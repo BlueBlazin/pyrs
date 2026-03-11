@@ -13418,7 +13418,12 @@ spans = [list(m.span()) for m in doctest.DocTestParser._EXAMPLE_RE.finditer(json
 ok = len(spans) == 32 and spans[0] == [392, 412] and spans[-1] == [2472, 2566]
 print(ok)
 "#;
-    let (stdout, stderr) = run_pyrs_subprocess_with_timeout(source, Duration::from_secs(10))
+    let timeout = if std::env::var_os("LLVM_PROFILE_FILE").is_some() {
+        Duration::from_secs(30)
+    } else {
+        Duration::from_secs(10)
+    };
+    let (stdout, stderr) = run_pyrs_subprocess_with_timeout(source, timeout)
         .expect("doctest regex probe should finish");
     let last_line = stdout.lines().last().unwrap_or_default().trim();
     assert_eq!(

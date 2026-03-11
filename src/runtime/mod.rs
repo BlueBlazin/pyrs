@@ -5631,6 +5631,9 @@ pub enum BuiltinFunction {
     PathlibPathInit,
     PathlibPathJoinPath,
     PathlibPathStr,
+    GrpGetGrAll,
+    GrpGetGrNam,
+    GrpGetGrGid,
     PwdGetPwAll,
     PwdGetPwNam,
     PwdGetPwUid,
@@ -9392,6 +9395,9 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::PathlibPathInit
             | BuiltinFunction::PathlibPathJoinPath
             | BuiltinFunction::PathlibPathStr
+            | BuiltinFunction::GrpGetGrAll
+            | BuiltinFunction::GrpGetGrNam
+            | BuiltinFunction::GrpGetGrGid
             | BuiltinFunction::PwdGetPwAll
             | BuiltinFunction::PwdGetPwNam
             | BuiltinFunction::PwdGetPwUid

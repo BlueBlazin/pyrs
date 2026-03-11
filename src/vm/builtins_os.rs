@@ -4248,6 +4248,244 @@ impl Vm {
         Ok(Value::None)
     }
 
+    fn grp_struct_group_class(&self) -> Option<ObjRef> {
+        self.modules
+            .get("grp")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("struct_group").cloned(),
+                _ => None,
+            })
+            .and_then(|value| match value {
+                Value::Class(class) => Some(class),
+                _ => None,
+            })
+    }
+
+    fn grp_entries(&self) -> Result<Vec<(String, String, i64, Vec<String>)>, RuntimeError> {
+        let contents = fs::read_to_string("/etc/group")
+            .map_err(|err| RuntimeError::new(format!("grp database unavailable: {err}")))?;
+        let mut out = Vec::new();
+        for line in contents.lines() {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let parts = line.split(':').collect::<Vec<_>>();
+            if parts.len() < 4 {
+                continue;
+            }
+            let Ok(gid) = parts[2].parse::<i64>() else {
+                continue;
+            };
+            let members = if parts[3].is_empty() {
+                Vec::new()
+            } else {
+                parts[3]
+                    .split(',')
+                    .filter(|member| !member.is_empty())
+                    .map(|member| member.to_string())
+                    .collect()
+            };
+            out.push((parts[0].to_string(), parts[1].to_string(), gid, members));
+        }
+        Ok(out)
+    }
+
+    #[cfg(unix)]
+    fn grp_string_field(ptr: *const libc::c_char) -> String {
+        if ptr.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(ptr) }
+                .to_string_lossy()
+                .into_owned()
+        }
+    }
+
+    #[cfg(unix)]
+    fn grp_members(ptr: *mut *mut libc::c_char) -> Vec<String> {
+        let mut members = Vec::new();
+        if ptr.is_null() {
+            return members;
+        }
+        let mut cursor = ptr;
+        unsafe {
+            while !(*cursor).is_null() {
+                members.push(CStr::from_ptr(*cursor).to_string_lossy().into_owned());
+                cursor = cursor.add(1);
+            }
+        }
+        members
+    }
+
+    #[cfg(unix)]
+    fn grp_entry_from_libc(&self, entry: &libc::group) -> (String, String, i64, Vec<String>) {
+        (
+            Self::grp_string_field(entry.gr_name),
+            Self::grp_string_field(entry.gr_passwd),
+            i64::from(entry.gr_gid),
+            Self::grp_members(entry.gr_mem),
+        )
+    }
+
+    #[cfg(unix)]
+    fn grp_lookup_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<(String, String, i64, Vec<String>)>, RuntimeError> {
+        let c_name =
+            CString::new(name).map_err(|_| RuntimeError::value_error("embedded null character"))?;
+        let entry = unsafe { libc::getgrnam(c_name.as_ptr()) };
+        if entry.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(self.grp_entry_from_libc(unsafe { &*entry })))
+    }
+
+    #[cfg(unix)]
+    fn grp_lookup_by_gid(&self, gid: i64) -> Option<(String, String, i64, Vec<String>)> {
+        let Ok(raw_gid) = u32::try_from(gid) else {
+            return None;
+        };
+        let entry = unsafe { libc::getgrgid(raw_gid) };
+        if entry.is_null() {
+            return None;
+        }
+        Some(self.grp_entry_from_libc(unsafe { &*entry }))
+    }
+
+    fn grp_struct_from_tuple(
+        &mut self,
+        class: &ObjRef,
+        entry: (String, String, i64, Vec<String>),
+    ) -> Result<Value, RuntimeError> {
+        let (name, passwd, gid, members) = entry;
+        let instance = self.alloc_instance_for_class(class);
+        let member_values = members.into_iter().map(Value::Str).collect::<Vec<_>>();
+        let member_list = self.heap.alloc_list(member_values);
+        let tuple_values = vec![
+            Value::Str(name.clone()),
+            Value::Str(passwd.clone()),
+            Value::Int(gid),
+            member_list.clone(),
+        ];
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data
+                .attrs
+                .insert("gr_name".to_string(), Value::Str(name));
+            instance_data
+                .attrs
+                .insert("gr_passwd".to_string(), Value::Str(passwd));
+            instance_data
+                .attrs
+                .insert("gr_gid".to_string(), Value::Int(gid));
+            instance_data
+                .attrs
+                .insert("gr_mem".to_string(), member_list);
+            instance_data.attrs.insert(
+                TUPLE_BACKING_STORAGE_ATTR.to_string(),
+                self.heap.alloc_tuple(tuple_values),
+            );
+        } else {
+            return Err(RuntimeError::new(
+                "grp.struct_group instance construction failed",
+            ));
+        }
+        Ok(Value::Instance(instance))
+    }
+
+    pub(super) fn builtin_grp_getgrall(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error("getgrall() takes no arguments"));
+        }
+        let class = self
+            .grp_struct_group_class()
+            .ok_or_else(|| RuntimeError::new("grp.struct_group missing"))?;
+        let values = self
+            .grp_entries()?
+            .into_iter()
+            .map(|entry| self.grp_struct_from_tuple(&class, entry))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(self.heap.alloc_list(values))
+    }
+
+    pub(super) fn builtin_grp_getgrnam(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "getgrnam() takes exactly one argument",
+            ));
+        }
+        let Value::Str(name) = &args[0] else {
+            return Err(RuntimeError::type_error("getgrnam() argument must be str"));
+        };
+        if name.contains('\0') {
+            return Err(RuntimeError::value_error("embedded null character"));
+        }
+        let class = self
+            .grp_struct_group_class()
+            .ok_or_else(|| RuntimeError::new("grp.struct_group missing"))?;
+        #[cfg(unix)]
+        if let Some(entry) = self.grp_lookup_by_name(name)? {
+            return self.grp_struct_from_tuple(&class, entry);
+        }
+        for entry in self.grp_entries()? {
+            if entry.0 == *name {
+                return self.grp_struct_from_tuple(&class, entry);
+            }
+        }
+        Err(RuntimeError::key_error(name.clone()))
+    }
+
+    pub(super) fn builtin_grp_getgrgid(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "getgrgid() takes exactly one argument",
+            ));
+        }
+        let gid = match &args[0] {
+            Value::Int(value) => *value,
+            Value::Bool(value) => {
+                if *value {
+                    1
+                } else {
+                    0
+                }
+            }
+            Value::BigInt(_) => {
+                return Err(RuntimeError::key_error("<gid>".to_string()));
+            }
+            _ => return Err(RuntimeError::type_error("getgrgid() argument must be int")),
+        };
+        // CPython reserves -1 as always-invalid gid lookup.
+        if gid == -1 {
+            return Err(RuntimeError::key_error(gid.to_string()));
+        }
+        let class = self
+            .grp_struct_group_class()
+            .ok_or_else(|| RuntimeError::new("grp.struct_group missing"))?;
+        #[cfg(unix)]
+        if let Some(entry) = self.grp_lookup_by_gid(gid) {
+            return self.grp_struct_from_tuple(&class, entry);
+        }
+        for entry in self.grp_entries()? {
+            if entry.2 == gid {
+                return self.grp_struct_from_tuple(&class, entry);
+            }
+        }
+        Err(RuntimeError::key_error(gid.to_string()))
+    }
+
     fn pwd_struct_passwd_class(&self) -> Option<ObjRef> {
         self.modules
             .get("pwd")
