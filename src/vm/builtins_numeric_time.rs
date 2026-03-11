@@ -1391,8 +1391,7 @@ impl Vm {
 
         let data_string =
             data_string.ok_or_else(|| RuntimeError::new("strptime() missing required argument"))?;
-        let format =
-            format.unwrap_or_else(|| Value::Str("%a %b %d %H:%M:%S %Y".to_string()));
+        let format = format.unwrap_or_else(|| Value::Str("%a %b %d %H:%M:%S %Y".to_string()));
 
         self.import_module("_strptime")?;
         let Some(module) = self.modules.get("_strptime").cloned() else {
@@ -1406,9 +1405,9 @@ impl Vm {
 
         match self.call_internal(helper, vec![data_string, format], HashMap::new())? {
             InternalCallOutcome::Value(value) => Ok(value),
-            InternalCallOutcome::CallerExceptionHandled => Err(
-                self.runtime_error_from_active_exception("strptime() raised exception"),
-            ),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("strptime() raised exception"))
+            }
         }
     }
 

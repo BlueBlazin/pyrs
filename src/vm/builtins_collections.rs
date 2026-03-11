@@ -2,11 +2,10 @@ use super::{
     BoundMethod, BuiltinFunction, ClassObject, DEQUE_BACKING_STORAGE_ATTR, HashMap, InstanceObject,
     InternalCallOutcome, IteratorKind, IteratorObject, MAPPING_PROXY_STORAGE_ATTR, ModuleObject,
     NativeCallResult, NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values,
-    and_values,
-    binary_operator, bytes_like_from_value, class_attr_lookup, class_name_for_instance, compare_ge,
-    compare_gt, compare_le, compare_lt, dict_remove_value, dict_set_value_checked, ensure_hashable,
-    format_repr, is_missing_attribute_error, is_truthy, lshift_values, pow_values, rshift_values,
-    runtime_error_matches_exception, unary_predicate, value_to_int, xor_values,
+    and_values, binary_operator, bytes_like_from_value, class_attr_lookup, class_name_for_instance,
+    compare_ge, compare_gt, compare_le, compare_lt, dict_remove_value, dict_set_value_checked,
+    ensure_hashable, format_repr, is_missing_attribute_error, is_truthy, lshift_values, pow_values,
+    rshift_values, runtime_error_matches_exception, unary_predicate, value_to_int, xor_values,
 };
 use crate::runtime::FunctionObject;
 
@@ -3329,8 +3328,9 @@ impl Vm {
             .insert(dict.id(), default_factory);
         match self.call_native_method(NativeMethodKind::DictUpdateMethod, dict, args, kwargs)? {
             NativeCallResult::Value(_) => Ok(()),
-            NativeCallResult::PropagatedException => Err(self
-                .runtime_error_from_active_exception("defaultdict() update failed")),
+            NativeCallResult::PropagatedException => {
+                Err(self.runtime_error_from_active_exception("defaultdict() update failed"))
+            }
         }
     }
 

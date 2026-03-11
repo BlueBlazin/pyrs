@@ -1,0 +1,668 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import fs from "node:fs";
+import path from "node:path";
+
+/* ── data loading ─────────────────────────────────────────────── */
+const locate = (name: string): string | null => {
+	const candidates = [
+		path.resolve(process.cwd(), "..", "perf", name),
+		path.resolve(process.cwd(), "perf", name),
+	];
+	for (const c of candidates) if (fs.existsSync(c)) return c;
+	return null;
+};
+const tryRead = (p: string | null) => {
+	if (!p) return null;
+	try { return JSON.parse(fs.readFileSync(p, "utf-8")); }
+	catch { return null; }
+};
+
+const data = tryRead(locate("public_micro_latest.json"));
+const ok = !!data;
+
+/* ── computed stats ───────────────────────────────────────────── */
+const benchmarks: any[] = data?.benchmarks ?? [];
+const interpreters = data?.interpreters ?? {};
+const config = data?.config ?? {};
+const host = data?.host ?? {};
+const geoMean = data?.summary?.geometric_mean_median_ratios ?? {};
+
+// interpreter display names
+const pyrsVer   = interpreters.pyrs?.version ?? "";
+const cp314Ver  = interpreters.cpython3143?.version ?? "";
+const cp310Ver  = interpreters.cpython3108?.version ?? "";
+
+// friendly labels
+const iLabels: Record<string, string> = {
+	pyrs: `PYRS ${pyrsVer}`,
+	cpython3143: `CPython ${cp314Ver}`,
+	cpython3108: `CPython ${cp310Ver}`,
+};
+
+// colors for interpreters
+const iColors: Record<string, string> = {
+	pyrs: "#e97d46",
+	cpython3143: "#5ec97a",
+	cpython3108: "#7d6452",
+};
+
+// categories
+const catLabels: Record<string, string> = {
+	startup: "Startup",
+	dispatch: "Call dispatch",
+	core: "Core operations",
+	collections: "Collections",
+	stdlib: "Standard library",
+};
+
+const categories = [...new Set(benchmarks.map((b: any) => b.category))];
+
+// per-benchmark processed data
+const processed = benchmarks.map((b: any) => {
+	const pyrsMedian = b.results.pyrs?.summary_seconds?.median ?? 0;
+	const cp314Median = b.results.cpython3143?.summary_seconds?.median ?? 0;
+	const cp310Median = b.results.cpython3108?.summary_seconds?.median ?? 0;
+	const ratio314 = b.ratios_by_median?.pyrs_vs_cpython3143 ?? 0;
+	const ratio310 = b.ratios_by_median?.pyrs_vs_cpython3108 ?? 0;
+	const maxMedian = Math.max(pyrsMedian, cp314Median, cp310Median);
+	return {
+		...b,
+		pyrsMedian,
+		cp314Median,
+		cp310Median,
+		ratio314,
+		ratio310,
+		maxMedian,
+		atParity: ratio314 <= 1.1,
+		pyrsWins: ratio314 < 1.0,
+	};
+});
+
+// summary stats
+const geoMean314 = geoMean.pyrs_vs_cpython3143 ?? 0;
+const geoMean310 = geoMean.pyrs_vs_cpython3108 ?? 0;
+const bestBench = [...processed].sort((a, b) => a.ratio314 - b.ratio314)[0];
+const worstBench = [...processed].sort((a, b) => b.ratio314 - a.ratio314)[0];
+const parityCount = processed.filter((b: any) => b.atParity).length;
+
+// meta
+const hostOS   = host.system === "Darwin" ? "macOS" : (host.system ?? "");
+const hostArch = host.machine ?? "";
+const cpuCount = host.cpu_count ?? "";
+const genDate  = data?.generated_at_utc ?? "";
+const iterations = config.iterations ?? 0;
+const warmup   = config.warmup ?? 0;
+
+/* ── helpers ──────────────────────────────────────────────────── */
+const fN = (n: number) => n.toLocaleString("en-US");
+const fR = (n: number) => n < 10 ? n.toFixed(2) + "x" : n.toFixed(1) + "x";
+const fMs = (n: number) => {
+	if (n < 0.001) return (n * 1_000_000).toFixed(0) + " \u00b5s";
+	if (n < 1) return (n * 1000).toFixed(1) + " ms";
+	return n.toFixed(2) + " s";
+};
+const fD = (iso: string) => {
+	if (!iso) return "";
+	return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+};
+---
+
+<SiteLayout
+	title="Performance Benchmarks — PYRS"
+	description="Microbenchmark results comparing PYRS against CPython on real workloads."
+>
+{ok ? (
+<div class="bench-page">
+
+	<!-- ── HEADER ─────────────────────────────────────────── -->
+	<section class="header">
+		<span class="kicker">Microbenchmark Suite</span>
+		<h1 class="title">Performance, measured.</h1>
+		<p class="lead">
+			{benchmarks.length} workloads timed head-to-head against CPython {cp314Ver}
+			and CPython {cp310Ver}. Each benchmark runs {iterations} iterations after {warmup} warmup rounds.
+		</p>
+		<div class="meta-row">
+			<span class="pill">{hostOS} {hostArch}</span>
+			<span class="pill">{cpuCount} cores</span>
+			<span class="pill">{benchmarks.length} benchmarks</span>
+			<span class="pill">Updated {fD(genDate)}</span>
+		</div>
+	</section>
+
+	<!-- ── SUMMARY METRICS ───────────────────────────────── -->
+	<section class="metrics">
+		<div class="mc">
+			<span class="mv accent-value">{fR(geoMean314)}</span>
+			<span class="ml">geometric mean vs CPython {cp314Ver}</span>
+			<span class="mx">across all {benchmarks.length} benchmarks</span>
+		</div>
+		<div class="mc">
+			<span class="mv">{fR(geoMean310)}</span>
+			<span class="ml">geometric mean vs CPython {cp310Ver}</span>
+			<span class="mx">across all {benchmarks.length} benchmarks</span>
+		</div>
+		<div class="mc">
+			<span class="mv green-value">{fR(bestBench.ratio314)}</span>
+			<span class="ml">best: {bestBench.name}</span>
+			<span class="mx">{bestBench.atParity ? "at parity with" : "vs"} CPython {cp314Ver}</span>
+		</div>
+		<div class="mc">
+			<span class="mv">{parityCount} of {benchmarks.length}</span>
+			<span class="ml">benchmarks at parity</span>
+			<span class="mx">within 10% of CPython {cp314Ver}</span>
+		</div>
+	</section>
+
+	<!-- ── COMPARISON CHART ──────────────────────────────── -->
+	<section class="chart-section">
+		<h2 class="sh">Head-to-head comparison</h2>
+		<p class="sd">Median execution time per benchmark — lower is better. Bars are log-scaled for readability.</p>
+
+		<div class="chart-legend">
+			<span class="chart-li"><span class="chart-dot" style="background:#e97d46" />PYRS {pyrsVer}</span>
+			<span class="chart-li"><span class="chart-dot" style="background:#5ec97a" />CPython {cp314Ver}</span>
+			<span class="chart-li"><span class="chart-dot" style="background:#7d6452" />CPython {cp310Ver}</span>
+		</div>
+
+		<div class="chart">
+			{processed.map((b: any) => {
+				const logMax = Math.log10(b.maxMedian);
+				const logFloor = Math.log10(Math.min(b.pyrsMedian, b.cp314Median, b.cp310Median)) - 0.15;
+				const range = logMax - logFloor + 0.15;
+				const pct = (v: number) => ((Math.log10(v) - logFloor) / range * 100);
+				return (
+					<div class="chart-group">
+						<div class="chart-label">
+							<span class="chart-name">{b.name}</span>
+							<span class="chart-cat">{catLabels[b.category] ?? b.category}</span>
+						</div>
+						<div class="chart-bars">
+							<div class="chart-bar-wrap">
+								<div class="chart-bar cb-pyrs" style={`width:${pct(b.pyrsMedian)}%`}>
+									<span class="chart-val">{fMs(b.pyrsMedian)}</span>
+								</div>
+							</div>
+							<div class="chart-bar-wrap">
+								<div class="chart-bar cb-cp314" style={`width:${pct(b.cp314Median)}%`}>
+									<span class="chart-val">{fMs(b.cp314Median)}</span>
+								</div>
+							</div>
+							<div class="chart-bar-wrap">
+								<div class="chart-bar cb-cp310" style={`width:${pct(b.cp310Median)}%`}>
+									<span class="chart-val">{fMs(b.cp310Median)}</span>
+								</div>
+							</div>
+						</div>
+						<div class="chart-ratio">
+							<span class={`ratio-badge ${b.atParity ? "ratio-parity" : b.ratio314 < 5 ? "ratio-close" : "ratio-far"}`}>
+								{b.pyrsWins ? "faster" : fR(b.ratio314)}
+							</span>
+						</div>
+					</div>
+				);
+			})}
+		</div>
+	</section>
+
+	<!-- ── CATEGORY BREAKDOWN ────────────────────────────── -->
+	<section class="cat-breakdown">
+		<h2 class="sh">Performance by category</h2>
+		<p class="sd">Average ratio vs CPython {cp314Ver} grouped by workload type.</p>
+
+		<div class="cat-cards">
+			{categories.map((cat: string) => {
+				const catBenches = processed.filter((b: any) => b.category === cat);
+				const avgRatio = catBenches.reduce((s: number, b: any) => s + b.ratio314, 0) / catBenches.length;
+				const best = catBenches.sort((a: any, b: any) => a.ratio314 - b.ratio314)[0];
+				return (
+					<div class="catc">
+						<div class="catc-head">
+							<span class="catc-label">{catLabels[cat] ?? cat}</span>
+							<span class={`catc-ratio ${avgRatio <= 1.1 ? "catc-parity" : avgRatio < 10 ? "catc-ok" : "catc-slow"}`}>
+								{avgRatio <= 1.1 ? "~1x" : fR(avgRatio)}
+							</span>
+						</div>
+						<div class="catc-benches">
+							{catBenches.map((b: any) => (
+								<div class="catc-bench">
+									<span class="catc-bname">{b.name}</span>
+									<span class={`catc-bratio ${b.atParity ? "catc-parity" : ""}`}>{b.atParity ? "~1x" : fR(b.ratio314)}</span>
+								</div>
+							))}
+						</div>
+					</div>
+				);
+			})}
+		</div>
+	</section>
+
+	<!-- ── METHODOLOGY ───────────────────────────────────── -->
+	<section class="method">
+		<h2 class="sh">Methodology</h2>
+		<p class="sd">How these numbers are produced.</p>
+
+		<div class="method-grid">
+			<div class="method-card">
+				<span class="method-label">Iterations</span>
+				<span class="method-val">{iterations} timed runs per benchmark</span>
+			</div>
+			<div class="method-card">
+				<span class="method-label">Warmup</span>
+				<span class="method-val">{warmup} untimed warmup rounds</span>
+			</div>
+			<div class="method-card">
+				<span class="method-label">Metric</span>
+				<span class="method-val">Median of all timed samples</span>
+			</div>
+			<div class="method-card">
+				<span class="method-label">Environment</span>
+				<span class="method-val">{hostOS} {hostArch}, {cpuCount} cores</span>
+			</div>
+			<div class="method-card">
+				<span class="method-label">Interpreters</span>
+				<span class="method-val">PYRS {pyrsVer}, CPython {cp314Ver}, CPython {cp310Ver}</span>
+			</div>
+			<div class="method-card">
+				<span class="method-label">Comparison</span>
+				<span class="method-val">Geometric mean of per-benchmark median ratios</span>
+			</div>
+		</div>
+	</section>
+
+</div>
+) : (
+<div class="bench-page">
+	<section class="header">
+		<h1 class="title">Performance Benchmarks</h1>
+		<p class="lead">Benchmark data not available. Run the benchmark suite to generate results.</p>
+	</section>
+</div>
+)}
+</SiteLayout>
+
+<!-- ── STYLES ──────────────────────────────────────────────────── -->
+<style>
+	/* ── page ─────────────────────────────────── */
+	.bench-page {
+		display: flex;
+		flex-direction: column;
+		gap: 3.5rem;
+	}
+
+	/* ── header ───────────────────────────────── */
+	.header {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		max-width: 700px;
+	}
+	.kicker {
+		font-size: 0.78rem;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: var(--accent);
+		font-weight: 600;
+	}
+	.title {
+		font-size: 2.6rem;
+		font-weight: 700;
+		line-height: 1.08;
+		letter-spacing: -0.03em;
+		margin: 0;
+	}
+	.lead {
+		font-size: 1.05rem;
+		color: var(--text-muted);
+		line-height: 1.6;
+		margin: 0.25rem 0 0;
+	}
+	.meta-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-top: 0.8rem;
+	}
+	.pill {
+		font-size: 0.74rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: var(--text-muted);
+		background: #201510;
+		border: 1px solid #2e1f17;
+		padding: 0.22rem 0.6rem;
+		border-radius: 2rem;
+	}
+
+	/* ── shared ───────────────────────────────── */
+	.sh {
+		font-size: 1.25rem;
+		font-weight: 600;
+		letter-spacing: -0.02em;
+		margin: 0 0 0.2rem;
+	}
+	.sd {
+		font-size: 0.9rem;
+		color: var(--text-muted);
+		margin: 0 0 1.4rem;
+	}
+
+	/* ── metrics ──────────────────────────────── */
+	.metrics {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 1rem;
+	}
+	.mc {
+		background: var(--bg-card);
+		border: 1px solid var(--line);
+		border-top: 2px solid #3a2414;
+		border-radius: 0.6rem;
+		padding: 1.4rem 1.3rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+	}
+	.mc:first-child { border-top-color: var(--accent); }
+	.mc:nth-child(3) { border-top-color: #5ec97a; }
+	.mv {
+		font-size: 2.2rem;
+		font-weight: 700;
+		letter-spacing: -0.03em;
+		line-height: 1.1;
+		color: var(--text);
+	}
+	.ml {
+		font-size: 0.88rem;
+		font-weight: 500;
+		color: var(--text-muted);
+		margin-top: 0.2rem;
+	}
+	.mx {
+		font-size: 0.78rem;
+		color: rgba(190, 170, 159, 0.6);
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+	}
+	.accent-value { color: var(--accent); }
+	.green-value  { color: #5ec97a; }
+
+	/* ── chart ────────────────────────────────── */
+	.chart-section {
+		background: #110b08;
+		border: 1px solid #2b1e15;
+		border-radius: 0.75rem;
+		padding: 2rem 2rem 1.6rem;
+	}
+	.chart-legend {
+		display: flex;
+		gap: 1.4rem;
+		margin-bottom: 1.6rem;
+	}
+	.chart-li {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.82rem;
+		color: var(--text-muted);
+	}
+	.chart-dot {
+		display: inline-block;
+		width: 10px;
+		height: 10px;
+		border-radius: 2px;
+	}
+
+	.chart {
+		display: flex;
+		flex-direction: column;
+		gap: 1.6rem;
+	}
+	.chart-group {
+		display: grid;
+		grid-template-columns: minmax(8rem, 12rem) 1fr 4rem;
+		gap: 0.8rem;
+		align-items: center;
+	}
+	.chart-label {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+	}
+	.chart-name {
+		font-size: 0.88rem;
+		font-weight: 500;
+		color: var(--text);
+	}
+	.chart-cat {
+		font-size: 0.72rem;
+		color: rgba(190, 170, 159, 0.5);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+	}
+
+	.chart-bars {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+	}
+	.chart-bar-wrap {
+		height: 1.1rem;
+		position: relative;
+	}
+	.chart-bar {
+		height: 100%;
+		border-radius: 0.2rem;
+		min-width: 3px;
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		padding-right: 0.4rem;
+		transform-origin: left;
+		animation: bar-grow 600ms cubic-bezier(0.22, 1, 0.36, 1) both;
+	}
+	@keyframes bar-grow {
+		from { transform: scaleX(0); }
+		to   { transform: scaleX(1); }
+	}
+	.chart-group:nth-child(2) .chart-bar  { animation-delay: 60ms; }
+	.chart-group:nth-child(3) .chart-bar  { animation-delay: 120ms; }
+	.chart-group:nth-child(4) .chart-bar  { animation-delay: 180ms; }
+	.chart-group:nth-child(5) .chart-bar  { animation-delay: 240ms; }
+	.chart-group:nth-child(6) .chart-bar  { animation-delay: 300ms; }
+	.chart-group:nth-child(7) .chart-bar  { animation-delay: 360ms; }
+	.chart-group:nth-child(8) .chart-bar  { animation-delay: 420ms; }
+	.chart-group:nth-child(9) .chart-bar  { animation-delay: 480ms; }
+	.chart-group:nth-child(10) .chart-bar { animation-delay: 540ms; }
+
+	.cb-pyrs  { background: #e97d46; }
+	.cb-cp314 { background: #5ec97a; }
+	.cb-cp310 { background: #7d6452; }
+	.chart-val {
+		font-size: 0.68rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: #0f0907;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.chart-ratio {
+		text-align: right;
+	}
+	.ratio-badge {
+		font-size: 0.76rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		font-weight: 600;
+		padding: 0.18rem 0.5rem;
+		border-radius: 0.25rem;
+	}
+	.ratio-parity {
+		color: #5ec97a;
+		background: #0f1d15;
+		border: 1px solid #1e3a2a;
+	}
+	.ratio-close {
+		color: #e97d46;
+		background: #1c1008;
+		border: 1px solid #3a2414;
+	}
+	.ratio-far {
+		color: #d4a03a;
+		background: #1a1508;
+		border: 1px solid #362a12;
+	}
+
+	/* ── category breakdown ──────────────────── */
+	.cat-cards {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+		gap: 1rem;
+	}
+	.catc {
+		background: var(--bg-card);
+		border: 1px solid var(--line);
+		border-radius: 0.6rem;
+		padding: 1.2rem 1.2rem 1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.8rem;
+	}
+	.catc-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+	.catc-label {
+		font-size: 0.92rem;
+		font-weight: 600;
+		color: var(--text);
+	}
+	.catc-ratio {
+		font-size: 0.82rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		font-weight: 700;
+		padding: 0.15rem 0.5rem;
+		border-radius: 0.25rem;
+	}
+	.catc-parity { color: #5ec97a; background: #0f1d15; }
+	.catc-ok     { color: #e97d46; background: #1c1008; }
+	.catc-slow   { color: #d4a03a; background: #1a1508; }
+
+	.catc-benches {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+	}
+	.catc-bench {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		padding: 0.25rem 0;
+		border-top: 1px solid #1c140f;
+	}
+	.catc-bname {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+	.catc-bratio {
+		font-size: 0.78rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: var(--text-muted);
+	}
+	.catc-bratio.catc-parity {
+		color: #5ec97a;
+		background: none;
+	}
+
+	/* ── methodology ─────────────────────────── */
+	.method-grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 0.8rem;
+	}
+	.method-card {
+		background: var(--bg-card);
+		border: 1px solid var(--line);
+		border-radius: 0.5rem;
+		padding: 1rem 1.1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+	}
+	.method-label {
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: rgba(190, 170, 159, 0.5);
+		font-weight: 600;
+	}
+	.method-val {
+		font-size: 0.88rem;
+		color: var(--text);
+	}
+
+	/* ── responsive ───────────────────────────── */
+	@media (max-width: 1024px) {
+		.metrics { grid-template-columns: repeat(2, 1fr); }
+		.method-grid { grid-template-columns: repeat(2, 1fr); }
+	}
+	@media (max-width: 760px) {
+		.bench-page { gap: 2.5rem; }
+		.title { font-size: 2rem; }
+		.chart-section { padding: 1.4rem 1rem 1.2rem; }
+		.metrics { grid-template-columns: 1fr; }
+		.mv { font-size: 1.8rem; }
+		.chart-group {
+			grid-template-columns: 1fr;
+			gap: 0.3rem;
+		}
+		.chart-label {
+			flex-direction: row;
+			align-items: baseline;
+			gap: 0.5rem;
+		}
+		.chart-ratio { text-align: left; margin-top: 0.2rem; }
+		.chart-legend { gap: 0.8rem; flex-wrap: wrap; }
+		.method-grid { grid-template-columns: 1fr; }
+		.cat-cards { grid-template-columns: 1fr; }
+	}
+</style>
+
+<!-- ── CLIENT JS ──────────────────────────────────────────────── -->
+<script>
+	/* ── count-up animation for metric values ── */
+	const mvEls = document.querySelectorAll<HTMLElement>(".mv");
+	const countUp = (el: HTMLElement) => {
+		const raw = el.textContent?.trim() ?? "";
+		// handle "Nx" ratio format
+		const isRatio = raw.endsWith("x");
+		const hasFraction = raw.includes(" of ");
+		if (hasFraction) return; // skip "N of M" cards
+		const numStr = raw.replace(/[x,%]/g, "");
+		const target = parseFloat(numStr);
+		if (isNaN(target)) return;
+		const decimals = raw.includes(".") ? (raw.split(".")[1]?.replace(/[x%]/g, "").length ?? 0) : 0;
+		const duration = 700;
+		const start = performance.now();
+		const fmt = (n: number) => {
+			const s = decimals > 0 ? n.toFixed(decimals) : Math.round(n).toLocaleString("en-US");
+			return isRatio ? s + "x" : s;
+		};
+		el.textContent = fmt(0);
+		const tick = (now: number) => {
+			const t = Math.min((now - start) / duration, 1);
+			const ease = 1 - Math.pow(1 - t, 3);
+			el.textContent = fmt(target * ease);
+			if (t < 1) requestAnimationFrame(tick);
+		};
+		requestAnimationFrame(tick);
+	};
+	const metricsObs = new IntersectionObserver((entries) => {
+		entries.forEach(entry => {
+			if (entry.isIntersecting) {
+				countUp(entry.target as HTMLElement);
+				metricsObs.unobserve(entry.target);
+			}
+		});
+	}, { threshold: 0.5 });
+	mvEls.forEach(el => metricsObs.observe(el));
+</script>

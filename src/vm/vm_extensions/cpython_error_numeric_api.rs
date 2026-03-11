@@ -4,6 +4,7 @@ use std::ffi::{CStr, CString, c_char, c_void};
 
 use crate::runtime::{BuiltinFunction, ExceptionObject, Object, Value};
 
+use super::super::TUPLE_BACKING_STORAGE_ATTR;
 use super::{
     _Py_NoneStruct, ACTIVE_CPYTHON_INIT_CONTEXT, CPY_EXCEPTION_TYPE_PTR_ATTR, CpythonComplexValue,
     CpythonErrorState, CpythonNumberMethods, CpythonObjectHead, CpythonStructSeqTypeInfo,
@@ -24,7 +25,6 @@ use super::{
     cpython_type_name_for_object_ptr, cpython_value_debug_tag, cpython_value_from_ptr,
     cpython_value_from_ptr_or_proxy, value_to_int, with_active_cpython_context_mut,
 };
-use super::super::TUPLE_BACKING_STORAGE_ATTR;
 
 fn cpython_structseq_field_names(
     fields: *mut super::CpythonStructSequenceField,
@@ -918,20 +918,23 @@ pub unsafe extern "C" fn PyStructSequence_SetItem(
             }
         };
         let tuple_len = match &*instance.kind() {
-            Object::Instance(instance_data) => match instance_data.attrs.get(TUPLE_BACKING_STORAGE_ATTR)
-            {
-                Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
-                    Object::Tuple(values) => values.len(),
+            Object::Instance(instance_data) => {
+                match instance_data.attrs.get(TUPLE_BACKING_STORAGE_ATTR) {
+                    Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
+                        Object::Tuple(values) => values.len(),
+                        _ => {
+                            context.set_error(
+                                "PyStructSequence_SetItem encountered invalid tuple storage",
+                            );
+                            return true;
+                        }
+                    },
                     _ => {
-                        context.set_error("PyStructSequence_SetItem encountered invalid tuple storage");
+                        context.set_error("PyStructSequence_SetItem expected structseq instance");
                         return true;
                     }
-                },
-                _ => {
-                    context.set_error("PyStructSequence_SetItem expected structseq instance");
-                    return true;
                 }
-            },
+            }
             _ => {
                 context.set_error("PyStructSequence_SetItem expected structseq instance");
                 return true;
@@ -948,14 +951,15 @@ pub unsafe extern "C" fn PyStructSequence_SetItem(
         }
         if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
             let field_name = match &*instance_data.class.kind() {
-                Object::Class(class_data) => match class_data.attrs.get("__pyrs_structseq_field_names__")
-                {
-                    Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
-                        Object::Tuple(values) => values.get(idx as usize).cloned(),
+                Object::Class(class_data) => {
+                    match class_data.attrs.get("__pyrs_structseq_field_names__") {
+                        Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
+                            Object::Tuple(values) => values.get(idx as usize).cloned(),
+                            _ => None,
+                        },
                         _ => None,
-                    },
-                    _ => None,
-                },
+                    }
+                }
                 _ => None,
             };
             let Some(Value::Tuple(tuple_obj)) =
@@ -1004,10 +1008,9 @@ pub unsafe extern "C" fn PyStructSequence_GetItem(
             return unsafe { PyTuple_GetItem(object, index) };
         };
         let tuple_value = match &*instance.kind() {
-            Object::Instance(instance_data) => instance_data
-                .attrs
-                .get(TUPLE_BACKING_STORAGE_ATTR)
-                .cloned(),
+            Object::Instance(instance_data) => {
+                instance_data.attrs.get(TUPLE_BACKING_STORAGE_ATTR).cloned()
+            }
             _ => None,
         };
         let Some(Value::Tuple(tuple_obj)) = tuple_value else {

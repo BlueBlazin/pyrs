@@ -543,8 +543,10 @@ fn instance_attributes_iter_item(entry: &(String, Value)) -> (&String, &Value) {
 
 impl<'a> IntoIterator for &'a InstanceAttributes {
     type Item = (&'a String, &'a Value);
-    type IntoIter =
-        std::iter::Map<std::slice::Iter<'a, (String, Value)>, fn(&(String, Value)) -> (&String, &Value)>;
+    type IntoIter = std::iter::Map<
+        std::slice::Iter<'a, (String, Value)>,
+        fn(&(String, Value)) -> (&String, &Value),
+    >;
 
     fn into_iter(self) -> Self::IntoIter {
         self.entries.iter().map(instance_attributes_iter_item)
@@ -784,6 +786,7 @@ pub enum NativeMethodKind {
     BytesHex,
     BytesStartsWith,
     BytesEndsWith,
+    BytesReplace,
     BytesCount,
     BytesFind,
     BytesIndex,
@@ -5535,11 +5538,11 @@ pub enum BuiltinFunction {
     TimeTimeNs,
     TimeLocalTime,
     TimeGmTime,
+    TimeStructTime,
+    TimeStrPTime,
     TimeStrFTime,
     TimeMonotonic,
     TimeGetClockInfo,
-    TimeStructTime,
-    TimeStrPTime,
     TimeSleep,
     OsGetPid,
     OsGetUid,
@@ -7043,9 +7046,7 @@ impl BuiltinFunction {
                     Value::Float(value) => Ok(Value::Float(*value)),
                     Value::Int(value) => Ok(Value::Float(*value as f64)),
                     Value::Bool(value) => Ok(Value::Float(if *value { 1.0 } else { 0.0 })),
-                    Value::Str(value) => {
-                        Ok(Value::Float(parse_float_literal(value)?))
-                    }
+                    Value::Str(value) => Ok(Value::Float(parse_float_literal(value)?)),
                     Value::Bytes(obj) => match &*obj.kind() {
                         Object::Bytes(values) => {
                             let text = std::str::from_utf8(values).map_err(|_| {
@@ -9298,9 +9299,9 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::TimeTimeNs
             | BuiltinFunction::TimeLocalTime
             | BuiltinFunction::TimeGmTime
-            | BuiltinFunction::TimeStrFTime
             | BuiltinFunction::TimeStructTime
             | BuiltinFunction::TimeStrPTime
+            | BuiltinFunction::TimeStrFTime
             | BuiltinFunction::TimeMonotonic
             | BuiltinFunction::TimeGetClockInfo
             | BuiltinFunction::TimeSleep
@@ -10198,11 +10199,13 @@ fn parse_complex_literal(text: &str) -> Result<(f64, f64), RuntimeError> {
 }
 
 fn parse_complex_component_literal(text: &str) -> Result<f64, RuntimeError> {
-    parse_numeric_float_literal(text).map_err(|_| RuntimeError::value_error("complex() invalid literal"))
+    parse_numeric_float_literal(text)
+        .map_err(|_| RuntimeError::value_error("complex() invalid literal"))
 }
 
 fn parse_float_literal(text: &str) -> Result<f64, RuntimeError> {
-    parse_numeric_float_literal(text).map_err(|_| RuntimeError::value_error("float() invalid literal"))
+    parse_numeric_float_literal(text)
+        .map_err(|_| RuntimeError::value_error("float() invalid literal"))
 }
 
 fn parse_numeric_float_literal(text: &str) -> Result<f64, ()> {
@@ -12276,6 +12279,9 @@ pub fn format_value(value: &Value) -> String {
                         }
                         NativeMethodKind::BytesEndsWith => {
                             "<bound method bytes.endswith>".to_string()
+                        }
+                        NativeMethodKind::BytesReplace => {
+                            "<bound method bytes.replace>".to_string()
                         }
                         NativeMethodKind::BytesCount => "<bound method bytes.count>".to_string(),
                         NativeMethodKind::BytesFind => "<bound method bytes.find>".to_string(),

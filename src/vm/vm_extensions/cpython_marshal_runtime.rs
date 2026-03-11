@@ -1,18 +1,15 @@
 use std::rc::Rc;
 
-use crate::bytecode::cpython::{PyObject as CpythonMarshalObject, translate_code};
 use crate::bytecode::cpython::CpythonCode;
-use crate::{compiler, parser};
+use crate::bytecode::cpython::{PyObject as CpythonMarshalObject, translate_code};
 use crate::runtime::{Object, SliceValue, Value};
+use crate::{compiler, parser};
 
 use super::Vm;
 
 const PYRS_MARSHALLED_SOURCE_CODE_MAGIC: &[u8] = b"PYRS_SRC_CODE_V1";
 
-fn source_marshaled_code_object(
-    code: &crate::bytecode::CodeObject,
-    source: String,
-) -> CpythonCode {
+fn source_marshaled_code_object(code: &crate::bytecode::CodeObject, source: String) -> CpythonCode {
     CpythonCode {
         argcount: 0,
         posonlyargcount: 0,
@@ -202,9 +199,7 @@ pub(super) fn cpython_marshal_object_to_value(
                 step: parse_int(step)?,
             })))
         }
-        CpythonMarshalObject::Code(code)
-            if code.code == PYRS_MARSHALLED_SOURCE_CODE_MAGIC =>
-        {
+        CpythonMarshalObject::Code(code) if code.code == PYRS_MARSHALLED_SOURCE_CODE_MAGIC => {
             source_marshaled_code_to_value(code, vm)
         }
         CpythonMarshalObject::Code(code) => translate_code(code, &mut vm.heap)
@@ -232,7 +227,11 @@ impl Vm {
             let source = self
                 .compiled_code_metadata(code)
                 .and_then(|metadata| metadata.source.clone())
-                .or_else(|| self.source_text_cache.get(&code.filename).map(|lines| lines.join("\n")))
+                .or_else(|| {
+                    self.source_text_cache
+                        .get(&code.filename)
+                        .map(|lines| lines.join("\n"))
+                })
                 .or_else(|| {
                     if code.filename.starts_with('<') {
                         None

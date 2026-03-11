@@ -6324,16 +6324,18 @@ impl Vm {
     }
 
     fn class_is_ast_node(&self, class: &ObjRef) -> bool {
-        self.class_mro_entries(class).iter().any(|entry| match &*entry.kind() {
-            Object::Class(class_data) => {
-                class_data.name == "AST"
-                    && matches!(
-                        class_data.attrs.get("__module__"),
-                        Some(Value::Str(module_name)) if module_name == "_ast"
-                    )
-            }
-            _ => false,
-        })
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => {
+                    class_data.name == "AST"
+                        && matches!(
+                            class_data.attrs.get("__module__"),
+                            Some(Value::Str(module_name)) if module_name == "_ast"
+                        )
+                }
+                _ => false,
+            })
     }
 
     fn ast_constructor_field_names(&self, class: &ObjRef) -> Vec<String> {

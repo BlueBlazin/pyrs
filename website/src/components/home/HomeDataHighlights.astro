@@ -1,0 +1,298 @@
+---
+import fs from "node:fs";
+import path from "node:path";
+
+const locate = (name: string): string | null => {
+	const candidates = [
+		path.resolve(process.cwd(), "..", "perf", name),
+		path.resolve(process.cwd(), "perf", name),
+	];
+	for (const c of candidates) if (fs.existsSync(c)) return c;
+	return null;
+};
+const tryRead = (p: string | null) => {
+	if (!p) return null;
+	try { return JSON.parse(fs.readFileSync(p, "utf-8")); }
+	catch { return null; }
+};
+
+/* ── test suite data ── */
+const summary = tryRead(locate("cpython_compat_benchmark_latest/summary.json"));
+const derived = tryRead(locate("cpython_compat_benchmark_latest/derived_summary.json"));
+const hasTests = !!(summary && derived);
+
+const entries: any[] = summary?.entries ?? [];
+const totals = derived?.totals ?? {};
+const caseOut = totals.case_outcomes ?? {};
+const effectiveStatus = (e: any) => e.run_status ?? e.inventory_status ?? "unknown";
+const sc: Record<string, number> = {};
+for (const e of entries) { const s = effectiveStatus(e); sc[s] = (sc[s] || 0) + 1; }
+const totalModules = entries.length;
+const passedModules = sc.passed ?? 0;
+const passedCases = caseOut.passed ?? 0;
+const execCases = totals.executed_case_count ?? 0;
+const casePassRate = execCases > 0 ? (passedCases / execCases * 100).toFixed(1) : "0";
+const barPass = totalModules > 0 ? passedModules / totalModules * 100 : 0;
+const barFail = totalModules > 0 ? (sc.failed ?? 0) / totalModules * 100 : 0;
+const barOther = 100 - barPass - barFail;
+
+/* ── benchmark data ── */
+const bench = tryRead(locate("public_micro_latest.json"));
+const hasBench = !!bench;
+
+const benchmarks: any[] = bench?.benchmarks ?? [];
+const geoMean = bench?.summary?.geometric_mean_median_ratios ?? {};
+const geoMean314 = geoMean.pyrs_vs_cpython3143 ?? 0;
+const bestBench = benchmarks.length > 0
+	? [...benchmarks].sort((a: any, b: any) =>
+		(a.ratios_by_median?.pyrs_vs_cpython3143 ?? 999) -
+		(b.ratios_by_median?.pyrs_vs_cpython3143 ?? 999)
+	)[0]
+	: null;
+const bestRatio = bestBench?.ratios_by_median?.pyrs_vs_cpython3143 ?? 0;
+const bestIsFaster = bestRatio < 1;
+const bestLabel = bestIsFaster ? "faster" : bestRatio.toFixed(2) + "x";
+const bestName = bestBench?.name ?? "";
+const cpVer = bench?.interpreters?.cpython3143?.version ?? "3.14";
+
+const benchTop5 = benchmarks.slice(0, 5).map((b: any) => {
+	const ratio = b.ratios_by_median?.pyrs_vs_cpython3143 ?? 1;
+	const maxR = 80;
+	const pct = Math.min(ratio / maxR * 100, 100);
+	const atParity = ratio <= 1.1;
+	return { name: b.name, ratio, pct, atParity };
+});
+---
+
+{(hasTests || hasBench) && (
+<section class="data-highlights">
+	<div class="dh-grid">
+
+		{hasTests && (
+		<a href="/tests" class="dh-card dh-tests">
+			<div class="dh-top">
+				<span class="dh-kicker">Test Suite</span>
+				<span class="dh-arrow">&rarr;</span>
+			</div>
+			<div class="dh-stats">
+				<div class="dh-stat">
+					<span class="dh-num dh-green">{passedModules}</span>
+					<span class="dh-label">modules passing</span>
+				</div>
+				<div class="dh-stat">
+					<span class="dh-num">{casePassRate}%</span>
+					<span class="dh-label">case pass rate</span>
+				</div>
+				<div class="dh-stat">
+					<span class="dh-num">{passedCases.toLocaleString("en-US")}</span>
+					<span class="dh-label">tests passing</span>
+				</div>
+			</div>
+			<div class="dh-bar-wrap">
+				<div class="dh-bar">
+					<div class="dh-seg dh-seg-pass" style={`width:${barPass}%`} />
+					<div class="dh-seg dh-seg-fail" style={`width:${barFail}%`} />
+					<div class="dh-seg dh-seg-other" style={`width:${barOther}%`} />
+				</div>
+				<span class="dh-bar-label">{totalModules} modules tested against CPython 3.14</span>
+			</div>
+		</a>
+		)}
+
+		{hasBench && (
+		<a href="/benchmark" class="dh-card dh-bench">
+			<div class="dh-top">
+				<span class="dh-kicker">Benchmarks</span>
+				<span class="dh-arrow">&rarr;</span>
+			</div>
+			<div class="dh-stats">
+				<div class="dh-stat">
+					<span class="dh-num dh-accent">{geoMean314.toFixed(1)}x</span>
+					<span class="dh-label">geo mean vs CPython {cpVer}</span>
+				</div>
+				<div class="dh-stat">
+					<span class="dh-num dh-green">{bestLabel}</span>
+					<span class="dh-label">best: {bestName}</span>
+				</div>
+				<div class="dh-stat">
+					<span class="dh-num">{benchmarks.length}</span>
+					<span class="dh-label">workloads</span>
+				</div>
+			</div>
+			<div class="dh-bench-bars">
+				{benchTop5.map((b) => (
+					<div class="dh-mini-row">
+						<span class="dh-mini-name">{b.name}</span>
+						<div class="dh-mini-track">
+							<div class={`dh-mini-fill ${b.atParity ? "dh-mini-parity" : ""}`} style={`width:${b.pct}%`} />
+						</div>
+						<span class={`dh-mini-ratio ${b.atParity ? "dh-green" : ""}`}>{b.atParity ? "~1x" : b.ratio.toFixed(1) + "x"}</span>
+					</div>
+				))}
+			</div>
+		</a>
+		)}
+
+	</div>
+</section>
+)}
+
+<style>
+	.data-highlights {
+		position: relative;
+		padding: 1rem 0 2rem;
+	}
+	.dh-grid {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: 1.5rem;
+	}
+
+	/* ── card ── */
+	.dh-card {
+		background: rgba(15, 10, 8, 0.5);
+		border: 1px solid rgba(83, 52, 39, 0.3);
+		border-radius: 1rem;
+		padding: 1.5rem 1.75rem;
+		display: flex;
+		flex-direction: column;
+		gap: 1.2rem;
+		text-decoration: none;
+		color: inherit;
+		transition: background-color 200ms ease, border-color 200ms ease, transform 200ms ease, box-shadow 200ms ease;
+		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+	}
+	.dh-card:hover {
+		background: rgba(20, 13, 10, 0.8);
+		border-color: rgba(150, 95, 68, 0.6);
+		transform: translateY(-3px);
+		box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+	}
+	.dh-card:hover .dh-arrow {
+		transform: translateX(3px);
+	}
+
+	/* ── top row ── */
+	.dh-top {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+	.dh-kicker {
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: var(--accent);
+		font-weight: 600;
+	}
+	.dh-arrow {
+		font-size: 1.1rem;
+		color: var(--text-muted);
+		transition: transform 200ms ease;
+	}
+
+	/* ── stats row ── */
+	.dh-stats {
+		display: flex;
+		gap: 1.5rem;
+	}
+	.dh-stat {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+	}
+	.dh-num {
+		font-size: 1.5rem;
+		font-weight: 700;
+		letter-spacing: -0.02em;
+		line-height: 1.15;
+		color: var(--text);
+	}
+	.dh-label {
+		font-size: 0.74rem;
+		color: var(--text-muted);
+		white-space: nowrap;
+	}
+	.dh-green  { color: #5ec97a; }
+	.dh-accent { color: var(--accent); }
+
+	/* ── test suite bar ── */
+	.dh-bar-wrap {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+	}
+	.dh-bar {
+		display: flex;
+		height: 0.5rem;
+		border-radius: 0.2rem;
+		overflow: hidden;
+		gap: 1px;
+	}
+	.dh-seg { min-width: 2px; }
+	.dh-seg-pass  { background: #5ec97a; }
+	.dh-seg-fail  { background: #e97d46; }
+	.dh-seg-other { background: #342c27; }
+	.dh-bar-label {
+		font-size: 0.72rem;
+		color: rgba(190, 170, 159, 0.5);
+	}
+
+	/* ── benchmark mini bars ── */
+	.dh-bench-bars {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+	}
+	.dh-mini-row {
+		display: grid;
+		grid-template-columns: minmax(6rem, 9rem) 1fr 2.6rem;
+		align-items: center;
+		gap: 0.5rem;
+	}
+	.dh-mini-name {
+		font-size: 0.72rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: rgba(190, 170, 159, 0.6);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.dh-mini-track {
+		height: 0.45rem;
+		background: #1a130e;
+		border-radius: 0.15rem;
+		overflow: hidden;
+	}
+	.dh-mini-fill {
+		height: 100%;
+		background: #b05a2a;
+		border-radius: 0.15rem;
+		min-width: 2px;
+	}
+	.dh-mini-parity {
+		background: #3d8a4e;
+	}
+	.dh-mini-ratio {
+		font-size: 0.72rem;
+		font-family: "IBM Plex Mono", ui-monospace, monospace;
+		color: var(--text-muted);
+		text-align: right;
+	}
+
+	/* ── responsive ── */
+	@media (max-width: 760px) {
+		.dh-grid {
+			grid-template-columns: 1fr;
+		}
+		.dh-card {
+			padding: 1.2rem 1.3rem;
+		}
+		.dh-stats {
+			gap: 1rem;
+		}
+		.dh-num {
+			font-size: 1.3rem;
+		}
+	}
+</style>

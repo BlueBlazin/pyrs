@@ -3063,7 +3063,9 @@ fn compile_clean_docstring(doc: &str) -> String {
     }
     if margin > 0 {
         for line in lines.iter_mut().skip(1) {
-            let leading_spaces = line.len().saturating_sub(line.trim_start_matches(' ').len());
+            let leading_spaces = line
+                .len()
+                .saturating_sub(line.trim_start_matches(' ').len());
             let strip = leading_spaces.min(margin);
             *line = line[strip..].to_string();
         }

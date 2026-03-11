@@ -5600,7 +5600,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("socket.bind() expects one address argument"));
+            return Err(RuntimeError::new(
+                "socket.bind() expects one address argument",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "socket.bind")?;
         let address = args.remove(0);
@@ -6899,12 +6901,8 @@ impl Vm {
         let (fourth, fifth, sixth) = if let Some(value) = arg3 {
             let outer = testcapi_fixed_arity_sequence(value, 2, "getargs_keywords", "arg3")?;
             let first_outer = value_to_int(outer[0].clone())?;
-            let inner = testcapi_fixed_arity_sequence(
-                outer[1].clone(),
-                2,
-                "getargs_keywords",
-                "arg3",
-            )?;
+            let inner =
+                testcapi_fixed_arity_sequence(outer[1].clone(), 2, "getargs_keywords", "arg3")?;
             (
                 first_outer,
                 value_to_int(inner[0].clone())?,

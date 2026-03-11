@@ -732,7 +732,9 @@ fn string_percent_runtime_mapping_candidate(
             }
             _ => Ok(None),
         },
-        Value::Instance(instance) if class_name_for_instance(instance).as_deref() == Some("range") => {
+        Value::Instance(instance)
+            if class_name_for_instance(instance).as_deref() == Some("range") =>
+        {
             Ok(Some(right.clone()))
         }
         Value::Instance(instance)
@@ -741,7 +743,12 @@ fn string_percent_runtime_mapping_candidate(
         {
             Ok(None)
         }
-        _ if vm.lookup_bound_special_method(right, "__getitem__")?.is_some() => Ok(Some(right.clone())),
+        _ if vm
+            .lookup_bound_special_method(right, "__getitem__")?
+            .is_some() =>
+        {
+            Ok(Some(right.clone()))
+        }
         _ => Ok(None),
     }
 }
@@ -763,12 +770,13 @@ fn string_percent_runtime_mapping_lookup(
                 .ok_or_else(|| RuntimeError::key_error(key.to_string())),
             _ => Err(RuntimeError::type_error("format requires a mapping")),
         },
-        _ => vm
-            .getitem_value(mapping.clone(), key_value)
-            .map_err(|err| match err.message.as_str() {
-                "key not found" => RuntimeError::key_error(key.to_string()),
-                _ => err,
-            }),
+        _ => {
+            vm.getitem_value(mapping.clone(), key_value)
+                .map_err(|err| match err.message.as_str() {
+                    "key not found" => RuntimeError::key_error(key.to_string()),
+                    _ => err,
+                })
+        }
     }
 }
 
