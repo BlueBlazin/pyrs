@@ -30,7 +30,7 @@ use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::ffi::{CString, OsString, c_void};
+use std::ffi::{CString, OsString, c_long, c_short, c_ulong, c_void};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{IsTerminal, Read, Seek, SeekFrom, Write};
@@ -5853,16 +5853,16 @@ impl Vm {
                 ("UINT_MAX", Value::Int(u32::MAX as i64)),
                 (
                     "ULONG_MAX",
-                    if (libc::c_ulong::MAX as u128) <= (i64::MAX as u128) {
-                        Value::Int(libc::c_ulong::MAX as i64)
+                    if (c_ulong::MAX as u128) <= (i64::MAX as u128) {
+                        Value::Int(c_ulong::MAX as i64)
                     } else {
-                        Value::BigInt(Box::new(BigInt::from_u64(libc::c_ulong::MAX as u64)))
+                        Value::BigInt(Box::new(BigInt::from_u64(c_ulong::MAX as u64)))
                     },
                 ),
-                ("LONG_MAX", Value::Int(libc::c_long::MAX as i64)),
-                ("LONG_MIN", Value::Int(libc::c_long::MIN as i64)),
-                ("SHRT_MAX", Value::Int(libc::c_short::MAX as i64)),
-                ("SHRT_MIN", Value::Int(libc::c_short::MIN as i64)),
+                ("LONG_MAX", Value::Int(c_long::MAX as i64)),
+                ("LONG_MIN", Value::Int(c_long::MIN as i64)),
+                ("SHRT_MAX", Value::Int(c_short::MAX as i64)),
+                ("SHRT_MIN", Value::Int(c_short::MIN as i64)),
                 ("LLONG_MAX", Value::Int(i64::MAX)),
                 ("LLONG_MIN", Value::Int(i64::MIN)),
                 (
