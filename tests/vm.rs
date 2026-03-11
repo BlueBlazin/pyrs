@@ -2631,6 +2631,30 @@ fn time_get_clock_info_returns_namespace_shape() {
 }
 
 #[test]
+fn time_strptime_exposes_struct_time_contract() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("time-strptime-contract".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = "import time\nparsed = time.strptime('1970-01-02 03:04:05', '%Y-%m-%d %H:%M:%S')\nfields = type(parsed)._fields\nok = (\n    time._STRUCT_TM_ITEMS == 9\n    and parsed.tm_year == 1970\n    and parsed.tm_mon == 1\n    and parsed.tm_mday == 2\n    and parsed.tm_hour == 3\n    and parsed.tm_min == 4\n    and parsed.tm_sec == 5\n    and parsed[:6] == (1970, 1, 2, 3, 4, 5)\n    and fields == ('tm_year', 'tm_mon', 'tm_mday', 'tm_hour', 'tm_min', 'tm_sec', 'tm_wday', 'tm_yday', 'tm_isdst')\n    and type(parsed).n_fields == 9\n    and type(parsed).n_sequence_fields == 9\n    and type(parsed).n_unnamed_fields == 0\n)\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib_path);
+            let value = vm.execute(&code).expect("execution should succeed");
+            assert_eq!(value, Value::None);
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn time-strptime-contract thread");
+    handle
+        .join()
+        .expect("time-strptime-contract thread should complete");
+}
+
+#[test]
 fn exposes_sys_jit_probe_flags() {
     let source = "import sys\nok = (hasattr(sys, '_jit') and hasattr(sys._jit, 'is_active') and isinstance(sys._jit.is_enabled(), bool) and isinstance(sys._jit.is_available(), bool) and isinstance(sys._jit.is_active(), bool) and (sys._jit.is_active() is False))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -10865,6 +10889,41 @@ fn executes_slots_restrictions() {
 }
 
 #[test]
+fn slot_descriptor_clears_abstract_property_requirement() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("slot-descriptor-abstract-property".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = "import abc\nclass Base(abc.ABC):\n    @property\n    @abc.abstractmethod\n    def info(self):\n        raise NotImplementedError\n\nclass Child(Base):\n    __slots__ = ('info',)\n\nitem = Child()\nitem.info = 7\nok = (\n    len(Child.__abstractmethods__) == 0\n    and Child.__dict__['info'].__name__ == 'info'\n    and item.info == 7\n)\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib_path);
+            let value = vm.execute(&code).expect("execution should succeed");
+            assert_eq!(value, Value::None);
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn slot-descriptor-abstract-property thread");
+    handle
+        .join()
+        .expect("slot-descriptor-abstract-property thread should complete");
+}
+
+#[test]
+fn uninitialized_slot_descriptor_raises_attribute_error() {
+    let source = "class Box:\n    __slots__ = ('x',)\n\nbox = Box()\ncaught = False\ntry:\n    box.x\nexcept AttributeError:\n    caught = True\nok = caught and Box.__dict__['x'].__name__ == 'x'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn allows_assignments_for_subclasses_of_empty_slots_base() {
     let source = "class Base:\n    __slots__ = ()\n\nclass Child(Base):\n    pass\n\nchild = Child()\nchild.gen = 42\nok = child.gen == 42\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -18851,6 +18910,37 @@ ok = (
     supports_ok and
     text == "utime: you may specify either 'times' or 'ns' but not both"
 )
+"#,
+        path = file.to_string_lossy().replace('\\', "\\\\"),
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(file);
+    let _ = std::fs::remove_dir(temp_dir);
+}
+
+#[test]
+fn os_utime_none_times_sentinel_allows_ns_override() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_os_utime_none_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let file = temp_dir.join("sample.txt");
+    std::fs::write(&file, b"x").expect("write sample file");
+
+    let source = format!(
+        r#"import os
+path = '{path}'
+os.utime(path, None)
+os.utime(path, None, ns=(5_000_000_000, 6_000_000_000))
+st = os.stat(path)
+ok = (st.st_atime_ns == 5_000_000_000 and st.st_mtime_ns == 6_000_000_000)
 "#,
         path = file.to_string_lossy().replace('\\', "\\\\"),
     );

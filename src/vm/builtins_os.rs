@@ -1825,6 +1825,9 @@ impl Vm {
             }
             times = Some(value);
         }
+        if matches!(times, Some(Value::None)) {
+            times = None;
+        }
         let ns = kwargs.remove("ns");
         if times.is_some() && ns.is_some() {
             return Err(RuntimeError::value_error(

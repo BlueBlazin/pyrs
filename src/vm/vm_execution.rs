@@ -10868,6 +10868,7 @@ impl Vm {
                     }
                 }
             }
+            let mut slot_descriptor_names = Vec::new();
             if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                 class_data.attrs.extend(attrs);
                 class_data.metaclass = metaclass;
@@ -10898,6 +10899,14 @@ impl Vm {
                 if let Some(slots_value) = class_data.attrs.get("__slots__").cloned()
                     && let Some(slot_names) = slot_names_from_value(Some(slots_value.clone()))
                 {
+                    slot_descriptor_names = slot_names
+                        .iter()
+                        .filter(|slot_name| {
+                            !matches!(slot_name.as_str(), "__dict__" | "__weakref__")
+                                && !class_data.attrs.contains_key(slot_name.as_str())
+                        })
+                        .cloned()
+                        .collect();
                     class_data.slots = Some(slot_names);
                     // Preserve the declared __slots__ object shape (str/list/tuple/etc.)
                     // while retaining normalized slot names in ClassObject::slots.
@@ -10945,6 +10954,20 @@ impl Vm {
                             .collect::<Vec<_>>(),
                     ),
                 );
+            }
+            if !slot_descriptor_names.is_empty() {
+                let slot_descriptors = slot_descriptor_names
+                    .into_iter()
+                    .map(|slot_name| {
+                        let descriptor = self.slot_member_descriptor_value(class_ref, &slot_name);
+                        (slot_name, descriptor)
+                    })
+                    .collect::<Vec<_>>();
+                if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                    for (slot_name, descriptor) in slot_descriptors {
+                        class_data.attrs.entry(slot_name).or_insert(descriptor);
+                    }
+                }
             }
             self.update_class_annotate_owner(class_ref);
             self.attach_owner_class_to_attrs(class_ref);

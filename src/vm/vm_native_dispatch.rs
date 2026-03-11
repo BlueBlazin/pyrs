@@ -6837,6 +6837,14 @@ impl Vm {
                         return Err(RuntimeError::type_error("invalid getset descriptor"));
                     }
                 };
+                let is_member_descriptor = matches!(
+                    &*receiver.kind(),
+                    Object::Instance(instance_data)
+                        if matches!(
+                            &*instance_data.class.kind(),
+                            Object::Class(class_data) if class_data.name == "member_descriptor"
+                        )
+                );
                 if !self.value_is_instance_of(&obj, &descriptor_owner)? {
                     let owner_name = match &descriptor_owner {
                         Value::Builtin(builtin) => self.builtin_type_name(*builtin).to_string(),
@@ -6850,6 +6858,23 @@ impl Vm {
                     return Err(RuntimeError::type_error(format!(
                         "descriptor '{}' for '{}' objects doesn't apply to a '{}' object",
                         descriptor_name, owner_name, object_name
+                    )));
+                }
+                if is_member_descriptor {
+                    let bound_receiver = self.receiver_from_value(&obj)?;
+                    let value = match &*bound_receiver.kind() {
+                        Object::Instance(instance_data) => {
+                            instance_data.attrs.get(&descriptor_name).cloned()
+                        }
+                        _ => None,
+                    };
+                    if let Some(value) = value {
+                        return Ok(NativeCallResult::Value(value));
+                    }
+                    return Err(RuntimeError::attribute_error(format!(
+                        "'{}' object has no attribute '{}'",
+                        self.value_type_name_for_error(&obj),
+                        descriptor_name
                     )));
                 }
                 let value =
@@ -13394,6 +13419,8 @@ impl Vm {
             BuiltinFunction::TimeTimeNs => self.builtin_time_time_ns(args, kwargs),
             BuiltinFunction::TimeLocalTime => self.builtin_time_localtime(args, kwargs),
             BuiltinFunction::TimeGmTime => self.builtin_time_gmtime(args, kwargs),
+            BuiltinFunction::TimeStructTime => self.builtin_time_struct_time(args, kwargs),
+            BuiltinFunction::TimeStrPTime => self.builtin_time_strptime(args, kwargs),
             BuiltinFunction::TimeStrFTime => self.builtin_time_strftime(args, kwargs),
             BuiltinFunction::TimeMonotonic => self.builtin_time_monotonic(args, kwargs),
             BuiltinFunction::TimeGetClockInfo => self.builtin_time_get_clock_info(args, kwargs),

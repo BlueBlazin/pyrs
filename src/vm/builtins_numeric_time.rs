@@ -1272,6 +1272,44 @@ impl Vm {
         self.builtin_time_time_tuple(args, kwargs)
     }
 
+    pub(super) fn builtin_time_struct_time(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "struct_time.__new__() does not accept keyword arguments",
+            ));
+        }
+        if args.is_empty() {
+            return Err(RuntimeError::new(
+                "struct_time.__new__() requires class receiver",
+            ));
+        }
+        let struct_time_class = match args.remove(0) {
+            Value::Class(class) => class,
+            _ => {
+                return Err(RuntimeError::new(
+                    "struct_time.__new__() requires class receiver",
+                ));
+            }
+        };
+        if args.len() != 1 {
+            return Err(RuntimeError::new("struct_time() takes a 9-sequence"));
+        }
+        let values = self.collect_iterable_values(args.remove(0))?;
+        if values.len() != 9 {
+            return Err(RuntimeError::new("struct_time() takes a 9-sequence"));
+        }
+        let Some(fields) = self.class_namedtuple_fields(&struct_time_class) else {
+            return Err(RuntimeError::new("time.struct_time fields missing"));
+        };
+        let instance = self.alloc_instance_for_class(&struct_time_class);
+        self.bind_namedtuple_instance_fields(&instance, &fields, values, HashMap::new())?;
+        Ok(Value::Instance(instance))
+    }
+
     pub(super) fn builtin_time_time_tuple(
         &mut self,
         mut args: Vec<Value>,
@@ -1305,6 +1343,73 @@ impl Vm {
             value_to_f64(args.remove(0))?.trunc() as i64
         };
         self.time_struct_time_from_parts(split_unix_timestamp(secs))
+    }
+
+    pub(super) fn builtin_time_strptime(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 2 {
+            return Err(RuntimeError::new(
+                "strptime() takes at most 2 positional arguments",
+            ));
+        }
+
+        let mut data_string = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+        let mut format = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+
+        if let Some(value) = kwargs.remove("string") {
+            if data_string.is_some() {
+                return Err(RuntimeError::new(
+                    "strptime() got multiple values for argument 'string'",
+                ));
+            }
+            data_string = Some(value);
+        }
+        if let Some(value) = kwargs.remove("format") {
+            if format.is_some() {
+                return Err(RuntimeError::new(
+                    "strptime() got multiple values for argument 'format'",
+                ));
+            }
+            format = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "strptime() got an unexpected keyword argument",
+            ));
+        }
+
+        let data_string =
+            data_string.ok_or_else(|| RuntimeError::new("strptime() missing required argument"))?;
+        let format =
+            format.unwrap_or_else(|| Value::Str("%a %b %d %H:%M:%S %Y".to_string()));
+
+        self.import_module("_strptime")?;
+        let Some(module) = self.modules.get("_strptime").cloned() else {
+            return Err(RuntimeError::new("_strptime module missing"));
+        };
+        let helper = match &*module.kind() {
+            Object::Module(module_data) => module_data.globals.get("_strptime_time").cloned(),
+            _ => None,
+        }
+        .ok_or_else(|| RuntimeError::new("_strptime._strptime_time missing"))?;
+
+        match self.call_internal(helper, vec![data_string, format], HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => Err(
+                self.runtime_error_from_active_exception("strptime() raised exception"),
+            ),
+        }
     }
 
     pub(super) fn builtin_time_strftime(

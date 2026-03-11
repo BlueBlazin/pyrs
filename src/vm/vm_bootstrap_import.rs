@@ -2526,6 +2526,44 @@ namereplace_errors = lookup_error("namereplace")
             ],
         );
         let time_struct_time_class = self.alloc_tuple_backed_builtin_class("struct_time");
+        let time_struct_time_fields = self.heap.alloc_tuple(vec![
+            Value::Str("tm_year".to_string()),
+            Value::Str("tm_mon".to_string()),
+            Value::Str("tm_mday".to_string()),
+            Value::Str("tm_hour".to_string()),
+            Value::Str("tm_min".to_string()),
+            Value::Str("tm_sec".to_string()),
+            Value::Str("tm_wday".to_string()),
+            Value::Str("tm_yday".to_string()),
+            Value::Str("tm_isdst".to_string()),
+        ]);
+        if let Value::Class(class_obj) = &time_struct_time_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("time".to_string()));
+            class_data.attrs.insert(
+                "__new__".to_string(),
+                Value::Builtin(BuiltinFunction::TimeStructTime),
+            );
+            class_data
+                .attrs
+                .insert("_fields".to_string(), time_struct_time_fields.clone());
+            class_data.attrs.insert(
+                "__pyrs_namedtuple_fields__".to_string(),
+                time_struct_time_fields,
+            );
+            class_data
+                .attrs
+                .insert("n_fields".to_string(), Value::Int(9));
+            class_data
+                .attrs
+                .insert("n_sequence_fields".to_string(), Value::Int(9));
+            class_data
+                .attrs
+                .insert("n_unnamed_fields".to_string(), Value::Int(0));
+        }
         self.install_builtin_module(
             "time",
             &[
@@ -2533,6 +2571,7 @@ namereplace_errors = lookup_error("namereplace")
                 ("time_ns", BuiltinFunction::TimeTimeNs),
                 ("localtime", BuiltinFunction::TimeLocalTime),
                 ("gmtime", BuiltinFunction::TimeGmTime),
+                ("strptime", BuiltinFunction::TimeStrPTime),
                 ("strftime", BuiltinFunction::TimeStrFTime),
                 ("monotonic", BuiltinFunction::TimeMonotonic),
                 ("get_clock_info", BuiltinFunction::TimeGetClockInfo),
@@ -2542,6 +2581,7 @@ namereplace_errors = lookup_error("namereplace")
             ],
             vec![
                 ("struct_time", time_struct_time_class),
+                ("_STRUCT_TM_ITEMS", Value::Int(9)),
                 ("timezone", Value::Int(0)),
                 ("altzone", Value::Int(0)),
                 ("daylight", Value::Int(0)),
@@ -5866,6 +5906,16 @@ namereplace_errors = lookup_error("namereplace")
             );
         }
         if let Value::Class(class_obj) = &getset_descriptor_type_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data.attrs.insert(
+                "__get__".to_string(),
+                Value::Function(self.heap.alloc_native_method(NativeMethodObject::new(
+                    NativeMethodKind::GetSetDescriptorGet,
+                ))),
+            );
+        }
+        if let Value::Class(class_obj) = &member_descriptor_type_class
             && let Object::Class(class_data) = &mut *class_obj.kind_mut()
         {
             class_data.attrs.insert(

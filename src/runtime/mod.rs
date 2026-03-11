@@ -5538,6 +5538,8 @@ pub enum BuiltinFunction {
     TimeStrFTime,
     TimeMonotonic,
     TimeGetClockInfo,
+    TimeStructTime,
+    TimeStrPTime,
     TimeSleep,
     OsGetPid,
     OsGetUid,
@@ -9297,6 +9299,8 @@ functions outside a stub module should always be followed by an implementation t
             | BuiltinFunction::TimeLocalTime
             | BuiltinFunction::TimeGmTime
             | BuiltinFunction::TimeStrFTime
+            | BuiltinFunction::TimeStructTime
+            | BuiltinFunction::TimeStrPTime
             | BuiltinFunction::TimeMonotonic
             | BuiltinFunction::TimeGetClockInfo
             | BuiltinFunction::TimeSleep
