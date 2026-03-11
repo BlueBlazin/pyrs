@@ -24975,6 +24975,59 @@ ok = (
 }
 
 #[test]
+fn ctypes_shim_exposes_cdata_hierarchy() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping ctypes hierarchy gate (CPython Lib not found)");
+        return;
+    };
+    let source = r#"import ctypes
+from _ctypes import Structure, Union, _Pointer, Array, _SimpleCData, CFuncPtr
+_CData = Structure.__base__
+ok = (
+    _CData.__name__ == "_CData"
+    and Structure.__base__ is _CData
+    and Union.__base__ is _CData
+    and _Pointer.__base__ is _CData
+    and Array.__base__ is _CData
+    and _SimpleCData.__base__ is _CData
+    and CFuncPtr.__base__ is _CData
+    and type(Structure).__name__ == "PyCStructType"
+    and type(Union).__name__ == "UnionType"
+    and type(_Pointer).__name__ == "PyCPointerType"
+    and type(Array).__name__ == "PyCArrayType"
+    and type(_SimpleCData).__name__ == "PyCSimpleType"
+    and type(CFuncPtr).__name__ == "PyCFuncPtrType"
+)
+"#
+    .to_string();
+    run_with_large_stack("vm-ctypes-cdata-hierarchy", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn test_test_ctypes_support_imports() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping ctypes support import gate (CPython Lib not found)");
+        return;
+    };
+    let source = "import test.test_ctypes._support\nok = True\n".to_string();
+    run_with_large_stack("vm-test-ctypes-support", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn stringprep_import_uses_unicodedata_ucd_3_2_0_surface() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping stringprep import gate (CPython Lib not found)");

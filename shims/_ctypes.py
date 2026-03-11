@@ -91,7 +91,46 @@ class CField:
     pass
 
 
-class _SimpleCData:
+class _CTypeMeta(type):
+    def __mul__(cls, length):
+        if not isinstance(length, int):
+            return NotImplemented
+        if length < 0:
+            raise ValueError("Array length must be >= 0")
+        return PyCArrayType(
+            f"{cls.__name__}_Array_{length}",
+            (Array,),
+            {"_type_": cls, "_length_": length},
+        )
+
+    __rmul__ = __mul__
+
+
+class PyCStructType(_CTypeMeta):
+    pass
+
+
+class UnionType(_CTypeMeta):
+    pass
+
+
+class PyCPointerType(_CTypeMeta):
+    pass
+
+
+class PyCArrayType(_CTypeMeta):
+    pass
+
+
+class PyCSimpleType(_CTypeMeta):
+    pass
+
+
+class PyCFuncPtrType(_CTypeMeta):
+    pass
+
+
+class _CData:
     _type_ = "O"
 
     def __init__(self, value=0):
@@ -108,6 +147,14 @@ class _SimpleCData:
             return value
         return cls(value)
 
+    @classmethod
+    def from_address(cls, _address):
+        return cls()
+
+    @classmethod
+    def from_buffer_copy(cls, obj):
+        return cls.from_buffer(obj)
+
     def __int__(self):
         try:
             return int(self.value)
@@ -115,28 +162,33 @@ class _SimpleCData:
             return 0
 
 
-class Union:
+class _SimpleCData(_CData, metaclass=PyCSimpleType):
+    _type_ = "O"
+
+
+class Union(_CData, metaclass=UnionType):
     pass
 
 
-class Structure:
+class Structure(_CData, metaclass=PyCStructType):
     pass
 
 
-class Array:
-    pass
+class Array(_CData, metaclass=PyCArrayType):
+    _length_ = 0
 
 
-class _Pointer(_SimpleCData):
+class _Pointer(_CData, metaclass=PyCPointerType):
     _type_ = "P"
 
 
-class CFuncPtr:
+class CFuncPtr(_CData, metaclass=PyCFuncPtrType):
     _argtypes_ = ()
     _restype_ = None
     _flags_ = 0
 
     def __init__(self, target=None):
+        super().__init__(0)
         self.argtypes = tuple(getattr(type(self), "_argtypes_", ()))
         self.restype = getattr(type(self), "_restype_", None)
         self._flags = int(getattr(type(self), "_flags_", 0))
@@ -170,7 +222,7 @@ class CFuncPtr:
                 raise TypeError("cast helper expects (obj, ignored, typ)")
             obj, _ignored, typ = args[:3]
             value = obj
-            if isinstance(value, _SimpleCData):
+            if isinstance(value, _CData):
                 value = value.value
             try:
                 return typ(value)
