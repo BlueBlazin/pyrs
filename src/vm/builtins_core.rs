@@ -9790,7 +9790,7 @@ impl Vm {
         };
         let mut attrs = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.attrs.clone(),
-            _ => HashMap::new(),
+            _ => Default::default(),
         };
         for (name, value) in kwargs {
             attrs.insert(name, value);

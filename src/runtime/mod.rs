@@ -358,16 +358,209 @@ impl fmt::Debug for ClassObject {
     }
 }
 
+#[derive(Clone, Default, Debug)]
+pub struct InstanceAttributes {
+    entries: Vec<(String, Value)>,
+    index: HashMap<String, usize>,
+}
+
+pub struct InstanceAttributeOccupiedEntry<'a> {
+    attrs: &'a mut InstanceAttributes,
+    index: usize,
+}
+
+pub struct InstanceAttributeVacantEntry<'a> {
+    attrs: &'a mut InstanceAttributes,
+    name: String,
+}
+
+pub enum InstanceAttributeEntry<'a> {
+    Occupied(InstanceAttributeOccupiedEntry<'a>),
+    Vacant(InstanceAttributeVacantEntry<'a>),
+}
+
+impl InstanceAttributes {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.index.clear();
+    }
+
+    pub fn contains_key<Q>(&self, name: Q) -> bool
+    where
+        Q: AsRef<str>,
+    {
+        self.index.contains_key(name.as_ref())
+    }
+
+    pub fn get<Q>(&self, name: Q) -> Option<&Value>
+    where
+        Q: AsRef<str>,
+    {
+        let index = *self.index.get(name.as_ref())?;
+        Some(&self.entries[index].1)
+    }
+
+    pub fn get_mut<Q>(&mut self, name: Q) -> Option<&mut Value>
+    where
+        Q: AsRef<str>,
+    {
+        let index = *self.index.get(name.as_ref())?;
+        Some(&mut self.entries[index].1)
+    }
+
+    pub fn insert(&mut self, name: String, value: Value) -> Option<Value> {
+        if let Some(index) = self.index.get(name.as_str()).copied() {
+            return Some(std::mem::replace(&mut self.entries[index].1, value));
+        }
+        let index = self.entries.len();
+        self.entries.push((name.clone(), value));
+        self.index.insert(name, index);
+        None
+    }
+
+    pub fn remove<Q>(&mut self, name: Q) -> Option<Value>
+    where
+        Q: AsRef<str>,
+    {
+        let index = self.index.remove(name.as_ref())?;
+        let (_, value) = self.entries.remove(index);
+        for (offset, (entry_name, _)) in self.entries[index..].iter().enumerate() {
+            self.index.insert(entry_name.clone(), index + offset);
+        }
+        Some(value)
+    }
+
+    pub fn entry(&mut self, name: String) -> InstanceAttributeEntry<'_> {
+        if let Some(index) = self.index.get(name.as_str()).copied() {
+            return InstanceAttributeEntry::Occupied(InstanceAttributeOccupiedEntry {
+                attrs: self,
+                index,
+            });
+        }
+        InstanceAttributeEntry::Vacant(InstanceAttributeVacantEntry { attrs: self, name })
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {
+        self.entries.iter().map(|(name, value)| (name, value))
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.entries.iter().map(|(name, _)| name)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &Value> {
+        self.entries.iter().map(|(_, value)| value)
+    }
+
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&String, &mut Value) -> bool,
+    {
+        let old_entries = std::mem::take(&mut self.entries);
+        self.index.clear();
+        self.entries = Vec::with_capacity(old_entries.len());
+        for (name, mut value) in old_entries {
+            if f(&name, &mut value) {
+                let index = self.entries.len();
+                self.index.insert(name.clone(), index);
+                self.entries.push((name, value));
+            }
+        }
+    }
+
+    pub fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = (String, Value)>,
+    {
+        for (name, value) in iter {
+            self.insert(name, value);
+        }
+    }
+
+    pub fn into_values(self) -> impl Iterator<Item = Value> {
+        self.entries.into_iter().map(|(_, value)| value)
+    }
+}
+
+impl<'a> InstanceAttributeOccupiedEntry<'a> {
+    pub fn into_mut(self) -> &'a mut Value {
+        &mut self.attrs.entries[self.index].1
+    }
+}
+
+impl<'a> InstanceAttributeVacantEntry<'a> {
+    pub fn insert(self, value: Value) -> &'a mut Value {
+        let index = self.attrs.entries.len();
+        self.attrs.entries.push((self.name.clone(), value));
+        self.attrs.index.insert(self.name, index);
+        &mut self.attrs.entries[index].1
+    }
+}
+
+impl<'a> InstanceAttributeEntry<'a> {
+    pub fn or_insert(self, default: Value) -> &'a mut Value {
+        match self {
+            Self::Occupied(entry) => entry.into_mut(),
+            Self::Vacant(entry) => entry.insert(default),
+        }
+    }
+
+    pub fn or_insert_with<F>(self, default: F) -> &'a mut Value
+    where
+        F: FnOnce() -> Value,
+    {
+        match self {
+            Self::Occupied(entry) => entry.into_mut(),
+            Self::Vacant(entry) => entry.insert(default()),
+        }
+    }
+}
+
+impl IntoIterator for InstanceAttributes {
+    type Item = (String, Value);
+    type IntoIter = std::vec::IntoIter<(String, Value)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
+    }
+}
+
+fn instance_attributes_iter_item(entry: &(String, Value)) -> (&String, &Value) {
+    (&entry.0, &entry.1)
+}
+
+impl<'a> IntoIterator for &'a InstanceAttributes {
+    type Item = (&'a String, &'a Value);
+    type IntoIter =
+        std::iter::Map<std::slice::Iter<'a, (String, Value)>, fn(&(String, Value)) -> (&String, &Value)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter().map(instance_attributes_iter_item)
+    }
+}
+
 pub struct InstanceObject {
     pub class: ObjRef,
-    pub attrs: HashMap<String, Value>,
+    pub attrs: InstanceAttributes,
 }
 
 impl InstanceObject {
     pub fn new(class: ObjRef) -> Self {
         Self {
             class,
-            attrs: HashMap::new(),
+            attrs: InstanceAttributes::new(),
         }
     }
 }

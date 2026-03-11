@@ -9825,14 +9825,14 @@ impl Vm {
                 {
                     return Err(RuntimeError::type_error("object is not iterable"));
                 }
-                if let Value::Class(class) = &other
-                    && let Some(iterator) = self.class_fallback_iterator(class)
-                {
-                    return Ok(iterator);
-                }
 
-                let Some(iter_method) = self.lookup_bound_special_method(&other, "__iter__")?
-                else {
+                let iter_method = self.lookup_bound_special_method(&other, "__iter__")?;
+                let Some(iter_method) = iter_method else {
+                    if let Value::Class(class) = &other
+                        && let Some(iterator) = self.class_fallback_iterator(class)
+                    {
+                        return Ok(iterator);
+                    }
                     if let Some(iterator) = self.sequence_iterator_via_getitem(other.clone())? {
                         return Ok(iterator);
                     }

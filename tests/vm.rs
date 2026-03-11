@@ -10145,6 +10145,55 @@ fn cpython_enum_path_supports_member_value_and_name() {
 }
 
 #[test]
+fn str_enum_iteration_uses_metaclass_definition_order() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"
+from enum import StrEnum
+
+class Color(StrEnum):
+    RED = "red"
+    GREEN = "green"
+    BLUE = "blue"
+
+ok = (
+    list(Color) == [Color.RED, Color.GREEN, Color.BLUE]
+    and [member.value for member in Color] == ["red", "green", "blue"]
+)
+"#;
+    run_with_large_stack("str-enum-iteration-order", move || {
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn instance_dict_preserves_attribute_insertion_order() {
+    let source = r#"
+class Namespace:
+    pass
+
+obj = Namespace()
+obj.foo = 42
+obj.bar = "spam"
+
+ok = (
+    list(obj.__dict__.items()) == [("foo", 42), ("bar", "spam")]
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn startup_honors_virtual_env_prefix_for_site_packages() {
     let Some(pyrs_bin) = pyrs_binary_path() else {
         eprintln!("skipping virtualenv site-packages startup test (pyrs binary not found)");

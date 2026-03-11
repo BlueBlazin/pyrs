@@ -4,6 +4,8 @@
 //! machinery that maps runtime failures into CPython-shaped exception and
 //! traceback behavior.
 
+use std::cell::RefMut;
+
 #[cfg(not(debug_assertions))]
 use super::FusedDirectOneArgNoCellsMetadata;
 #[cfg(not(debug_assertions))]
@@ -30,12 +32,37 @@ use super::{
 };
 use crate::bytecode::Location;
 use crate::runtime::{
-    BoundMethodDispatchKind, DictViewKind, ExceptionTracebackFrame, SliceValue,
+    BoundMethodDispatchKind, DictViewKind, ExceptionTracebackFrame, InstanceAttributes, SliceValue,
     builtin_type_name_info,
 };
 
 unsafe extern "C" {
     fn PyErr_Clear();
+}
+
+pub(super) trait SyntaxErrorAttrStore {
+    fn insert_attr(&mut self, name: &str, value: Value);
+}
+
+impl SyntaxErrorAttrStore for HashMap<String, Value> {
+    fn insert_attr(&mut self, name: &str, value: Value) {
+        self.insert(name.to_string(), value);
+    }
+}
+
+impl SyntaxErrorAttrStore for InstanceAttributes {
+    fn insert_attr(&mut self, name: &str, value: Value) {
+        self.insert(name.to_string(), value);
+    }
+}
+
+impl<T> SyntaxErrorAttrStore for RefMut<'_, T>
+where
+    T: SyntaxErrorAttrStore,
+{
+    fn insert_attr(&mut self, name: &str, value: Value) {
+        (**self).insert_attr(name, value);
+    }
 }
 
 thread_local! {
@@ -9569,13 +9596,10 @@ impl Vm {
 
     pub(super) fn populate_syntax_error_attrs(
         &self,
-        attrs: &mut HashMap<String, Value>,
+        attrs: &mut impl SyntaxErrorAttrStore,
         args: &[Value],
     ) {
-        attrs.insert(
-            "msg".to_string(),
-            args.first().cloned().unwrap_or(Value::None),
-        );
+        attrs.insert_attr("msg", args.first().cloned().unwrap_or(Value::None));
         let detail_items = args.get(1).and_then(|value| match value {
             Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
                 Object::Tuple(items) => Some(items.clone()),
@@ -9614,16 +9638,13 @@ impl Vm {
             }
         }
         let print_file_and_line = !matches!(filename, Value::None);
-        attrs.insert("filename".to_string(), filename);
-        attrs.insert("lineno".to_string(), lineno);
-        attrs.insert("offset".to_string(), offset);
-        attrs.insert("text".to_string(), text);
-        attrs.insert("end_lineno".to_string(), end_lineno);
-        attrs.insert("end_offset".to_string(), end_offset);
-        attrs.insert(
-            "print_file_and_line".to_string(),
-            Value::Bool(print_file_and_line),
-        );
+        attrs.insert_attr("filename", filename);
+        attrs.insert_attr("lineno", lineno);
+        attrs.insert_attr("offset", offset);
+        attrs.insert_attr("text", text);
+        attrs.insert_attr("end_lineno", end_lineno);
+        attrs.insert_attr("end_offset", end_offset);
+        attrs.insert_attr("print_file_and_line", Value::Bool(print_file_and_line));
     }
 
     pub(super) fn instantiate_exception_type(
