@@ -19,43 +19,47 @@ Artifact root: `perf/cpython_compat_benchmark_latest`
 
 Snapshot metadata:
 
-- completed at: `2026-03-10T12:40:12Z`
-- git head: `1349056a0795ab231f7f91ccf5a9ebff0d7adc3e`
+- completed at: `2026-03-12T06:50:30Z`
+- git head: `613b9d546121ba07b7f52e9b663587492fdc9ed6`
 - host: macOS `arm64`
 
 Headline counts:
 
 - discoverable benchmark entries: `492`
-- runnable entries after inventory: `452`
-- clean-pass modules: `43`
-- modules that execute but still fail cases: `252`
-- blocked modules (`load_error` + `process_error` + `process_timeout`): `131`
-- discoverable test cases: `47,040`
-- executed case outcomes: `16,080`
-- passed case outcomes: `8,477`
-- executed subtest outcomes: `35,152`
-- passed subtest outcomes: `32,656`
+- runnable entries after inventory: `394`
+- clean-pass modules: `45`
+- modules that execute but still fail cases: `245`
+- blocked modules (`load_error` + `process_error` + `process_timeout`): `83`
+- discoverable test cases: `37,076`
+- executed case outcomes: `19,651`
+- passed case outcomes: `10,278`
+- executed subtest outcomes: `46,034`
+- passed subtest outcomes: `40,343`
 
-The main leverage signal is blocked execution coverage, and this snapshot is
-timeout-heavy:
+Blocked execution is still the clearest leverage signal, but this rerun also
+exposed broader inventory-stage fallout:
 
-- discoverable cases currently trapped behind blocked modules: `30,342`
-- timeout rows alone now hide `17,153` discoverable cases
+- discoverable cases currently trapped behind blocked modules: `16,005`
+- timeout rows alone now hide `6,077` discoverable cases
+- inventory-stage failures now stop `62` modules before they contribute
+  runnable coverage
 
-Movement from the 2026-03-09 checked-in snapshot:
+Movement from the 2026-03-10 checked-in snapshot:
 
-- clean-pass modules moved from `41` to `43`
-- runnable entries after inventory moved from `454` to `452`
-- modules that execute but still fail cases moved from `265` to `252`
-- blocked modules moved from `118` to `131`
-- discoverable cases hidden behind blocked modules moved from `23,051` to
-  `30,342`
-- executed case outcomes moved from `23,303` to `16,080`
-- major drivers were new timeout-heavy regressions in
-  `test.test_importlib`, `test.test_unittest`,
-  `test.test_asyncio.test_tasks`, `test.test_array`, `test.test_socket`, and
-  `test.test_io`, plus fresh load blockers in `test.test_argparse` and
-  `test.test_decimal`
+- clean-pass modules moved from `43` to `45`
+- runnable entries after inventory moved from `452` to `394`
+- modules that execute but still fail cases moved from `252` to `245`
+- blocked modules moved from `131` to `83`
+- discoverable cases hidden behind blocked modules moved from `30,342` to
+  `16,005`
+- timeout-hidden discoverable cases moved from `17,153` to `6,077`
+- executed case outcomes moved from `16,080` to `19,651`
+- passed case outcomes moved from `8,477` to `10,278`
+- executed subtest outcomes moved from `35,152` to `46,034`
+- major drivers were fewer run-phase blockers overall, with more rows
+  reaching ordinary case/subtest execution, but broad inventory-stage failures
+  across asyncio-family modules reduced runnable-after-inventory coverage and
+  the discoverable-case total
 
 ## Prioritization Rules
 
@@ -72,87 +76,102 @@ Movement from the 2026-03-09 checked-in snapshot:
 
 | Order | Lane | Why now | Primary focused suite(s) |
 |---|---|---|---|
-| 1 | Process timeouts and crashes | `process_timeout` + `process_error` now hide `21,267` discoverable cases, overwhelmingly more than any other bucket | `timeouts-crashes`, `high-leverage` |
-| 2 | Import/bootstrap load errors | Remaining `load_error` rows still hide `9,075` discoverable cases | `high-leverage`, `import-bootstrap` |
-| 3 | OS / pathlib / socket filesystem parity | Largest user-visible runnable cluster is now centered on `pathlib`, `os`, selectors, and socket-adjacent filesystem behavior | `high-leverage`, `os-fs-socket` |
-| 4 | Call / descriptor / warnings / object model parity | Broadest shared runtime lane after blocked execution and filesystem transport work | `object-model-call` |
-| 5 | Codecs / XML / annotation substrate | Concentrated bootstrap and runtime signature cluster with good focused payoff once the larger blockers move | `text-codecs-xml` |
+| 1 | Process blockers and inventory fallout | `process_timeout` + `process_error` still hide `11,738` discoverable cases, and `inventory_process_error` now suppresses `62` modules before run time | `timeouts-crashes`, `high-leverage` |
+| 2 | Import/bootstrap load errors | Remaining `load_error` rows still hide `4,267` discoverable cases | `high-leverage`, `import-bootstrap` |
+| 3 | Array / socket / datetime / OS parity | Largest user-visible runnable cluster now centers on `array`, `socket`, `datetime`, and `os` semantics | `high-leverage`, `os-fs-socket` |
+| 4 | Call / descriptor / warnings / object model parity | Broadest shared runtime lane after blocked execution and protocol/substrate work | `object-model-call` |
+| 5 | Codecs / XML / AST / annotation substrate | Concentrated signature cluster with good focused payoff once the larger blockers move | `text-codecs-xml` |
 
 ## Lane Details
 
-### 1. Process errors and timeouts
+### 1. Process blockers and inventory fallout
 
 Why first:
 
-- `34` modules currently end in `process_error`
-- `52` modules currently end in `process_timeout`
-- together they hide `21,267` discoverable cases
+- `32` modules currently end in `process_error`
+- `25` modules currently end in `process_timeout`
+- those run-phase blockers still hide `11,738` discoverable cases
+- another `62` modules now fail during inventory before contributing runnable
+  coverage
 
 Largest blocked rows:
 
 - timeouts:
-  - `test.test_email`
-  - `test.test_importlib`
-  - `test.test_datetime`
   - `test.test_unittest`
-  - `test.test_asyncio.test_tasks`
   - `test.test_pickle`
-  - `test.test_array`
-  - `test.test_socket`
-  - `test.test_io`
   - `test.test_set`
+  - `test.test_sqlite3`
+  - `test.test_sys_settrace`
+  - `test.test_zipfile`
+  - `test.test_subprocess`
+  - `test.test_bytes`
+  - `test.test_threading`
+  - `test.test_pdb`
 - process errors:
   - `test.test_enum`
   - `test.test_tarfile`
+  - `test.test_decimal`
+  - `test.test_io`
   - `test.test_statistics`
+  - `test.test_ordered_dict`
   - `test.test_posix`
+  - `test.test_re`
+  - `test.test_descr`
   - `test.test_str`
-  - `test.test_itertools`
+- inventory failures:
+  - `test.test_asyncio.test_base_events`
+  - `test.test_asyncio.test_events`
+  - `test.test_asyncio.test_futures`
+  - `test.test_asyncio.test_selector_events`
 
 Observed patterns:
 
-- `40` timeout rows currently end with no stderr at all, which points to
-  event-loop or scheduler stalls instead of ordinary assertion failures
-- other timeouts still surface destructor churn or unreaped-child warnings in
-  asyncio, `_io`, subprocess, and XML cleanup paths
-- process errors are dominated by stack overflows / panics (`-6`) and
-  codec-path crashes (`-11`)
+- inventory failures now suppress broad asyncio coverage before the benchmark
+  reaches ordinary run-time case execution
+- remaining timeouts cluster in `unittest`, `pickle`, `set`, `sqlite3`,
+  tracing, zipfile, and subprocess-heavy rows rather than the older
+  importlib/email-heavy set
+- process errors are still concentrated in enum, tarfile, decimal, `_io`, and
+  regex-adjacent runtime surfaces
 
 Closure evidence:
 
-- focused runs stop reporting `process_error` / `process_timeout`
+- focused runs stop reporting `inventory_process_error`, `process_error`, and
+  `process_timeout`
 - the module starts producing ordinary case-level failures
-- targeted tests capture the old crash or hang trigger
+- targeted tests capture the old crash, hang, or inventory bootstrap trigger
 
 ### 2. Import/bootstrap load errors
 
 Why second:
 
-- `45` runnable modules currently stop at `load_error`
-- those rows hide `9,075` discoverable cases
-- remaining failures are still shared parser/import/bootstrap substrate defects
+- `26` runnable modules currently stop at `load_error`
+- those rows hide `4,267` discoverable cases
+- remaining failures are still shared parser/import/bootstrap and helper-surface
+  defects
 
 Current snapshot signatures still to address:
 
-- negative-complex literal import-time unary-minus is still wrong in
-  `test.test_argparse` (`TypeError: unsupported operand type for -`)
-- `test.test_decimal` still hits `SignalDict.keys()` mapping-surface gaps
-- missing `codecs.latin_1_encode` still blocks multiprocessing-forkserver and
-  related bootstrap lanes
+- `_testclinic` is still missing, which keeps `test.test_capi` and nearby
+  helper-backed rows from importing cleanly
+- `_testcapi` helper gaps remain visible in compile and monitoring-adjacent
+  modules
+- `multiprocessing.forkserver` still hits a parse error during fixture setup
 - `_opcode.ENABLE_SPECIALIZATION*` flags are still missing for compile and
   monitoring imports
-- parser / AST / inspection substrate gaps remain visible in `test.test_ast`,
-  `test.test_grammar`, `test.test_dis`, and
-  `test.test_inspect.test_inspect`
+- parser / AST / inspection substrate gaps remain visible in
+  `test.test_compile`, `test.test_dis`, `test.test_inspect.test_inspect`, and
+  `test.test_pyrepl`
 
 High-value modules after this checkpoint:
 
-- `test.test_argparse`
 - `test.test_capi`
-- `test.test_decimal`
 - `test.test_ctypes`
 - `test.test_idle`
 - `test.test_inspect.test_inspect`
+- `test.test_pyrepl`
+- `test.test_compile`
+- `test.test_dis`
 
 Closure evidence:
 
@@ -160,20 +179,21 @@ Closure evidence:
 - the missing substrate is covered by targeted regressions
 - the fix is in shared runtime code, not a one-off compatibility patch
 
-### 3. OS / pathlib / socket filesystem parity
+### 3. Array / socket / datetime / OS parity
 
 Why third:
 
 - biggest user-visible failed cluster among modules that already run now sits
-  in `pathlib`, `os`, selectors, and socket-adjacent filesystem behavior
-- `test.test_socket` itself has moved back into the timeout bucket, so address
-  family and socket primitive work should stay tied to the filesystem lane
+  in `array`, `socket`, `datetime`, and `os`-adjacent protocol behavior
+- these failures map to shared buffer/socket/datetime substrate instead of
+  isolated assertion deltas
 
 Largest modules:
 
-- `test.test_pathlib`: `436` non-pass
-- `test.test_os`: `253` non-pass
-- `test.test_asyncio.test_futures`: `129` non-pass
+- `test.test_array`: `762` non-pass
+- `test.test_socket`: `732` non-pass
+- `test.test_datetime`: `640` non-pass
+- `test.test_os`: `252` non-pass
 - `test.test_imaplib`: `109` non-pass
 - `test.test_selectors`: `99` non-pass
 - `test.test_ftplib`: `93` non-pass
@@ -181,26 +201,26 @@ Largest modules:
 Current signatures:
 
 - `RuntimeError: bind() address family is unsupported`
-- `RuntimeError: utime() times must be a 2-sequence`
-- `AttributeError: 'socket' object has no attribute 'setsockopt'`
-- `TypeError: protocol must be int`
-- platform-path handling is still too eager in `pathlib`
-  (`requires Windows-flavoured path class`, Windows-only cases not being
-  pruned early enough)
+- `don't have recvmsg_into`
+- `don't have recvmsg`
+- `AttributeError: 'socket' object has no attribute 'connect'`
+- `TypeError: expected bytes-like payload`
+- `AttributeError: class 'datetime' has no attribute 'fromisoformat'`
 
 Closure evidence:
 
-- `os-fs-socket` stops failing on missing or incorrectly typed primitive APIs
-- `pathlib` moves from broad API-shape mismatches to narrower semantic deltas
-- bind/setsockopt/address-family and `utime()` semantics land with targeted
-  regression tests
+- socket and bytes-like primitives stop failing on missing APIs or unsupported
+  payload handling
+- datetime moves from missing ISO helpers to narrower semantic deltas
+- array, OS, and network-adjacent modules drop broad non-pass counts after
+  shared substrate fixes
 
 ### 4. Call / descriptor / warnings / object model parity
 
 Why fourth:
 
-- broadest cross-cutting runtime lane after blocked execution and filesystem
-  transport work
+- broadest cross-cutting runtime lane after blocked execution and core protocol
+  work
 - fixes here fan out into warnings, call machinery, interpreters,
   `memoryview`, and process-pool behavior
 
@@ -230,38 +250,35 @@ Closure evidence:
 - fixes land in shared runtime substrate, not per-module patching
 - constructor/call/descriptor/warning paths get direct regression tests
 
-### 5. Codecs / XML / annotation substrate
+### 5. Codecs / XML / AST / annotation substrate
 
 Why fifth:
 
 - smaller than the lanes above, but still unusually concentrated
-- fixes here affect XML parsers, source encoding, multiprocessing bootstrap,
-  and annotation/AST exposure together
+- fixes here affect source encoding, XML parsers, annotation/AST exposure, and
+  codec-adjacent bootstrap paths together
 
 Largest modules:
 
-- `test.test_sax`: `136` non-pass
-- `test.test_minidom`: `82` non-pass
-- `test.test_source_encoding`: `81` non-pass
-- `test.test_annotationlib` is now runnable and exposes annotation/AST
+- `test.test_codecs`: `226` non-pass
+- `test.test_ast`: `169` non-pass
+- `test.test_xml_etree_c`: `127` non-pass
+- `test.test_xml_etree`: `108` non-pass
+- `test.test_source_encoding`: `90` non-pass
+- `test.test_annotationlib` is runnable and still exposes annotation/AST
   surface mismatches instead of import-time failure
-- `test.test_xml_etree` / `test.test_xml_etree_c` are still noisy, but most of
-  that lane currently shows up as subtest-level failures rather than headline
-  case-level non-pass counts
-- codec helper gaps still show up indirectly across import/bootstrap lanes even
-  when `test.test_codecs` is not the headline module
 
 Current signatures:
 
-- missing codec helpers such as `latin_1_encode`
-- XML parser API mismatches such as `xmlparser.intern`
-- struct-format substrate still rejects `F` and `D`
-- annotation / AST helper surfaces are still off
-  (`function.__annotate__`, `Constant.kind`)
+- `AttributeError: code has no attribute '_varname_from_oparg'`
+- `AssertionError: <bound method function.__annotate__> is not None`
+- `RuntimeError: bad char in struct format: F`
+- `RuntimeError: bad char in struct format: D`
+- `ValueError: Element.remove(x): element not found`
 
 Closure evidence:
 
-- codec helper failures disappear from bootstrap and runtime lanes
+- codec and AST helper failures disappear from bootstrap and runtime lanes
 - XML failures move from API-surface gaps to narrower semantic deltas
 - targeted regressions cover codec, XML, and annotation-facing behavior
 
