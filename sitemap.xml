@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://blueblazin.github.io/pyrs/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/reference/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/install/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/repl/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/execution-modes/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/repl-reference/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/playground/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/ast-and-bytecode-tools/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/reference/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/diagnostics/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/import-paths/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/troubleshooting/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/compatibility/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/language-compatibility/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/stdlib-compatibility/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/scientific-stack-status/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/native-extensions/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/extensions/capi-v1/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/roadmap-and-milestones/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/contributing/architecture/</loc></url>
+  <url><loc>https://blueblazin.github.io/pyrs/docs/contributing/validation/</loc></url>
+</urlset>
