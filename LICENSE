@@ -1,43 +1,21 @@
-PYRS TEMPORARY PROPRIETARY NOTICE AND DISCLAIMER
+MIT License
 
-Copyright (c) 2026 The PYRS Authors.
-All rights reserved.
+Copyright (c) 2026 The PYRS Authors
 
-This repository is not currently offered under an OSI-approved open source
-license. The maintainers may publish a different license in the future, but no
-future licensing is promised.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-NO LICENSE GRANT
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-Except where required by applicable law, no express or implied license or other
-rights are granted to any person to use, reproduce, modify, distribute,
-sublicense, sell, or otherwise exploit this software or any associated
-materials.
-
-USE AT YOUR OWN RISK
-
-By accessing, running, building, testing, or otherwise interacting with this
-software, you acknowledge that you do so voluntarily and entirely at your own
-risk.
-
-DISCLAIMER OF WARRANTIES
-
-TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THIS SOFTWARE IS PROVIDED
-"AS IS" AND "AS AVAILABLE", WITH ALL FAULTS, AND WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING, WITHOUT LIMITATION, ANY WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT,
-QUIET ENJOYMENT, ACCURACY, OR THAT THE SOFTWARE WILL BE ERROR-FREE, SECURE, OR
-UNINTERRUPTED.
-
-LIMITATION OF LIABILITY
-
-TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE
-AUTHORS, COPYRIGHT HOLDERS, OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES,
-OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT, STRICT LIABILITY, OR OTHERWISE,
-ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF OR OTHER
-DEALINGS IN THE SOFTWARE, INCLUDING WITHOUT LIMITATION ANY DIRECT, INDIRECT,
-INCIDENTAL, SPECIAL, EXEMPLARY, PUNITIVE, OR CONSEQUENTIAL DAMAGES, LOSS OF
-DATA, LOSS OF PROFITS, LOSS OF BUSINESS, OR PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
-
-IF YOU DO NOT AGREE TO THESE TERMS, DO NOT USE THIS SOFTWARE.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
